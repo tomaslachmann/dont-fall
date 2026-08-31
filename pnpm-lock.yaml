@@ -30,6 +30,9 @@ importers:
       vite:
         specifier: ^6.0.11
         version: 6.4.3(@types/node@22.20.1)
+      vitest:
+        specifier: ^3.0.5
+        version: 3.2.7(@types/node@22.20.1)
 
   apps/server:
     dependencies:
@@ -48,6 +51,10 @@ importers:
         version: 3.2.7(@types/node@22.20.1)
 
   packages/shared:
+    dependencies:
+      '@dimforge/rapier3d-compat':
+        specifier: ^0.20.0
+        version: 0.20.0
     devDependencies:
       typescript:
         specifier: ^5.7.3
@@ -57,6 +64,9 @@ importers:
         version: 3.2.7(@types/node@22.20.1)
 
 packages:
+
+  '@dimforge/rapier3d-compat@0.20.0':
+    resolution: {integrity: sha512-X4W9pJBdGRX5CO3c/gUNjBFEFG2fn4nYxp9k8STdBDaLa0/w5XTW2ArpayS+9jGFojTi3uFSOWAElCd4rkpekA==}
 
   '@esbuild/aix-ppc64@0.25.12':
     resolution: {integrity: sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==}
@@ -650,6 +660,8 @@ packages:
     hasBin: true
 
 snapshots:
+
+  '@dimforge/rapier3d-compat@0.20.0': {}
 
   '@esbuild/aix-ppc64@0.25.12':
     optional: true

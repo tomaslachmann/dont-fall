@@ -8,13 +8,19 @@ optional mouse orbit and a mostly-fixed pitch.
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Rapier integrated into `packages/shared`; same WASM module usable client-side
-- [ ] Character is a kinematic capsule using Rapier's character controller
-- [ ] WASD movement applied inside the sim step (not the render loop)
-- [ ] Third-person spring-arm camera follows the Character
-- [ ] Camera arm shortens against geometry (no clipping through walls/ground)
-- [ ] Optional mouse orbit; pitch stays within a clamped range
-- [ ] Movement stays smooth under render interpolation from ticket 01
-- [ ] `Controlled` is the only Character state so far; movement input maps to it
+- [x] Rapier integrated into `packages/shared` (`@dimforge/rapier3d-compat`); same WASM module on client and server
+- [x] Character is a kinematic capsule using Rapier's `KinematicCharacterController`
+- [x] WASD movement applied inside `RapierSimulation.tick`, not the render loop
+- [x] Third-person spring-arm camera follows the Character (`springArmPosition`)
+- [x] Camera arm shortens against geometry via raycast (`resolveArm`)
+- [x] Mouse-drag orbit; `PointerOrbit.pitch` clamped at the source
+- [x] Movement stays smooth — `advanceFixed` carries `previousSnapshot` across frames
+- [x] `Controlled` is the only Character motion state; movement input maps to it
+
+**Note:** architecture set by ADR 0009 (`RapierSimulation` owns Rapier, `SimState`
+is a POJO, `advanceFixed` drives a `FixedSimulation`). Camera-relative movement is
+done here (`movementDirection(keys, cameraYaw)`). Pointer-lock free-look (mouse
+move without drag) is a follow-up — see ticket 02b. Manual browser check of feel
+still pending (extension offline).

@@ -1,12 +1,12 @@
-import type { SimState } from "./sim.js";
-import { lerpVec3, type Vec3 } from "./vec3.js";
+import { lerpVec3, type Vec3 } from "../math/vec3.js";
+import type { SimState } from "./SimState.js";
 
 /**
- * What the renderer draws: the sim state visually interpolated toward the next
- * tick. Never fed back into the sim — presentation only (ADR 0004).
+ * What the renderer draws: sim state visually interpolated toward the next tick.
+ * Never fed back into the simulation — presentation only (ADR 0004).
  */
 export interface RenderState {
-  demo: { position: Vec3 };
+  character: { position: Vec3 };
 }
 
 const clamp01 = (t: number): number => (t < 0 ? 0 : t > 1 ? 1 : t);
@@ -22,6 +22,8 @@ export const interpolateState = (
 ): RenderState => {
   const t = clamp01(alpha);
   return {
-    demo: { position: lerpVec3(prev.demo.position, next.demo.position, t) },
+    character: {
+      position: lerpVec3(prev.character.position, next.character.position, t),
+    },
   };
 };
