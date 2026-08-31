@@ -1,6 +1,7 @@
 import {
   CAPSULE_HALF_HEIGHT,
   CAPSULE_RADIUS,
+  RAGDOLL_BONES,
   type Box,
   type Checkpoint,
   type RenderState,
@@ -90,11 +91,25 @@ export const createStage = ({ statics, checkpoints, killPlaneY }: StageConfig): 
   killPlane.position.y = killPlaneY;
   scene.add(killPlane);
 
+  const characterMaterial = new THREE.MeshStandardMaterial({ color: 0x4fd1c5, roughness: 0.4 });
   const character = new THREE.Mesh(
     new THREE.CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_HALF_HEIGHT * 2, 6, 14),
-    new THREE.MeshStandardMaterial({ color: 0x4fd1c5, roughness: 0.4 }),
+    characterMaterial,
   );
   scene.add(character);
+
+  // One mesh per ragdoll bone, shown only while ragdolling / getting up.
+  const boneMeshes = RAGDOLL_BONES.map((spec) => {
+    const mesh = new THREE.Mesh(
+      new THREE.CapsuleGeometry(spec.radius, spec.halfHeight * 2, 4, 8),
+      spec.name === "head"
+        ? new THREE.MeshStandardMaterial({ color: 0xf0f4f8, roughness: 0.5 })
+        : characterMaterial,
+    );
+    mesh.visible = false;
+    scene.add(mesh);
+    return mesh;
+  });
 
   const raycaster = new THREE.Raycaster();
   const castArm = (from: Vec3, to: Vec3): number | null => {
@@ -118,11 +133,23 @@ export const createStage = ({ statics, checkpoints, killPlaneY }: StageConfig): 
     domElement: renderer.domElement,
     render: () => renderer.render(scene, camera),
     applyRenderState: (state) => {
-      character.position.set(
-        state.character.position.x,
-        state.character.position.y,
-        state.character.position.z,
-      );
+      const { position, bones } = state.character;
+      const ragdolling = bones.length > 0;
+
+      character.visible = !ragdolling;
+      if (!ragdolling) {
+        character.position.set(position.x, position.y, position.z);
+      }
+
+      for (let i = 0; i < boneMeshes.length; i += 1) {
+        const mesh = boneMeshes[i]!;
+        const bone = bones[i];
+        mesh.visible = bone !== undefined;
+        if (bone) {
+          mesh.position.set(bone.position.x, bone.position.y, bone.position.z);
+          mesh.quaternion.set(bone.rotation.x, bone.rotation.y, bone.rotation.z, bone.rotation.w);
+        }
+      }
     },
     updateCamera: (target, yaw, pitch) => {
       const desired = springArmPosition(target, yaw, pitch, CAMERA_DISTANCE);

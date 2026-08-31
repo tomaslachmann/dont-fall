@@ -3,7 +3,9 @@ import type { Box } from "../math/box.js";
 import {
   CAPSULE_BOTTOM_OFFSET,
   DASH_COOLDOWN_MS,
-  RESPAWN_LOCKOUT_TICKS,
+  IMPACT_RAGDOLL_MIN,
+  IMPACT_STAGGER_MIN,
+  RAGDOLL_MAX_MS,
   TICK_RATE_HZ,
   WALK_SPEED,
 } from "../tuning.js";
@@ -41,6 +43,19 @@ const tickUntilFall = (sim: RapierSimulation): void => {
     if (sim.snapshot().character.fallCount >= 1) return;
   }
   throw new Error("character never fell");
+};
+
+/**
+ * Tick idle until the Character is back under control. Ticks first, then checks —
+ * a Fall queues the ragdoll but the state machine only transitions on the next
+ * tick, so an immediate check would see a stale `Controlled`.
+ */
+const tickUntilControlled = (sim: RapierSimulation, maxTicks = 400): void => {
+  for (let i = 0; i < maxTicks; i += 1) {
+    sim.tick(IDLE_INPUTS);
+    if (sim.snapshot().character.motionState === "Controlled") return;
+  }
+  throw new Error(`still ${sim.snapshot().character.motionState} after ${maxTicks} ticks`);
 };
 
 describe("RapierSimulation — walk", () => {
@@ -87,21 +102,20 @@ describe("RapierSimulation — walk", () => {
 });
 
 describe("RapierSimulation — Fall & Respawn", () => {
-  /** A high floating platform with a big void underneath and a kill-plane at y = -8. */
-  const PLATFORM: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 2 } };
+  /** A floating platform with a big void underneath and a kill-plane at y = -8. */
+  const PLATFORM: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 4, y: 0.5, z: 4 } };
   const config = { spawn: { x: 0, y: 1.5, z: 0 }, statics: [PLATFORM], killPlaneY: -8 };
 
-  const EDGE_SPAWN = { x: 0, y: 1.5, z: 1.8 }; // near the north edge of PLATFORM
-
   it("respawns at spawn after Falling past the kill-plane", () => {
-    const sim = new RapierSimulation({ ...config, spawn: EDGE_SPAWN });
+    const sim = new RapierSimulation(config);
     tick(sim, 0.5); // settle
-    tickUntilFall(sim);
+    tickUntilFall(sim); // walk off the north edge
+    tickUntilControlled(sim); // ragdoll flop + get up
 
     const { character } = sim.snapshot();
     expect(character.fallCount).toBe(1);
     expect(character.position.y).toBeGreaterThan(config.killPlaneY); // out of the void
-    expect(character.position.z).toBeCloseTo(EDGE_SPAWN.z, 0); // back near the spawn
+    expect(Math.hypot(character.position.x, character.position.z)).toBeLessThan(3); // near the spawn
     expect(character.checkpointIndex).toBeNull(); // no checkpoint reached
   });
 
@@ -130,14 +144,14 @@ describe("RapierSimulation — Fall & Respawn", () => {
 
   it("respawns at the last Checkpoint reached, not spawn", () => {
     const checkpoint: Checkpoint = {
-      respawn: { x: 5, y: 1.5, z: 0 },
+      respawn: { x: 8, y: 1.5, z: 0 },
       volume: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
     };
     const sim = new RapierSimulation({
-      spawn: EDGE_SPAWN,
+      spawn: config.spawn,
       statics: [
         PLATFORM,
-        { center: { x: 5, y: -0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } }, // checkpoint pad
+        { center: { x: 8, y: -0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 3 } }, // checkpoint pad
       ],
       checkpoints: [checkpoint],
       killPlaneY: -8,
@@ -146,51 +160,53 @@ describe("RapierSimulation — Fall & Respawn", () => {
     expect(sim.snapshot().character.checkpointIndex).toBe(0);
 
     tickUntilFall(sim);
+    tickUntilControlled(sim);
 
-    expect(sim.snapshot().character.position.x).toBeCloseTo(5, 0); // respawned at the pad
+    expect(Math.abs(sim.snapshot().character.position.x - 8)).toBeLessThan(3); // respawned at the pad
   });
 
-  it("ignores movement input during the post-Respawn lockout", () => {
-    const sim = new RapierSimulation({ spawn: EDGE_SPAWN, statics: [PLATFORM], killPlaneY: -8 });
+  it("routes a Fall through a Ragdoll at the Checkpoint before returning control", () => {
+    const sim = new RapierSimulation({ spawn: config.spawn, statics: [PLATFORM], killPlaneY: -8 });
     tick(sim, 0.5);
     tickUntilFall(sim);
 
-    sim.tick(NORTH); // first locked tick
-    expect(sim.snapshot().character.respawning).toBe(true);
-    const lockedStart = sim.snapshot().character.position;
+    sim.tick(NORTH); // the respawn tick
+    expect(sim.snapshot().character.motionState).toBe("Ragdoll");
+    expect(sim.snapshot().character.bones.length).toBe(11);
 
-    for (let i = 0; i < RESPAWN_LOCKOUT_TICKS - 3; i += 1) sim.tick(NORTH);
-    const lockedEnd = sim.snapshot().character.position;
-    expect(lockedEnd.z).toBeCloseTo(lockedStart.z, 1); // never moved despite the input
-    expect(sim.snapshot().character.respawning).toBe(true);
-
-    tick(sim, 1, NORTH); // past the lockout, control returns
-    expect(sim.snapshot().character.respawning).toBe(false);
-    expect(sim.snapshot().character.position.z).toBeLessThan(lockedEnd.z - 1);
+    const seen = new Set<string>();
+    for (let i = 0; i < 400; i += 1) {
+      seen.add(sim.snapshot().character.motionState);
+      if (sim.snapshot().character.motionState === "Controlled") break;
+      sim.tick(NORTH); // input is ignored while ragdolling / getting up
+    }
+    expect(seen.has("Ragdoll")).toBe(true);
+    expect(seen.has("GettingUp")).toBe(true);
+    expect(sim.snapshot().character.motionState).toBe("Controlled");
   });
 
-  it("keeps walking at full speed after a Respawn (no character-controller stall)", () => {
-    const sim = new RapierSimulation({ spawn: EDGE_SPAWN, statics: [PLATFORM], killPlaneY: -8 });
+  it("ignores movement input until control returns after a Fall", () => {
+    const sim = new RapierSimulation({ spawn: config.spawn, statics: [PLATFORM], killPlaneY: -8 });
     tick(sim, 0.5);
-    tickUntilFall(sim); // fall #1
-    tick(sim, RESPAWN_LOCKOUT_TICKS / TICK_RATE_HZ + 0.2); // wait out the lockout
-
-    const before = sim.snapshot().character.position;
-    tick(sim, 0.5, input({ moveDirection: { x: 1, y: 0, z: 0 } })); // walk toward the east edge
-    const travelled = Math.abs(sim.snapshot().character.position.x - before.x);
-    expect(travelled).toBeGreaterThan(WALK_SPEED * 0.5 * 0.6); // at least 60% of full speed
-  });
-
-  it("flags the teleport only on the tick the Respawn happens", () => {
-    const sim = new RapierSimulation({ spawn: EDGE_SPAWN, statics: [PLATFORM], killPlaneY: -8 });
-    tick(sim, 0.5);
-    expect(sim.snapshot().character.teleported).toBe(false);
-
     tickUntilFall(sim);
-    expect(sim.snapshot().character.teleported).toBe(true); // the fall tick
+    sim.tick(NORTH);
+    const afterRespawn = sim.snapshot().character.position;
+
+    for (let i = 0; i < 20; i += 1) sim.tick(input({ moveDirection: { x: 1, y: 0, z: 0 } }));
+    // still ragdolling — the flopping body moves a little, but nowhere near a full walk
+    expect(Math.abs(sim.snapshot().character.position.x - afterRespawn.x)).toBeLessThan(1.5);
+  });
+
+  it("flags the teleport only on the respawn tick", () => {
+    const sim = new RapierSimulation({ spawn: config.spawn, statics: [PLATFORM], killPlaneY: -8 });
+    tick(sim, 0.5);
+    tickUntilFall(sim);
+
+    sim.tick(NORTH); // respawn tick
+    expect(sim.snapshot().character.teleported).toBe(true);
 
     sim.tick(NORTH);
-    expect(sim.snapshot().character.teleported).toBe(false); // and only that tick
+    expect(sim.snapshot().character.teleported).toBe(false);
   });
 });
 
@@ -396,5 +412,78 @@ describe("RapierSimulation — dash", () => {
     tick(sim, 0.15, input({ jumpHeld: true, moveDirection: { x: 0, y: 0, z: -1 } }));
     const after = sim.snapshot().character.position.z;
     expect(Math.abs(after - before)).toBeGreaterThan(WALK_SPEED * 0.3 * 1.2);
+  });
+});
+
+describe("RapierSimulation — Impact & ragdoll", () => {
+  const standing = () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
+    tick(sim, 0.5);
+    return sim;
+  };
+
+  it("ignores a tiny Impact", () => {
+    const sim = standing();
+    sim.applyImpact({ x: IMPACT_STAGGER_MIN - 1, y: 0, z: 0 });
+    sim.tick(IDLE_INPUTS);
+    expect(sim.snapshot().character.motionState).toBe("Controlled");
+  });
+
+  it("staggers on a medium Impact — stays upright, walks slower, recovers", () => {
+    const sim = standing();
+    sim.applyImpact({ x: (IMPACT_STAGGER_MIN + IMPACT_RAGDOLL_MIN) / 2, y: 0, z: 0 });
+    sim.tick(NORTH);
+    expect(sim.snapshot().character.motionState).toBe("Stagger");
+    expect(sim.snapshot().character.bones.length).toBe(0); // no ragdoll body
+
+    const staggerZ0 = sim.snapshot().character.position.z;
+    tick(sim, 0.2, NORTH);
+    const staggerTravel = Math.abs(sim.snapshot().character.position.z - staggerZ0);
+    expect(staggerTravel).toBeLessThan(WALK_SPEED * 0.2 * 0.6); // dampened
+
+    tickUntilControlled(sim);
+    expect(sim.snapshot().character.motionState).toBe("Controlled");
+  });
+
+  it("ragdolls on a hard Impact and shows 11 bones", () => {
+    const sim = standing();
+    sim.applyImpact({ x: IMPACT_RAGDOLL_MIN + 5, y: 3, z: 0 });
+    sim.tick(IDLE_INPUTS);
+    expect(sim.snapshot().character.motionState).toBe("Ragdoll");
+    expect(sim.snapshot().character.bones.length).toBe(11);
+  });
+
+  it("the ragdoll does not explode — bones stay near the Character and finite", () => {
+    const sim = standing();
+    const origin = sim.snapshot().character.position;
+    sim.applyImpact({ x: IMPACT_RAGDOLL_MIN + 4, y: 4, z: 0 });
+    for (let i = 0; i < 90; i += 1) {
+      sim.tick(IDLE_INPUTS);
+      for (const b of sim.snapshot().character.bones) {
+        expect(Number.isFinite(b.position.x + b.position.y + b.position.z)).toBe(true);
+        expect(Math.hypot(b.position.x - origin.x, b.position.z - origin.z)).toBeLessThan(12);
+      }
+    }
+  });
+
+  it("gets back up and returns to Controlled near where it fell", () => {
+    const sim = standing();
+    const fellAt = sim.snapshot().character.position;
+    sim.applyImpact({ x: IMPACT_RAGDOLL_MIN + 3, y: 3, z: 0 });
+    tickUntilControlled(sim, 500);
+
+    const back = sim.snapshot().character.position;
+    expect(sim.snapshot().character.motionState).toBe("Controlled");
+    expect(sim.snapshot().character.bones.length).toBe(0);
+    expect(back.y - CAPSULE_BOTTOM_OFFSET).toBeCloseTo(0, 0); // standing on the ground again
+    expect(Math.hypot(back.x - fellAt.x, back.z - fellAt.z)).toBeLessThan(6);
+  });
+
+  it("caps ragdoll time even if it never settles (RAGDOLL_MAX_MS)", () => {
+    const sim = standing();
+    sim.applyImpact({ x: IMPACT_RAGDOLL_MIN, y: 1, z: 0 });
+    tick(sim, RAGDOLL_MAX_MS / 1000 + 0.2);
+    // it must have left Ragdoll (into GettingUp or already Controlled)
+    expect(sim.snapshot().character.motionState).not.toBe("Ragdoll");
   });
 });

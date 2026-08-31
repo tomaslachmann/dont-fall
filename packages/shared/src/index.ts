@@ -1,4 +1,5 @@
 export * from "./math/vec3.js";
+export * from "./math/quat.js";
 export * from "./math/box.js";
 export * from "./tuning.js";
 export * from "./state/SimState.js";
@@ -8,5 +9,9 @@ export * from "./timing/FixedSimulation.js";
 export * from "./timing/advanceFixed.js";
 export * from "./simulation/SimInputs.js";
 export * from "./simulation/Checkpoint.js";
+export * from "./simulation/CharacterStateMachine.js";
 export * from "./simulation/movementVerbs.js";
+export * from "./simulation/collisionGroups.js";
+export * from "./simulation/ragdollSkeleton.js";
+export * from "./simulation/Ragdoll.js";
 export * from "./simulation/RapierSimulation.js";

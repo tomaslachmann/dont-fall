@@ -97,13 +97,45 @@ export const CAPSULE_BOTTOM_OFFSET = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS;
 /** Skin width kept between the capsule and surfaces (units). */
 export const CHARACTER_CONTROLLER_OFFSET = 0.01;
 
+// --- Impact & ragdoll state machine (ADR 0006) ------------------------------
+
+/** Impulse magnitude below which an Impact is ignored entirely. */
+export const IMPACT_STAGGER_MIN = 4;
+
+/** Impulse magnitude at or above which an Impact knocks the Character to Ragdoll. */
+export const IMPACT_RAGDOLL_MIN = 9;
+
+/** How long a Stagger lasts before recovering to Controlled (ms). */
+export const STAGGER_MS = 350;
+
+/** Movement input multiplier while Staggered. */
+export const STAGGER_INPUT_SCALE = 0.35;
+
+/** Minimum time spent in Ragdoll before it can begin getting up (ms). */
+export const RAGDOLL_MIN_MS = 500;
+
+/** Hard cap on Ragdoll time — get up even if the body has not settled (ms). */
+export const RAGDOLL_MAX_MS = 4000;
+
+/** Max speed (units/s) of any ragdoll bone for the body to count as settled. */
+export const RAGDOLL_SETTLE_SPEED = 1.2;
+
+/** How long the GettingUp blend from ragdoll pose back to standing takes (ms). */
+export const GETUP_MS = 450;
+
+/** {@link STAGGER_MS} in whole ticks. */
+export const STAGGER_TICKS = msToTicks(STAGGER_MS);
+
+/** {@link RAGDOLL_MIN_MS} in whole ticks. */
+export const RAGDOLL_MIN_TICKS = msToTicks(RAGDOLL_MIN_MS);
+
+/** {@link RAGDOLL_MAX_MS} in whole ticks. */
+export const RAGDOLL_MAX_TICKS = msToTicks(RAGDOLL_MAX_MS);
+
+/** {@link GETUP_MS} in whole ticks. */
+export const GETUP_TICKS = msToTicks(GETUP_MS);
+
 // --- Fall & respawn ---------------------------------------------------------
 
 /** Default height below which a Character has Fallen out of the playground (units). */
 export const DEFAULT_KILL_PLANE_Y = -8;
-
-/** How long a Character is frozen at its Checkpoint after a Respawn — the Fall penalty (ms). */
-export const RESPAWN_LOCKOUT_MS = 2000;
-
-/** {@link RESPAWN_LOCKOUT_MS} rounded to whole ticks. */
-export const RESPAWN_LOCKOUT_TICKS = msToTicks(RESPAWN_LOCKOUT_MS);

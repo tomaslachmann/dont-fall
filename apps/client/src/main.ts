@@ -74,10 +74,10 @@ const main = async () => {
     const dashFill = Math.max(0, Math.min(10, Math.round((1 - c.dashCooldownMs / DASH_COOLDOWN_MS) * 10)));
     const dashBar = "#".repeat(dashFill) + "-".repeat(10 - dashFill);
     hud.textContent =
-      `DON'T FALL — M1 · movement\n` +
+      `DON'T FALL — M1 · ragdoll\n` +
       `sim ${TICK_RATE_HZ} Hz · render ${fps.toFixed(0)} fps · tick ${result.snapshot.tick}\n` +
-      `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · grounded ${c.grounded}\n` +
-      `checkpoint ${cp} · falls ${c.fallCount}${c.respawning ? " · RESPAWNING" : ""}\n` +
+      `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · ${c.motionState}\n` +
+      `checkpoint ${cp} · falls ${c.fallCount}\n` +
       `dash [${dashBar}]${c.dashCooldownMs === 0 ? " ready" : ""}\n` +
       `WASD move · Space jump · Shift dash · mouse look`;
 

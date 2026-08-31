@@ -26,3 +26,17 @@ shoved and hit the floor" moment that is the game's identity.
   position/velocity between them cleanly to avoid pops.
 - Only `Controlled` (and dampened `Stagger`) accept movement input; `Ragdoll` and
   `GettingUp` ignore it.
+
+## Implementation notes (ticket 05)
+
+- The state machine is `CharacterStateMachine` — pure, fed Impact magnitudes and
+  a "ragdoll settled" flag by `RapierSimulation`.
+- The ragdoll is an 11-bone articulated humanoid (`ragdollSkeleton.ts`, `Ragdoll`)
+  with spherical joints, built once and parked, activated on transition into
+  `Ragdoll`. Collision groups keep it from fighting the capsule
+  (`collisionGroups.ts`).
+- `SimState.character.bones` carries the per-bone transforms while `Ragdoll` /
+  `GettingUp`; `interpolateState` snaps (no blend) on any `motionState` change,
+  since the body being drawn swaps.
+- `GettingUp` blends the captured ragdoll pose toward the standing rest pose over
+  `GETUP_MS`; the capsule re-takes control at `Controlled`.

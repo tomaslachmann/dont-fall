@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { IDENTITY_QUAT } from "../math/quat.js";
+import type { BoneSnapshot } from "../simulation/Ragdoll.js";
 import { interpolateState } from "./interpolate.js";
-import { characterSnapshot, type SimState } from "./SimState.js";
+import { characterSnapshot, type CharacterMotionState, type SimState } from "./SimState.js";
 
 const stateAt = (x: number, teleported = false): SimState => ({
   tick: 0,
   character: characterSnapshot({ position: { x, y: x * 2, z: x * 3 }, teleported }),
+});
+
+const bone = (x: number): BoneSnapshot => ({ position: { x, y: 0, z: 0 }, rotation: IDENTITY_QUAT });
+
+const ragdollStateAt = (x: number, motionState: CharacterMotionState = "Ragdoll"): SimState => ({
+  tick: 0,
+  character: characterSnapshot({ position: { x, y: 0, z: 0 }, motionState, bones: [bone(x)] }),
 });
 
 describe("interpolateState", () => {
@@ -31,5 +40,22 @@ describe("interpolateState", () => {
   it("snaps to the next pose without blending when next was teleported", () => {
     const render = interpolateState(stateAt(0), stateAt(10, true), 0.5);
     expect(render.character.position).toEqual({ x: 10, y: 20, z: 30 });
+  });
+
+  it("interpolates ragdoll bone positions while the motion state holds", () => {
+    const render = interpolateState(ragdollStateAt(0), ragdollStateAt(10), 0.5);
+    expect(render.character.bones[0]!.position.x).toBe(5);
+  });
+
+  it("snaps (no blend) when the motion state changes — the drawn body swaps", () => {
+    // Controlled -> Ragdoll: use the next pose directly, don't lerp through the air
+    const render = interpolateState(stateAt(0), ragdollStateAt(10), 0.5);
+    expect(render.character.position.x).toBe(10);
+    expect(render.character.bones[0]!.position.x).toBe(10);
+  });
+
+  it("has no bones while Controlled", () => {
+    const render = interpolateState(stateAt(0), stateAt(10), 0.5);
+    expect(render.character.bones).toEqual([]);
   });
 });

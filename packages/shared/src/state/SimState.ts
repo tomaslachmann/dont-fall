@@ -1,13 +1,11 @@
 import type { Vec3 } from "../math/vec3.js";
+import type { CharacterMotionState } from "../simulation/CharacterStateMachine.js";
+import type { BoneSnapshot } from "../simulation/Ragdoll.js";
 
-/**
- * The Character's motion state (ADR 0006). Only `Controlled` exists until the
- * ragdoll state machine lands in ticket 05.
- */
-export type CharacterMotionState = "Controlled";
+export type { CharacterMotionState, BoneSnapshot };
 
 export interface CharacterSnapshot {
-  /** Capsule centre in world space. */
+  /** The point the camera follows: capsule centre while upright, pelvis while ragdolling. */
   position: Vec3;
   /** Whether the character controller reported ground contact last tick. */
   grounded: boolean;
@@ -25,28 +23,12 @@ export interface CharacterSnapshot {
   teleported: boolean;
   /** Milliseconds left on the Dash cooldown; 0 means Dash is ready. */
   dashCooldownMs: number;
+  /**
+   * Per-bone transforms while `motionState` is `Ragdoll` or `GettingUp`, in
+   * `RAGDOLL_BONES` order; empty otherwise (the renderer draws the capsule).
+   */
+  bones: BoneSnapshot[];
 }
-
-export interface CharacterSnapshotFields {
-  position: Vec3;
-  grounded?: boolean;
-  checkpointIndex?: number | null;
-  fallCount?: number;
-  respawning?: boolean;
-  teleported?: boolean;
-  dashCooldownMs?: number;
-}
-
-export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSnapshot => ({
-  position: { ...fields.position },
-  grounded: fields.grounded ?? false,
-  motionState: "Controlled",
-  checkpointIndex: fields.checkpointIndex ?? null,
-  fallCount: fields.fallCount ?? 0,
-  respawning: fields.respawning ?? false,
-  teleported: fields.teleported ?? false,
-  dashCooldownMs: fields.dashCooldownMs ?? 0,
-});
 
 /**
  * The observable state of the world at one tick — a plain, fully serialisable
@@ -57,3 +39,27 @@ export interface SimState {
   tick: number;
   character: CharacterSnapshot;
 }
+
+export interface CharacterSnapshotFields {
+  position: Vec3;
+  grounded?: boolean;
+  motionState?: CharacterMotionState;
+  checkpointIndex?: number | null;
+  fallCount?: number;
+  respawning?: boolean;
+  teleported?: boolean;
+  dashCooldownMs?: number;
+  bones?: BoneSnapshot[];
+}
+
+export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSnapshot => ({
+  position: { ...fields.position },
+  grounded: fields.grounded ?? false,
+  motionState: fields.motionState ?? "Controlled",
+  checkpointIndex: fields.checkpointIndex ?? null,
+  fallCount: fields.fallCount ?? 0,
+  respawning: fields.respawning ?? false,
+  teleported: fields.teleported ?? false,
+  dashCooldownMs: fields.dashCooldownMs ?? 0,
+  bones: fields.bones ?? [],
+});
