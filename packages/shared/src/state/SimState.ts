@@ -1,6 +1,6 @@
 import type { Vec3 } from "../math/vec3.js";
 import type { CharacterMotionState } from "../simulation/CharacterStateMachine.js";
-import type { BoneSnapshot } from "../simulation/Ragdoll.js";
+import type { BoneSnapshot } from "../simulation/ragdollSkeleton.js";
 
 export type { CharacterMotionState, BoneSnapshot };
 
@@ -14,8 +14,6 @@ export interface CharacterSnapshot {
   checkpointIndex: number | null;
   /** How many times this Character has Fallen and Respawned. */
   fallCount: number;
-  /** True while frozen at a Checkpoint after a Respawn (the Fall penalty). */
-  respawning: boolean;
   /**
    * True only on the tick a Respawn teleported the Character. The renderer must
    * snap rather than interpolate through this frame.
@@ -46,7 +44,6 @@ export interface CharacterSnapshotFields {
   motionState?: CharacterMotionState;
   checkpointIndex?: number | null;
   fallCount?: number;
-  respawning?: boolean;
   teleported?: boolean;
   dashCooldownMs?: number;
   bones?: BoneSnapshot[];
@@ -58,7 +55,6 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   motionState: fields.motionState ?? "Controlled",
   checkpointIndex: fields.checkpointIndex ?? null,
   fallCount: fields.fallCount ?? 0,
-  respawning: fields.respawning ?? false,
   teleported: fields.teleported ?? false,
   dashCooldownMs: fields.dashCooldownMs ?? 0,
   bones: fields.bones ?? [],

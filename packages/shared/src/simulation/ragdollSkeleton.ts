@@ -1,4 +1,12 @@
-import { vec3, type Vec3 } from "../math/vec3.js";
+import { IDENTITY_QUAT, slerpQuat, type Quat } from "../math/quat.js";
+import { addVec3, lerpVec3, vec3, type Vec3 } from "../math/vec3.js";
+import { GETUP_TICKS } from "../tuning.js";
+
+/** One bone's world transform, for the snapshot / renderer. Ordered as {@link RAGDOLL_BONES}. */
+export interface BoneSnapshot {
+  position: Vec3;
+  rotation: Quat;
+}
 
 /**
  * One bone of the Character's articulated ragdoll (ADR 0006, ticket 05). Offsets
@@ -42,3 +50,28 @@ export const jointRestPoint = (bone: BoneSpec, parent: BoneSpec): Vec3 => ({
   y: (bone.restCenter.y + parent.restCenter.y) / 2,
   z: (bone.restCenter.z + parent.restCenter.z) / 2,
 });
+
+/**
+ * Blend the pose captured when GettingUp began (`from`) toward the standing rest
+ * pose around `capsuleCentre`, by `elapsedTicks` of {@link GETUP_TICKS}. Pure —
+ * both the client and (in M2) the server compute the authoritative getup poses
+ * this way.
+ */
+export const blendGettingUpBones = (
+  from: readonly BoneSnapshot[],
+  capsuleCentre: Vec3,
+  elapsedTicks: number,
+): BoneSnapshot[] => {
+  const t = Math.min(1, Math.max(0, elapsedTicks / GETUP_TICKS));
+  return RAGDOLL_BONES.map((spec, i) => {
+    const rest: BoneSnapshot = {
+      position: addVec3(capsuleCentre, spec.restCenter),
+      rotation: IDENTITY_QUAT,
+    };
+    const start = from[i] ?? rest;
+    return {
+      position: lerpVec3(start.position, rest.position, t),
+      rotation: slerpQuat(start.rotation, rest.rotation, t),
+    };
+  });
+};

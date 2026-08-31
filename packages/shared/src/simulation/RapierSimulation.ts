@@ -1,7 +1,6 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { pointInBox, type Box } from "../math/box.js";
-import { IDENTITY_QUAT, slerpQuat } from "../math/quat.js";
-import { addVec3, lengthVec3, lerpVec3, scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
+import { lengthVec3, lerpVec3, scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
 import { characterSnapshot, type SimState } from "../state/SimState.js";
 import type { FixedSimulation } from "../timing/FixedSimulation.js";
 import {
@@ -9,10 +8,12 @@ import {
   CAPSULE_RADIUS,
   CHARACTER_CONTROLLER_OFFSET,
   DEFAULT_KILL_PLANE_Y,
+  GETUP_CAPSULE_LIFT,
   GETUP_TICKS,
   GRAVITY_Y,
   GROUND_STICK_SPEED,
   RAGDOLL_SETTLE_SPEED,
+  RESPAWN_FLOP_IMPULSE,
   TICK_DT,
   WALK_SPEED,
 } from "../tuning.js";
@@ -20,8 +21,8 @@ import type { Checkpoint } from "./Checkpoint.js";
 import { CharacterStateMachine } from "./CharacterStateMachine.js";
 import { CHARACTER_GROUPS, STATIC_GROUPS } from "./collisionGroups.js";
 import { DashController, JumpController } from "./movementVerbs.js";
-import { Ragdoll, type BoneSnapshot } from "./Ragdoll.js";
-import { RAGDOLL_BONES } from "./ragdollSkeleton.js";
+import { Ragdoll } from "./Ragdoll.js";
+import { blendGettingUpBones, type BoneSnapshot } from "./ragdollSkeleton.js";
 import type { SimInputs } from "./SimInputs.js";
 
 export interface SimulationConfig {
@@ -41,13 +42,15 @@ const DEFAULT_GROUND: Box = {
   halfExtents: vec3(30, 0.5, 30),
 };
 
-/** Lift applied to the capsule when GettingUp begins, above the settled pelvis. */
-const GETUP_CAPSULE_LIFT = 0.7;
-
 const cloneBox = (box: Box): Box => ({
   center: { ...box.center },
   halfExtents: { ...box.halfExtents },
 });
+
+interface PendingImpact {
+  magnitude: number;
+  impulse: Vec3;
+}
 
 let initPromise: Promise<void> | null = null;
 
@@ -74,11 +77,10 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
   private readonly statics: Box[];
   private readonly checkpoints: Checkpoint[];
   private readonly killPlaneY: number;
-  private readonly spawn: Vec3;
 
   private tickCount = 0;
-  private verticalVelocity = 0;
-  private horizontalVelocity: Vec3 = vec3();
+  /** Capsule velocity (units/s): `x`/`z` set fresh each Controlled tick, `y` integrated. */
+  private velocity: Vec3 = vec3();
   private grounded = false;
 
   private respawnPoint: Vec3;
@@ -93,13 +95,15 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
   private jumpHeldLastTick = false;
   private dashHeldLastTick = false;
 
-  private lastImpactImpulse: Vec3 = vec3();
-  private getupBones: BoneSnapshot[] | null = null;
+  /** Strongest Impact queued since the last tick, with the shove to apply if it ragdolls. */
+  private pendingImpact: PendingImpact | null = null;
+  private getupBones: readonly BoneSnapshot[] = [];
   private getupStartTick = 0;
+  private getupStartRoot: Vec3 = vec3();
 
   constructor(config: SimulationConfig = {}) {
-    this.spawn = config.spawn ?? DEFAULT_SPAWN;
-    this.respawnPoint = { ...this.spawn };
+    const spawn = config.spawn ?? DEFAULT_SPAWN;
+    this.respawnPoint = { ...spawn };
     this.statics = config.statics ?? [DEFAULT_GROUND];
     this.checkpoints = config.checkpoints ?? [];
     this.killPlaneY = config.killPlaneY ?? DEFAULT_KILL_PLANE_Y;
@@ -117,11 +121,7 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
     }
 
     this.body = this.world.createRigidBody(
-      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(
-        this.spawn.x,
-        this.spawn.y,
-        this.spawn.z,
-      ),
+      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(spawn.x, spawn.y, spawn.z),
     );
     this.collider = this.world.createCollider(
       RAPIER.ColliderDesc.capsule(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS).setCollisionGroups(
@@ -143,11 +143,16 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
   /**
    * Deliver an Impact to the Character (a shove from the Spinner, a wall dash,
    * another player…). The magnitude decides Stagger vs Ragdoll (ADR 0006); the
-   * vector is the shove applied to the ragdoll if it goes down.
+   * vector is the shove applied to the ragdoll. If the Character is already down,
+   * the shove flails it right away.
    */
   applyImpact(impulse: Vec3): void {
-    this.lastImpactImpulse = { ...impulse };
-    this.machine.impact(lengthVec3(impulse));
+    const magnitude = lengthVec3(impulse);
+    this.machine.impact(magnitude);
+    if (!this.pendingImpact || magnitude > this.pendingImpact.magnitude) {
+      this.pendingImpact = { magnitude, impulse: { ...impulse } };
+    }
+    if (this.machine.state === "Ragdoll") this.ragdoll.applyImpulse(impulse);
   }
 
   tick(input: SimInputs): void {
@@ -158,6 +163,8 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
     this.jumpHeldLastTick = input.jumpHeld;
     this.dashHeldLastTick = input.dashHeld;
 
+    // Order matters: read prevState before the machine ticks; compute `settled`
+    // from last tick's physics before this tick's world.step().
     const prevState = this.machine.state;
     const settled = this.ragdoll.isActive && this.ragdoll.maxSpeed() < RAGDOLL_SETTLE_SPEED;
     const state = this.machine.tick(settled);
@@ -168,11 +175,12 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
       this.beginRagdoll();
     }
     if (prevState === "Ragdoll" && state === "GettingUp") this.beginGettingUp();
-    if (prevState === "GettingUp" && state === "Controlled") this.getupBones = null;
+    if (prevState === "GettingUp" && state === "Controlled") this.getupBones = [];
 
     if (state === "Ragdoll") {
       this.world.step();
-      this.followRagdollWithCapsule();
+      this.body.setTranslation(this.ragdoll.rootPosition(), false); // camera continuity
+      this.grounded = false;
     } else {
       this.simulateCapsule(input, jumpPressed, dashPressed);
     }
@@ -184,29 +192,25 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
 
   /** Controlled / Stagger / GettingUp: the kinematic capsule drives, input scaled by the state. */
   private simulateCapsule(input: SimInputs, jumpPressed: boolean, dashPressed: boolean): void {
-    const inputScale = this.machine.inputScale;
-    const move = scaleVec3(input.moveDirection, inputScale);
+    // Stagger dampens *all* movement input — walk, jump and dash — not just walk.
+    const fullControl = this.machine.inputScale >= 1;
+    const move = scaleVec3(input.moveDirection, this.machine.inputScale);
 
-    const takeoff = inputScale > 0 ? this.jump.beginTick(this.grounded, jumpPressed) : null;
-    if (takeoff !== null) this.verticalVelocity = takeoff;
-    const gravityScale =
-      inputScale > 0 ? this.jump.gravityScale(input.jumpHeld, this.verticalVelocity) : 1;
-    this.verticalVelocity += GRAVITY_Y * gravityScale * TICK_DT;
+    const takeoff = this.jump.beginTick(this.grounded, fullControl && jumpPressed);
+    if (takeoff !== null) this.velocity.y = takeoff;
+    const gravityScale = this.jump.gravityScale(fullControl && input.jumpHeld, this.velocity.y);
+    this.velocity.y += GRAVITY_Y * gravityScale * TICK_DT;
 
     const walk = scaleVec3(move, WALK_SPEED);
-    const dashBurst = inputScale > 0 ? this.dash.beginTick(move, dashPressed) : this.dash.beginTick(vec3(), false);
-    this.horizontalVelocity = addVec3(walk, dashBurst);
+    const dashBurst = this.dash.beginTick(move, fullControl && dashPressed);
+    this.velocity.x = walk.x + dashBurst.x;
+    this.velocity.z = walk.z + dashBurst.z;
 
-    const desired = {
-      x: this.horizontalVelocity.x * TICK_DT,
-      y: this.verticalVelocity * TICK_DT,
-      z: this.horizontalVelocity.z * TICK_DT,
-    };
-    this.controller.computeColliderMovement(this.collider, desired);
+    this.controller.computeColliderMovement(this.collider, scaleVec3(this.velocity, TICK_DT));
     const corrected = this.controller.computedMovement();
     this.grounded = this.controller.computedGrounded();
-    if (this.grounded && this.verticalVelocity < 0) {
-      this.verticalVelocity = -GROUND_STICK_SPEED;
+    if (this.grounded && this.velocity.y < 0) {
+      this.velocity.y = -GROUND_STICK_SPEED;
       this.jump.land();
     }
 
@@ -219,49 +223,55 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
     this.world.step();
   }
 
-  private followRagdollWithCapsule(): void {
-    const root = this.ragdoll.rootPosition();
-    this.body.setTranslation(root, false);
-    this.grounded = false;
-  }
-
   private beginRagdoll(): void {
     const at = this.body.translation();
     this.collider.setEnabled(false);
-    this.jump.reset();
-    this.dash.reset();
-    this.ragdoll.activate(
-      vec3(at.x, at.y, at.z),
-      vec3(this.horizontalVelocity.x, this.verticalVelocity, this.horizontalVelocity.z),
-      this.lastImpactImpulse,
-    );
-    this.lastImpactImpulse = vec3();
+    this.resetMovementControllers();
+    this.ragdoll.activate(vec3(at.x, at.y, at.z), { ...this.velocity }, this.takeImpactImpulse());
   }
 
   private beginGettingUp(): void {
     this.getupBones = this.ragdoll.readBones();
-    this.getupStartTick = this.tickCount;
-    const root = this.ragdoll.rootPosition();
+    this.getupStartTick = this.tickCount + 1; // this tick's snapshot is t = 0
+    this.getupStartRoot = this.ragdoll.rootPosition();
     this.ragdoll.deactivate();
-    this.body.setTranslation({ x: root.x, y: root.y + GETUP_CAPSULE_LIFT, z: root.z }, false);
+    this.pendingImpact = null;
+    this.body.setTranslation(
+      { x: this.getupStartRoot.x, y: this.getupStartRoot.y + GETUP_CAPSULE_LIFT, z: this.getupStartRoot.z },
+      false,
+    );
     this.collider.setEnabled(true);
-    this.verticalVelocity = 0;
-    this.horizontalVelocity = vec3();
+    this.velocity = vec3();
   }
 
   private respawnAtCheckpoint(): void {
     this.pendingRespawn = false;
     this.teleportedThisTick = true;
-    this.getupBones = null;
+    this.getupBones = [];
+    this.pendingImpact = null;
     this.collider.setEnabled(false);
     this.body.setTranslation({ ...this.respawnPoint }, true);
-    // A gentle, varied flop onto the Checkpoint — enough not to land upright,
-    // not enough to launch the ragdoll off a small platform.
-    this.ragdoll.activate(
-      { ...this.respawnPoint },
-      vec3(0, -1, 0),
-      vec3(Math.sin(this.fallCount * 1.7) * 1.5, 0.5, Math.cos(this.fallCount * 2.3) * 1.5),
-    );
+    // A gentle, varied flop onto the Checkpoint — enough not to land upright, not
+    // enough to launch the ragdoll off a small platform. Varied by fallCount so
+    // repeated Falls don't look identical.
+    this.ragdoll.activate({ ...this.respawnPoint }, vec3(0, -1, 0), {
+      x: Math.sin(this.fallCount * 1.7) * RESPAWN_FLOP_IMPULSE,
+      y: 0.5,
+      z: Math.cos(this.fallCount * 2.3) * RESPAWN_FLOP_IMPULSE,
+    });
+  }
+
+  /** The queued Impact shove, consumed. Zero if none. */
+  private takeImpactImpulse(): Vec3 {
+    const impulse = this.pendingImpact?.impulse ?? vec3();
+    this.pendingImpact = null;
+    return impulse;
+  }
+
+  private resetMovementControllers(): void {
+    this.velocity = vec3();
+    this.jump.reset();
+    this.dash.reset();
   }
 
   private updateCheckpoint(): void {
@@ -279,10 +289,7 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
     if (this.pendingRespawn || this.body.translation().y >= this.killPlaneY) return;
 
     this.fallCount += 1;
-    this.verticalVelocity = 0;
-    this.horizontalVelocity = vec3();
-    this.jump.reset();
-    this.dash.reset();
+    this.resetMovementControllers();
     this.machine.forceRagdoll();
     this.pendingRespawn = true;
   }
@@ -290,18 +297,20 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
   snapshot(): SimState {
     const state = this.machine.state;
     const t = this.body.translation();
+    const capsuleCentre = vec3(t.x, t.y, t.z);
 
-    let position: Vec3;
-    let bones: BoneSnapshot[];
+    let position = capsuleCentre;
+    let bones: BoneSnapshot[] = [];
     if (state === "Ragdoll") {
       position = this.ragdoll.rootPosition();
       bones = this.ragdoll.readBones();
     } else if (state === "GettingUp") {
-      position = vec3(t.x, t.y, t.z);
-      bones = this.blendedGettingUpBones(vec3(t.x, t.y, t.z));
-    } else {
-      position = vec3(t.x, t.y, t.z);
-      bones = [];
+      const elapsed = this.tickCount - this.getupStartTick;
+      const t = Math.min(1, Math.max(0, elapsed / GETUP_TICKS));
+      // position rises smoothly from the settled pelvis to the standing capsule,
+      // so there is no jump at the Ragdoll → GettingUp boundary
+      position = lerpVec3(this.getupStartRoot, capsuleCentre, t);
+      bones = blendGettingUpBones(this.getupBones, capsuleCentre, elapsed);
     }
 
     return {
@@ -312,29 +321,11 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
         motionState: state,
         checkpointIndex: this.checkpointIndex,
         fallCount: this.fallCount,
-        respawning: state === "Ragdoll" || state === "GettingUp",
         teleported: this.teleportedThisTick,
         dashCooldownMs: this.dash.cooldownMs,
         bones,
       }),
     };
-  }
-
-  /** Bones blended from the pose captured when GettingUp began toward the standing rest pose. */
-  private blendedGettingUpBones(capsuleCenter: Vec3): BoneSnapshot[] {
-    const from = this.getupBones ?? [];
-    const t = Math.min(1, (this.tickCount - this.getupStartTick) / GETUP_TICKS);
-    return RAGDOLL_BONES.map((spec, i) => {
-      const rest: BoneSnapshot = {
-        position: addVec3(capsuleCenter, spec.restCenter),
-        rotation: IDENTITY_QUAT,
-      };
-      const start = from[i] ?? rest;
-      return {
-        position: lerpVec3(start.position, rest.position, t),
-        rotation: slerpQuat(start.rotation, rest.rotation, t),
-      };
-    });
   }
 
   /** The resolved static geometry (including the default ground), for the renderer. */

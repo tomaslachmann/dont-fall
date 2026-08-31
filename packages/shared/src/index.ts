@@ -13,5 +13,5 @@ export * from "./simulation/CharacterStateMachine.js";
 export * from "./simulation/movementVerbs.js";
 export * from "./simulation/collisionGroups.js";
 export * from "./simulation/ragdollSkeleton.js";
-export * from "./simulation/Ragdoll.js";
+export { Ragdoll } from "./simulation/Ragdoll.js";
 export * from "./simulation/RapierSimulation.js";

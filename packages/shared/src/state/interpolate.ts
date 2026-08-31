@@ -1,6 +1,6 @@
 import { slerpQuat } from "../math/quat.js";
 import { lerpVec3, type Vec3 } from "../math/vec3.js";
-import type { BoneSnapshot } from "../simulation/Ragdoll.js";
+import type { BoneSnapshot } from "../simulation/ragdollSkeleton.js";
 import type { SimState } from "./SimState.js";
 
 /**
@@ -31,18 +31,18 @@ const interpolateBones = (
  * Blend between the two most recent sim states by `alpha` (the fraction of a
  * tick the renderer is past `prev`). `alpha` is clamped to [0, 1].
  *
- * A discontinuity — a Respawn teleport, or a motion-state change that swaps the
- * body being drawn (capsule ↔ ragdoll) — cannot be blended through, so the
- * `next` pose is used directly.
+ * A discontinuity cannot be blended through, so the `next` pose is used directly:
+ * a Respawn teleport, or a frame where the drawn body swaps (the bone count goes
+ * 0 ↔ N, i.e. capsule ↔ ragdoll). `Controlled ↔ Stagger` and `Ragdoll ↔
+ * GettingUp` both keep the same body and interpolate normally.
  */
 export const interpolateState = (
   prev: SimState,
   next: SimState,
   alpha: number,
 ): RenderState => {
-  const snap =
-    next.character.teleported || prev.character.motionState !== next.character.motionState;
-  const t = snap ? 1 : clamp01(alpha);
+  const bodySwapped = prev.character.bones.length !== next.character.bones.length;
+  const t = next.character.teleported || bodySwapped ? 1 : clamp01(alpha);
 
   return {
     character: {

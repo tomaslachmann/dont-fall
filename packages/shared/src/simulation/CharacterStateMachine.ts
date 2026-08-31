@@ -17,8 +17,8 @@ import {
  * Stagger    → Controlled (after STAGGER_TICKS)
  * Stagger    → Ragdoll    (a hard Impact lands while staggering)
  * Ragdoll    → GettingUp  (past RAGDOLL_MIN_TICKS and settled, or at RAGDOLL_MAX_TICKS)
- * GettingUp  → Controlled (after GETUP_TICKS)
- * GettingUp  → Ragdoll    (a fresh hard Impact interrupts the recovery)
+ * GettingUp  → Controlled (after GETUP_TICKS — uninterruptible, so continuous
+ *                          Impacts can't soft-lock the Character while down)
  * ```
  */
 export type CharacterMotionState = "Controlled" | "Stagger" | "Ragdoll" | "GettingUp";
@@ -72,7 +72,12 @@ export class CharacterStateMachine {
     this.pendingImpact = 0;
     this.forcedRagdoll = false;
 
-    if (forced || impact >= IMPACT_RAGDOLL_MIN) {
+    const hardHit = forced || impact >= IMPACT_RAGDOLL_MIN;
+    // A fresh hard hit downs a Controlled or Staggering Character. It is ignored
+    // while already `Ragdoll` (so the timer keeps counting toward
+    // RAGDOLL_MAX_TICKS) and while `GettingUp` (which always completes) — so
+    // continuous impacts can never soft-lock the Character out of `Controlled`.
+    if (hardHit && (this.motionState === "Controlled" || this.motionState === "Stagger")) {
       this.enter("Ragdoll");
       return this.motionState;
     }

@@ -93,14 +93,26 @@ describe("CharacterStateMachine", () => {
     expect(m.state).toBe("Ragdoll");
   });
 
-  it("re-ragdolls from GettingUp on a fresh hard Impact", () => {
+  it("does not re-ragdoll from GettingUp (the recovery always completes)", () => {
     const m = new CharacterStateMachine();
     m.forceRagdoll();
     m.tick(false);
     run(m, RAGDOLL_MAX_TICKS + 2, false); // -> GettingUp
-    m.impact(IMPACT_RAGDOLL_MIN);
+    expect(m.state).toBe("GettingUp");
+    m.impact(IMPACT_RAGDOLL_MIN + 5);
     m.tick(false);
-    expect(m.state).toBe("Ragdoll");
+    expect(m.state).toBe("GettingUp"); // hit shrugged off — no interrupt
+  });
+
+  it("continuous hard Impacts can never soft-lock the Character out of Controlled", () => {
+    const m = new CharacterStateMachine();
+    m.forceRagdoll();
+    let reachedControlled = false;
+    for (let i = 0; i < RAGDOLL_MAX_TICKS + GETUP_TICKS + 10; i += 1) {
+      m.impact(IMPACT_RAGDOLL_MIN + 3); // hit every single tick
+      if (m.tick(false) === "Controlled") reachedControlled = true;
+    }
+    expect(reachedControlled).toBe(true);
   });
 
   it("reset returns to Controlled", () => {

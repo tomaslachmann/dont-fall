@@ -486,4 +486,36 @@ describe("RapierSimulation — Impact & ragdoll", () => {
     // it must have left Ragdoll (into GettingUp or already Controlled)
     expect(sim.snapshot().character.motionState).not.toBe("Ragdoll");
   });
+
+  it("the camera-follow point never jumps at the Ragdoll → GettingUp handoff", () => {
+    const sim = standing();
+    sim.applyImpact({ x: IMPACT_RAGDOLL_MIN + 3, y: 4, z: 0 });
+    let prev = sim.snapshot().character.position;
+    let maxStep = 0;
+    for (let i = 0; i < 400; i += 1) {
+      sim.tick(IDLE_INPUTS);
+      const c = sim.snapshot().character;
+      if (!c.teleported) {
+        maxStep = Math.max(maxStep, Math.hypot(c.position.x - prev.x, c.position.y - prev.y, c.position.z - prev.z));
+      }
+      prev = c.position;
+      if (c.motionState === "Controlled" && i > 20) break;
+    }
+    expect(maxStep).toBeLessThan(0.35); // no ~0.7 pop, no discontinuity
+  });
+
+  it("dampens jump and dash while Staggered, not just walking", () => {
+    const sim = standing();
+    sim.applyImpact({ x: (IMPACT_STAGGER_MIN + IMPACT_RAGDOLL_MIN) / 2, y: 0, z: 0 });
+    sim.tick(input({ jumpHeld: true, dashHeld: true }));
+    expect(sim.snapshot().character.motionState).toBe("Stagger");
+    const y0 = sim.snapshot().character.position.y;
+
+    // hammer jump+dash while staggered — the Character should barely leave the ground
+    for (let i = 0; i < 4; i += 1) {
+      sim.tick(input({ jumpHeld: false, dashHeld: false }));
+      sim.tick(input({ ...NORTH, jumpHeld: true, dashHeld: true }));
+    }
+    expect(sim.snapshot().character.position.y - y0).toBeLessThan(0.4); // no real jump
+  });
 });

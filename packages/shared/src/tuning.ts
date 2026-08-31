@@ -123,6 +123,19 @@ export const RAGDOLL_SETTLE_SPEED = 1.2;
 /** How long the GettingUp blend from ragdoll pose back to standing takes (ms). */
 export const GETUP_MS = 450;
 
+/** Where the capsule centre is placed above the settled pelvis when GettingUp begins (units). */
+export const GETUP_CAPSULE_LIFT = 0.7;
+
+/** Angular / linear damping on ragdoll bones — higher settles the flop faster. */
+export const RAGDOLL_ANGULAR_DAMPING = 3;
+export const RAGDOLL_LINEAR_DAMPING = 0.12;
+
+/** Friction on ragdoll bone colliders (they should slide a little, not stick). */
+export const RAGDOLL_FRICTION = 0.9;
+
+/** Peak magnitude of the gentle, varied flop impulse applied on a post-Fall Respawn. */
+export const RESPAWN_FLOP_IMPULSE = 1.5;
+
 /** {@link STAGGER_MS} in whole ticks. */
 export const STAGGER_TICKS = msToTicks(STAGGER_MS);
 

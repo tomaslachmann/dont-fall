@@ -5,12 +5,18 @@ movement and collision, with a separate articulated ragdoll body that takes over
 on Impact or Fall. A state machine drives the handoff:
 
 ```
-Controlled  → Stagger   (minor impact: input dampened, stays upright)
-Controlled  → Ragdoll   (hard impact / fall / dash into wall)
-Stagger     → Controlled (auto)
-Ragdoll     → GettingUp  (blend ragdoll pose back toward standing)
-GettingUp   → Controlled
+Controlled  → Stagger    (minor impact: input dampened, stays upright)
+Controlled  → Ragdoll    (hard impact / fall / dash into wall)
+Stagger     → Controlled  (auto, after STAGGER_TICKS)
+Stagger     → Ragdoll     (a hard impact lands while staggering)
+Ragdoll     → GettingUp   (settled past RAGDOLL_MIN, or at RAGDOLL_MAX)
+GettingUp   → Controlled   (auto, after GETUP_TICKS)
 ```
+
+`GettingUp` is uninterruptible — a hard impact during recovery is ignored, and an
+impact landing while already `Ragdoll` does not restart its timer, so continuous
+impacts (lying in a Spinner's arc) can never soft-lock the Character out of
+`Controlled`.
 
 A pure active ragdoll (Gang Beasts style) gives the best chaos but is months of
 tuning for a solo dev and is hard to network. A pure kinematic capsule is

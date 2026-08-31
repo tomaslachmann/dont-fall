@@ -1,18 +1,22 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { IDENTITY_QUAT, type Quat } from "../math/quat.js";
+import { IDENTITY_QUAT } from "../math/quat.js";
 import { vec3, type Vec3 } from "../math/vec3.js";
+import {
+  RAGDOLL_ANGULAR_DAMPING,
+  RAGDOLL_FRICTION,
+  RAGDOLL_LINEAR_DAMPING,
+} from "../tuning.js";
 import { RAGDOLL_GROUPS } from "./collisionGroups.js";
-import { jointRestPoint, RAGDOLL_BONES, type BoneSpec } from "./ragdollSkeleton.js";
+import {
+  jointRestPoint,
+  RAGDOLL_BONES,
+  type BoneSnapshot,
+  type BoneSpec,
+} from "./ragdollSkeleton.js";
 
-/** One bone's world transform, for the snapshot / renderer. Ordered as {@link RAGDOLL_BONES}. */
-export interface BoneSnapshot {
-  position: Vec3;
-  rotation: Quat;
-}
+export type { BoneSnapshot };
 
 const ZERO = { x: 0, y: 0, z: 0 };
-/** Bodies are parked far below the world while the ragdoll is inactive. */
-const PARK_OFFSET_Y = -1000;
 
 interface Bone {
   spec: BoneSpec;
@@ -22,9 +26,10 @@ interface Bone {
 
 /**
  * The Character's articulated ragdoll: 11 dynamic bones joined by spherical
- * joints (ADR 0006, ticket 05). Built once and parked; {@link activate} snaps it
- * into the standing pose and lets physics take over, {@link deactivate} freezes
- * and hides it. `SimState` never holds any of these handles (ADR 0009).
+ * joints (ADR 0006, ticket 05). Built once; while inactive the bones are `Fixed`
+ * with their colliders disabled (the renderer hides them). {@link activate} snaps
+ * it into the standing pose and lets physics take over, {@link deactivate} freezes
+ * it. `SimState` never holds any of these handles (ADR 0009).
  */
 export class Ragdoll {
   private readonly bones: Bone[] = [];
@@ -35,15 +40,15 @@ export class Ragdoll {
     for (const spec of RAGDOLL_BONES) {
       const body = world.createRigidBody(
         RAPIER.RigidBodyDesc.fixed()
-          .setTranslation(spec.restCenter.x, spec.restCenter.y + PARK_OFFSET_Y, spec.restCenter.z)
-          .setAngularDamping(3)
-          .setLinearDamping(0.12)
+          .setTranslation(spec.restCenter.x, spec.restCenter.y, spec.restCenter.z)
+          .setAngularDamping(RAGDOLL_ANGULAR_DAMPING)
+          .setLinearDamping(RAGDOLL_LINEAR_DAMPING)
           .setCanSleep(false),
       );
       const collider = world.createCollider(
         RAPIER.ColliderDesc.capsule(spec.halfHeight, spec.radius)
           .setMass(spec.mass)
-          .setFriction(0.9)
+          .setFriction(RAGDOLL_FRICTION)
           .setCollisionGroups(RAGDOLL_GROUPS)
           .setEnabled(false),
         body,
@@ -103,7 +108,12 @@ export class Ragdoll {
     this.active = true;
   }
 
-  /** Freeze and hide the ragdoll. */
+  /** Shove the chest — a fresh Impact landing on a Character that is already down. */
+  applyImpulse(impulse: Vec3): void {
+    if (this.active) this.byName.get("chest")!.applyImpulse(impulse, true);
+  }
+
+  /** Freeze the ragdoll in place (the renderer stops drawing it once bones are empty). */
   deactivate(): void {
     for (const { body, collider } of this.bones) {
       collider.setEnabled(false);
@@ -114,7 +124,10 @@ export class Ragdoll {
     this.active = false;
   }
 
-  /** Fastest bone speed (units/s), linear or scaled angular — for the settled check. */
+  /** Weight applied to angular speed when comparing against the linear settle threshold. */
+  private static readonly ANGULAR_SETTLE_WEIGHT = 0.3;
+
+  /** Fastest bone speed (units/s), linear or weighted angular — for the settled check. */
   maxSpeed(): number {
     let max = 0;
     for (const { body } of this.bones) {
@@ -123,7 +136,7 @@ export class Ragdoll {
       max = Math.max(
         max,
         Math.hypot(v.x, v.y, v.z),
-        Math.hypot(w.x, w.y, w.z) * 0.3,
+        Math.hypot(w.x, w.y, w.z) * Ragdoll.ANGULAR_SETTLE_WEIGHT,
       );
     }
     return max;

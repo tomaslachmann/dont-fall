@@ -29,6 +29,17 @@ cleanly between capsule and ragdoll (no pops). Only `Controlled` and (dampened)
 - [x] Respects ADR 0006 (implementation notes added there)
 
 **Impact trigger:** `simulation.applyImpact(impulse)` — used by tests now, by the
-Spinner / wall dash / props in ticket 06. `SimInputs` unchanged.
+Spinner / wall dash / props in ticket 06. `SimInputs` unchanged. The strongest
+Impact per tick wins (magnitude + shove kept together); an Impact landing while
+already down flails the ragdoll directly.
+
+**Review fixes (high):** no soft-lock under continuous Impacts (`GettingUp`
+uninterruptible, Ragdoll timer not restarted while down); Stagger dampens jump/
+dash too, not just walk; `interpolateState` snaps only on a body swap (bone count
+0↔N), not on `Controlled↔Stagger`; `position` rises smoothly across the
+Ragdoll→GettingUp handoff (no ~0.7 pop); all feel values in `tuning.ts`;
+`BoneSnapshot` moved to the handle-free `ragdollSkeleton.ts`; `respawning` field
+removed (redundant with `motionState`); velocity unified to one `Vec3`.
+
 **Deferred to ticket 07:** joint limits / mass tuning for a nicer flop; the
-GettingUp pose blend is linear and crude.
+GettingUp pose blend is linear.
