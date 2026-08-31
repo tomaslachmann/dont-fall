@@ -8,12 +8,13 @@ import {
   movementDirection,
   type SimState,
 } from "@dont-fall/shared";
-import { KeyboardInput, PointerOrbit } from "./input.js";
+import { FreeLookCamera, KeyboardInput } from "./input.js";
 import { PLAYGROUND_SPAWN, PLAYGROUND_STATICS } from "./playground.js";
 import { createStage } from "./scene.js";
 
 const main = async () => {
   const hud = document.getElementById("hud")!;
+  const lockPrompt = document.getElementById("lock-prompt")!;
   await initPhysics();
 
   const simulation = new RapierSimulation({
@@ -22,7 +23,7 @@ const main = async () => {
   });
   const stage = createStage(simulation.getStatics());
   const keyboard = new KeyboardInput();
-  const orbit = new PointerOrbit(stage.domElement);
+  const look = new FreeLookCamera(stage.domElement);
 
   let accumulatorMs = 0;
   let previousSnapshot: SimState = simulation.snapshot();
@@ -34,7 +35,7 @@ const main = async () => {
     lastFrame = now;
     fps += (1000 / Math.max(elapsedMs, 1) - fps) * 0.1;
 
-    const moveDirection = movementDirection(keyboard.movementKeys(), orbit.yaw);
+    const moveDirection = movementDirection(keyboard.movementKeys(), look.yaw);
     const result = advanceFixed({
       simulation,
       input: { moveDirection },
@@ -48,15 +49,17 @@ const main = async () => {
     const alpha = accumulatorMs / TICK_MS;
     const render = interpolateState(result.previousSnapshot, result.snapshot, alpha);
     stage.applyRenderState(render);
-    stage.updateCamera(render.character.position, orbit.yaw, orbit.pitch);
+    stage.updateCamera(render.character.position, look.yaw, look.pitch);
     stage.render();
+
+    lockPrompt.hidden = look.locked;
 
     const c = result.snapshot.character;
     hud.textContent =
       `DON'T FALL — M1 · walk\n` +
       `sim ${TICK_RATE_HZ} Hz · render ${fps.toFixed(0)} fps · tick ${result.snapshot.tick}\n` +
       `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · grounded ${c.grounded}\n` +
-      `WASD move · drag mouse to orbit`;
+      `WASD move · mouse look`;
 
     requestAnimationFrame(frame);
   };

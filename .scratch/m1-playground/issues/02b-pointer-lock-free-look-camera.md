@@ -8,11 +8,14 @@ shows a small "click to look around" prompt. Movement stays camera-relative
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Clicking the canvas calls `requestPointerLock()`
-- [ ] While locked, `pointermove` `movementX/Y` drives `PointerOrbit` yaw/pitch (no button held)
-- [ ] `pointerlockchange` / `pointerlockerror` handled; Esc releases cleanly
-- [ ] A minimal overlay prompt shown when not locked, hidden when locked
-- [ ] Pitch stays clamped at the source (unchanged from ticket 02)
-- [ ] Drag-orbit fallback removed or kept deliberately — decide and note
+- [x] Clicking the canvas calls `requestPointerLock()` (`FreeLookCamera`)
+- [x] While locked, `mousemove` `movementX/Y` drives yaw/pitch via `applyLook` (no button held)
+- [x] `pointerlockchange` / `pointerlockerror` handled; Esc release observed via `pointerlockchange`
+- [x] `#lock-prompt` overlay shown when unlocked, hidden when locked (toggled each frame)
+- [x] Pitch clamped at the source inside `applyLook`
+- [x] **Drag-orbit fallback removed** — one input model; re-add if pointer-lock proves annoying for testing
+
+**Seam tested:** `applyLook(current, movementX, movementY)` — pure, 5 tests. Pointer-lock
+wiring is manual browser verification.
