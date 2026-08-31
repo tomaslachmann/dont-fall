@@ -1,4 +1,5 @@
 import {
+  DEFAULT_KILL_PLANE_Y,
   TICK_MS,
   TICK_RATE_HZ,
   RapierSimulation,
@@ -9,7 +10,11 @@ import {
   type SimState,
 } from "@dont-fall/shared";
 import { FreeLookCamera, KeyboardInput } from "./input.js";
-import { PLAYGROUND_SPAWN, PLAYGROUND_STATICS } from "./playground.js";
+import {
+  PLAYGROUND_CHECKPOINTS,
+  PLAYGROUND_SPAWN,
+  PLAYGROUND_STATICS,
+} from "./playground.js";
 import { createStage } from "./scene.js";
 
 const main = async () => {
@@ -20,8 +25,13 @@ const main = async () => {
   const simulation = new RapierSimulation({
     spawn: PLAYGROUND_SPAWN,
     statics: PLAYGROUND_STATICS,
+    checkpoints: PLAYGROUND_CHECKPOINTS,
   });
-  const stage = createStage(simulation.getStatics());
+  const stage = createStage({
+    statics: simulation.getStatics(),
+    checkpoints: simulation.getCheckpoints(),
+    killPlaneY: DEFAULT_KILL_PLANE_Y,
+  });
   const keyboard = new KeyboardInput();
   const look = new FreeLookCamera(stage.domElement);
 
@@ -55,10 +65,12 @@ const main = async () => {
     lockPrompt.hidden = look.locked;
 
     const c = result.snapshot.character;
+    const cp = c.checkpointIndex === null ? "spawn" : `#${c.checkpointIndex + 1}`;
     hud.textContent =
-      `DON'T FALL — M1 · walk\n` +
+      `DON'T FALL — M1 · platforms\n` +
       `sim ${TICK_RATE_HZ} Hz · render ${fps.toFixed(0)} fps · tick ${result.snapshot.tick}\n` +
       `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · grounded ${c.grounded}\n` +
+      `checkpoint ${cp} · falls ${c.fallCount}${c.respawning ? " · RESPAWNING" : ""}\n` +
       `WASD move · mouse look`;
 
     requestAnimationFrame(frame);

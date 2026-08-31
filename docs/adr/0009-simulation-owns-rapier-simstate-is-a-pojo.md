@@ -58,7 +58,8 @@ packages/shared/src/
 ├── simulation/
 │   ├── RapierSimulation.ts   ← owns the Rapier World; implements FixedSimulation
 │   ├── entityMap.ts          ← entity id ↔ rigid-body handle (arrives with the 2nd tracked entity)
-│   └── snapshot.ts           ← world readouts → SimState
+│   └── snapshot.ts           ← world → SimState assembly (arrives when >1 entity makes it
+│                                worth extracting; until then it lives in RapierSimulation.snapshot())
 ├── state/
 │   ├── SimState.ts           ← POJO only
 │   └── interpolate.ts        ← SimState × SimState × alpha → render state

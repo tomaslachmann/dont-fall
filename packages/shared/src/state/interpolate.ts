@@ -14,12 +14,19 @@ const clamp01 = (t: number): number => (t < 0 ? 0 : t > 1 ? 1 : t);
 /**
  * Blend between the two most recent sim states by `alpha` (the fraction of a
  * tick the renderer is past `prev`). `alpha` is clamped to [0, 1].
+ *
+ * When `next` was produced by a Respawn teleport, there is nothing to blend
+ * through — the Character jumped discontinuously — so the `next` pose is used
+ * directly.
  */
 export const interpolateState = (
   prev: SimState,
   next: SimState,
   alpha: number,
 ): RenderState => {
+  if (next.character.teleported) {
+    return { character: { position: { ...next.character.position } } };
+  }
   const t = clamp01(alpha);
   return {
     character: {

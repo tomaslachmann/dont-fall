@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { interpolateState } from "./interpolate.js";
 import { characterSnapshot, type SimState } from "./SimState.js";
 
-const stateAt = (x: number): SimState => ({
+const stateAt = (x: number, teleported = false): SimState => ({
   tick: 0,
-  character: characterSnapshot({ x, y: x * 2, z: x * 3 }),
+  character: characterSnapshot({ position: { x, y: x * 2, z: x * 3 }, teleported }),
 });
 
 describe("interpolateState", () => {
@@ -26,5 +26,10 @@ describe("interpolateState", () => {
   it("clamps alpha outside [0, 1]", () => {
     expect(interpolateState(stateAt(0), stateAt(10), 2).character.position.x).toBe(10);
     expect(interpolateState(stateAt(0), stateAt(10), -1).character.position.x).toBe(0);
+  });
+
+  it("snaps to the next pose without blending when next was teleported", () => {
+    const render = interpolateState(stateAt(0), stateAt(10, true), 0.5);
+    expect(render.character.position).toEqual({ x: 10, y: 20, z: 30 });
   });
 });

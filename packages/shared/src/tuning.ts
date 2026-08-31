@@ -29,6 +29,14 @@ export const GRAVITY_Y = -22;
 /** Ground movement speed (units/s) while Controlled. */
 export const WALK_SPEED = 6;
 
+/**
+ * Small downward speed (units/s) kept while grounded so the character controller
+ * always has a non-degenerate vertical to solve — a flat `0` makes Rapier's
+ * controller stall when the capsule rests exactly flush after a step-down. The
+ * controller's own depenetration keeps the capsule from actually sinking.
+ */
+export const GROUND_STICK_SPEED = 2;
+
 /** Capsule radius (units). */
 export const CAPSULE_RADIUS = 0.35;
 
@@ -43,11 +51,19 @@ export const CAPSULE_BOTTOM_OFFSET = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS;
 /** Skin width kept between the capsule and surfaces (units). */
 export const CHARACTER_CONTROLLER_OFFSET = 0.01;
 
-/** Max drop the controller snaps down to stay grounded on small steps/slopes (units). */
-export const CHARACTER_SNAP_TO_GROUND = 0.3;
-
 /** Tallest step the character walks up automatically (units). */
 export const CHARACTER_AUTOSTEP_MAX_HEIGHT = 0.3;
 
 /** Minimum ledge width for autostep to engage (units). */
 export const CHARACTER_AUTOSTEP_MIN_WIDTH = 0.15;
+
+// --- Fall & respawn ---------------------------------------------------------
+
+/** Default height below which a Character has Fallen out of the playground (units). */
+export const DEFAULT_KILL_PLANE_Y = -8;
+
+/** How long a Character is frozen at its Checkpoint after a Respawn — the Fall penalty (ms). */
+export const RESPAWN_LOCKOUT_MS = 2000;
+
+/** {@link RESPAWN_LOCKOUT_MS} rounded to whole ticks. */
+export const RESPAWN_LOCKOUT_TICKS = Math.round(RESPAWN_LOCKOUT_MS / TICK_MS);

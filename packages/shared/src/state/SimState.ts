@@ -12,7 +12,37 @@ export interface CharacterSnapshot {
   /** Whether the character controller reported ground contact last tick. */
   grounded: boolean;
   motionState: CharacterMotionState;
+  /** Index of the last Checkpoint reached, or `null` if only the spawn point is set. */
+  checkpointIndex: number | null;
+  /** How many times this Character has Fallen and Respawned. */
+  fallCount: number;
+  /** True while frozen at a Checkpoint after a Respawn (the Fall penalty). */
+  respawning: boolean;
+  /**
+   * True only on the tick a Respawn teleported the Character. The renderer must
+   * snap rather than interpolate through this frame.
+   */
+  teleported: boolean;
 }
+
+export interface CharacterSnapshotFields {
+  position: Vec3;
+  grounded?: boolean;
+  checkpointIndex?: number | null;
+  fallCount?: number;
+  respawning?: boolean;
+  teleported?: boolean;
+}
+
+export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSnapshot => ({
+  position: { ...fields.position },
+  grounded: fields.grounded ?? false,
+  motionState: "Controlled",
+  checkpointIndex: fields.checkpointIndex ?? null,
+  fallCount: fields.fallCount ?? 0,
+  respawning: fields.respawning ?? false,
+  teleported: fields.teleported ?? false,
+});
 
 /**
  * The observable state of the world at one tick — a plain, fully serialisable
@@ -23,12 +53,3 @@ export interface SimState {
   tick: number;
   character: CharacterSnapshot;
 }
-
-export const characterSnapshot = (
-  position: Vec3,
-  grounded = false,
-): CharacterSnapshot => ({
-  position: { ...position },
-  grounded,
-  motionState: "Controlled",
-});

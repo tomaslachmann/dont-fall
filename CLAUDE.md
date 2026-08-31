@@ -12,10 +12,11 @@ Design philosophy: **Easy to understand. Hard to master. Hilarious when you fail
 Working through **M1** — a local physics playground (`docs/milestones/M1.md`).
 Tickets in `.scratch/m1-playground/issues/`.
 
-- **Ticket 01 (scaffold) — done.** pnpm monorepo, fixed 30 Hz sim in
-  `packages/shared` (`step`, `advanceFixed`, `interpolateState`), Three.js client
-  with render interpolation, server stub. The M1 scaffold uses a placeholder
-  Euler integrator, not Rapier — **Rapier lands in ticket 02** with the Character.
+- **Tickets 01–03 done.** Monorepo + fixed 30 Hz sim + render interpolation
+  (01); Rapier kinematic-capsule Character, WASD, spring-arm camera, pointer-lock
+  free-look (02, 02b); platforms + Fall + Checkpoint respawn with a lockout
+  penalty (03). See `.scratch/m1-playground/issues/` and ADRs 0009 / 0010.
+- **Next:** ticket 04 — jump + dash.
 
 No multiplayer, backend, lobby, or accounts until M1 proves the core loop is fun.
 

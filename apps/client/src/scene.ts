@@ -1,8 +1,9 @@
 import {
   CAPSULE_HALF_HEIGHT,
   CAPSULE_RADIUS,
+  type Box,
+  type Checkpoint,
   type RenderState,
-  type StaticBox,
   type Vec3,
 } from "@dont-fall/shared";
 import * as THREE from "three";
@@ -16,6 +17,12 @@ import {
 
 const BACKGROUND_COLOR = 0x0b0e14;
 
+export interface StageConfig {
+  statics: Box[];
+  checkpoints: Checkpoint[];
+  killPlaneY: number;
+}
+
 export interface Stage {
   domElement: HTMLCanvasElement;
   render: () => void;
@@ -25,17 +32,16 @@ export interface Stage {
   updateCamera: (target: Vec3, yaw: number, pitch: number) => void;
 }
 
-const boxMesh = (box: StaticBox): THREE.Mesh => {
+const boxMesh = (box: Box, material: THREE.Material): THREE.Mesh => {
   const mesh = new THREE.Mesh(
     new THREE.BoxGeometry(box.halfExtents.x * 2, box.halfExtents.y * 2, box.halfExtents.z * 2),
-    new THREE.MeshStandardMaterial({ color: 0x1c2740, roughness: 0.95 }),
+    material,
   );
   mesh.position.set(box.center.x, box.center.y, box.center.z);
   return mesh;
 };
 
-/** Builds the Three.js stage from the simulation's static geometry plus a Character capsule. */
-export const createStage = (statics: StaticBox[]): Stage => {
+export const createStage = ({ statics, checkpoints, killPlaneY }: StageConfig): Stage => {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -57,13 +63,32 @@ export const createStage = (statics: StaticBox[]): Stage => {
   sun.position.set(10, 18, 6);
   scene.add(sun);
 
+  const platformMaterial = new THREE.MeshStandardMaterial({ color: 0x1c2740, roughness: 0.95 });
   const collidables: THREE.Object3D[] = [];
   for (const box of statics) {
-    const mesh = boxMesh(box);
+    const mesh = boxMesh(box, platformMaterial);
     scene.add(mesh);
     collidables.push(mesh);
   }
-  scene.add(new THREE.GridHelper(50, 50, 0x2a3547, 0x18202e));
+
+  const checkpointMaterial = new THREE.MeshBasicMaterial({
+    color: 0x4fd1c5,
+    transparent: true,
+    opacity: 0.12,
+    depthWrite: false,
+  });
+  for (const cp of checkpoints) {
+    scene.add(boxMesh(cp.volume, checkpointMaterial));
+  }
+
+  // A faint plane at the kill height so the void reads as a floor, not infinity.
+  const killPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(200, 200),
+    new THREE.MeshBasicMaterial({ color: 0x05070b, transparent: true, opacity: 0.6 }),
+  );
+  killPlane.rotation.x = -Math.PI / 2;
+  killPlane.position.y = killPlaneY;
+  scene.add(killPlane);
 
   const character = new THREE.Mesh(
     new THREE.CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_HALF_HEIGHT * 2, 6, 14),
