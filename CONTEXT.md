@@ -170,3 +170,17 @@ _Avoid_: wager, guess
 **Skyfall**:
 The signature Final Race concept — a tall vertical Track the last Players climb;
 first to the top wins.
+
+### Presentation
+
+**HUD**:
+The overlay drawn on top of the game view *during* a Round — Round timer, Dash
+cooldown, Power-up held, Checkpoint splits. Rendered by the game itself as plain
+DOM, never by the Screen framework (ADR 0008).
+_Avoid_: overlay, interface, UI
+
+**Screen**:
+A full-viewport view shown *outside* a running Round — main menu, lobby,
+settings, account/registration, results, the Bet screen. Screens are React
+(ADR 0008).
+_Avoid_: menu, page, view, route

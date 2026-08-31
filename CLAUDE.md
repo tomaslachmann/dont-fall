@@ -25,6 +25,7 @@ No multiplayer, backend, lobby, or accounts until M1 proves the core loop is fun
 - **Client rendering:** Three.js, hand-written game loop. No full engine (Unity/Godot/PlayCanvas).
 - **Physics:** Rapier (WASM). Same module on client and server.
 - **Server (from M2):** Node. Authoritative. One instance spun up on-demand per Match.
+- **Screens (from M4):** React + `react-router`, code-split from the game module. HUD is plain DOM, not React. (ADR 0008)
 - **Monorepo:** pnpm workspaces.
 - **Client bundler:** Vite.
 
@@ -55,6 +56,9 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 4. **The Character is a kinematic capsule** driven by a state machine
    (`Controlled → Stagger → Ragdoll → GettingUp → Controlled`). The ragdoll is a
    separate articulated body activated on impact/fall. (ADR 0006)
+5. **The HUD is plain DOM; Screens are React.** React owns the app shell and
+   routing and mounts `<GameCanvas>`; the game loop never runs through React.
+   The in-match HUD is drawn by the game. (ADR 0008)
 
 ## Roadmap
 
@@ -63,7 +67,7 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 | **M1** | Local physics playground. "Fun to walk, jump, bump, and fall." |
 | **M2** | Netcode — 2+ players in the same playground, authoritative server. |
 | **M3** | Procedural Segments — build a Track from Modules. |
-| **M4** | Match structure — Rounds, Qualification, Time Limit. |
+| **M4** | Match structure — Rounds, Qualification, Time Limit. First Screens: React shell + lobby/results (ADR 0008). |
 | later | Power-ups, Grab, Betting/Spectator, level themes, the Skyfall final. |
 
 ## Working agreements
@@ -76,3 +80,6 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
   Decisions go in `docs/adr/`.
 - When a change is hard to reverse, surprising without context, and the result of
   a real trade-off, add an ADR.
+- `/code-review` at **medium** for scaffold/plumbing/small-feature tickets;
+  **high** only for intricate logic (netcode, physics state machines, procedural
+  generation).
