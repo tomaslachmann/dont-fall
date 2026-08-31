@@ -10,6 +10,7 @@ import {
   movementDirection,
   type SimState,
 } from "@dont-fall/shared";
+import { loadCharacterModel } from "./characterModel.js";
 import { FreeLookCamera, KeyboardInput } from "./input.js";
 import {
   PLAYGROUND_CHECKPOINTS,
@@ -20,10 +21,18 @@ import {
 } from "./playground.js";
 import { createStage } from "./scene.js";
 
+/**
+ * Cap on the per-frame delta fed to the Character model's animation/facing
+ * update. `advanceFixed` already bounds how many sim ticks a stalled frame
+ * can catch up on; this bounds the render-only animation step the same way,
+ * so a backgrounded-tab refocus can't snap the facing or jump the clip.
+ */
+const MAX_ANIMATION_DELTA_MS = 100;
+
 const main = async () => {
   const hud = document.getElementById("hud")!;
   const lockPrompt = document.getElementById("lock-prompt")!;
-  await initPhysics();
+  const [, characterModel] = await Promise.all([initPhysics(), loadCharacterModel()]);
 
   const simulation = new RapierSimulation({
     spawn: PLAYGROUND_SPAWN,
@@ -38,6 +47,7 @@ const main = async () => {
     killPlaneY: DEFAULT_KILL_PLANE_Y,
     spinners: simulation.getSpinners(),
     props: simulation.getProps(),
+    characterModel,
   });
   const keyboard = new KeyboardInput();
   const look = new FreeLookCamera(stage.domElement);
@@ -70,6 +80,12 @@ const main = async () => {
     const alpha = accumulatorMs / TICK_MS;
     const render = interpolateState(result.previousSnapshot, result.snapshot, alpha);
     stage.applyRenderState(render);
+    stage.updateCharacterAnimation(
+      Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000,
+      moveDirection,
+      result.snapshot.character.grounded,
+      result.snapshot.character.dashing,
+    );
     stage.updateSpinners(result.previousSnapshot.tick + alpha);
     stage.updateCamera(render.character.position, look.yaw, look.pitch);
     stage.render();

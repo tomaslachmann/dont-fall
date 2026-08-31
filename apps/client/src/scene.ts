@@ -1,6 +1,5 @@
 import {
-  CAPSULE_HALF_HEIGHT,
-  CAPSULE_RADIUS,
+  CAPSULE_BOTTOM_OFFSET,
   RAGDOLL_BONES,
   spinnerAngleAt,
   yawQuat,
@@ -12,6 +11,7 @@ import {
   type Vec3,
 } from "@dont-fall/shared";
 import * as THREE from "three";
+import type { CharacterModel } from "./characterModel.js";
 import {
   CAMERA_DISTANCE,
   CAMERA_MIN_DISTANCE,
@@ -22,12 +22,25 @@ import {
 
 const BACKGROUND_COLOR = 0x0b0e14;
 
+/** Standing height (units) the loaded model is rescaled to, a touch taller than the capsule. */
+const CHARACTER_VISUAL_HEIGHT = 2 * CAPSULE_BOTTOM_OFFSET + 0.35;
+
+/** How fast (rad/s) the model turns to face its movement direction. */
+const FACING_TURN_SPEED = 14;
+
+/** Locomotion clip crossfade duration (s). */
+const ANIMATION_CROSSFADE = 0.15;
+
+/** Walk-clip playback-speed multiplier while a Dash burst is active. */
+const DASH_WALK_ANIMATION_SPEED = 2.2;
+
 export interface StageConfig {
   statics: Box[];
   checkpoints: Checkpoint[];
   killPlaneY: number;
   spinners: SpinnerConfig[];
   props: PropConfig[];
+  characterModel: CharacterModel;
 }
 
 export interface Stage {
@@ -43,6 +56,18 @@ export interface Stage {
    * pure function of the tick, so it is never carried in `RenderState`.
    */
   updateSpinners: (t: number) => void;
+  /**
+   * Advance the Character model's animation and turn it to face
+   * `moveDirection` (world-space, zero when idle). Purely cosmetic and
+   * render-rate driven (ADR 0004) — `moveDirection`/`grounded`/`dashing` are
+   * read straight from input/the latest snapshot, never fed back into the sim.
+   */
+  updateCharacterAnimation: (
+    deltaSeconds: number,
+    moveDirection: Vec3,
+    grounded: boolean,
+    dashing: boolean,
+  ) => void;
 }
 
 const boxMesh = (box: Box, material: THREE.Material): THREE.Mesh => {
@@ -54,7 +79,14 @@ const boxMesh = (box: Box, material: THREE.Material): THREE.Mesh => {
   return mesh;
 };
 
-export const createStage = ({ statics, checkpoints, killPlaneY, spinners, props }: StageConfig): Stage => {
+export const createStage = ({
+  statics,
+  checkpoints,
+  killPlaneY,
+  spinners,
+  props,
+  characterModel,
+}: StageConfig): Stage => {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -130,11 +162,31 @@ export const createStage = ({ statics, checkpoints, killPlaneY, spinners, props 
   scene.add(killPlane);
 
   const characterMaterial = new THREE.MeshStandardMaterial({ color: 0x4fd1c5, roughness: 0.4 });
-  const character = new THREE.Mesh(
-    new THREE.CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_HALF_HEIGHT * 2, 6, 14),
-    characterMaterial,
-  );
+
+  // `character` is the runtime placement handle: its position is the capsule's
+  // ground-contact point (feet), its rotation.y is the cosmetic facing. The
+  // loaded model's own pivot/scale quirks are corrected once, on the child.
+  const character = new THREE.Group();
+  const naturalBounds = new THREE.Box3().setFromObject(characterModel.scene);
+  const naturalHeight = naturalBounds.getSize(new THREE.Vector3()).y;
+  const naturalFeetY = naturalBounds.min.y;
+  const modelScale = naturalHeight > 0 ? CHARACTER_VISUAL_HEIGHT / naturalHeight : 1;
+  characterModel.scene.scale.setScalar(modelScale);
+  characterModel.scene.position.y = -naturalFeetY * modelScale;
+  character.add(characterModel.scene);
+  character.position.y = CAPSULE_BOTTOM_OFFSET; // arbitrary until the first applyRenderState
   scene.add(character);
+
+  const mixer = new THREE.AnimationMixer(characterModel.scene);
+  const clipAction = (name: string): THREE.AnimationAction | null => {
+    const clip = THREE.AnimationClip.findByName(characterModel.animations, name);
+    return clip ? mixer.clipAction(clip) : null;
+  };
+  const idleAction = clipAction("Idle");
+  const walkAction = clipAction("Walk");
+  const jumpAction = clipAction("Jump_Idle");
+  let activeAction: THREE.AnimationAction | null = idleAction;
+  activeAction?.play();
 
   // One mesh per ragdoll bone, shown only while ragdolling / getting up.
   const boneMeshes = RAGDOLL_BONES.map((spec) => {
@@ -176,7 +228,8 @@ export const createStage = ({ statics, checkpoints, killPlaneY, spinners, props 
 
       character.visible = !ragdolling;
       if (!ragdolling) {
-        character.position.set(position.x, position.y, position.z);
+        // `position` is the capsule centre; the model rig is placed at the feet.
+        character.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
       }
 
       for (let i = 0; i < boneMeshes.length; i += 1) {
@@ -214,6 +267,26 @@ export const createStage = ({ statics, checkpoints, killPlaneY, spinners, props 
         const mesh = spinnerMeshes[i]!;
         mesh.quaternion.set(q.x, q.y, q.z, q.w);
         mesh.updateMatrixWorld();
+      }
+    },
+    updateCharacterAnimation: (deltaSeconds, moveDirection, grounded, dashing) => {
+      const moving = moveDirection.x !== 0 || moveDirection.z !== 0;
+      // A Dash with no direction held plays from lastMoveDir (see DashController),
+      // so it must still select the Walk clip even though moveDirection is zero.
+      const next = grounded ? (moving || dashing ? walkAction : idleAction) : jumpAction;
+      if (next && next !== activeAction) {
+        next.reset().fadeIn(ANIMATION_CROSSFADE).play();
+        activeAction?.fadeOut(ANIMATION_CROSSFADE);
+        activeAction = next;
+      }
+      if (walkAction) walkAction.timeScale = dashing ? DASH_WALK_ANIMATION_SPEED : 1;
+      mixer.update(deltaSeconds);
+
+      if (moving) {
+        const targetYaw = Math.atan2(moveDirection.x, moveDirection.z);
+        const delta = THREE.MathUtils.euclideanModulo(targetYaw - character.rotation.y + Math.PI, Math.PI * 2) - Math.PI;
+        const maxStep = FACING_TURN_SPEED * deltaSeconds;
+        character.rotation.y += THREE.MathUtils.clamp(delta, -maxStep, maxStep);
       }
     },
   };

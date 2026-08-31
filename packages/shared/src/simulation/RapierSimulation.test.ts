@@ -333,6 +333,17 @@ describe("RapierSimulation — dash", () => {
     expect(dashed).toBeGreaterThan(walked * 1.5);
   });
 
+  it("surfaces dashing:true for the renderer only while a burst is playing out", () => {
+    const sim = settled();
+    expect(sim.snapshot().character.dashing).toBe(false);
+
+    sim.tick(input({ ...NORTH, dashHeld: true }));
+    expect(sim.snapshot().character.dashing).toBe(true);
+
+    tick(sim, 1, NORTH); // well past DASH_DURATION_MS
+    expect(sim.snapshot().character.dashing).toBe(false);
+  });
+
   it("dashes along the movement direction, not straight ahead when idle-facing changes", () => {
     const sim = settled();
     tick(sim, 0.2, NORTH); // establish a facing
@@ -403,15 +414,20 @@ describe("RapierSimulation — dash", () => {
     expect(sim.snapshot().character.dashCooldownMs).toBe(0);
   });
 
-  it("works in the air", () => {
+  it("does not start a Dash while airborne — grounded only", () => {
     const sim = settled();
     sim.tick(input({ jumpHeld: true }));
-    tick(sim, 0.15, input({ jumpHeld: true })); // rising
+    tick(sim, 0.15, input({ jumpHeld: true })); // rising, now airborne
+    expect(sim.snapshot().character.grounded).toBe(false);
+
+    sim.tick(input({ ...NORTH, dashHeld: true, jumpHeld: true })); // dash press while airborne
+    expect(sim.snapshot().character.dashing).toBe(false);
+    expect(sim.snapshot().character.dashCooldownMs).toBe(0); // ignored outright, not even queued
+
     const before = sim.snapshot().character.position.z;
-    sim.tick(input({ moveDirection: { x: 0, y: 0, z: -1 }, dashHeld: true, jumpHeld: true }));
-    tick(sim, 0.15, input({ jumpHeld: true, moveDirection: { x: 0, y: 0, z: -1 } }));
+    tick(sim, 0.15, input({ ...NORTH, jumpHeld: true }));
     const after = sim.snapshot().character.position.z;
-    expect(Math.abs(after - before)).toBeGreaterThan(WALK_SPEED * 0.3 * 1.2);
+    expect(Math.abs(after - before)).toBeLessThan(WALK_SPEED * 0.15 * 1.5); // plain air control only
   });
 });
 

@@ -140,9 +140,10 @@ Character-to-Character contact that produces Knockback without any input beyond
 running into someone.
 
 **Dash**:
-A short fixed-impulse burst in the direction of movement, on a cooldown, usable
-on the ground and in the air. Dashing into a wall or edge sends the Character to
-Ragdoll.
+A short fixed-impulse burst in the direction of movement, on a cooldown.
+Ground-only — it cannot be started in mid-air, though a burst already underway
+keeps going if it carries the Character off an edge. Dashing into a wall or
+edge sends the Character to Ragdoll.
 
 **Grab**:
 Briefly latching onto a Character just ahead of you (planned, post-M1). The

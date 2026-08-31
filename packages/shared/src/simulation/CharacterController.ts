@@ -64,6 +64,8 @@ export interface CharacterState {
   motionState: CharacterMotionState;
   teleported: boolean;
   dashCooldownMs: number;
+  /** Whether a Dash burst is currently playing out (for the renderer to speed up the movement animation). */
+  dashing: boolean;
   bones: BoneSnapshot[];
 }
 
@@ -207,7 +209,9 @@ export class CharacterController {
     this.velocity.y += GRAVITY_Y * gravityScale * TICK_DT;
 
     const walk = scaleVec3(move, WALK_SPEED);
-    const dashBurst = this.dash.beginTick(move, fullControl && dashPressed);
+    // Dash only starts while grounded (a walking burst, not an air dash); an
+    // already-active burst keeps running if it carries the Character off an edge.
+    const dashBurst = this.dash.beginTick(move, fullControl && dashPressed && this.grounded);
     this.velocity.x = walk.x + dashBurst.x;
     this.velocity.z = walk.z + dashBurst.z;
 
@@ -330,6 +334,7 @@ export class CharacterController {
       motionState: state,
       teleported: this.teleportedThisTick,
       dashCooldownMs: this.dash.cooldownMs,
+      dashing: this.dash.isActive,
       bones,
     };
   }

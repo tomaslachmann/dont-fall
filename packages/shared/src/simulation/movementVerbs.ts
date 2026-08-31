@@ -100,6 +100,11 @@ export class DashController {
     return this.cooldownTicks * TICK_MS;
   }
 
+  /** Whether a burst is currently playing out (as opposed to merely on cooldown). */
+  get isActive(): boolean {
+    return this.ticksLeft > 0;
+  }
+
   /** Advance dash bookkeeping and return the extra horizontal velocity for this tick. */
   beginTick(moveDirection: Vec3, dashPressed: boolean): Vec3 {
     if (this.cooldownTicks > 0) this.cooldownTicks -= 1;

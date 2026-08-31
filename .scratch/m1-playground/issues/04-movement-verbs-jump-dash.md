@@ -24,3 +24,13 @@ pure smooth-start/stop curve. `SimState.character` gained `dashCooldownMs`.
 Rapier autostep was disabled (hitched during fast dash movement; M1 platforms
 don't need it). Feel values (tap ≈ 2.3u, hold ≈ 3.3u, dash peak ≈ 28 u/s over
 230 ms) are starting points for ticket 07.
+
+**Revised (post-ticket 06, character-model playtest):** Dash is now
+ground-only — a press while airborne is ignored outright (no cooldown starts).
+An already-active burst still carries through if it runs the Character off an
+edge; only *starting* a new one requires being grounded. `CharacterController`
+gates the dash-start condition on `this.grounded` (mirrors how Jump/coyote
+already reads that field); `DashController` gained an `isActive` getter and
+`SimState.character` gained `dashing`, both used by the renderer to speed up
+the movement animation while a burst plays out. `CONTEXT.md` and
+`docs/milestones/M1.md` updated to match.
