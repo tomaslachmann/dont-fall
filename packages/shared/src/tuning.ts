@@ -71,8 +71,13 @@ export const DASH_DURATION_MS = 1000;
 /** Ease-in and ease-out time at each end of the dash (ms) — the "smooth" start/stop. */
 export const DASH_RAMP_MS = 90;
 
-/** Minimum time between dashes (ms). */
-export const DASH_COOLDOWN_MS = 1000;
+/**
+ * Minimum time between dashes (ms), measured from the *start* of the previous
+ * one — must stay comfortably above {@link DASH_DURATION_MS} or there is no
+ * real rest after the burst ends (DashController's cooldown and duration
+ * timers start together and count down in lockstep).
+ */
+export const DASH_COOLDOWN_MS = 1500;
 
 /** {@link DASH_DURATION_MS} in whole ticks. */
 export const DASH_DURATION_TICKS = msToTicks(DASH_DURATION_MS);

@@ -18,6 +18,9 @@ export const PLAYGROUND_STATICS: Box[] = [
   box({ x: 0, y: -1.7, z: -6.5 }, { x: 1, y: 0.5, z: 2 }), // narrow bridge 2, top y = -1.2
   box({ x: 0, y: -2.6, z: -13 }, { x: 4, y: 0.5, z: 4.5 }), // checkpoint 2 / end platform, top y = -2.1
   box({ x: -3.2, y: 0.5, z: 10 }, { x: 0.4, y: 1.5, z: 3 }), // wall on the start platform
+  // Open sandbox past the end platform (ticket 07 playtest) — flush with its
+  // top (y = -2.1), 30x30, plenty of clear room for dash/jump/spinner testing.
+  box({ x: 0, y: -2.6, z: -32 }, { x: 15, y: 0.5, z: 15 }),
 ];
 
 export const PLAYGROUND_SPAWN: Vec3 = { x: 0, y: 1.2, z: 10.5 };
@@ -33,14 +36,20 @@ export const PLAYGROUND_CHECKPOINTS: Checkpoint[] = [
   },
 ];
 
-/** One rotating bar on the Checkpoint 1 platform (top y = -0.6), clear of the Checkpoint volume. */
+/**
+ * One rotating bar on the Checkpoint 1 platform (top y = -0.6), clear of the
+ * Checkpoint volume. `angularSpeed` (ticket 07 feel pass) is tuned so a tip
+ * hit clears IMPACT_RAGDOLL_MIN (a real knockdown) while a graze near the
+ * axle stays in IMPACT_STAGGER_MIN territory — at 2.5 rad/s the tip alone
+ * never broke Stagger, so the bar was all bark, no bite.
+ */
 export const PLAYGROUND_SPINNERS: SpinnerConfig[] = [
   {
     center: { x: 0, y: -0.05, z: 1 },
     armLength: 2.5,
     halfHeight: 0.4,
     armRadius: 0.35,
-    angularSpeed: 2.5,
+    angularSpeed: 6.5,
   },
 ];
 

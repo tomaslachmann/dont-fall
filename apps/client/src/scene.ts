@@ -21,6 +21,7 @@ import {
   resolveArm,
   springArmPosition,
 } from "./camera/springArm.js";
+import { initialWobbleState, stepWobble } from "./wobble.js";
 
 const BACKGROUND_COLOR = 0x0b0e14;
 
@@ -171,16 +172,21 @@ export const createStage = ({
   scene.add(killPlane);
 
   // `character` is the runtime placement handle: its position is the capsule's
-  // ground-contact point (feet), its rotation.y is the cosmetic facing. The
-  // loaded model's own pivot/scale quirks are corrected once, on the child.
+  // ground-contact point (feet), its rotation.y is the cosmetic facing.
+  // `wobblePivot` sits between it and the model for the procedural Wobble lean
+  // (ticket 07) — rotating in `character`'s local frame so "lean forward"
+  // always means forward relative to the current facing, at whatever yaw.
+  // The loaded model's own pivot/scale quirks are corrected once, on the child.
   const character = new THREE.Group();
+  const wobblePivot = new THREE.Group();
   const naturalBounds = new THREE.Box3().setFromObject(characterModel.scene);
   const naturalHeight = naturalBounds.getSize(new THREE.Vector3()).y;
   const naturalFeetY = naturalBounds.min.y;
   const modelScale = naturalHeight > 0 ? CHARACTER_VISUAL_HEIGHT / naturalHeight : 1;
   characterModel.scene.scale.setScalar(modelScale);
   characterModel.scene.position.y = -naturalFeetY * modelScale;
-  character.add(characterModel.scene);
+  wobblePivot.add(characterModel.scene);
+  character.add(wobblePivot);
   character.position.y = CAPSULE_BOTTOM_OFFSET; // arbitrary until the first applyRenderState
   scene.add(character);
 
@@ -210,6 +216,12 @@ export const createStage = ({
 
   /** The last `motionState` seen, to detect the Ragdoll/GettingUp/Controlled edges. */
   let visualState: CharacterMotionState = "Controlled";
+
+  let wobbleState = initialWobbleState;
+  // Seeded lazily on the first updateCharacterAnimation call (null here would
+  // otherwise predate applyRenderState placing the Character at its real spawn
+  // position, producing a one-frame phantom velocity spike at game start).
+  let previousWobblePosition: Vec3 | null = null;
 
   const raycaster = new THREE.Raycaster();
   const castArm = (from: Vec3, to: Vec3): number | null => {
@@ -299,6 +311,25 @@ export const createStage = ({
       }
     },
     updateCharacterAnimation: (deltaSeconds, moveDirection, grounded, dashing) => {
+      const currentPosition: Vec3 = { x: character.position.x, y: character.position.y, z: character.position.z };
+      // Lazily seeded so the very first call (before any real movement) reads
+      // as zero velocity rather than a jump from an arbitrary creation-time value.
+      previousWobblePosition ??= currentPosition;
+
+      // Wobble only applies while Controlled (ADR 0006). Every other state —
+      // Stagger, Ragdoll, GettingUp — holds it neutral *and* keeps the position
+      // tracker current every frame (not just on the Controlled branch below),
+      // so the instant Controlled resumes there is no stale previousWobblePosition
+      // to compute a fake velocity/acceleration spike from (e.g. the Ragdoll/
+      // GettingUp anchor, or a Fall's Respawn teleport, sitting units away from
+      // where control resumes).
+      if (visualState !== "Controlled") {
+        wobbleState = initialWobbleState;
+        previousWobblePosition = currentPosition;
+        wobblePivot.rotation.x = 0;
+        wobblePivot.rotation.z = 0;
+      }
+
       // Ragdoll (forward Death) and GettingUp (reverse Death) are both driven
       // from applyRenderState and fully own the model's pose while they hold.
       if (visualState === "Ragdoll" || visualState === "GettingUp") {
@@ -323,6 +354,16 @@ export const createStage = ({
         const delta = THREE.MathUtils.euclideanModulo(targetYaw - character.rotation.y + Math.PI, Math.PI * 2) - Math.PI;
         const maxStep = FACING_TURN_SPEED * deltaSeconds;
         character.rotation.y += THREE.MathUtils.clamp(delta, -maxStep, maxStep);
+      }
+
+      if (visualState === "Controlled") {
+        const yaw = character.rotation.y;
+        const forward: Vec3 = { x: Math.sin(yaw), y: 0, z: Math.cos(yaw) };
+        const right: Vec3 = { x: -Math.cos(yaw), y: 0, z: Math.sin(yaw) };
+        wobbleState = stepWobble(wobbleState, currentPosition, previousWobblePosition, forward, right, deltaSeconds);
+        previousWobblePosition = currentPosition;
+        wobblePivot.rotation.x = -wobbleState.pitch;
+        wobblePivot.rotation.z = wobbleState.roll;
       }
     },
   };

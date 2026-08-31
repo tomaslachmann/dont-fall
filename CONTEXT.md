@@ -5,6 +5,7 @@ for code, comments, commits, and docs. This file is a glossary only — no
 implementation detail, no decisions (those live in `docs/adr/`).
 
 ## Language
+cz + en
 
 ### Participants
 
