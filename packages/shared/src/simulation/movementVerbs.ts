@@ -3,12 +3,30 @@ import {
   COYOTE_TICKS,
   DASH_COOLDOWN_TICKS,
   DASH_DURATION_TICKS,
+  DASH_RAMP_TICKS,
   DASH_SPEED,
   JUMP_HOLD_GRAVITY_SCALE,
   JUMP_HOLD_MAX_TICKS,
   JUMP_VELOCITY,
   TICK_MS,
 } from "../tuning.js";
+
+const smoothstep = (x: number): number => x * x * (3 - 2 * x);
+
+/**
+ * The dash speed envelope: 0 at the start and end, {@link smoothstep}-eased up
+ * to 1 over the first `ramp`, flat at 1 through the middle, eased back down over
+ * the last `ramp`. `elapsed` and `duration` are in ticks. If `2 * ramp` exceeds
+ * `duration` the ramps meet with no flat middle — a smooth peak instead of a
+ * plateau.
+ */
+export const dashEnvelope = (elapsed: number, duration: number, ramp: number): number => {
+  if (elapsed <= 0 || elapsed >= duration) return 0;
+  const r = Math.min(ramp, duration / 2);
+  if (elapsed < r) return smoothstep(elapsed / r);
+  if (elapsed > duration - r) return smoothstep((duration - elapsed) / r);
+  return 1;
+};
 
 /**
  * Jump take-off, coyote time and variable-height ascent. Owns only jump state;
@@ -97,8 +115,10 @@ export class DashController {
     }
 
     if (this.ticksLeft > 0) {
+      const elapsed = DASH_DURATION_TICKS - this.ticksLeft + 0.5; // sample mid-tick
       this.ticksLeft -= 1;
-      return scaleVec3(this.dir, DASH_SPEED);
+      const speed = DASH_SPEED * dashEnvelope(elapsed, DASH_DURATION_TICKS, DASH_RAMP_TICKS);
+      return scaleVec3(this.dir, speed);
     }
     return vec3();
   }

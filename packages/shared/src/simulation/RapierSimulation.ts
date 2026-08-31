@@ -6,8 +6,6 @@ import type { FixedSimulation } from "../timing/FixedSimulation.js";
 import {
   CAPSULE_HALF_HEIGHT,
   CAPSULE_RADIUS,
-  CHARACTER_AUTOSTEP_MAX_HEIGHT,
-  CHARACTER_AUTOSTEP_MIN_WIDTH,
   CHARACTER_CONTROLLER_OFFSET,
   DEFAULT_KILL_PLANE_Y,
   GRAVITY_Y,
@@ -117,14 +115,10 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
     );
 
     this.controller = this.world.createCharacterController(CHARACTER_CONTROLLER_OFFSET);
-    // Snap-to-ground is deliberately OFF: it stalls the controller near platform
-    // edges (the character stops ~2 units short of a ledge). M1 has no stairs to
-    // need it; GROUND_STICK_SPEED keeps ground contact instead.
-    this.controller.enableAutostep(
-      CHARACTER_AUTOSTEP_MAX_HEIGHT,
-      CHARACTER_AUTOSTEP_MIN_WIDTH,
-      true,
-    );
+    // Snap-to-ground and autostep are deliberately OFF: snap-to-ground stalls the
+    // controller near platform edges, and autostep hitches during fast movement
+    // (dash). M1 platforms are same-height or step down, so neither is needed;
+    // GROUND_STICK_SPEED keeps ground contact.
     this.controller.setApplyImpulsesToDynamicBodies(false);
   }
 

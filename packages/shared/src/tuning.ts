@@ -62,17 +62,23 @@ export const COYOTE_TICKS = msToTicks(COYOTE_MS);
 
 // --- Dash ------------------------------------------------------------------
 
-/** Horizontal speed (units/s) added during a dash burst. */
-export const DASH_SPEED = 20;
+/** Peak horizontal speed (units/s) added at the middle of a dash burst. */
+export const DASH_SPEED = 22;
 
 /** How long the dash burst lasts (ms). */
-export const DASH_DURATION_MS = 170;
+export const DASH_DURATION_MS = 230;
+
+/** Ease-in and ease-out time at each end of the dash (ms) — the "smooth" start/stop. */
+export const DASH_RAMP_MS = 90;
 
 /** Minimum time between dashes (ms). */
 export const DASH_COOLDOWN_MS = 1000;
 
 /** {@link DASH_DURATION_MS} in whole ticks. */
 export const DASH_DURATION_TICKS = msToTicks(DASH_DURATION_MS);
+
+/** {@link DASH_RAMP_MS} in whole ticks. */
+export const DASH_RAMP_TICKS = msToTicks(DASH_RAMP_MS);
 
 /** {@link DASH_COOLDOWN_MS} in whole ticks. */
 export const DASH_COOLDOWN_TICKS = msToTicks(DASH_COOLDOWN_MS);
@@ -90,12 +96,6 @@ export const CAPSULE_BOTTOM_OFFSET = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS;
 
 /** Skin width kept between the capsule and surfaces (units). */
 export const CHARACTER_CONTROLLER_OFFSET = 0.01;
-
-/** Tallest step the character walks up automatically (units). */
-export const CHARACTER_AUTOSTEP_MAX_HEIGHT = 0.3;
-
-/** Minimum ledge width for autostep to engage (units). */
-export const CHARACTER_AUTOSTEP_MIN_WIDTH = 0.15;
 
 // --- Fall & respawn ---------------------------------------------------------
 

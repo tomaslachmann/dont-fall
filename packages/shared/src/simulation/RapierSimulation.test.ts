@@ -328,6 +328,23 @@ describe("RapierSimulation — dash", () => {
     expect(Math.abs(after.z - before.z)).toBeLessThan(1);
   });
 
+  it("eases the dash speed in and out rather than jumping to full speed", () => {
+    const sim = settled();
+    const stepZ = (i: SimInputs): number => {
+      const z0 = sim.snapshot().character.position.z;
+      sim.tick(i);
+      return Math.abs(sim.snapshot().character.position.z - z0);
+    };
+
+    const first = stepZ(input({ ...NORTH, dashHeld: true })); // dash press tick
+    const rest = [1, 2, 3, 4, 5, 6].map(() => stepZ(NORTH));
+
+    const peak = Math.max(first, ...rest);
+    const last = rest[rest.length - 1]!;
+    expect(peak).toBeGreaterThan(first * 1.5); // sped up after the first tick
+    expect(last).toBeLessThan(peak * 0.7); // eased back down before the end
+  });
+
   it("dashes along the last movement direction when the stick is idle", () => {
     const sim = settled();
     tick(sim, 0.3, NORTH); // establish a northward facing
