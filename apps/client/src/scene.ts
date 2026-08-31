@@ -1,9 +1,11 @@
 import {
   CAPSULE_BOTTOM_OFFSET,
+  GETUP_MS,
   RAGDOLL_BONES,
   spinnerAngleAt,
   yawQuat,
   type Box,
+  type CharacterMotionState,
   type Checkpoint,
   type PropConfig,
   type RenderState,
@@ -31,8 +33,15 @@ const FACING_TURN_SPEED = 14;
 /** Locomotion clip crossfade duration (s). */
 const ANIMATION_CROSSFADE = 0.15;
 
-/** Walk-clip playback-speed multiplier while a Dash burst is active. */
-const DASH_WALK_ANIMATION_SPEED = 2.2;
+/**
+ * Vertical distance from the ragdoll's pelvis (its `RenderState.character.position`
+ * while Ragdoll/GettingUp) down to the feet — the pelvis rest offset from the
+ * capsule centre plus the capsule's own centre-to-feet distance. Lets the
+ * Ragdoll collapse anchor be derived from the pelvis alone, correct whether it
+ * came from a live Impact or a Fall's Respawn teleport (both activate the
+ * ragdoll the same way, at the capsule-centre convention).
+ */
+const RAGDOLL_PELVIS_TO_FEET = CAPSULE_BOTTOM_OFFSET + RAGDOLL_BONES.find((b) => b.name === "pelvis")!.restCenter.y;
 
 export interface StageConfig {
   statics: Box[];
@@ -161,8 +170,6 @@ export const createStage = ({
   killPlane.position.y = killPlaneY;
   scene.add(killPlane);
 
-  const characterMaterial = new THREE.MeshStandardMaterial({ color: 0x4fd1c5, roughness: 0.4 });
-
   // `character` is the runtime placement handle: its position is the capsule's
   // ground-contact point (feet), its rotation.y is the cosmetic facing. The
   // loaded model's own pivot/scale quirks are corrected once, on the child.
@@ -184,22 +191,25 @@ export const createStage = ({
   };
   const idleAction = clipAction("Idle");
   const walkAction = clipAction("Walk");
+  const runAction = clipAction("Run");
   const jumpAction = clipAction("Jump_Idle");
+  // MushroomKing's own "Death" clip doubles for both Ragdoll and GettingUp:
+  // played forward (then held on the last frame) the moment the Character goes
+  // down, and in reverse to stand back up — no compatible dedicated "get up"
+  // clip exists for this rig (see the Universal Animation Library skeleton
+  // mismatch noted ahead of ticket 07). The physics ragdoll still simulates
+  // underneath for real (Impact response, settle position); only its capsule-
+  // bone visualisation is replaced by this animated model.
+  const deathAction = clipAction("Death");
+  if (deathAction) {
+    deathAction.setLoop(THREE.LoopOnce, 1);
+    deathAction.clampWhenFinished = true;
+  }
   let activeAction: THREE.AnimationAction | null = idleAction;
   activeAction?.play();
 
-  // One mesh per ragdoll bone, shown only while ragdolling / getting up.
-  const boneMeshes = RAGDOLL_BONES.map((spec) => {
-    const mesh = new THREE.Mesh(
-      new THREE.CapsuleGeometry(spec.radius, spec.halfHeight * 2, 4, 8),
-      spec.name === "head"
-        ? new THREE.MeshStandardMaterial({ color: 0xf0f4f8, roughness: 0.5 })
-        : characterMaterial,
-    );
-    mesh.visible = false;
-    scene.add(mesh);
-    return mesh;
-  });
+  /** The last `motionState` seen, to detect the Ragdoll/GettingUp/Controlled edges. */
+  let visualState: CharacterMotionState = "Controlled";
 
   const raycaster = new THREE.Raycaster();
   const castArm = (from: Vec3, to: Vec3): number | null => {
@@ -223,24 +233,43 @@ export const createStage = ({
     domElement: renderer.domElement,
     render: () => renderer.render(scene, camera),
     applyRenderState: (state) => {
-      const { position, bones } = state.character;
-      const ragdolling = bones.length > 0;
+      const { position, motionState } = state.character;
+      const fallingRagdoll = motionState === "Ragdoll";
+      const gettingUp = motionState === "GettingUp";
+      const enteringRagdoll = fallingRagdoll && visualState !== "Ragdoll";
+      const enteringGettingUp = gettingUp && visualState !== "GettingUp";
+      const leavingGettingUp = !gettingUp && visualState === "GettingUp";
+      visualState = motionState;
 
-      character.visible = !ragdolling;
-      if (!ragdolling) {
+      if (enteringRagdoll && deathAction) {
+        // Freeze the model at the impact point, converting the ragdoll's pelvis
+        // (what `position` is while Ragdoll/GettingUp) down to the feet — this
+        // holds whether the ragdoll was just activated by a live Impact or by a
+        // Fall's Respawn teleport, since both activate it the same way. The
+        // physics ragdoll still simulates for real underneath (Impact response,
+        // settle position); only its visual is this canned collapse instead of
+        // the bone puppet.
+        character.position.set(position.x, position.y - RAGDOLL_PELVIS_TO_FEET, position.z);
+        activeAction?.fadeOut(0);
+        activeAction = null;
+        deathAction.reset();
+        deathAction.timeScale = 1;
+        deathAction.play();
+      } else if (enteringGettingUp && deathAction) {
+        // Reverse from wherever the forward collapse actually got to — Ragdoll
+        // can end (settled, or RAGDOLL_MAX_MS) before the Death clip finishes
+        // playing forward, and snapping to the final frame here would pop the
+        // pose. Scaled to land back on Controlled within GETUP_MS regardless.
+        const fallen = deathAction.time;
+        deathAction.timeScale = fallen > 0 ? -fallen / (GETUP_MS / 1000) : -1;
+        deathAction.paused = false;
+      } else if (leavingGettingUp) {
+        deathAction?.stop();
+      } else if (!fallingRagdoll && !gettingUp) {
         // `position` is the capsule centre; the model rig is placed at the feet.
         character.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
       }
-
-      for (let i = 0; i < boneMeshes.length; i += 1) {
-        const mesh = boneMeshes[i]!;
-        const bone = bones[i];
-        mesh.visible = bone !== undefined;
-        if (bone) {
-          mesh.position.set(bone.position.x, bone.position.y, bone.position.z);
-          mesh.quaternion.set(bone.rotation.x, bone.rotation.y, bone.rotation.z, bone.rotation.w);
-        }
-      }
+      // While Ragdoll/GettingUp continue, `character` stays put at the frozen anchor.
 
       // Recomputed immediately (not left for the next render()) since `updateCamera`
       // raycasts against these meshes — via `collidables` — before this frame renders.
@@ -270,16 +299,23 @@ export const createStage = ({
       }
     },
     updateCharacterAnimation: (deltaSeconds, moveDirection, grounded, dashing) => {
+      // Ragdoll (forward Death) and GettingUp (reverse Death) are both driven
+      // from applyRenderState and fully own the model's pose while they hold.
+      if (visualState === "Ragdoll" || visualState === "GettingUp") {
+        mixer.update(deltaSeconds);
+        return;
+      }
+
       const moving = moveDirection.x !== 0 || moveDirection.z !== 0;
       // A Dash with no direction held plays from lastMoveDir (see DashController),
-      // so it must still select the Walk clip even though moveDirection is zero.
-      const next = grounded ? (moving || dashing ? walkAction : idleAction) : jumpAction;
+      // so it must still select a locomotion clip even though moveDirection is zero.
+      const locomotion = dashing ? (runAction ?? walkAction) : walkAction;
+      const next = grounded ? (moving || dashing ? locomotion : idleAction) : jumpAction;
       if (next && next !== activeAction) {
         next.reset().fadeIn(ANIMATION_CROSSFADE).play();
         activeAction?.fadeOut(ANIMATION_CROSSFADE);
         activeAction = next;
       }
-      if (walkAction) walkAction.timeScale = dashing ? DASH_WALK_ANIMATION_SPEED : 1;
       mixer.update(deltaSeconds);
 
       if (moving) {

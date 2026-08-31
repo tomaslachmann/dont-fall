@@ -43,3 +43,11 @@ removed (redundant with `motionState`); velocity unified to one `Vec3`.
 
 **Deferred to ticket 07:** joint limits / mass tuning for a nicer flop; the
 GettingUp pose blend is linear.
+
+**Revised (post-ticket 06, MushroomKing character model):** the client no
+longer draws the 11 capsule-bone meshes for Ragdoll/GettingUp — it plays the
+Character model's own "Death" clip forward (then holds) for the fall, and in
+reverse (from wherever the forward play actually got to, not always the final
+frame) to stand back up, scaled to fit `GETUP_MS`. The physics ragdoll and
+`SimState.character.bones` are unchanged — this is a client-rendering swap
+only (`apps/client/src/scene.ts`), not a simulation change.

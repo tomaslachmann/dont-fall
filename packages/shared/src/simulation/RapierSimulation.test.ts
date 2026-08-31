@@ -3,6 +3,7 @@ import type { Box } from "../math/box.js";
 import {
   CAPSULE_BOTTOM_OFFSET,
   DASH_COOLDOWN_MS,
+  DASH_DURATION_MS,
   IMPACT_RAGDOLL_MIN,
   IMPACT_STAGGER_MIN,
   RAGDOLL_MAX_MS,
@@ -340,7 +341,7 @@ describe("RapierSimulation — dash", () => {
     sim.tick(input({ ...NORTH, dashHeld: true }));
     expect(sim.snapshot().character.dashing).toBe(true);
 
-    tick(sim, 1, NORTH); // well past DASH_DURATION_MS
+    tick(sim, DASH_DURATION_MS / 1000 + 0.2, NORTH); // comfortably past the burst's end
     expect(sim.snapshot().character.dashing).toBe(false);
   });
 
@@ -364,7 +365,8 @@ describe("RapierSimulation — dash", () => {
     };
 
     const first = stepZ(input({ ...NORTH, dashHeld: true })); // dash press tick
-    const rest = [1, 2, 3, 4, 5, 6].map(() => stepZ(NORTH));
+    const durationTicks = Math.round((DASH_DURATION_MS / 1000) * TICK_RATE_HZ);
+    const rest = Array.from({ length: durationTicks - 1 }, () => stepZ(NORTH));
 
     const peak = Math.max(first, ...rest);
     const last = rest[rest.length - 1]!;
@@ -386,21 +388,18 @@ describe("RapierSimulation — dash", () => {
     expect(Math.abs(after.x - before.x)).toBeLessThan(0.5);
   });
 
-  it("enforces the cooldown — a second dash within a second does nothing extra", () => {
+  it("enforces the cooldown — a second press mid-burst does not restart it", () => {
     const sim = settled();
-    const start = sim.snapshot().character.position.z;
-    sim.tick(input({ ...NORTH, dashHeld: true }));
-    tick(sim, 0.3, NORTH);
-    const afterFirst = sim.snapshot().character.position.z;
+    sim.tick(input({ ...NORTH, dashHeld: true })); // first dash press
+    tick(sim, 0.05, NORTH); // a few ticks into the burst, well before it ends
+    const cooldownBeforeRetry = sim.snapshot().character.dashCooldownMs;
 
     sim.tick(input({ ...NORTH, dashHeld: false }));
-    sim.tick(input({ ...NORTH, dashHeld: true })); // try again ~0.35s later
-    tick(sim, 0.3, NORTH);
-    const afterSecondAttempt = sim.snapshot().character.position.z;
+    sim.tick(input({ ...NORTH, dashHeld: true })); // second press attempt, still on cooldown
+    const cooldownAfterRetry = sim.snapshot().character.dashCooldownMs;
 
-    const firstBurst = Math.abs(afterFirst - start);
-    const secondSpan = Math.abs(afterSecondAttempt - afterFirst);
-    expect(secondSpan).toBeLessThan(firstBurst * 0.75); // second "dash" was just a walk
+    // Ticked down normally, not refreshed back up toward DASH_COOLDOWN_MS.
+    expect(cooldownAfterRetry).toBeLessThanOrEqual(cooldownBeforeRetry);
   });
 
   it("surfaces the cooldown and lets it recover", () => {

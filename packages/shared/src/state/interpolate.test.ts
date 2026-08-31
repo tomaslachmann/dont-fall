@@ -63,6 +63,11 @@ describe("interpolateState", () => {
     expect(render.character.bones).toEqual([]);
   });
 
+  it("carries motionState straight from next, uninterpolated", () => {
+    const render = interpolateState(stateAt(0), ragdollStateAt(10, "GettingUp"), 0.5);
+    expect(render.character.motionState).toBe("GettingUp");
+  });
+
   it("interpolates Prop positions independently of the Character", () => {
     const render = interpolateState(
       stateAt(0, false, [prop(0)]),

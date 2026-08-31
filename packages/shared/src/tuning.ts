@@ -63,10 +63,10 @@ export const COYOTE_TICKS = msToTicks(COYOTE_MS);
 // --- Dash ------------------------------------------------------------------
 
 /** Peak horizontal speed (units/s) added at the middle of a dash burst. */
-export const DASH_SPEED = 22;
+export const DASH_SPEED = 15;
 
 /** How long the dash burst lasts (ms). */
-export const DASH_DURATION_MS = 230;
+export const DASH_DURATION_MS = 1000;
 
 /** Ease-in and ease-out time at each end of the dash (ms) — the "smooth" start/stop. */
 export const DASH_RAMP_MS = 90;

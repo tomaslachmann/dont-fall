@@ -1,5 +1,6 @@
 import { slerpQuat, type Quat } from "../math/quat.js";
 import { lerpVec3, type Vec3 } from "../math/vec3.js";
+import type { CharacterMotionState } from "../simulation/CharacterStateMachine.js";
 import type { PropSnapshot } from "../simulation/Prop.js";
 import type { BoneSnapshot } from "../simulation/ragdollSkeleton.js";
 import type { SimState } from "./SimState.js";
@@ -18,6 +19,8 @@ export interface RenderState {
     position: Vec3;
     /** Empty unless the Character is ragdolling / getting up. */
     bones: BoneSnapshot[];
+    /** Not interpolated — a discrete state, taken straight from `next`. */
+    motionState: CharacterMotionState;
   };
   /** Per-Prop pose, in `SimState.props` order. */
   props: PropSnapshot[];
@@ -54,6 +57,7 @@ export const interpolateState = (
       bones: t === 1
         ? next.character.bones.map((b) => ({ position: { ...b.position }, rotation: { ...b.rotation } }))
         : interpolatePosed(prev.character.bones, next.character.bones, t),
+      motionState: next.character.motionState,
     },
     props: interpolatePosed(prev.props, next.props, clamp01(alpha)),
   };
