@@ -1,0 +1,172 @@
+# DON'T FALL
+
+The glossary / ubiquitous language for DON'T FALL. These are the canonical terms
+for code, comments, commits, and docs. This file is a glossary only — no
+implementation detail, no decisions (those live in `docs/adr/`).
+
+## Language
+
+### Participants
+
+**Player**:
+A human with an account who joins a Match. Persists across Matches.
+_Avoid_: user, gamer
+
+**Character**:
+The in-world body a Player controls — a kinematic capsule with an attached
+ragdoll. Exists only for the duration of a Match.
+_Avoid_: avatar, player (when you mean the body), pawn
+
+### Match structure
+
+**Match**:
+One full session from lobby to a single winner, made of several Rounds.
+_Avoid_: game, session, lobby
+
+**Round**:
+One run through a single obstacle course within a Match. Ends by Qualification or
+Time Limit; survivors advance to the next Round.
+_Avoid_: level, stage, kolo, heat
+
+**Race**:
+A Round type. Get to the Finish Zone before the Time Limit. The primary Round type.
+
+**Survival**:
+A Round type. Stay alive / on the course; the last players standing advance.
+
+**Collect Round**:
+A Round type. Gather objects scattered on the course; a threshold advances you.
+
+**Team Round**:
+A Round type where Players are split into teams and advance by team result.
+
+**Final Race**:
+The last Round of a Match. May be a special mode (see Skyfall) rather than a
+plain Race.
+
+**Qualification**:
+The condition for advancing out of a Round — reaching the Finish Zone, or being
+among the survivors, before the Round ends.
+_Avoid_: passing, promotion
+
+**Time Limit**:
+The countdown for a Round. When it hits zero, every Player not yet Qualified is
+eliminated. Preferred over a fixed "first N players" cutoff.
+
+**Finish Zone**:
+The area at the end of a Race that grants Qualification on entry. Deliberately an
+area, not a line, so the end of a Round stays chaotic and contested.
+_Avoid_: finish line, goal
+
+### Track
+
+**Track**:
+The full obstacle course a Round runs on, assembled from Segments.
+_Avoid_: map, course, level
+
+**Module**:
+A reusable template for a piece of Track (e.g. "Spinner", "Ice", "Moving
+Platforms", "Straight", "Gap"). Authored once.
+_Avoid_: prefab, block, piece
+
+**Segment**:
+One concrete instance of a Module placed at a position in a Track. A Track is a
+sequence of Segments.
+_Avoid_: section, tile, chunk
+
+**Obstacle**:
+A Module (or part of one) that actively threatens the Character — a Spinner,
+Pendulum, Falling Tiles. Contrast with connective Modules like Straight and Gap.
+_Avoid_: hazard, trap
+
+**Checkpoint**:
+A point on the Track that a Character respawns at after a Fall.
+
+**Spawn**:
+Where Characters start a Round, or reappear after a Respawn.
+
+### Character state & physics
+
+**Controlled**:
+The Character state where the Player has normal movement input over the kinematic
+capsule.
+
+**Stagger**:
+A brief Character state after a minor Impact — movement input is dampened but the
+Character stays upright. Recovers automatically to Controlled.
+
+**Ragdoll**:
+The Character state where the articulated body takes over full physics and the
+Player has no movement control. Triggered by a hard Impact, a Fall, or dashing
+into a wall.
+
+**GettingUp**:
+The Character state that blends the ragdoll back into a standing pose and
+re-activates the kinematic capsule. Recovers to Controlled.
+_Avoid_: recovery (as a noun for the state — use GettingUp), standup
+
+**Wobble**:
+The procedural, non-simulated lean/sway of the Character's visual mesh while
+Controlled. Cosmetic only; it never affects collision.
+
+**Impact**:
+A collision forceful enough to change Character state — into Stagger or Ragdoll
+depending on magnitude.
+
+**Impact Reaction**:
+The visible response to an Impact (flinch, spin, knockdown).
+
+**Fall**:
+The core failure. A Character leaves the play volume (drops below the kill-plane).
+Triggers a Respawn at the last Checkpoint with a time penalty. "Don't fall" is
+this.
+_Avoid_: death, out of bounds, KO
+
+**Respawn**:
+Returning a fallen Character to its last Checkpoint, with a short time penalty so
+a Fall always costs something.
+
+**Knockback**:
+Momentum transferred to a Character by another Character or an Obstacle. Allowed
+and encouraged. Never directly lethal — only the resulting Fall is.
+
+**Bump**:
+Character-to-Character contact that produces Knockback without any input beyond
+running into someone.
+
+**Dash**:
+A short fixed-impulse burst in the direction of movement, on a cooldown, usable
+on the ground and in the air. Dashing into a wall or edge sends the Character to
+Ragdoll.
+
+**Grab**:
+Briefly latching onto a Character just ahead of you (planned, post-M1). The
+grabber cannot run while holding; the held Player can struggle free; cooldown
+after.
+_Avoid_: grapple, catch
+
+### Items
+
+**Item Box**:
+A pickup on the Track that grants a random Power-up.
+_Avoid_: crate, loot box
+
+**Power-up**:
+A single-use ability from an Item Box (e.g. Punch, Boomerang, Shield, Jump,
+Rocket, Magnet, Bubble, Slow).
+_Avoid_: item, ability, buff
+
+### Meta
+
+**Spectator Mode**:
+The camera state a Player enters after a Fall that eliminates them — they watch
+the remaining Players.
+
+**Bet**:
+A prediction an eliminated Player makes in Spectator Mode about who wins the
+Round, for XP / coins. Keeps eliminated Players engaged.
+_Avoid_: wager, guess
+
+**Skyfall**:
+The signature Final Race concept — a tall vertical Track the last Players climb;
+first to the top wins.
