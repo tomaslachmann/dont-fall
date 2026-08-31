@@ -1,0 +1,8 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+
+# esbuild (via vite / vitest) needs its postinstall to fetch its native binary.
+# pnpm 11 gates build scripts; this is pnpm's own approval format.
+allowBuilds:
+  esbuild: true

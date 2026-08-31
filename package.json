@@ -1,0 +1,14 @@
+{
+  "name": "dont-fall",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.24.0",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "dev": "pnpm --filter @dont-fall/client dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
