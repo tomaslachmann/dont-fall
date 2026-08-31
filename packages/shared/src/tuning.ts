@@ -62,14 +62,19 @@ export const COYOTE_TICKS = msToTicks(COYOTE_MS);
 
 // --- Dash ------------------------------------------------------------------
 
-/** Peak horizontal speed (units/s) added at the middle of a dash burst. */
+/** Peak horizontal speed (units/s) reached at the end of a dash's build-up. */
 export const DASH_SPEED = 15;
 
 /** How long the dash burst lasts (ms). */
 export const DASH_DURATION_MS = 1000;
 
-/** Ease-in and ease-out time at each end of the dash (ms) — the "smooth" start/stop. */
-export const DASH_RAMP_MS = 90;
+/**
+ * How long the dash takes to release back to 0 at the very end (ms) — a
+ * "nitro" build, not a ramp-in: speed builds continuously toward
+ * {@link DASH_SPEED} across the whole burst (see `dashEnvelope`), then only
+ * this final window eases it back down instead of cutting dead at full speed.
+ */
+export const DASH_RELEASE_MS = 90;
 
 /**
  * Minimum time between dashes (ms), measured from the *start* of the previous
@@ -82,8 +87,8 @@ export const DASH_COOLDOWN_MS = 1500;
 /** {@link DASH_DURATION_MS} in whole ticks. */
 export const DASH_DURATION_TICKS = msToTicks(DASH_DURATION_MS);
 
-/** {@link DASH_RAMP_MS} in whole ticks. */
-export const DASH_RAMP_TICKS = msToTicks(DASH_RAMP_MS);
+/** {@link DASH_RELEASE_MS} in whole ticks. */
+export const DASH_RELEASE_TICKS = msToTicks(DASH_RELEASE_MS);
 
 /** {@link DASH_COOLDOWN_MS} in whole ticks. */
 export const DASH_COOLDOWN_TICKS = msToTicks(DASH_COOLDOWN_MS);
@@ -176,6 +181,14 @@ export const WALL_NORMAL_MAX_Y = 0.5;
 
 /** Upward bias mixed into the wall-bounce direction, before normalising, for a visible pop. */
 export const DASH_WALL_LIFT_RATIO = 0.3;
+
+/**
+ * Minimum current Dash speed, as a fraction of {@link DASH_SPEED}, for hitting
+ * a wall to force Ragdoll. Below this — early in the build-up or late in the
+ * release (`dashEnvelope`) — a wall hit is just an ordinary blocked walk, not
+ * a knockdown; only a hit near the top of the build counts as a real crash.
+ */
+export const DASH_WALL_MIN_SPEED_RATIO = 0.6;
 
 // --- Spinner Obstacle (ticket 06) --------------------------------------------
 

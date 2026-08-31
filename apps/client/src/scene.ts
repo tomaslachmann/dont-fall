@@ -1,8 +1,10 @@
 import {
   CAPSULE_BOTTOM_OFFSET,
+  DASH_SPEED,
   GETUP_MS,
   RAGDOLL_BONES,
   spinnerAngleAt,
+  WALK_SPEED,
   yawQuat,
   type Box,
   type CharacterMotionState,
@@ -21,7 +23,16 @@ import {
   resolveArm,
   springArmPosition,
 } from "./camera/springArm.js";
+import { createSpeedLines } from "./speedLines.js";
 import { initialWobbleState, stepWobble } from "./wobble.js";
+
+/**
+ * Speed, in units/s, at which the speed-lines effect starts to appear and
+ * reaches full intensity — anything at or below a plain walk shows nothing;
+ * a full-speed Dash shows it fully.
+ */
+const SPEED_LINES_MIN_SPEED = WALK_SPEED;
+const SPEED_LINES_MAX_SPEED = DASH_SPEED;
 
 const BACKGROUND_COLOR = 0x0b0e14;
 
@@ -112,6 +123,8 @@ export const createStage = ({
     0.1,
     300,
   );
+
+  const speedLines = createSpeedLines(renderer, scene, camera);
 
   scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x1b2430, 1.1));
   const sun = new THREE.DirectionalLight(0xffffff, 1.7);
@@ -239,11 +252,12 @@ export const createStage = ({
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    speedLines.resize(window.innerWidth, window.innerHeight);
   });
 
   return {
     domElement: renderer.domElement,
-    render: () => renderer.render(scene, camera),
+    render: () => speedLines.render(),
     applyRenderState: (state) => {
       const { position, motionState } = state.character;
       const fallingRagdoll = motionState === "Ragdoll";
@@ -328,6 +342,7 @@ export const createStage = ({
         previousWobblePosition = currentPosition;
         wobblePivot.rotation.x = 0;
         wobblePivot.rotation.z = 0;
+        speedLines.setIntensity(0);
       }
 
       // Ragdoll (forward Death) and GettingUp (reverse Death) are both driven
@@ -364,6 +379,13 @@ export const createStage = ({
         previousWobblePosition = currentPosition;
         wobblePivot.rotation.x = -wobbleState.pitch;
         wobblePivot.rotation.z = wobbleState.roll;
+
+        // Speed lines: driven by actual observed horizontal speed (the same
+        // velocity Wobble already computed), not the `dashing` flag directly —
+        // reads correctly for the Dash's own gradual build/release curve.
+        const speed = Math.hypot(wobbleState.velocity.x, wobbleState.velocity.z);
+        const intensity = (speed - SPEED_LINES_MIN_SPEED) / (SPEED_LINES_MAX_SPEED - SPEED_LINES_MIN_SPEED);
+        speedLines.setIntensity(intensity);
       }
     },
   };

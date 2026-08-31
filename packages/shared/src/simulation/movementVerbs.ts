@@ -3,7 +3,7 @@ import {
   COYOTE_TICKS,
   DASH_COOLDOWN_TICKS,
   DASH_DURATION_TICKS,
-  DASH_RAMP_TICKS,
+  DASH_RELEASE_TICKS,
   DASH_SPEED,
   JUMP_HOLD_GRAVITY_SCALE,
   JUMP_HOLD_MAX_TICKS,
@@ -14,18 +14,19 @@ import {
 const smoothstep = (x: number): number => x * x * (3 - 2 * x);
 
 /**
- * The dash speed envelope: 0 at the start and end, {@link smoothstep}-eased up
- * to 1 over the first `ramp`, flat at 1 through the middle, eased back down over
- * the last `ramp`. `elapsed` and `duration` are in ticks. If `2 * ramp` exceeds
- * `duration` the ramps meet with no flat middle — a smooth peak instead of a
- * plateau.
+ * The dash speed envelope: a "nitro" build — {@link smoothstep}-eased up to
+ * full speed continuously across the whole burst (never plateaus early), then
+ * released back to 0 over the final `rampOut`, so it doesn't cut dead at full
+ * speed. `elapsed` and `duration` are in ticks. If `rampOut` covers the whole
+ * `duration` there is no build at all, just the release curve throughout.
  */
-export const dashEnvelope = (elapsed: number, duration: number, ramp: number): number => {
+export const dashEnvelope = (elapsed: number, duration: number, rampOut: number): number => {
   if (elapsed <= 0 || elapsed >= duration) return 0;
-  const r = Math.min(ramp, duration / 2);
-  if (elapsed < r) return smoothstep(elapsed / r);
-  if (elapsed > duration - r) return smoothstep((duration - elapsed) / r);
-  return 1;
+  const clampedRampOut = Math.min(rampOut, duration);
+  const releaseStart = duration - clampedRampOut;
+  if (releaseStart <= 0) return smoothstep((duration - elapsed) / duration);
+  if (elapsed < releaseStart) return smoothstep(elapsed / releaseStart);
+  return smoothstep((duration - elapsed) / clampedRampOut);
 };
 
 /**
@@ -122,7 +123,7 @@ export class DashController {
     if (this.ticksLeft > 0) {
       const elapsed = DASH_DURATION_TICKS - this.ticksLeft + 0.5; // sample mid-tick
       this.ticksLeft -= 1;
-      const speed = DASH_SPEED * dashEnvelope(elapsed, DASH_DURATION_TICKS, DASH_RAMP_TICKS);
+      const speed = DASH_SPEED * dashEnvelope(elapsed, DASH_DURATION_TICKS, DASH_RELEASE_TICKS);
       return scaleVec3(this.dir, speed);
     }
     return vec3();

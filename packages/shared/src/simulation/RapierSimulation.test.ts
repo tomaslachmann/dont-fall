@@ -320,15 +320,20 @@ describe("RapierSimulation — dash", () => {
   };
 
   it("covers much more ground during a dash than a plain walk", () => {
+    // The dash builds continuously toward full speed across the whole burst
+    // (a "nitro" build, not an early ramp), so the comparison window has to
+    // span the full DASH_DURATION_MS to see it, not a short slice of it.
+    const window = DASH_DURATION_MS / 1000;
+
     const walkRef = settled();
     const walkStart = walkRef.snapshot().character.position.z;
-    tick(walkRef, 0.3, NORTH);
+    tick(walkRef, window, NORTH);
     const walked = Math.abs(walkRef.snapshot().character.position.z - walkStart);
 
     const dasher = settled();
     const dashStart = dasher.snapshot().character.position.z;
     dasher.tick(input({ ...NORTH, dashHeld: true })); // dash press
-    tick(dasher, 0.3, NORTH);
+    tick(dasher, window, NORTH);
     const dashed = Math.abs(dasher.snapshot().character.position.z - dashStart);
 
     expect(dashed).toBeGreaterThan(walked * 1.5);
@@ -350,7 +355,7 @@ describe("RapierSimulation — dash", () => {
     tick(sim, 0.2, NORTH); // establish a facing
     const before = sim.snapshot().character.position;
     sim.tick(input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true })); // dash east
-    tick(sim, 0.2, input({ moveDirection: { x: 1, y: 0, z: 0 } }));
+    tick(sim, DASH_DURATION_MS / 1000, input({ moveDirection: { x: 1, y: 0, z: 0 } }));
     const after = sim.snapshot().character.position;
     expect(after.x - before.x).toBeGreaterThan(1.5);
     expect(Math.abs(after.z - before.z)).toBeLessThan(1);
@@ -381,7 +386,7 @@ describe("RapierSimulation — dash", () => {
     const before = sim.snapshot().character.position;
 
     sim.tick(input({ dashHeld: true })); // dash with no move input
-    tick(sim, 0.2, IDLE_INPUTS);
+    tick(sim, DASH_DURATION_MS / 1000, IDLE_INPUTS);
     const after = sim.snapshot().character.position;
 
     expect(after.z - before.z).toBeLessThan(-2); // dashed north, the last-held direction
@@ -630,6 +635,17 @@ describe("RapierSimulation — dash into a wall", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND, WALL] });
     tick(sim, 0.5);
     tick(sim, 2, input({ moveDirection: { x: 1, y: 0, z: 0 } }));
+    expect(sim.snapshot().character.motionState).toBe("Controlled");
+  });
+
+  it("does not ragdoll from a wall hit right at the start of the build — only once fast enough", () => {
+    // Wall close enough to hit on the very first dash tick, while speed is
+    // still near zero (the build has barely started) — should just block,
+    // same as an ordinary walk, not force Ragdoll.
+    const closeWall: Box = { center: { x: 1, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 5 } };
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND, closeWall] });
+    tick(sim, 0.5);
+    sim.tick(input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true })); // dash press, contacts the wall immediately
     expect(sim.snapshot().character.motionState).toBe("Controlled");
   });
 });

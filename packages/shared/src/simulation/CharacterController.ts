@@ -4,8 +4,10 @@ import {
   CAPSULE_HALF_HEIGHT,
   CAPSULE_RADIUS,
   CHARACTER_CONTROLLER_OFFSET,
+  DASH_SPEED,
   DASH_WALL_IMPACT_MAGNITUDE,
   DASH_WALL_LIFT_RATIO,
+  DASH_WALL_MIN_SPEED_RATIO,
   GETUP_CAPSULE_LIFT,
   GETUP_TICKS,
   GRAVITY_Y,
@@ -223,7 +225,7 @@ export class CharacterController {
       this.jump.land();
     }
 
-    this.resolveCollisions(lengthVec3(dashBurst) > 0);
+    this.resolveCollisions(lengthVec3(dashBurst));
 
     const at = this.body.translation();
     this.body.setNextKinematicTranslation({
@@ -236,18 +238,21 @@ export class CharacterController {
 
   /**
    * Walk this tick's `computeColliderMovement` collisions (ticket 06): a Dash
-   * burst blocked by a near-vertical surface always knocks the Character down
-   * (wall or Spinner or Prop — whatever it hit), and every collision is also
-   * forwarded to {@link onCollision} so `RapierSimulation` can resolve
-   * Obstacle/Prop-specific reactions (Spinner Knockback, a shoved Prop).
+   * burst moving at or above {@link DASH_WALL_MIN_SPEED_RATIO} of full speed,
+   * blocked by a near-vertical surface, knocks the Character down (wall or
+   * Spinner or Prop — whatever it hit) — a slow build-up or late-release hit
+   * is just a blocked walk. Every collision is also forwarded to
+   * {@link onCollision} so `RapierSimulation` can resolve Obstacle/Prop-
+   * specific reactions (Spinner Knockback, a shoved Prop).
    */
-  private resolveCollisions(dashing: boolean): void {
+  private resolveCollisions(dashSpeed: number): void {
+    const dashingFastEnough = dashSpeed >= DASH_SPEED * DASH_WALL_MIN_SPEED_RATIO;
     const count = this.rapierController.numComputedCollisions();
     for (let i = 0; i < count; i += 1) {
       const collision = this.rapierController.computedCollision(i);
       if (!collision) continue;
 
-      if (dashing && Math.abs(collision.normal1.y) < WALL_NORMAL_MAX_Y) {
+      if (dashingFastEnough && Math.abs(collision.normal1.y) < WALL_NORMAL_MAX_Y) {
         this.applyImpact(dashWallKnockback(vec3(collision.normal1.x, collision.normal1.y, collision.normal1.z)));
       }
 
