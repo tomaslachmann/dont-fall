@@ -15,3 +15,5 @@ export * from "./simulation/collisionGroups.js";
 export * from "./simulation/ragdollSkeleton.js";
 export { Ragdoll } from "./simulation/Ragdoll.js";
 export * from "./simulation/RapierSimulation.js";
+export * from "./simulation/Spinner.js";
+export * from "./simulation/Prop.js";

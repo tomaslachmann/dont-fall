@@ -13,7 +13,9 @@ import {
 import { FreeLookCamera, KeyboardInput } from "./input.js";
 import {
   PLAYGROUND_CHECKPOINTS,
+  PLAYGROUND_PROPS,
   PLAYGROUND_SPAWN,
+  PLAYGROUND_SPINNERS,
   PLAYGROUND_STATICS,
 } from "./playground.js";
 import { createStage } from "./scene.js";
@@ -27,11 +29,15 @@ const main = async () => {
     spawn: PLAYGROUND_SPAWN,
     statics: PLAYGROUND_STATICS,
     checkpoints: PLAYGROUND_CHECKPOINTS,
+    spinners: PLAYGROUND_SPINNERS,
+    props: PLAYGROUND_PROPS,
   });
   const stage = createStage({
     statics: simulation.getStatics(),
     checkpoints: simulation.getCheckpoints(),
     killPlaneY: DEFAULT_KILL_PLANE_Y,
+    spinners: simulation.getSpinners(),
+    props: simulation.getProps(),
   });
   const keyboard = new KeyboardInput();
   const look = new FreeLookCamera(stage.domElement);
@@ -64,6 +70,7 @@ const main = async () => {
     const alpha = accumulatorMs / TICK_MS;
     const render = interpolateState(result.previousSnapshot, result.snapshot, alpha);
     stage.applyRenderState(render);
+    stage.updateSpinners(result.previousSnapshot.tick + alpha);
     stage.updateCamera(render.character.position, look.yaw, look.pitch);
     stage.render();
 

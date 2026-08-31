@@ -1,7 +1,13 @@
-import { slerpQuat } from "../math/quat.js";
+import { slerpQuat, type Quat } from "../math/quat.js";
 import { lerpVec3, type Vec3 } from "../math/vec3.js";
+import type { PropSnapshot } from "../simulation/Prop.js";
 import type { BoneSnapshot } from "../simulation/ragdollSkeleton.js";
 import type { SimState } from "./SimState.js";
+
+interface Posed {
+  position: Vec3;
+  rotation: Quat;
+}
 
 /**
  * What the renderer draws: sim state visually interpolated toward the next tick.
@@ -13,18 +19,16 @@ export interface RenderState {
     /** Empty unless the Character is ragdolling / getting up. */
     bones: BoneSnapshot[];
   };
+  /** Per-Prop pose, in `SimState.props` order. */
+  props: PropSnapshot[];
 }
 
 const clamp01 = (t: number): number => (t < 0 ? 0 : t > 1 ? 1 : t);
 
-const interpolateBones = (
-  prev: BoneSnapshot[],
-  next: BoneSnapshot[],
-  t: number,
-): BoneSnapshot[] =>
+const interpolatePosed = <T extends Posed>(prev: T[], next: T[], t: number): T[] =>
   next.map((n, i) => {
     const p = prev[i] ?? n;
-    return { position: lerpVec3(p.position, n.position, t), rotation: slerpQuat(p.rotation, n.rotation, t) };
+    return { ...n, position: lerpVec3(p.position, n.position, t), rotation: slerpQuat(p.rotation, n.rotation, t) };
   });
 
 /**
@@ -49,7 +53,8 @@ export const interpolateState = (
       position: lerpVec3(prev.character.position, next.character.position, t),
       bones: t === 1
         ? next.character.bones.map((b) => ({ position: { ...b.position }, rotation: { ...b.rotation } }))
-        : interpolateBones(prev.character.bones, next.character.bones, t),
+        : interpolatePosed(prev.character.bones, next.character.bones, t),
     },
+    props: interpolatePosed(prev.props, next.props, clamp01(alpha)),
   };
 };

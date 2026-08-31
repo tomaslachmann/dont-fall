@@ -1,9 +1,11 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { lengthVec3, lerpVec3, scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
+import { lengthVec3, lerpVec3, normalizeVec3, scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
 import {
   CAPSULE_HALF_HEIGHT,
   CAPSULE_RADIUS,
   CHARACTER_CONTROLLER_OFFSET,
+  DASH_WALL_IMPACT_MAGNITUDE,
+  DASH_WALL_LIFT_RATIO,
   GETUP_CAPSULE_LIFT,
   GETUP_TICKS,
   GRAVITY_Y,
@@ -12,6 +14,7 @@ import {
   RESPAWN_FLOP_IMPULSE,
   TICK_DT,
   WALK_SPEED,
+  WALL_NORMAL_MAX_Y,
 } from "../tuning.js";
 import { CharacterStateMachine, type CharacterMotionState } from "./CharacterStateMachine.js";
 import { CHARACTER_GROUPS } from "./collisionGroups.js";
@@ -29,6 +32,29 @@ interface PendingRespawn {
   point: Vec3;
   fallCount: number;
 }
+
+/**
+ * Reported once per Obstacle/Prop the Character's movement collides with this
+ * tick (ticket 06) — `RapierSimulation` looks `colliderHandle` up against its
+ * own Spinners/Props and decides what the contact does; `CharacterController`
+ * only knows *that* something was hit and *where*.
+ */
+export type CollisionListener = (
+  colliderHandle: number,
+  point: Vec3,
+  characterVelocity: Vec3,
+) => void;
+
+/**
+ * Knockback for a Dash blocked by a near-vertical surface: bounces back along
+ * `normal` (the obstacle's outward contact normal, which already points away
+ * from the surface toward the Character — no sign flip needed), plus a small
+ * lift, always at {@link DASH_WALL_IMPACT_MAGNITUDE}.
+ */
+export const dashWallKnockback = (normal: Vec3): Vec3 => {
+  const away = normalizeVec3(vec3(normal.x, DASH_WALL_LIFT_RATIO, normal.z));
+  return scaleVec3(away, DASH_WALL_IMPACT_MAGNITUDE);
+};
 
 /** What {@link CharacterController.snapshot} reports back to `RapierSimulation` each tick. */
 export interface CharacterState {
@@ -56,6 +82,7 @@ export class CharacterController {
   private readonly body: RAPIER.RigidBody;
   private readonly collider: RAPIER.Collider;
   private readonly ragdoll: Ragdoll;
+  private readonly onCollision: CollisionListener | undefined;
 
   private tickCount = 0;
   /** Capsule velocity (units/s): `x`/`z` set fresh each Controlled tick, `y` integrated. */
@@ -78,8 +105,9 @@ export class CharacterController {
   private getupStartTick = 0;
   private getupStartRoot: Vec3 = vec3();
 
-  constructor(world: RAPIER.World, spawn: Vec3) {
+  constructor(world: RAPIER.World, spawn: Vec3, onCollision?: CollisionListener) {
     this.world = world;
+    this.onCollision = onCollision;
 
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(spawn.x, spawn.y, spawn.z),
@@ -191,6 +219,8 @@ export class CharacterController {
       this.jump.land();
     }
 
+    this.resolveCollisions(lengthVec3(dashBurst) > 0);
+
     const at = this.body.translation();
     this.body.setNextKinematicTranslation({
       x: at.x + corrected.x,
@@ -198,6 +228,30 @@ export class CharacterController {
       z: at.z + corrected.z,
     });
     this.world.step();
+  }
+
+  /**
+   * Walk this tick's `computeColliderMovement` collisions (ticket 06): a Dash
+   * burst blocked by a near-vertical surface always knocks the Character down
+   * (wall or Spinner or Prop — whatever it hit), and every collision is also
+   * forwarded to {@link onCollision} so `RapierSimulation` can resolve
+   * Obstacle/Prop-specific reactions (Spinner Knockback, a shoved Prop).
+   */
+  private resolveCollisions(dashing: boolean): void {
+    const count = this.rapierController.numComputedCollisions();
+    for (let i = 0; i < count; i += 1) {
+      const collision = this.rapierController.computedCollision(i);
+      if (!collision) continue;
+
+      if (dashing && Math.abs(collision.normal1.y) < WALL_NORMAL_MAX_Y) {
+        this.applyImpact(dashWallKnockback(vec3(collision.normal1.x, collision.normal1.y, collision.normal1.z)));
+      }
+
+      if (this.onCollision && collision.collider) {
+        const point = vec3(collision.witness1.x, collision.witness1.y, collision.witness1.z);
+        this.onCollision(collision.collider.handle, point, { ...this.velocity });
+      }
+    }
   }
 
   private beginRagdoll(): void {

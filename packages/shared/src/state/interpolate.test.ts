@@ -1,19 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { IDENTITY_QUAT } from "../math/quat.js";
 import type { BoneSnapshot } from "../simulation/Ragdoll.js";
+import type { PropSnapshot } from "../simulation/Prop.js";
 import { interpolateState } from "./interpolate.js";
 import { characterSnapshot, type CharacterMotionState, type SimState } from "./SimState.js";
 
-const stateAt = (x: number, teleported = false): SimState => ({
+const bone = (x: number): BoneSnapshot => ({ position: { x, y: 0, z: 0 }, rotation: IDENTITY_QUAT });
+const prop = (x: number): PropSnapshot => ({ position: { x, y: 0, z: 0 }, rotation: IDENTITY_QUAT });
+
+const stateAt = (x: number, teleported = false, props: PropSnapshot[] = []): SimState => ({
   tick: 0,
   character: characterSnapshot({ position: { x, y: x * 2, z: x * 3 }, teleported }),
+  props,
 });
-
-const bone = (x: number): BoneSnapshot => ({ position: { x, y: 0, z: 0 }, rotation: IDENTITY_QUAT });
 
 const ragdollStateAt = (x: number, motionState: CharacterMotionState = "Ragdoll"): SimState => ({
   tick: 0,
   character: characterSnapshot({ position: { x, y: 0, z: 0 }, motionState, bones: [bone(x)] }),
+  props: [],
 });
 
 describe("interpolateState", () => {
@@ -57,5 +61,14 @@ describe("interpolateState", () => {
   it("has no bones while Controlled", () => {
     const render = interpolateState(stateAt(0), stateAt(10), 0.5);
     expect(render.character.bones).toEqual([]);
+  });
+
+  it("interpolates Prop positions independently of the Character", () => {
+    const render = interpolateState(
+      stateAt(0, false, [prop(0)]),
+      stateAt(0, true, [prop(10)]), // Character teleports; the Prop keeps moving normally
+      0.5,
+    );
+    expect(render.props[0]!.position.x).toBe(5);
   });
 });

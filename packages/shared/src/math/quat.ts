@@ -10,6 +10,14 @@ export const quat = (x = 0, y = 0, z = 0, w = 1): Quat => ({ x, y, z, w });
 
 export const IDENTITY_QUAT: Quat = { x: 0, y: 0, z: 0, w: 1 };
 
+/** A rotation of `radians` around the world Y (up) axis. */
+export const yawQuat = (radians: number): Quat => ({
+  x: 0,
+  y: Math.sin(radians / 2),
+  z: 0,
+  w: Math.cos(radians / 2),
+});
+
 /**
  * Spherical linear interpolation between two unit quaternions. Falls back to a
  * normalised lerp for near-parallel inputs.

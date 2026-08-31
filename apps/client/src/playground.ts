@@ -1,11 +1,12 @@
-import type { Box, Checkpoint, Vec3 } from "@dont-fall/shared";
+import type { Box, Checkpoint, PropConfig, SpinnerConfig, Vec3 } from "@dont-fall/shared";
 
 /**
  * The M1 scaffold playground: a run of platforms that step steadily downhill,
  * joined by narrow bridges you can be pushed off the sides of. No upward steps —
  * there is no jump until ticket 04. Ticket 03 adds the two Checkpoints; the
- * kill-plane is the shared `DEFAULT_KILL_PLANE_Y`. A later ticket replaces all of
- * this with a Segment-built Track.
+ * kill-plane is the shared `DEFAULT_KILL_PLANE_Y`. Ticket 06 adds one Spinner on
+ * the Checkpoint 1 platform and a few Props on the end platform. A later ticket
+ * replaces all of this with a Segment-built Track.
  */
 
 const box = (center: Vec3, halfExtents: Vec3): Box => ({ center, halfExtents });
@@ -30,4 +31,22 @@ export const PLAYGROUND_CHECKPOINTS: Checkpoint[] = [
     respawn: { x: 0, y: -1.15, z: -13 },
     volume: { center: { x: 0, y: -1.15, z: -13 }, halfExtents: { x: 3.5, y: 2, z: 4 } },
   },
+];
+
+/** One rotating bar on the Checkpoint 1 platform (top y = -0.6), clear of the Checkpoint volume. */
+export const PLAYGROUND_SPINNERS: SpinnerConfig[] = [
+  {
+    center: { x: 0, y: -0.05, z: 1 },
+    armLength: 2.5,
+    halfHeight: 0.4,
+    armRadius: 0.35,
+    angularSpeed: 2.5,
+  },
+];
+
+/** A few dynamic props scattered on the end platform (top y = -2.1) to bump and knock around. */
+export const PLAYGROUND_PROPS: PropConfig[] = [
+  { shape: { kind: "box", halfExtents: { x: 0.4, y: 0.4, z: 0.4 } }, center: { x: -1.5, y: -1.7, z: -13 } },
+  { shape: { kind: "ball", radius: 0.4 }, center: { x: 1.5, y: -1.7, z: -13 } },
+  { shape: { kind: "box", halfExtents: { x: 0.35, y: 0.35, z: 0.35 } }, center: { x: 0, y: -1.75, z: -15.5 } },
 ];

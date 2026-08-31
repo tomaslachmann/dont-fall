@@ -7,7 +7,9 @@ import { DEFAULT_KILL_PLANE_Y, GRAVITY_Y } from "../tuning.js";
 import { CharacterController } from "./CharacterController.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
+import { Prop, type PropConfig } from "./Prop.js";
 import type { SimInputs } from "./SimInputs.js";
+import { Spinner, type SpinnerConfig } from "./Spinner.js";
 
 export interface SimulationConfig {
   /** Where the Character starts (capsule centre). Also its first respawn point. */
@@ -18,6 +20,10 @@ export interface SimulationConfig {
   checkpoints?: Checkpoint[];
   /** Height below which the Character has Fallen out of the playground. */
   killPlaneY?: number;
+  /** Rotating-bar Obstacles (ticket 06). */
+  spinners?: SpinnerConfig[];
+  /** Dynamic props (boxes/balls) the Character can bump and knock around (ticket 06). */
+  props?: PropConfig[];
 }
 
 const DEFAULT_SPAWN = vec3(0, 2, 0);
@@ -29,6 +35,20 @@ const DEFAULT_GROUND: Box = {
 const cloneBox = (box: Box): Box => ({
   center: { ...box.center },
   halfExtents: { ...box.halfExtents },
+});
+
+const cloneSpinnerConfig = (config: SpinnerConfig): SpinnerConfig => ({
+  ...config,
+  center: { ...config.center },
+});
+
+const clonePropConfig = (config: PropConfig): PropConfig => ({
+  ...config,
+  center: { ...config.center },
+  shape:
+    config.shape.kind === "box"
+      ? { kind: "box", halfExtents: { ...config.shape.halfExtents } }
+      : { ...config.shape },
 });
 
 let initPromise: Promise<void> | null = null;
@@ -54,6 +74,10 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
   private readonly statics: Box[];
   private readonly checkpoints: Checkpoint[];
   private readonly killPlaneY: number;
+  private readonly spinners: Spinner[];
+  private readonly props: Prop[];
+  private readonly spinnerByHandle = new Map<number, Spinner>();
+  private readonly propByHandle = new Map<number, Prop>();
 
   private tickCount = 0;
   private respawnPoint: Vec3;
@@ -79,8 +103,29 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
       );
     }
 
-    this.character = new CharacterController(this.world, spawn);
+    this.spinners = (config.spinners ?? []).map((c) => new Spinner(this.world, c));
+    for (const spinner of this.spinners) this.spinnerByHandle.set(spinner.collider.handle, spinner);
+
+    this.props = (config.props ?? []).map((c) => new Prop(this.world, c));
+    for (const prop of this.props) this.propByHandle.set(prop.collider.handle, prop);
+
+    this.character = new CharacterController(this.world, spawn, this.resolveCollision);
   }
+
+  /**
+   * Look `colliderHandle` up against the Spinners/Props this sim owns and
+   * resolve the contact (ticket 06): a Spinner delivers Knockback through the
+   * Character's Impact pipeline; a Prop gets shoved by the Character's own
+   * velocity. Anything else (statics) is not registered here and is ignored.
+   */
+  private readonly resolveCollision = (colliderHandle: number, point: Vec3, velocity: Vec3): void => {
+    const spinner = this.spinnerByHandle.get(colliderHandle);
+    if (spinner) {
+      this.character.applyImpact(spinner.knockbackAt(point));
+      return;
+    }
+    this.propByHandle.get(colliderHandle)?.shove(velocity);
+  };
 
   /**
    * Deliver an Impact to the Character (a shove from the Spinner, a wall dash,
@@ -91,6 +136,11 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
   }
 
   tick(input: SimInputs): void {
+    // Queue each Spinner's rotation for the tick about to run — it must be
+    // queued before `character.tick()`'s `world.step()` applies it, the same
+    // way the capsule's own `setNextKinematicTranslation` works.
+    for (const spinner of this.spinners) spinner.tick(this.tickCount + 1);
+
     // The Character must finish moving — including any queued respawn — before
     // Checkpoint and Fall detection read its position for this tick.
     this.character.tick(input);
@@ -125,6 +175,7 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
         checkpointIndex: this.checkpointIndex,
         fallCount: this.fallCount,
       }),
+      props: this.props.map((p) => p.snapshot()),
     };
   }
 
@@ -139,5 +190,19 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
       respawn: { ...cp.respawn },
       volume: cloneBox(cp.volume),
     }));
+  }
+
+  /**
+   * The configured Spinners, for the renderer to build geometry from. A
+   * Spinner's rotation is not part of `SimState` — it is a pure function of
+   * the tick number (`spinnerAngleAt`), so the renderer recomputes it directly.
+   */
+  getSpinners(): SpinnerConfig[] {
+    return this.spinners.map((s) => cloneSpinnerConfig(s.config));
+  }
+
+  /** The configured Props, for the renderer to build geometry from (pose comes from `SimState.props`). */
+  getProps(): PropConfig[] {
+    return this.props.map((p) => clonePropConfig(p.config));
   }
 }

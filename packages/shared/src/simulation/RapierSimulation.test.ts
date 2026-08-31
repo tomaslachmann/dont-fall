@@ -519,3 +519,102 @@ describe("RapierSimulation — Impact & ragdoll", () => {
     expect(sim.snapshot().character.position.y - y0).toBeLessThan(0.4); // no real jump
   });
 });
+
+describe("RapierSimulation — Spinner", () => {
+  it("knocks a standing Character down when the rotating bar sweeps through it", () => {
+    const sim = new RapierSimulation({
+      spawn: RESTING_SPAWN,
+      statics: [GROUND],
+      spinners: [
+        {
+          center: { x: 0, y: RESTING_SPAWN.y, z: 3 },
+          armLength: 3.5,
+          halfHeight: 0.5,
+          armRadius: 0.4,
+          angularSpeed: 2 * Math.PI, // one revolution per second — several sweeps in the window below
+        },
+      ],
+    });
+    tick(sim, 0.5); // settle
+
+    let hit = false;
+    for (let i = 0; i < 90; i += 1) {
+      sim.tick(IDLE_INPUTS);
+      if (sim.snapshot().character.motionState !== "Controlled") {
+        hit = true;
+        break;
+      }
+    }
+    expect(hit).toBe(true);
+  });
+
+  it("does nothing to a Character outside the bar's reach", () => {
+    const sim = new RapierSimulation({
+      spawn: RESTING_SPAWN,
+      statics: [GROUND],
+      spinners: [
+        {
+          center: { x: 0, y: RESTING_SPAWN.y, z: 10 }, // far away
+          armLength: 3.5,
+          halfHeight: 0.5,
+          armRadius: 0.4,
+          angularSpeed: 2 * Math.PI,
+        },
+      ],
+    });
+    tick(sim, 2); // several full revolutions
+    expect(sim.snapshot().character.motionState).toBe("Controlled");
+  });
+});
+
+describe("RapierSimulation — dynamic props", () => {
+  const propConfig = {
+    shape: { kind: "box" as const, halfExtents: { x: 0.4, y: 0.4, z: 0.4 } },
+    center: { x: 0, y: 0.4, z: -1.5 },
+  };
+
+  it("pushes a Prop when the Character walks into it", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [propConfig] });
+    tick(sim, 0.5); // settle
+    const start = sim.snapshot().props[0]!.position;
+
+    tick(sim, 1.5, NORTH); // walk into the prop, which sits north of spawn
+
+    const moved = sim.snapshot().props[0]!.position;
+    expect(Math.hypot(moved.x - start.x, moved.z - start.z)).toBeGreaterThan(0.3);
+  });
+
+  it("leaves an untouched Prop at rest", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [propConfig] });
+    tick(sim, 1);
+    const p = sim.snapshot().props[0]!.position;
+    expect(Math.hypot(p.x - propConfig.center.x, p.z - propConfig.center.z)).toBeLessThan(0.1);
+  });
+});
+
+describe("RapierSimulation — dash into a wall", () => {
+  const WALL: Box = { center: { x: 3, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 5 } };
+
+  it("ragdolls the Character when a dash is blocked by a wall", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND, WALL] });
+    tick(sim, 0.5); // settle
+    sim.tick(input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true })); // dash toward the wall
+
+    let ragdolled = false;
+    for (let i = 0; i < 20; i += 1) {
+      sim.tick(input({ moveDirection: { x: 1, y: 0, z: 0 } }));
+      if (sim.snapshot().character.motionState === "Ragdoll") {
+        ragdolled = true;
+        break;
+      }
+    }
+    expect(ragdolled).toBe(true);
+  });
+
+  it("does not ragdoll from an ordinary walk into a wall", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND, WALL] });
+    tick(sim, 0.5);
+    tick(sim, 2, input({ moveDirection: { x: 1, y: 0, z: 0 } }));
+    expect(sim.snapshot().character.motionState).toBe("Controlled");
+  });
+});

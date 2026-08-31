@@ -1,8 +1,9 @@
 import type { Vec3 } from "../math/vec3.js";
 import type { CharacterMotionState } from "../simulation/CharacterStateMachine.js";
+import type { PropSnapshot } from "../simulation/Prop.js";
 import type { BoneSnapshot } from "../simulation/ragdollSkeleton.js";
 
-export type { CharacterMotionState, BoneSnapshot };
+export type { CharacterMotionState, BoneSnapshot, PropSnapshot };
 
 export interface CharacterSnapshot {
   /** The point the camera follows: capsule centre while upright, pelvis while ragdolling. */
@@ -36,6 +37,12 @@ export interface CharacterSnapshot {
 export interface SimState {
   tick: number;
   character: CharacterSnapshot;
+  /**
+   * Per-Prop pose, in the same order every tick (ticket 06). A Spinner's pose
+   * is not carried here — it is a pure function of `tick`, so the renderer
+   * recomputes it directly instead (`spinnerAngleAt`).
+   */
+  props: PropSnapshot[];
 }
 
 export interface CharacterSnapshotFields {

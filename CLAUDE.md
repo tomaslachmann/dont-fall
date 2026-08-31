@@ -12,11 +12,14 @@ Design philosophy: **Easy to understand. Hard to master. Hilarious when you fail
 Working through **M1** — a local physics playground (`docs/milestones/M1.md`).
 Tickets in `.scratch/m1-playground/issues/`.
 
-- **Tickets 01–03 done.** Monorepo + fixed 30 Hz sim + render interpolation
+- **Tickets 01–06 done.** Monorepo + fixed 30 Hz sim + render interpolation
   (01); Rapier kinematic-capsule Character, WASD, spring-arm camera, pointer-lock
   free-look (02, 02b); platforms + Fall + Checkpoint respawn with a lockout
-  penalty (03). See `.scratch/m1-playground/issues/` and ADRs 0009 / 0010.
-- **Next:** ticket 04 — jump + dash.
+  penalty (03); jump + dash (04); ragdoll state machine (05); `CharacterController`
+  extracted from `RapierSimulation` (05b); Spinner Obstacle, dynamic Props,
+  dash-into-a-wall Ragdoll (06). See `.scratch/m1-playground/issues/` and ADRs
+  0006 / 0009 / 0010.
+- **Next:** ticket 07 — Wobble + M1 feel-tuning playtest (closes M1).
 
 No multiplayer, backend, lobby, or accounts until M1 proves the core loop is fun.
 

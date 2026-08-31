@@ -152,3 +152,35 @@ export const GETUP_TICKS = msToTicks(GETUP_MS);
 
 /** Default height below which a Character has Fallen out of the playground (units). */
 export const DEFAULT_KILL_PLANE_Y = -8;
+
+// --- Dash into a wall (ticket 06) --------------------------------------------
+
+/**
+ * Impulse magnitude of the Knockback applied when a Dash burst is blocked by a
+ * near-vertical surface. Always at or above {@link IMPACT_RAGDOLL_MIN} — dashing
+ * into a wall always knocks the Character down, never just Staggers it.
+ */
+export const DASH_WALL_IMPACT_MAGNITUDE = 14;
+
+/**
+ * A collision normal counts as a "wall" (not a floor or ceiling) when the
+ * absolute value of its Y component is below this. Above it, the surface is
+ * treated as roughly horizontal and ignored for the dash-into-wall check.
+ */
+export const WALL_NORMAL_MAX_Y = 0.5;
+
+/** Upward bias mixed into the wall-bounce direction, before normalising, for a visible pop. */
+export const DASH_WALL_LIFT_RATIO = 0.3;
+
+// --- Spinner Obstacle (ticket 06) --------------------------------------------
+
+/** Knockback imparted per unit of tangential speed (units/s) at the point hit. */
+export const SPINNER_KNOCKBACK_SCALE = 0.6;
+
+/** Extra upward Knockback (units/s) added to every Spinner hit, for a visible pop. */
+export const SPINNER_KNOCKBACK_LIFT = 2;
+
+// --- Dynamic props (ticket 06) -----------------------------------------------
+
+/** Push impulse applied to a Prop per unit of the Character's horizontal speed. */
+export const PROP_PUSH_SCALE = 0.5;

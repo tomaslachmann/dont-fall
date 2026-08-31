@@ -79,6 +79,11 @@ A Module (or part of one) that actively threatens the Character — a Spinner,
 Pendulum, Falling Tiles. Contrast with connective Modules like Straight and Gap.
 _Avoid_: hazard, trap
 
+**Prop**:
+A dynamic physics body that reacts to being bumped (a box, a ball) but never
+threatens the Character on its own. Contrast with Obstacle.
+_Avoid_: crate (see Item Box), object, decoration
+
 **Checkpoint**:
 A point on the Track that a Character respawns at after a Fall.
 

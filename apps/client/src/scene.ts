@@ -2,9 +2,13 @@ import {
   CAPSULE_HALF_HEIGHT,
   CAPSULE_RADIUS,
   RAGDOLL_BONES,
+  spinnerAngleAt,
+  yawQuat,
   type Box,
   type Checkpoint,
+  type PropConfig,
   type RenderState,
+  type SpinnerConfig,
   type Vec3,
 } from "@dont-fall/shared";
 import * as THREE from "three";
@@ -22,6 +26,8 @@ export interface StageConfig {
   statics: Box[];
   checkpoints: Checkpoint[];
   killPlaneY: number;
+  spinners: SpinnerConfig[];
+  props: PropConfig[];
 }
 
 export interface Stage {
@@ -31,6 +37,12 @@ export interface Stage {
   applyRenderState: (state: RenderState) => void;
   /** Position the camera on a collision-resolved spring arm around `target`. */
   updateCamera: (target: Vec3, yaw: number, pitch: number) => void;
+  /**
+   * Rotate every Spinner to its pose at continuous simulation tick `t`
+   * (fractional for smooth render-rate rotation). A Spinner's rotation is a
+   * pure function of the tick, so it is never carried in `RenderState`.
+   */
+  updateSpinners: (t: number) => void;
 }
 
 const boxMesh = (box: Box, material: THREE.Material): THREE.Mesh => {
@@ -42,7 +54,7 @@ const boxMesh = (box: Box, material: THREE.Material): THREE.Mesh => {
   return mesh;
 };
 
-export const createStage = ({ statics, checkpoints, killPlaneY }: StageConfig): Stage => {
+export const createStage = ({ statics, checkpoints, killPlaneY, spinners, props }: StageConfig): Stage => {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -81,6 +93,32 @@ export const createStage = ({ statics, checkpoints, killPlaneY }: StageConfig): 
   for (const cp of checkpoints) {
     scene.add(boxMesh(cp.volume, checkpointMaterial));
   }
+
+  const spinnerMaterial = new THREE.MeshStandardMaterial({ color: 0xf25c54, roughness: 0.5 });
+  const spinnerMeshes = spinners.map((config) => {
+    const mesh = boxMesh(
+      { center: config.center, halfExtents: { x: config.armLength, y: config.halfHeight, z: config.armRadius } },
+      spinnerMaterial,
+    );
+    scene.add(mesh);
+    collidables.push(mesh);
+    return mesh;
+  });
+
+  const propMaterial = new THREE.MeshStandardMaterial({ color: 0xf2c14e, roughness: 0.6 });
+  const propMeshes = props.map((config) => {
+    if (config.shape.kind === "box") {
+      const mesh = boxMesh({ center: config.center, halfExtents: config.shape.halfExtents }, propMaterial);
+      scene.add(mesh);
+      collidables.push(mesh);
+      return mesh;
+    }
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(config.shape.radius, 16, 12), propMaterial);
+    mesh.position.set(config.center.x, config.center.y, config.center.z);
+    scene.add(mesh);
+    collidables.push(mesh);
+    return mesh;
+  });
 
   // A faint plane at the kill height so the void reads as a floor, not infinity.
   const killPlane = new THREE.Mesh(
@@ -150,12 +188,33 @@ export const createStage = ({ statics, checkpoints, killPlaneY }: StageConfig): 
           mesh.quaternion.set(bone.rotation.x, bone.rotation.y, bone.rotation.z, bone.rotation.w);
         }
       }
+
+      // Recomputed immediately (not left for the next render()) since `updateCamera`
+      // raycasts against these meshes — via `collidables` — before this frame renders.
+      for (let i = 0; i < propMeshes.length; i += 1) {
+        const mesh = propMeshes[i]!;
+        const prop = state.props[i];
+        if (!prop) continue;
+        mesh.position.set(prop.position.x, prop.position.y, prop.position.z);
+        mesh.quaternion.set(prop.rotation.x, prop.rotation.y, prop.rotation.z, prop.rotation.w);
+        mesh.updateMatrixWorld();
+      }
     },
     updateCamera: (target, yaw, pitch) => {
       const desired = springArmPosition(target, yaw, pitch, CAMERA_DISTANCE);
       const resolved = resolveArm(target, desired, castArm, CAMERA_MIN_DISTANCE, CAMERA_SKIN);
       camera.position.set(resolved.x, resolved.y, resolved.z);
       camera.lookAt(target.x, target.y, target.z);
+    },
+    updateSpinners: (t) => {
+      // Recomputed immediately, same reason as the Prop meshes above.
+      for (let i = 0; i < spinnerMeshes.length; i += 1) {
+        const config = spinners[i]!;
+        const q = yawQuat(spinnerAngleAt(config, t));
+        const mesh = spinnerMeshes[i]!;
+        mesh.quaternion.set(q.x, q.y, q.z, q.w);
+        mesh.updateMatrixWorld();
+      }
     },
   };
 };
