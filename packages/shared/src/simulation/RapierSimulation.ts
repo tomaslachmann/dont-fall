@@ -1,6 +1,6 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { pointInBox, type Box } from "../math/box.js";
-import { scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
+import { addVec3, scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
 import { characterSnapshot, type SimState } from "../state/SimState.js";
 import type { FixedSimulation } from "../timing/FixedSimulation.js";
 import {
@@ -17,6 +17,7 @@ import {
   WALK_SPEED,
 } from "../tuning.js";
 import type { Checkpoint } from "./Checkpoint.js";
+import { DashController, JumpController } from "./movementVerbs.js";
 import type { SimInputs } from "./SimInputs.js";
 
 export interface SimulationConfig {
@@ -77,6 +78,11 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
   private respawning = false;
   private teleportedThisTick = false;
 
+  private readonly jump = new JumpController();
+  private readonly dash = new DashController();
+  private jumpHeldLastTick = false;
+  private dashHeldLastTick = false;
+
   constructor(config: SimulationConfig = {}) {
     this.spawn = config.spawn ?? DEFAULT_SPAWN;
     this.respawnPoint = { ...this.spawn };
@@ -125,12 +131,18 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
   tick(input: SimInputs): void {
     this.teleportedThisTick = false;
 
+    // Edge detection runs even during the lockout so a button held through the
+    // freeze isn't seen as a fresh press on the first live tick.
+    const jumpPressed = input.jumpHeld && !this.jumpHeldLastTick;
+    const dashPressed = input.dashHeld && !this.dashHeldLastTick;
+    this.jumpHeldLastTick = input.jumpHeld;
+    this.dashHeldLastTick = input.dashHeld;
+
     const locked = this.respawnLockTicks > 0;
     this.respawning = locked;
     if (locked) this.respawnLockTicks -= 1;
     // During the lockout the Character is pinned at its Checkpoint: movement input
-    // is dropped and no gravity accumulates. It is genuinely frozen, not just
-    // horizontally stuck.
+    // is dropped and no gravity accumulates. It is genuinely frozen.
     if (locked) {
       this.verticalVelocity = 0;
       this.grounded = true;
@@ -140,20 +152,27 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
       return;
     }
 
-    this.verticalVelocity += GRAVITY_Y * TICK_DT;
-    const horizontal = scaleVec3(input.moveDirection, WALK_SPEED * TICK_DT);
-    const desired = {
-      x: horizontal.x,
-      y: this.verticalVelocity * TICK_DT,
-      z: horizontal.z,
-    };
+    const takeoff = this.jump.beginTick(this.grounded, jumpPressed);
+    if (takeoff !== null) this.verticalVelocity = takeoff;
+    const gravity = GRAVITY_Y * this.jump.gravityScale(input.jumpHeld, this.verticalVelocity);
+    this.verticalVelocity += gravity * TICK_DT;
 
+    const walk = scaleVec3(input.moveDirection, WALK_SPEED);
+    const dashBurst = this.dash.beginTick(input.moveDirection, dashPressed);
+    const horizontal = addVec3(walk, dashBurst);
+
+    const desired = {
+      x: horizontal.x * TICK_DT,
+      y: this.verticalVelocity * TICK_DT,
+      z: horizontal.z * TICK_DT,
+    };
     this.controller.computeColliderMovement(this.collider, desired);
     const corrected = this.controller.computedMovement();
     this.grounded = this.controller.computedGrounded();
     if (this.grounded && this.verticalVelocity < 0) {
       // Keep a slight downward bias, not a hard 0 — see GROUND_STICK_SPEED.
       this.verticalVelocity = -GROUND_STICK_SPEED;
+      this.jump.land();
     }
 
     const current = this.body.translation();
@@ -188,6 +207,8 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
 
     this.fallCount += 1;
     this.verticalVelocity = 0;
+    this.jump.reset();
+    this.dash.reset();
     this.respawnLockTicks = RESPAWN_LOCKOUT_TICKS;
     this.teleportedThisTick = true;
     this.body.setTranslation({ ...this.respawnPoint }, true);
@@ -204,6 +225,7 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
         fallCount: this.fallCount,
         respawning: this.respawning,
         teleported: this.teleportedThisTick,
+        dashCooldownMs: this.dash.cooldownMs,
       }),
     };
   }

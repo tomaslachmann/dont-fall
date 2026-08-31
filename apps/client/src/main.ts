@@ -1,4 +1,5 @@
 import {
+  DASH_COOLDOWN_MS,
   DEFAULT_KILL_PLANE_Y,
   TICK_MS,
   TICK_RATE_HZ,
@@ -48,7 +49,11 @@ const main = async () => {
     const moveDirection = movementDirection(keyboard.movementKeys(), look.yaw);
     const result = advanceFixed({
       simulation,
-      input: { moveDirection },
+      input: {
+        moveDirection,
+        jumpHeld: keyboard.jumpHeld(),
+        dashHeld: keyboard.dashHeld(),
+      },
       accumulatorMs,
       elapsedMs,
       previousSnapshot,
@@ -66,12 +71,15 @@ const main = async () => {
 
     const c = result.snapshot.character;
     const cp = c.checkpointIndex === null ? "spawn" : `#${c.checkpointIndex + 1}`;
+    const dashFill = Math.max(0, Math.min(10, Math.round((1 - c.dashCooldownMs / DASH_COOLDOWN_MS) * 10)));
+    const dashBar = "#".repeat(dashFill) + "-".repeat(10 - dashFill);
     hud.textContent =
-      `DON'T FALL — M1 · platforms\n` +
+      `DON'T FALL — M1 · movement\n` +
       `sim ${TICK_RATE_HZ} Hz · render ${fps.toFixed(0)} fps · tick ${result.snapshot.tick}\n` +
       `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · grounded ${c.grounded}\n` +
       `checkpoint ${cp} · falls ${c.fallCount}${c.respawning ? " · RESPAWNING" : ""}\n` +
-      `WASD move · mouse look`;
+      `dash [${dashBar}]${c.dashCooldownMs === 0 ? " ready" : ""}\n` +
+      `WASD move · Space jump · Shift dash · mouse look`;
 
     requestAnimationFrame(frame);
   };

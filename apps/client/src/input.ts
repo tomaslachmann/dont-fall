@@ -13,13 +13,18 @@ const MOVEMENT_CODES: Record<string, keyof MovementKeys> = {
   ArrowRight: "right",
 };
 
-/** Tracks held WASD/arrow keys and reports them as framework-agnostic {@link MovementKeys}. */
+const JUMP_CODES = ["Space"];
+const DASH_CODES = ["ShiftLeft", "ShiftRight"];
+/** Codes whose default (page scroll) we swallow while playing. */
+const SWALLOW_DEFAULT = new Set([...Object.keys(MOVEMENT_CODES), ...JUMP_CODES]);
+
+/** Tracks held keys and reports them as framework-agnostic input for the sim. */
 export class KeyboardInput {
   private readonly held = new Set<string>();
 
   constructor(target: Window = window) {
     target.addEventListener("keydown", (e) => {
-      if (e.code in MOVEMENT_CODES) e.preventDefault(); // arrow keys would scroll the page
+      if (SWALLOW_DEFAULT.has(e.code)) e.preventDefault();
       this.held.add(e.code);
     });
     target.addEventListener("keyup", (e) => this.held.delete(e.code));
@@ -33,6 +38,14 @@ export class KeyboardInput {
       if (dir) keys[dir] = true;
     }
     return keys;
+  }
+
+  jumpHeld(): boolean {
+    return JUMP_CODES.some((code) => this.held.has(code));
+  }
+
+  dashHeld(): boolean {
+    return DASH_CODES.some((code) => this.held.has(code));
   }
 }
 

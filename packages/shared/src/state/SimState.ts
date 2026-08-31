@@ -23,6 +23,8 @@ export interface CharacterSnapshot {
    * snap rather than interpolate through this frame.
    */
   teleported: boolean;
+  /** Milliseconds left on the Dash cooldown; 0 means Dash is ready. */
+  dashCooldownMs: number;
 }
 
 export interface CharacterSnapshotFields {
@@ -32,6 +34,7 @@ export interface CharacterSnapshotFields {
   fallCount?: number;
   respawning?: boolean;
   teleported?: boolean;
+  dashCooldownMs?: number;
 }
 
 export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSnapshot => ({
@@ -42,6 +45,7 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   fallCount: fields.fallCount ?? 0,
   respawning: fields.respawning ?? false,
   teleported: fields.teleported ?? false,
+  dashCooldownMs: fields.dashCooldownMs ?? 0,
 });
 
 /**

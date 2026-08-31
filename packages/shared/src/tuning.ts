@@ -15,6 +15,9 @@ export const TICK_DT = 1 / TICK_RATE_HZ;
 /** Milliseconds of simulated time advanced by one tick. */
 export const TICK_MS = TICK_DT * 1000;
 
+/** Convert a duration in milliseconds to whole simulation ticks. */
+export const msToTicks = (ms: number): number => Math.round(ms / TICK_MS);
+
 /**
  * Upper bound on how many sim steps a single frame may run before the loop
  * gives up catching up (avoids the "spiral of death" after a long stall).
@@ -36,6 +39,43 @@ export const WALK_SPEED = 6;
  * controller's own depenetration keeps the capsule from actually sinking.
  */
 export const GROUND_STICK_SPEED = 2;
+
+// --- Jump ------------------------------------------------------------------
+
+/** Upward speed (units/s) applied at the moment of a jump. */
+export const JUMP_VELOCITY = 10;
+
+/** How long holding jump keeps the ascent boosted after take-off (ms). */
+export const JUMP_HOLD_MAX_MS = 260;
+
+/** Gravity multiplier while jump is held and the Character is still rising (<1 = floatier). */
+export const JUMP_HOLD_GRAVITY_SCALE = 0.5;
+
+/** Grace period after walking off an edge during which a jump still works (ms). */
+export const COYOTE_MS = 100;
+
+/** {@link JUMP_HOLD_MAX_MS} in whole ticks. */
+export const JUMP_HOLD_MAX_TICKS = msToTicks(JUMP_HOLD_MAX_MS);
+
+/** {@link COYOTE_MS} in whole ticks. */
+export const COYOTE_TICKS = msToTicks(COYOTE_MS);
+
+// --- Dash ------------------------------------------------------------------
+
+/** Horizontal speed (units/s) added during a dash burst. */
+export const DASH_SPEED = 20;
+
+/** How long the dash burst lasts (ms). */
+export const DASH_DURATION_MS = 170;
+
+/** Minimum time between dashes (ms). */
+export const DASH_COOLDOWN_MS = 1000;
+
+/** {@link DASH_DURATION_MS} in whole ticks. */
+export const DASH_DURATION_TICKS = msToTicks(DASH_DURATION_MS);
+
+/** {@link DASH_COOLDOWN_MS} in whole ticks. */
+export const DASH_COOLDOWN_TICKS = msToTicks(DASH_COOLDOWN_MS);
 
 /** Capsule radius (units). */
 export const CAPSULE_RADIUS = 0.35;
@@ -66,4 +106,4 @@ export const DEFAULT_KILL_PLANE_Y = -8;
 export const RESPAWN_LOCKOUT_MS = 2000;
 
 /** {@link RESPAWN_LOCKOUT_MS} rounded to whole ticks. */
-export const RESPAWN_LOCKOUT_TICKS = Math.round(RESPAWN_LOCKOUT_MS / TICK_MS);
+export const RESPAWN_LOCKOUT_TICKS = msToTicks(RESPAWN_LOCKOUT_MS);

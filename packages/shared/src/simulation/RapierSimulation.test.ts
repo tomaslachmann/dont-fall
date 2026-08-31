@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Box } from "../math/box.js";
 import {
   CAPSULE_BOTTOM_OFFSET,
+  DASH_COOLDOWN_MS,
   RESPAWN_LOCKOUT_TICKS,
   TICK_RATE_HZ,
   WALK_SPEED,
@@ -16,10 +17,22 @@ beforeAll(async () => {
 
 const GROUND: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 20, y: 0.5, z: 20 } };
 const RESTING_SPAWN = { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 };
-const NORTH: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 } };
 
-const tick = (sim: RapierSimulation, seconds: number, input: SimInputs = IDLE_INPUTS) => {
-  for (let i = 0; i < Math.round(seconds * TICK_RATE_HZ); i += 1) sim.tick(input);
+const input = (partial: Partial<SimInputs> = {}): SimInputs => ({ ...IDLE_INPUTS, ...partial });
+const NORTH = input({ moveDirection: { x: 0, y: 0, z: -1 } });
+
+const tick = (sim: RapierSimulation, seconds: number, i: SimInputs = IDLE_INPUTS) => {
+  for (let n = 0; n < Math.round(seconds * TICK_RATE_HZ); n += 1) sim.tick(i);
+};
+
+/** Jump/settle, then hold `held` for `count` ticks, tracking the peak Y. */
+const peakYWhile = (sim: RapierSimulation, count: number, held: SimInputs): number => {
+  let peak = -Infinity;
+  for (let n = 0; n < count; n += 1) {
+    sim.tick(held);
+    peak = Math.max(peak, sim.snapshot().character.position.y);
+  }
+  return peak;
 };
 
 const tickUntilFall = (sim: RapierSimulation): void => {
@@ -51,7 +64,7 @@ describe("RapierSimulation — walk", () => {
   it("stops the character at a wall instead of passing through it", () => {
     const wall: Box = { center: { x: 3, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 5 } };
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND, wall] });
-    tick(sim, 2, { moveDirection: { x: 1, y: 0, z: 0 } });
+    tick(sim, 2, input({ moveDirection: { x: 1, y: 0, z: 0 } }));
     expect(sim.snapshot().character.position.x).toBeLessThan(2.5);
   });
 
@@ -111,7 +124,7 @@ describe("RapierSimulation — Fall & Respawn", () => {
     tick(sim, 2.5, NORTH); // walk through `near` then `far`
     expect(sim.snapshot().character.checkpointIndex).toBe(1);
 
-    tick(sim, 2.5, { moveDirection: { x: 0, y: 0, z: 1 } }); // walk back south through `near`
+    tick(sim, 2.5, input({ moveDirection: { x: 0, y: 0, z: 1 } })); // walk back south through `near`
     expect(sim.snapshot().character.checkpointIndex).toBe(1); // still the far one
   });
 
@@ -163,7 +176,7 @@ describe("RapierSimulation — Fall & Respawn", () => {
     tick(sim, RESPAWN_LOCKOUT_TICKS / TICK_RATE_HZ + 0.2); // wait out the lockout
 
     const before = sim.snapshot().character.position;
-    tick(sim, 0.5, { moveDirection: { x: 1, y: 0, z: 0 } }); // walk toward the east edge
+    tick(sim, 0.5, input({ moveDirection: { x: 1, y: 0, z: 0 } })); // walk toward the east edge
     const travelled = Math.abs(sim.snapshot().character.position.x - before.x);
     expect(travelled).toBeGreaterThan(WALK_SPEED * 0.5 * 0.6); // at least 60% of full speed
   });
@@ -178,5 +191,193 @@ describe("RapierSimulation — Fall & Respawn", () => {
 
     sim.tick(NORTH);
     expect(sim.snapshot().character.teleported).toBe(false); // and only that tick
+  });
+});
+
+describe("RapierSimulation — jump", () => {
+  const settled = () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
+    tick(sim, 0.5);
+    return sim;
+  };
+
+  it("lifts the Character clear of the ground on a jump", () => {
+    const sim = settled();
+    const restY = sim.snapshot().character.position.y;
+    sim.tick(input({ jumpHeld: true })); // rising edge
+    const peak = peakYWhile(sim, 30, input({ jumpHeld: true }));
+    expect(peak - restY).toBeGreaterThan(1.5);
+  });
+
+  it("reaches a higher peak when jump is held longer", () => {
+    const restY = settled().snapshot().character.position.y;
+
+    const tapper = settled();
+    tapper.tick(input({ jumpHeld: true }));
+    let tapPeak = -Infinity;
+    for (let n = 0; n < 40; n += 1) {
+      tapper.tick(input({ jumpHeld: false })); // released straight away
+      tapPeak = Math.max(tapPeak, tapper.snapshot().character.position.y);
+    }
+
+    const holder = settled();
+    holder.tick(input({ jumpHeld: true }));
+    const holdPeak = peakYWhile(holder, 40, input({ jumpHeld: true }));
+
+    expect(holdPeak).toBeGreaterThan(tapPeak + 0.3);
+    expect(tapPeak - restY).toBeGreaterThan(0.4); // a tap still hops
+  });
+
+  it("does not jump a second time in mid-air (no double jump)", () => {
+    const singlePeak = (() => {
+      const sim = settled();
+      sim.tick(input({ jumpHeld: true }));
+      return peakYWhile(sim, 45, input({ jumpHeld: true }));
+    })();
+
+    const sim = settled();
+    sim.tick(input({ jumpHeld: true }));
+    for (let n = 0; n < 6; n += 1) sim.tick(input({ jumpHeld: true }));
+    sim.tick(input({ jumpHeld: false })); // release mid-air
+    sim.tick(input({ jumpHeld: true })); // press again mid-air
+    const doublePeak = peakYWhile(sim, 45, input({ jumpHeld: true }));
+
+    expect(doublePeak).toBeLessThanOrEqual(singlePeak + 0.15);
+  });
+
+  it("caps the jump height even if jump is held indefinitely", () => {
+    const restY = settled().snapshot().character.position.y;
+
+    const normalHold = settled();
+    normalHold.tick(input({ jumpHeld: true }));
+    const normalPeak = peakYWhile(normalHold, 45, input({ jumpHeld: true }));
+
+    const foreverHold = settled();
+    foreverHold.tick(input({ jumpHeld: true }));
+    const foreverPeak = peakYWhile(foreverHold, 200, input({ jumpHeld: true }));
+
+    // holding past the hold-time cap adds nothing — the extra float window is bounded
+    expect(foreverPeak - restY).toBeLessThan(normalPeak - restY + 0.2);
+  });
+
+  it("still lets the Character jump just after walking off an edge (coyote time)", () => {
+    const ledge: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 2 } };
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: RESTING_SPAWN.y, z: 1.5 },
+      statics: [ledge],
+      killPlaneY: -30,
+    });
+    tick(sim, 0.5);
+
+    // walk north until the moment ground contact is lost
+    for (let n = 0; n < 60 && sim.snapshot().character.grounded; n += 1) sim.tick(NORTH);
+    const yAtEdge = sim.snapshot().character.position.y;
+
+    // jump immediately — inside the coyote window
+    const rise = peakYWhile(sim, 12, input({ ...NORTH, jumpHeld: true }));
+    expect(rise).toBeGreaterThan(yAtEdge + 0.5);
+  });
+
+  it("does not jump once the coyote window has passed", () => {
+    const ledge: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 2 } };
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: RESTING_SPAWN.y, z: 1.5 },
+      statics: [ledge],
+      killPlaneY: -30,
+    });
+    tick(sim, 0.5);
+    for (let n = 0; n < 60 && sim.snapshot().character.grounded; n += 1) sim.tick(NORTH);
+
+    tick(sim, 0.4, NORTH); // fall for well over the coyote window
+    const yBefore = sim.snapshot().character.position.y;
+    peakYWhile(sim, 6, input({ ...NORTH, jumpHeld: true }));
+    expect(sim.snapshot().character.position.y).toBeLessThan(yBefore); // kept falling
+  });
+});
+
+describe("RapierSimulation — dash", () => {
+  const settled = () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
+    tick(sim, 0.5);
+    return sim;
+  };
+
+  it("covers much more ground during a dash than a plain walk", () => {
+    const walkRef = settled();
+    const walkStart = walkRef.snapshot().character.position.z;
+    tick(walkRef, 0.3, NORTH);
+    const walked = Math.abs(walkRef.snapshot().character.position.z - walkStart);
+
+    const dasher = settled();
+    const dashStart = dasher.snapshot().character.position.z;
+    dasher.tick(input({ ...NORTH, dashHeld: true })); // dash press
+    tick(dasher, 0.3, NORTH);
+    const dashed = Math.abs(dasher.snapshot().character.position.z - dashStart);
+
+    expect(dashed).toBeGreaterThan(walked * 1.5);
+  });
+
+  it("dashes along the movement direction, not straight ahead when idle-facing changes", () => {
+    const sim = settled();
+    tick(sim, 0.2, NORTH); // establish a facing
+    const before = sim.snapshot().character.position;
+    sim.tick(input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true })); // dash east
+    tick(sim, 0.2, input({ moveDirection: { x: 1, y: 0, z: 0 } }));
+    const after = sim.snapshot().character.position;
+    expect(after.x - before.x).toBeGreaterThan(1.5);
+    expect(Math.abs(after.z - before.z)).toBeLessThan(1);
+  });
+
+  it("dashes along the last movement direction when the stick is idle", () => {
+    const sim = settled();
+    tick(sim, 0.3, NORTH); // establish a northward facing
+    tick(sim, 0.2, IDLE_INPUTS); // let momentum settle, stick released
+    const before = sim.snapshot().character.position;
+
+    sim.tick(input({ dashHeld: true })); // dash with no move input
+    tick(sim, 0.2, IDLE_INPUTS);
+    const after = sim.snapshot().character.position;
+
+    expect(after.z - before.z).toBeLessThan(-2); // dashed north, the last-held direction
+    expect(Math.abs(after.x - before.x)).toBeLessThan(0.5);
+  });
+
+  it("enforces the cooldown — a second dash within a second does nothing extra", () => {
+    const sim = settled();
+    const start = sim.snapshot().character.position.z;
+    sim.tick(input({ ...NORTH, dashHeld: true }));
+    tick(sim, 0.3, NORTH);
+    const afterFirst = sim.snapshot().character.position.z;
+
+    sim.tick(input({ ...NORTH, dashHeld: false }));
+    sim.tick(input({ ...NORTH, dashHeld: true })); // try again ~0.35s later
+    tick(sim, 0.3, NORTH);
+    const afterSecondAttempt = sim.snapshot().character.position.z;
+
+    const firstBurst = Math.abs(afterFirst - start);
+    const secondSpan = Math.abs(afterSecondAttempt - afterFirst);
+    expect(secondSpan).toBeLessThan(firstBurst * 0.75); // second "dash" was just a walk
+  });
+
+  it("surfaces the cooldown and lets it recover", () => {
+    const sim = settled();
+    expect(sim.snapshot().character.dashCooldownMs).toBe(0);
+
+    sim.tick(input({ ...NORTH, dashHeld: true }));
+    expect(sim.snapshot().character.dashCooldownMs).toBeGreaterThan(DASH_COOLDOWN_MS * 0.8);
+
+    tick(sim, DASH_COOLDOWN_MS / 1000 + 0.1, NORTH);
+    expect(sim.snapshot().character.dashCooldownMs).toBe(0);
+  });
+
+  it("works in the air", () => {
+    const sim = settled();
+    sim.tick(input({ jumpHeld: true }));
+    tick(sim, 0.15, input({ jumpHeld: true })); // rising
+    const before = sim.snapshot().character.position.z;
+    sim.tick(input({ moveDirection: { x: 0, y: 0, z: -1 }, dashHeld: true, jumpHeld: true }));
+    tick(sim, 0.15, input({ jumpHeld: true, moveDirection: { x: 0, y: 0, z: -1 } }));
+    const after = sim.snapshot().character.position.z;
+    expect(Math.abs(after - before)).toBeGreaterThan(WALK_SPEED * 0.3 * 1.2);
   });
 });

@@ -8,4 +8,5 @@ export * from "./timing/FixedSimulation.js";
 export * from "./timing/advanceFixed.js";
 export * from "./simulation/SimInputs.js";
 export * from "./simulation/Checkpoint.js";
+export * from "./simulation/movementVerbs.js";
 export * from "./simulation/RapierSimulation.js";
