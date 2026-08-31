@@ -11,10 +11,22 @@ composes the controller.
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `CharacterController` owns capsule + `CharacterStateMachine` + `JumpController` + `DashController` + `Ragdoll` + the handoff transitions
-- [ ] `RapierSimulation` composes it; world / statics / checkpoints / kill-plane stay on the sim
-- [ ] All existing ticket 01–05 tests pass unchanged (behaviour identical)
-- [ ] The implicit ordering in `tick()` (prevState before machine.tick, settled before world.step, detectFall after position writes) is either enforced or documented at the seam
-- [ ] Not urgent — do it before ticket 06 piles more onto the class, or fold into ticket 07
+- [x] `CharacterController` owns capsule + `CharacterStateMachine` + `JumpController` + `DashController` + `Ragdoll` + the handoff transitions
+- [x] `RapierSimulation` composes it; world / statics / checkpoints / kill-plane stay on the sim
+- [x] All existing ticket 01–05 tests pass unchanged (behaviour identical)
+- [x] The implicit ordering in `tick()` (prevState before machine.tick, settled before world.step, detectFall after position writes) is either enforced or documented at the seam
+- [x] Not urgent — do it before ticket 06 piles more onto the class, or fold into ticket 07
+
+**Seam:** Fall detection can't move into the controller — it needs the sim-owned
+kill-plane — so it stays a handshake: the sim calls `controller.fall(respawnPoint,
+fallCount)` when the kill-plane check trips, and reads `controller.hasPendingRespawn`
+to avoid re-triggering while the respawn is queued. `controller.position` (the
+kinematic body's translation, kept current even while ragdolling for camera
+continuity) is what both Checkpoint and Fall detection read. The tick-ordering
+invariants inside `CharacterController.tick()` are unchanged, comment and all.
+
+Verified with the full `packages/shared` suite (74/74) plus `apps/client` and
+`apps/server` (91/91 total), and `tsc --noEmit` clean across all three packages.
+`/code-review` at medium found no findings — a faithful mechanical extraction.
