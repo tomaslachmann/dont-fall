@@ -38,7 +38,8 @@ export interface CharacterSnapshot {
  */
 export interface SimState {
   tick: number;
-  character: CharacterSnapshot;
+  /** Every Character in the Match, keyed by an ID assigned when it was added (ticket 01). */
+  characters: Record<string, CharacterSnapshot>;
   /**
    * Per-Prop pose, in the same order every tick (ticket 06). A Spinner's pose
    * is not carried here — it is a pure function of `tick`, so the renderer

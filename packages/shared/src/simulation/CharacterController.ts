@@ -343,4 +343,11 @@ export class CharacterController {
       bones,
     };
   }
+
+  /** Remove this Character's capsule body, character controller and ragdoll bones from the world (ticket 01: `removeCharacter`). */
+  dispose(): void {
+    this.ragdoll.dispose();
+    this.world.removeCharacterController(this.rapierController);
+    this.world.removeRigidBody(this.body);
+  }
 }

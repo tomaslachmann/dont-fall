@@ -1,5 +1,6 @@
 import {
   DASH_COOLDOWN_MS,
+  DEFAULT_CHARACTER_ID,
   DEFAULT_KILL_PLANE_Y,
   TICK_MS,
   TICK_RATE_HZ,
@@ -79,20 +80,19 @@ const main = async () => {
 
     const alpha = accumulatorMs / TICK_MS;
     const render = interpolateState(result.previousSnapshot, result.snapshot, alpha);
-    stage.applyRenderState(render);
+    const c = result.snapshot.characters[DEFAULT_CHARACTER_ID]!;
+    stage.applyRenderState({ character: render.characters[DEFAULT_CHARACTER_ID]!, props: render.props });
     stage.updateCharacterAnimation(
       Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000,
       moveDirection,
-      result.snapshot.character.grounded,
-      result.snapshot.character.dashing,
+      c.grounded,
+      c.dashing,
     );
     stage.updateSpinners(result.previousSnapshot.tick + alpha);
-    stage.updateCamera(render.character.position, look.yaw, look.pitch);
+    stage.updateCamera(render.characters[DEFAULT_CHARACTER_ID]!.position, look.yaw, look.pitch);
     stage.render();
 
     lockPrompt.hidden = look.locked;
-
-    const c = result.snapshot.character;
     const cp = c.checkpointIndex === null ? "spawn" : `#${c.checkpointIndex + 1}`;
     const dashFill = Math.max(0, Math.min(10, Math.round((1 - c.dashCooldownMs / DASH_COOLDOWN_MS) * 10)));
     const dashBar = "#".repeat(dashFill) + "-".repeat(10 - dashFill);

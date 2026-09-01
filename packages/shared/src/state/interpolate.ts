@@ -14,14 +14,17 @@ interface Posed {
  * What the renderer draws: sim state visually interpolated toward the next tick.
  * Never fed back into the simulation — presentation only (ADR 0004).
  */
+export interface RenderCharacter {
+  position: Vec3;
+  /** Empty unless the Character is ragdolling / getting up. */
+  bones: BoneSnapshot[];
+  /** Not interpolated — a discrete state, taken straight from `next`. */
+  motionState: CharacterMotionState;
+}
+
 export interface RenderState {
-  character: {
-    position: Vec3;
-    /** Empty unless the Character is ragdolling / getting up. */
-    bones: BoneSnapshot[];
-    /** Not interpolated — a discrete state, taken straight from `next`. */
-    motionState: CharacterMotionState;
-  };
+  /** Every Character in the Match, keyed the same way as `SimState.characters`. */
+  characters: Record<string, RenderCharacter>;
   /** Per-Prop pose, in `SimState.props` order. */
   props: PropSnapshot[];
 }
@@ -36,29 +39,34 @@ const interpolatePosed = <T extends Posed>(prev: T[], next: T[], t: number): T[]
 
 /**
  * Blend between the two most recent sim states by `alpha` (the fraction of a
- * tick the renderer is past `prev`). `alpha` is clamped to [0, 1].
+ * tick the renderer is past `prev`), independently per Character.
  *
  * A discontinuity cannot be blended through, so the `next` pose is used directly:
  * a Respawn teleport, or a frame where the drawn body swaps (the bone count goes
  * 0 ↔ N, i.e. capsule ↔ ragdoll). `Controlled ↔ Stagger` and `Ragdoll ↔
- * GettingUp` both keep the same body and interpolate normally.
+ * GettingUp` both keep the same body and interpolate normally. A Character
+ * present in `next` but not yet in `prev` (just added) renders at its `next`
+ * pose with no blend, the same as any other discontinuity.
  */
 export const interpolateState = (
   prev: SimState,
   next: SimState,
   alpha: number,
 ): RenderState => {
-  const bodySwapped = prev.character.bones.length !== next.character.bones.length;
-  const t = next.character.teleported || bodySwapped ? 1 : clamp01(alpha);
+  const characters: Record<string, RenderCharacter> = {};
+  for (const [id, n] of Object.entries(next.characters)) {
+    const p = prev.characters[id] ?? n;
+    const bodySwapped = p.bones.length !== n.bones.length;
+    const t = n.teleported || bodySwapped ? 1 : clamp01(alpha);
 
-  return {
-    character: {
-      position: lerpVec3(prev.character.position, next.character.position, t),
+    characters[id] = {
+      position: lerpVec3(p.position, n.position, t),
       bones: t === 1
-        ? next.character.bones.map((b) => ({ position: { ...b.position }, rotation: { ...b.rotation } }))
-        : interpolatePosed(prev.character.bones, next.character.bones, t),
-      motionState: next.character.motionState,
-    },
-    props: interpolatePosed(prev.props, next.props, clamp01(alpha)),
-  };
+        ? n.bones.map((b) => ({ position: { ...b.position }, rotation: { ...b.rotation } }))
+        : interpolatePosed(p.bones, n.bones, t),
+      motionState: n.motionState,
+    };
+  }
+
+  return { characters, props: interpolatePosed(prev.props, next.props, clamp01(alpha)) };
 };

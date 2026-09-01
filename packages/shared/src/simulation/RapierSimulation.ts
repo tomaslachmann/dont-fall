@@ -1,15 +1,30 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { pointInBox, type Box } from "../math/box.js";
 import { vec3, type Vec3 } from "../math/vec3.js";
-import { characterSnapshot, type SimState } from "../state/SimState.js";
+import { characterSnapshot, type CharacterSnapshot, type SimState } from "../state/SimState.js";
 import type { FixedSimulation } from "../timing/FixedSimulation.js";
 import { DEFAULT_KILL_PLANE_Y, GRAVITY_Y } from "../tuning.js";
-import { CharacterController } from "./CharacterController.js";
+import { CharacterController, type CollisionListener } from "./CharacterController.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
 import { Prop, type PropConfig } from "./Prop.js";
 import type { SimInputs } from "./SimInputs.js";
 import { Spinner, type SpinnerConfig } from "./Spinner.js";
+
+/**
+ * ID of the Character `SimulationConfig.spawn` auto-creates — the only
+ * Character single-player (and every M1 test) ever has. From ticket 02
+ * onward each connected client gets its own server-assigned session ID via
+ * {@link RapierSimulation.addCharacter} instead.
+ */
+export const DEFAULT_CHARACTER_ID = "local";
+
+/** Per-Character progress that belongs to the world, not the Character itself: where it Checkpointed and how many times it has Fallen. */
+interface CharacterProgress {
+  respawnPoint: Vec3;
+  checkpointIndex: number | null;
+  fallCount: number;
+}
 
 export interface SimulationConfig {
   /** Where the Character starts (capsule centre). Also its first respawn point. */
@@ -60,17 +75,21 @@ export const initPhysics = (): Promise<void> => {
 };
 
 /**
- * The authoritative simulation for M1: a Rapier world composing a
- * {@link CharacterController} (the capsule, jump/dash, state machine and
- * ragdoll — ticket 05b), plus Fall detection and Checkpoint respawns.
- * Owns the Rapier `World` and the entity ↔ body mapping; `SimState` stays a
- * plain POJO (ADR 0009).
+ * The authoritative simulation: a Rapier world composing a collection of
+ * {@link CharacterController}s (each one's capsule, jump/dash, state machine
+ * and ragdoll — ticket 05b), keyed by ID (ticket 01), plus Fall detection and
+ * Checkpoint respawns tracked per Character. Owns the Rapier `World` and the
+ * entity ↔ body mapping; `SimState` stays a plain POJO (ADR 0009).
+ *
+ * `tick`/`applyImpact` are scoped to {@link DEFAULT_CHARACTER_ID} until
+ * ticket 04 needs to address other Characters individually.
  *
  * `initPhysics()` must have resolved before constructing this.
  */
 export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
   private readonly world: RAPIER.World;
-  private readonly character: CharacterController;
+  private readonly characters = new Map<string, CharacterController>();
+  private readonly progress = new Map<string, CharacterProgress>();
   private readonly statics: Box[];
   private readonly checkpoints: Checkpoint[];
   private readonly killPlaneY: number;
@@ -80,13 +99,8 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
   private readonly propByHandle = new Map<number, Prop>();
 
   private tickCount = 0;
-  private respawnPoint: Vec3;
-  private checkpointIndex: number | null = null;
-  private fallCount = 0;
 
   constructor(config: SimulationConfig = {}) {
-    const spawn = config.spawn ?? DEFAULT_SPAWN;
-    this.respawnPoint = { ...spawn };
     this.statics = config.statics ?? [DEFAULT_GROUND];
     this.checkpoints = config.checkpoints ?? [];
     this.killPlaneY = config.killPlaneY ?? DEFAULT_KILL_PLANE_Y;
@@ -109,30 +123,52 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
     this.props = (config.props ?? []).map((c) => new Prop(this.world, c));
     for (const prop of this.props) this.propByHandle.set(prop.collider.handle, prop);
 
-    this.character = new CharacterController(this.world, spawn, this.resolveCollision);
+    this.addCharacter(DEFAULT_CHARACTER_ID, config.spawn ?? DEFAULT_SPAWN);
   }
 
   /**
-   * Look `colliderHandle` up against the Spinners/Props this sim owns and
-   * resolve the contact (ticket 06): a Spinner delivers Knockback through the
-   * Character's Impact pipeline; a Prop gets shoved by the Character's own
-   * velocity. Anything else (statics) is not registered here and is ignored.
+   * Add a Character to the Match (ticket 01), spawning it at `point` and
+   * making it its own first respawn point. Wires up the same Spinner/Prop
+   * collision resolution every Character gets, scoped to this one.
    */
-  private readonly resolveCollision = (colliderHandle: number, point: Vec3, velocity: Vec3): void => {
-    const spinner = this.spinnerByHandle.get(colliderHandle);
-    if (spinner) {
-      this.character.applyImpact(spinner.knockbackAt(point));
-      return;
-    }
-    this.propByHandle.get(colliderHandle)?.shove(velocity);
-  };
+  addCharacter(id: string, point: Vec3): void {
+    // Guard against orphaning the previous Character's Rapier bodies if `id`
+    // is reused (e.g. a reconnect) before it was explicitly removed.
+    this.removeCharacter(id);
+
+    const onCollision: CollisionListener = (colliderHandle, hitPoint, velocity) => {
+      const spinner = this.spinnerByHandle.get(colliderHandle);
+      if (spinner) {
+        this.characters.get(id)?.applyImpact(spinner.knockbackAt(hitPoint));
+        return;
+      }
+      this.propByHandle.get(colliderHandle)?.shove(velocity);
+    };
+
+    this.characters.set(id, new CharacterController(this.world, point, onCollision));
+    this.progress.set(id, { respawnPoint: { ...point }, checkpointIndex: null, fallCount: 0 });
+  }
+
+  /** Remove a Character from the Match and free its Rapier bodies (ticket 01). */
+  removeCharacter(id: string): void {
+    this.characters.get(id)?.dispose();
+    this.characters.delete(id);
+    this.progress.delete(id);
+  }
+
+  private character(id: string): CharacterController {
+    const character = this.characters.get(id);
+    if (!character) throw new Error(`no Character with id "${id}"`);
+    return character;
+  }
 
   /**
-   * Deliver an Impact to the Character (a shove from the Spinner, a wall dash,
-   * another player…). See {@link CharacterController.applyImpact}.
+   * Deliver an Impact to the default Character (a shove from the Spinner, a
+   * wall dash…). See {@link CharacterController.applyImpact}. Scoped to the
+   * single-player default Character until ticket 04 needs to target others.
    */
   applyImpact(impulse: Vec3): void {
-    this.character.applyImpact(impulse);
+    this.character(DEFAULT_CHARACTER_ID).applyImpact(impulse);
   }
 
   tick(input: SimInputs): void {
@@ -142,39 +178,49 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
     for (const spinner of this.spinners) spinner.tick(this.tickCount + 1);
 
     // The Character must finish moving — including any queued respawn — before
-    // Checkpoint and Fall detection read its position for this tick.
-    this.character.tick(input);
+    // Checkpoint and Fall detection read its position for this tick. Only the
+    // default Character is driven until ticket 04 ticks every Character.
+    this.character(DEFAULT_CHARACTER_ID).tick(input);
     this.tickCount += 1;
-    this.updateCheckpoint();
-    this.detectFall();
+    this.updateCheckpoint(DEFAULT_CHARACTER_ID);
+    this.detectFall(DEFAULT_CHARACTER_ID);
   }
 
-  private updateCheckpoint(): void {
-    const reached = this.checkpointIndex ?? -1;
-    const p = this.character.position;
+  private updateCheckpoint(id: string): void {
+    const character = this.character(id);
+    const progress = this.progress.get(id)!;
+    const reached = progress.checkpointIndex ?? -1;
+    const p = character.position;
     for (let i = reached + 1; i < this.checkpoints.length; i += 1) {
       if (pointInBox(p, this.checkpoints[i]!.volume)) {
-        this.checkpointIndex = i;
-        this.respawnPoint = { ...this.checkpoints[i]!.respawn };
+        progress.checkpointIndex = i;
+        progress.respawnPoint = { ...this.checkpoints[i]!.respawn };
       }
     }
   }
 
-  private detectFall(): void {
-    if (this.character.hasPendingRespawn || this.character.position.y >= this.killPlaneY) return;
+  private detectFall(id: string): void {
+    const character = this.character(id);
+    const progress = this.progress.get(id)!;
+    if (character.hasPendingRespawn || character.position.y >= this.killPlaneY) return;
 
-    this.fallCount += 1;
-    this.character.fall(this.respawnPoint, this.fallCount);
+    progress.fallCount += 1;
+    character.fall(progress.respawnPoint, progress.fallCount);
   }
 
   snapshot(): SimState {
+    const characters: Record<string, CharacterSnapshot> = {};
+    for (const [id, character] of this.characters) {
+      const progress = this.progress.get(id)!;
+      characters[id] = characterSnapshot({
+        ...character.snapshot(),
+        checkpointIndex: progress.checkpointIndex,
+        fallCount: progress.fallCount,
+      });
+    }
     return {
       tick: this.tickCount,
-      character: characterSnapshot({
-        ...this.character.snapshot(),
-        checkpointIndex: this.checkpointIndex,
-        fallCount: this.fallCount,
-      }),
+      characters,
       props: this.props.map((p) => p.snapshot()),
     };
   }

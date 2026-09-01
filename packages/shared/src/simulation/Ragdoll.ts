@@ -32,11 +32,13 @@ interface Bone {
  * it. `SimState` never holds any of these handles (ADR 0009).
  */
 export class Ragdoll {
+  private readonly world: RAPIER.World;
   private readonly bones: Bone[] = [];
   private readonly byName = new Map<string, RAPIER.RigidBody>();
   private active = false;
 
   constructor(world: RAPIER.World) {
+    this.world = world;
     for (const spec of RAGDOLL_BONES) {
       const body = world.createRigidBody(
         RAPIER.RigidBodyDesc.fixed()
@@ -155,5 +157,10 @@ export class Ragdoll {
       const r = body.rotation();
       return { position: vec3(t.x, t.y, t.z), rotation: { x: r.x, y: r.y, z: r.z, w: r.w } };
     });
+  }
+
+  /** Remove every bone body (and its joints/collider) from the world (ticket 01: `removeCharacter`). */
+  dispose(): void {
+    for (const { body } of this.bones) this.world.removeRigidBody(body);
   }
 }

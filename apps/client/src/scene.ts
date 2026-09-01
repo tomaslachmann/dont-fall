@@ -10,7 +10,8 @@ import {
   type CharacterMotionState,
   type Checkpoint,
   type PropConfig,
-  type RenderState,
+  type PropSnapshot,
+  type RenderCharacter,
   type SpinnerConfig,
   type Vec3,
 } from "@dont-fall/shared";
@@ -64,11 +65,22 @@ export interface StageConfig {
   characterModel: CharacterModel;
 }
 
+/**
+ * What `applyRenderState` needs for the one Character this Stage renders —
+ * the caller picks it out of `RenderState.characters` (a collection since
+ * ticket 01; the Stage itself stays single-Character until ticket 04 adds
+ * rendering for other players).
+ */
+export interface StageRenderState {
+  character: RenderCharacter;
+  props: PropSnapshot[];
+}
+
 export interface Stage {
   domElement: HTMLCanvasElement;
   render: () => void;
   /** Place the Character mesh from an interpolated snapshot. Presentation only (ADR 0009). */
-  applyRenderState: (state: RenderState) => void;
+  applyRenderState: (state: StageRenderState) => void;
   /** Position the camera on a collision-resolved spring arm around `target`. */
   updateCamera: (target: Vec3, yaw: number, pitch: number) => void;
   /**
