@@ -131,3 +131,60 @@ describe("startServer", () => {
     second.close();
   });
 });
+
+describe("startServer — disconnects (ticket 07)", () => {
+  const drainUntil = async (
+    socket: WebSocket,
+    predicate: (message: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+    tries = 40,
+  ): Promise<boolean> => {
+    for (let i = 0; i < tries; i += 1) {
+      const message = await nextMessage(socket);
+      if (message.type === "snapshot" && predicate(message)) return true;
+    }
+    return false;
+  };
+
+  it("survives an abrupt drop (no close frame) and keeps serving the remaining player", async () => {
+    server = await startServer({ port: 0 });
+    const survivor = connect(server.port);
+    const survivorId = (await nextMessage(survivor) as { id: string }).id;
+    const leaver = connect(server.port);
+    const leaverId = (await nextMessage(leaver) as { id: string }).id;
+
+    await drainUntil(survivor, (m) => leaverId in m.state.characters); // both present
+
+    leaver.terminate(); // hard TCP drop, no WebSocket close handshake
+
+    const gone = await drainUntil(
+      survivor,
+      (m) => !(leaverId in m.state.characters) && survivorId in m.state.characters,
+    );
+    expect(gone).toBe(true);
+
+    // The survivor's own input still works — the Match kept running.
+    for (let i = 0; i < 20; i += 1) sendInput(survivor, i + 1, NORTH);
+    const moved = await drainUntil(survivor, (m) => m.state.characters[survivorId]!.lastInputTick > 0);
+    expect(moved).toBe(true);
+    survivor.close();
+  });
+
+  it("lets a new client connect and play normally after another has disconnected", async () => {
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    const aId = (await nextMessage(a) as { id: string }).id;
+    a.close();
+    await new Promise((resolve) => a.once("close", resolve));
+
+    const b = connect(server.port);
+    const bWelcome = await nextMessage(b);
+    if (bWelcome.type !== "welcome") throw new Error("unreachable");
+    expect(bWelcome.id).not.toBe(aId);
+
+    const startZ = bWelcome.spawn.z;
+    for (let i = 0; i < 30; i += 1) sendInput(b, i + 1, NORTH);
+    const walked = await drainUntil(b, (m) => m.state.characters[bWelcome.id]!.position.z < startZ - 1);
+    expect(walked).toBe(true);
+    b.close();
+  });
+});

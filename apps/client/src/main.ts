@@ -64,6 +64,10 @@ const main = async () => {
   const look = new FreeLookCamera(stage.domElement);
 
   let myId: string | null = null;
+  // Set once the socket drops (tab still open, network/server gone). The game
+  // loop freezes on the last frame and the HUD says so — there is no reconnect
+  // in M2 (ADR 0011), a reload rejoins as a fresh player.
+  let connectionLost = false;
 
   // The local Character is predicted by re-running the exact same shared
   // simulation step the server uses (ticket 03) — its own RapierSimulation,
@@ -199,7 +203,10 @@ const main = async () => {
     }
   });
   socket.addEventListener("error", (event) => console.error("DON'T FALL: connection error", event));
-  socket.addEventListener("close", () => console.warn("DON'T FALL: disconnected from server"));
+  socket.addEventListener("close", () => {
+    console.warn("DON'T FALL: disconnected from server");
+    connectionLost = true;
+  });
 
   const sendInput = (tick: number, input: SimInputs): void => {
     if (socket.readyState !== WebSocket.OPEN) return;
@@ -213,6 +220,14 @@ const main = async () => {
     const elapsedMs = now - lastFrame;
     lastFrame = now;
     fps += (1000 / Math.max(elapsedMs, 1) - fps) * 0.1;
+
+    if (connectionLost) {
+      // Freeze on the last frame — no reconnect in M2 (ADR 0011). Render once
+      // more so the HUD updates, then let the loop stop.
+      hud.textContent = "DON'T FALL — connection lost\nreload the page to rejoin";
+      stage.render();
+      return;
+    }
 
     if (myId && localSim) {
       const sampledInput: SimInputs = {

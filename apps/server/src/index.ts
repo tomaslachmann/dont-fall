@@ -9,6 +9,7 @@ import {
   PLAYGROUND_STATICS,
   RapierSimulation,
   TICK_MS,
+  TICK_RATE_HZ,
   initPhysics,
   playgroundSpawn,
   type ClientMessage,
@@ -35,8 +36,23 @@ export interface StartServerConfig {
   port?: number;
 }
 
+/**
+ * Send to one client, swallowing any failure. A socket can drop between a
+ * `readyState` check and the write, and `ws` then throws synchronously or emits
+ * `'error'` — neither may escape the tick loop or the connection handler and
+ * take the Match down for everyone else (ADR 0011). The `'close'` handler does
+ * the cleanup regardless.
+ */
+const trySend = (socket: WebSocket, payload: string): void => {
+  try {
+    socket.send(payload);
+  } catch {
+    // dropped mid-write — 'close' will clean up
+  }
+};
+
 const send = (socket: WebSocket, message: ServerMessage): void => {
-  socket.send(JSON.stringify(message));
+  trySend(socket, JSON.stringify(message));
 };
 
 export const startServer = async (config: StartServerConfig = {}): Promise<MatchServer> => {
@@ -120,25 +136,38 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     });
   });
 
+  let consecutiveTickFailures = 0;
   const interval = setInterval(() => {
-    const tickInputs: Record<string, SimInputs> = {};
-    for (const id of sockets.keys()) {
-      const next = inputQueues.get(id)?.shift();
-      if (next) {
-        lastApplied.set(id, next.input);
-        lastInputTicks.set(id, next.tick);
+    // The Match loop must survive a bad tick (a physics edge case, a NaN) —
+    // one hiccup crashing the process would drop every connected player. Log
+    // and carry on; the next tick usually recovers (ADR 0011).
+    try {
+      const tickInputs: Record<string, SimInputs> = {};
+      for (const id of sockets.keys()) {
+        const next = inputQueues.get(id)?.shift();
+        if (next) {
+          lastApplied.set(id, next.input);
+          lastInputTicks.set(id, next.tick);
+        }
+        tickInputs[id] = lastApplied.get(id) ?? IDLE_INPUTS;
       }
-      tickInputs[id] = lastApplied.get(id) ?? IDLE_INPUTS;
-    }
 
-    simulation.tick(tickInputs);
-    const state = simulation.snapshot();
-    for (const [id, character] of Object.entries(state.characters)) {
-      character.lastInputTick = lastInputTicks.get(id) ?? 0;
-    }
-    const payload = JSON.stringify({ type: "snapshot", state } satisfies ServerMessage);
-    for (const socket of sockets.values()) {
-      if (socket.readyState === socket.OPEN) socket.send(payload);
+      simulation.tick(tickInputs);
+      const state = simulation.snapshot();
+      for (const [id, character] of Object.entries(state.characters)) {
+        character.lastInputTick = lastInputTicks.get(id) ?? 0;
+      }
+      const payload = JSON.stringify({ type: "snapshot", state } satisfies ServerMessage);
+      for (const socket of sockets.values()) {
+        if (socket.readyState === socket.OPEN) trySend(socket, payload);
+      }
+      consecutiveTickFailures = 0;
+    } catch (err) {
+      // Rate-limit the log: a persistently broken sim shouldn't spam 30×/s.
+      if (consecutiveTickFailures % TICK_RATE_HZ === 0) {
+        console.error(`DON'T FALL: tick failed (${consecutiveTickFailures + 1}), continuing`, err);
+      }
+      consecutiveTickFailures += 1;
     }
   }, TICK_MS);
 
