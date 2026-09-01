@@ -1,6 +1,12 @@
 import type { Vec3 } from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
-import { WOBBLE_MAX_TILT, initialWobbleState, stepWobble, type WobbleState } from "./wobble.js";
+import {
+  WOBBLE_MAX_TILT,
+  WOBBLE_TELEPORT_DISTANCE,
+  initialWobbleState,
+  stepWobble,
+  type WobbleState,
+} from "./wobble.js";
 
 const FORWARD: Vec3 = { x: 0, y: 0, z: 1 };
 const RIGHT: Vec3 = { x: 1, y: 0, z: 0 };
@@ -59,9 +65,47 @@ describe("stepWobble", () => {
   });
 
   it("clamps extreme acceleration to WOBBLE_MAX_TILT", () => {
+    // A jump just under the teleport threshold — a real (if violent) frame,
+    // not a snap, so it goes through the spring and must be clamped.
     let state = initialWobbleState;
-    state = stepWobble(state, { x: 0, y: 0, z: 1000 }, { x: 0, y: 0, z: 0 }, FORWARD, RIGHT, DT);
+    state = stepWobble(
+      state,
+      { x: 0, y: 0, z: WOBBLE_TELEPORT_DISTANCE - 0.01 },
+      { x: 0, y: 0, z: 0 },
+      FORWARD,
+      RIGHT,
+      DT,
+    );
     expect(Math.abs(state.pitch)).toBeLessThanOrEqual(WOBBLE_MAX_TILT);
+    expect(Math.abs(state.pitch)).toBeGreaterThan(0); // it did lean, just clamped
+  });
+
+  it("skips a frame where the Character teleported (a reconciliation snap), instead of ringing the lean", () => {
+    // Build up a normal walking lean first.
+    let state = initialWobbleState;
+    let z = 0;
+    for (let i = 0; i < 20; i += 1) {
+      const next = { x: 0, y: 0, z: z + 0.1 };
+      state = stepWobble(state, next, { x: 0, y: 0, z }, FORWARD, RIGHT, DT);
+      z = next.z;
+    }
+    const beforeJump = state;
+
+    // One frame: the position snaps several units — a reconciliation correction.
+    const jumped = { x: 0, y: 0, z: z + WOBBLE_TELEPORT_DISTANCE + 3 };
+    state = stepWobble(state, jumped, { x: 0, y: 0, z }, FORWARD, RIGHT, DT);
+    expect(state).toEqual(beforeJump); // the spike frame is dropped entirely
+
+    // And it recovers to near-upright over the following steady-speed frames,
+    // never pinned at the clamp.
+    let zz = jumped.z;
+    for (let i = 0; i < 60; i += 1) {
+      const next = { x: 0, y: 0, z: zz + 0.1 };
+      state = stepWobble(state, next, { x: 0, y: 0, z: zz }, FORWARD, RIGHT, DT);
+      zz = next.z;
+      expect(Math.abs(state.pitch)).toBeLessThan(WOBBLE_MAX_TILT);
+    }
+    expect(Math.abs(state.pitch)).toBeLessThan(0.02);
   });
 
   it("is a no-op when deltaSeconds is zero or negative", () => {

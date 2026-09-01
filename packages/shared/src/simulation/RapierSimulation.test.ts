@@ -121,6 +121,16 @@ describe("RapierSimulation — Fall & Respawn", () => {
     expect(character.checkpointIndex).toBeNull(); // no checkpoint reached
   });
 
+  it("advances bumpSeq on a Fall — a client at a ledge edge can mispredict it (ticket 08)", () => {
+    const sim = new RapierSimulation(config);
+    tick(sim, 0.5);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bumpSeq).toBe(0);
+
+    tickUntilFall(sim);
+
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bumpSeq).toBe(1);
+  });
+
   it("does not move the respawn point backward when walking back through an earlier Checkpoint", () => {
     const near: Checkpoint = {
       respawn: { x: -8, y: 1.5, z: 4 },
@@ -487,6 +497,19 @@ describe("RapierSimulation — Impact & ragdoll", () => {
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bones.length).toBe(11);
   });
 
+  it("reports the ragdoll's own velocity, not zero, while Ragdoll (ticket 08 follow-up)", () => {
+    // The capsule's velocity is zeroed the instant Ragdoll begins, but a
+    // reconciling client needs a real launch to hand its own local ragdoll on
+    // a forced Bump snap — reporting zero here would always flop it limply
+    // regardless of how hard the hit was.
+    const sim = standing();
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: IMPACT_RAGDOLL_MIN + 5, y: 3, z: 0 });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    const snap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(snap.motionState).toBe("Ragdoll");
+    expect(Math.hypot(snap.velocity.x, snap.velocity.y, snap.velocity.z)).toBeGreaterThan(0.5);
+  });
+
   it("the ragdoll does not explode — bones stay near the Character and finite", () => {
     const sim = standing();
     const origin = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
@@ -623,6 +646,24 @@ describe("RapierSimulation — dynamic props", () => {
     tick(sim, 1);
     const p = sim.snapshot().props[0]!.position;
     expect(Math.hypot(p.x - propConfig.center.x, p.z - propConfig.center.z)).toBeLessThan(0.1);
+  });
+
+  it("a ragdoll flung into a Prop crumples against it instead of passing through (ticket 08)", () => {
+    const box = {
+      shape: { kind: "box" as const, halfExtents: { x: 0.6, y: 0.6, z: 0.6 } },
+      center: { x: 0, y: 0.6, z: -2 }, // ~2 units north of spawn
+    };
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [box] });
+    tick(sim, 0.5);
+    // Dash north into the box — a dash-crash ragdolls the Character.
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: { x: 0, y: 0, z: -1 }, dashHeld: true }) });
+    tick(sim, 2, input({ moveDirection: { x: 0, y: 0, z: -1 } }));
+
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).not.toBe("Controlled"); // it ragdolled
+    // Without ragdoll-vs-Prop collision the ragdoll rockets clean past the box
+    // (several units downrange); with it, it piles up around the box.
+    const pelvisZ = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z;
+    expect(pelvisZ).toBeGreaterThan(-4);
   });
 });
 
@@ -767,6 +808,16 @@ describe("RapierSimulation — dash into a wall", () => {
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
   });
 
+  it("a dash-wall Ragdoll does not advance bumpSeq — the client predicts this one itself (ticket 08)", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND, WALL] });
+    tick(sim, 0.5);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true }) });
+    tick(sim, 1, input({ moveDirection: { x: 1, y: 0, z: 0 } }));
+
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bumpSeq).toBe(0);
+  });
+
   it("does not ragdoll from a wall hit right at the start of the build — only once fast enough", () => {
     // Wall close enough to hit on the very first dash tick, while speed is
     // still near zero (the build has barely started) — should just block,
@@ -832,18 +883,22 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     dashCooldownMs: 0,
   });
 
-  it("snaps a locally-Controlled Character into Ragdoll when the server reports a Bump it never predicted", () => {
+  it("snaps a locally-Controlled Character into Ragdoll on a forced Bump the client never predicted", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
     tick(sim, 0.5);
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
 
-    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
-      position: { x: 1, y: RESTING_SPAWN.y, z: 1 },
-      velocity: { x: 0, y: 0, z: 0 },
-      grounded: false,
-      motionState: "Ragdoll",
-      dashCooldownMs: 0,
-    });
+    sim.reconcileCharacter(
+      DEFAULT_CHARACTER_ID,
+      {
+        position: { x: 1, y: RESTING_SPAWN.y, z: 1 },
+        velocity: { x: 0, y: 0, z: 0 },
+        grounded: false,
+        motionState: "Ragdoll",
+        dashCooldownMs: 0,
+      },
+      true, // forceRagdoll — this is a Bump (a new bumpSeq)
+    );
 
     // Immediate — the discrete state is never delayed or smoothed (ADR 0013).
     const snap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -853,6 +908,22 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     // stale predicted spot.
     expect(snap.position.x).toBeCloseTo(1, 1);
     expect(snap.position.z).toBeCloseTo(1, 1);
+  });
+
+  it("does NOT snap into Ragdoll for a server down-state that carries no forced Bump (a knockdown the client predicts itself)", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
+    tick(sim, 0.5);
+
+    // Stale Ragdoll snapshot of a dash-wall the client already ran and recovered from.
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+      position: { x: 1, y: RESTING_SPAWN.y, z: 1 },
+      velocity: { x: 0, y: 0, z: 0 },
+      grounded: false,
+      motionState: "Ragdoll",
+      dashCooldownMs: 0,
+    });
+
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
   });
 
   it("does not re-collapse a locally-recovered Character when the server is only as far as GettingUp", () => {
@@ -914,17 +985,22 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     tick(sim, 0.5);
 
     // Server keeps reporting Ragdoll at a pelvis drifting north as the body
-    // slides; the client reconciles on every snapshot.
+    // slides; the client reconciles on every snapshot. The first is the forced
+    // Bump; the rest just track (no new bumpSeq).
     let serverZ = 0;
     for (let s = 0; s < 6; s += 1) {
       serverZ -= 0.15;
-      sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
-        position: { x: 0, y: RESTING_SPAWN.y - 0.5, z: serverZ },
-        velocity: { x: 0, y: 0, z: 0 },
-        grounded: false,
-        motionState: "Ragdoll",
-        dashCooldownMs: 0,
-      });
+      sim.reconcileCharacter(
+        DEFAULT_CHARACTER_ID,
+        {
+          position: { x: 0, y: RESTING_SPAWN.y - 0.5, z: serverZ },
+          velocity: { x: 0, y: 0, z: 0 },
+          grounded: false,
+          motionState: "Ragdoll",
+          dashCooldownMs: 0,
+        },
+        s === 0, // forceRagdoll only on the first (the Bump)
+      );
       tick(sim, 0.1); // a few local ticks between snapshots
 
       const snap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -1002,6 +1078,16 @@ describe("RapierSimulation — Character-to-Character Bump (ticket 04)", () => {
 
     expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Ragdoll");
     expect(sim.snapshot().characters[MOVER]!.motionState).toBe("Controlled");
+  });
+
+  it("advances the bumped player's bumpSeq (an unpredictable knockdown), but not the mover's (ticket 08)", () => {
+    const sim = twoCharacters(3.5);
+    expect(sim.snapshot().characters[TARGET]!.bumpSeq).toBe(0);
+
+    step(sim, 0.9, input({ ...NORTH, dashHeld: true }));
+
+    expect(sim.snapshot().characters[TARGET]!.bumpSeq).toBeGreaterThan(0);
+    expect(sim.snapshot().characters[MOVER]!.bumpSeq).toBe(0);
   });
 
   it("an ordinary walking bump does not change the other player's state", () => {

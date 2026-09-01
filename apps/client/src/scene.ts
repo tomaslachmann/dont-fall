@@ -289,7 +289,14 @@ export const createStage = ({
       const gettingUp = motionState === "GettingUp";
       const enteringRagdoll = fallingRagdoll && visualState !== "Ragdoll";
       const enteringGettingUp = gettingUp && visualState !== "GettingUp";
-      const leavingGettingUp = !gettingUp && visualState === "GettingUp";
+      // Covers both the normal GettingUp → Controlled completion AND a
+      // reconciliation snapping straight from Ragdoll to Controlled (the
+      // server rejected a knockdown the client mispredicted, skipping the
+      // GettingUp frame entirely) — either way the model needs the same
+      // hand-back to locomotion, or the Death clip is left stuck mid-pose
+      // with no `activeAction` to fade it out from (ticket 08 follow-up).
+      const wasDown = visualState === "Ragdoll" || visualState === "GettingUp";
+      const leavingDown = !fallingRagdoll && !gettingUp && wasDown;
       visualState = motionState;
 
       if (enteringRagdoll && deathAction) {
@@ -314,8 +321,18 @@ export const createStage = ({
         const fallen = deathAction.time;
         deathAction.timeScale = fallen > 0 ? -fallen / (GETUP_MS / 1000) : -1;
         deathAction.paused = false;
-      } else if (leavingGettingUp) {
+      } else if (leavingDown) {
+        // Fully hand the model back to locomotion — stop the Death clip, place
+        // the rig at the real capsule position, and start idle so the next
+        // `updateCharacterAnimation` has a live `activeAction` to cross-fade
+        // from instead of a null it left behind on the way into Ragdoll (ticket 08).
         deathAction?.stop();
+        character.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
+        const resume = idleAction ?? walkAction;
+        if (resume) {
+          resume.reset().fadeIn(ANIMATION_CROSSFADE).play();
+          activeAction = resume;
+        }
       } else if (!fallingRagdoll && !gettingUp) {
         // `position` is the capsule centre; the model rig is placed at the feet.
         character.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
@@ -420,6 +437,8 @@ export const createStage = ({
       }
 
       if (visualState === "Controlled") {
+        // `stepWobble` itself skips a frame where `character.position` jumped
+        // metres (a reconciliation snap / Respawn) — see WOBBLE_TELEPORT_DISTANCE.
         const yaw = character.rotation.y;
         const forward: Vec3 = { x: Math.sin(yaw), y: 0, z: Math.cos(yaw) };
         const right: Vec3 = { x: -Math.cos(yaw), y: 0, z: Math.sin(yaw) };

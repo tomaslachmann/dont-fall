@@ -3,8 +3,10 @@ import { IDENTITY_QUAT } from "../math/quat.js";
 import { vec3, type Vec3 } from "../math/vec3.js";
 import {
   RAGDOLL_ANGULAR_DAMPING,
+  RAGDOLL_CONTACT_SKIN,
   RAGDOLL_FRICTION,
   RAGDOLL_LINEAR_DAMPING,
+  RAGDOLL_SOLVER_ITERATIONS,
 } from "../tuning.js";
 import { RAGDOLL_GROUPS } from "./collisionGroups.js";
 import {
@@ -45,12 +47,14 @@ export class Ragdoll {
           .setTranslation(spec.restCenter.x, spec.restCenter.y, spec.restCenter.z)
           .setAngularDamping(RAGDOLL_ANGULAR_DAMPING)
           .setLinearDamping(RAGDOLL_LINEAR_DAMPING)
+          .setAdditionalSolverIterations(RAGDOLL_SOLVER_ITERATIONS) // ticket 08: survive a dash-crash into a Prop
           .setCanSleep(false),
       );
       const collider = world.createCollider(
         RAPIER.ColliderDesc.capsule(spec.halfHeight, spec.radius)
           .setMass(spec.mass)
           .setFriction(RAGDOLL_FRICTION)
+          .setContactSkin(RAGDOLL_CONTACT_SKIN)
           .setCollisionGroups(RAGDOLL_GROUPS)
           .setEnabled(false),
         body,
@@ -148,6 +152,19 @@ export class Ragdoll {
   rootPosition(): Vec3 {
     const t = this.byName.get("pelvis")!.translation();
     return vec3(t.x, t.y, t.z);
+  }
+
+  /**
+   * The pelvis's current linear velocity — what a reconciling client reports
+   * as `CharacterSnapshot.velocity` while Ragdoll, so a forced Bump snap has a
+   * real launch to hand its own local ragdoll (ticket 08 follow-up): the
+   * capsule's own velocity is zeroed the moment a Character goes down, so
+   * without this a reconciled knockdown would always flop with zero velocity
+   * on the bumped player's own screen, no matter how hard the hit was.
+   */
+  rootVelocity(): Vec3 {
+    const v = this.byName.get("pelvis")!.linvel();
+    return vec3(v.x, v.y, v.z);
   }
 
   /**

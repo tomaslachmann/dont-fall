@@ -84,6 +84,14 @@ const main = async () => {
   const inputBuffer: { tick: number; input: SimInputs }[] = [];
   const positionHistory = new Map<number, Vec3>();
 
+  // Discrete-state reconciliation (ticket 08): the client predicts its own
+  // dash-into-wall / Spinner knockdowns and lets its own state machine run
+  // them; the server flags the ones the client can mispredict — a Bump, a Fall
+  // at a ledge edge — with a rising `bumpSeq`, which the client force-applies
+  // exactly once. A stale `Ragdoll` snapshot arriving after local recovery
+  // carries no new `bumpSeq`, so it does nothing (no more double knockdowns).
+  let lastAppliedBumpSeq = 0;
+
   // Prop prediction (ticket 06, ADR 0012): ticks-of-grace left per Prop since
   // the local player last touched it. > 0 ⇒ the client simulates that Prop
   // locally (the push feels immediate) and renders its own result; 0 ⇒ the
@@ -124,17 +132,26 @@ const main = async () => {
     const serverDown = isDown(server.motionState);
     const localDown = isDown(localChar.motionState);
 
+    // A knockdown the client couldn't reliably predict (a Bump, a Fall) — force
+    // it once. A dash-wall / Spinner knockdown carries no new bumpSeq and is
+    // never forced here; the client's own machine already ran it.
+    const bumped = server.bumpSeq > lastAppliedBumpSeq;
+    if (bumped) lastAppliedBumpSeq = server.bumpSeq;
+    const forceRagdoll = bumped && serverDown;
+
     const predictedAtAck = positionHistory.get(acked);
     const positionError = predictedAtAck ? distance(predictedAtAck, server.position) : Infinity;
 
     const needsCorrection =
-      serverDown || // while the server has us down, keep tracking it (ragdoll ignores input)
-      localDown || // we predicted a knockdown the server didn't — get back up
-      server.motionState !== localChar.motionState || // e.g. a Stagger we missed / are holding too long
-      positionError > RECONCILE_POSITION_ERROR;
+      forceRagdoll ||
+      (localDown && !serverDown) || // we predicted a knockdown the server didn't — get back up
+      (serverDown && localDown) || // both down — keep tracking the server's pelvis
+      (!serverDown &&
+        (server.motionState !== localChar.motionState || // e.g. a Stagger we missed / are holding too long
+          positionError > RECONCILE_POSITION_ERROR));
     if (!needsCorrection) return;
 
-    sim.reconcileCharacter(id, server);
+    sim.reconcileCharacter(id, server, forceRagdoll);
     if (!serverDown) {
       // Realign the tick counter so replayed ticks see the right Spinner phase,
       // reset any Prop we're pushing to the authoritative base so replay

@@ -36,6 +36,14 @@ export interface CharacterSnapshot {
    */
   lastInputTick: number;
   /**
+   * Monotonic counter, advanced each time this Character took a knockdown the
+   * client could mispredict — a Bump from another player, or a Fall at a ledge
+   * edge (ticket 08). The client force-applies the state change once per new
+   * value; a dash-into-wall / Spinner knockdown carries no new `bumpSeq`, since
+   * the client's own state machine already ran it.
+   */
+  bumpSeq: number;
+  /**
    * Per-bone transforms while `motionState` is `Ragdoll` or `GettingUp`, in
    * `RAGDOLL_BONES` order; empty otherwise (the renderer draws the capsule).
    */
@@ -71,6 +79,7 @@ export interface CharacterSnapshotFields {
   dashing?: boolean;
   dashSpeed?: number;
   lastInputTick?: number;
+  bumpSeq?: number;
   bones?: BoneSnapshot[];
 }
 
@@ -86,5 +95,6 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   dashing: fields.dashing ?? false,
   dashSpeed: fields.dashSpeed ?? 0,
   lastInputTick: fields.lastInputTick ?? 0,
+  bumpSeq: fields.bumpSeq ?? 0,
   bones: fields.bones ?? [],
 });

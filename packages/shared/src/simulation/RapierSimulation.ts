@@ -8,6 +8,7 @@ import {
   BUMP_LIFT_RATIO,
   DEFAULT_KILL_PLANE_Y,
   GRAVITY_Y,
+  IMPACT_STAGGER_MIN,
   PROP_HARD_CORRECT_DISTANCE,
 } from "../tuning.js";
 import { CharacterController, type CollisionListener } from "./CharacterController.js";
@@ -26,11 +27,13 @@ import { Spinner, type SpinnerConfig } from "./Spinner.js";
  */
 export const DEFAULT_CHARACTER_ID = "local";
 
-/** Per-Character progress that belongs to the world, not the Character itself: where it Checkpointed and how many times it has Fallen. */
+/** Per-Character progress that belongs to the world, not the Character itself: where it Checkpointed, how many times it has Fallen, and its unpredictable-knockdown counter. */
 interface CharacterProgress {
   respawnPoint: Vec3;
   checkpointIndex: number | null;
   fallCount: number;
+  /** Count of knockdowns the client couldn't reliably predict — a Bump or a ledge-edge Fall (ticket 08). See `CharacterSnapshot.bumpSeq`. */
+  bumpSeq: number;
 }
 
 export interface SimulationConfig {
@@ -194,7 +197,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     const character = new CharacterController(this.world, point, onCollision);
     this.characters.set(id, character);
     this.characterIdByHandle.set(character.colliderHandle, id);
-    this.progress.set(id, { respawnPoint: { ...point }, checkpointIndex: null, fallCount: 0 });
+    this.progress.set(id, { respawnPoint: { ...point }, checkpointIndex: null, fallCount: 0, bumpSeq: 0 });
   }
 
   /**
@@ -210,7 +213,8 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    */
   private resolveBump(moverId: string, bumpedId: string, moverVelocity: Vec3, normal: Vec3): void {
     const bumped = this.characters.get(bumpedId);
-    if (!bumped) return;
+    const bumpedProgress = this.progress.get(bumpedId);
+    if (!bumped || !bumpedProgress) return;
 
     // `normal` points from the bumped Character back toward the mover, so
     // `-normal` is "from the mover toward the target" — the push direction.
@@ -223,7 +227,13 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     if (closingSpeed <= 0) return;
 
     const direction = normalizeVec3(vec3(-normal.x, BUMP_LIFT_RATIO, -normal.z));
-    bumped.applyImpact(scaleVec3(direction, closingSpeed * BUMP_IMPULSE_SCALE));
+    const magnitude = closingSpeed * BUMP_IMPULSE_SCALE;
+    bumped.applyImpact(scaleVec3(direction, magnitude));
+    // A Bump strong enough to change state is the one knockdown the client
+    // cannot predict — flag it so reconciliation force-applies it exactly once.
+    if (magnitude >= IMPACT_STAGGER_MIN) {
+      bumpedProgress.bumpSeq += 1;
+    }
   }
 
   /** Remove a Character from the Match and free its Rapier bodies (ticket 01). */
@@ -271,13 +281,16 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   /**
    * Ticket 05: overwrite a locally predicted Character with the server's
    * authoritative base so the client can replay its unacknowledged inputs
-   * forward from it (ADR 0013). See {@link CharacterController.reconcileTo}.
+   * forward from it (ADR 0013). `forceRagdoll` (ticket 08) triggers the
+   * knockdown itself — the client passes it only for a Bump (a new `bumpSeq`),
+   * never for a Ragdoll it predicts itself. See {@link CharacterController.reconcileTo}.
    */
   reconcileCharacter(
     id: string,
     base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs">,
+    forceRagdoll = false,
   ): void {
-    this.character(id).reconcileTo(base);
+    this.character(id).reconcileTo(base, forceRagdoll);
   }
 
   /**
@@ -417,6 +430,10 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     if (character.hasPendingRespawn || character.position.y >= this.killPlaneY) return;
 
     progress.fallCount += 1;
+    // A Fall is a knockdown the client can mispredict at a ledge edge (sub-tick
+    // position divergence) — flag it like a Bump so reconciliation force-applies
+    // it once if the client missed it (ticket 08).
+    progress.bumpSeq += 1;
     character.fall(progress.respawnPoint, progress.fallCount);
   }
 
@@ -428,6 +445,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
         ...character.snapshot(),
         checkpointIndex: progress.checkpointIndex,
         fallCount: progress.fallCount,
+        bumpSeq: progress.bumpSeq,
       });
     }
     return {

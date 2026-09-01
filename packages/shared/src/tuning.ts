@@ -140,11 +140,37 @@ export const GETUP_CAPSULE_LIFT = 0.7;
 export const RAGDOLL_ANGULAR_DAMPING = 3;
 export const RAGDOLL_LINEAR_DAMPING = 0.12;
 
+/**
+ * Extra constraint-solver iterations on each ragdoll bone body (M2 ticket 08).
+ * The joint solver's documented worst case is a jointed body "pushed with a
+ * large force" against another body — exactly a dash-crash into a Prop, now
+ * that ragdoll bones collide with Props. Extra iterations keep the skeleton
+ * from tearing apart on the hit (research §3.2).
+ */
+export const RAGDOLL_SOLVER_ITERATIONS = 6;
+
+/**
+ * Contact skin (units) on ragdoll bone colliders — a small margin that keeps
+ * bones from deep-penetrating a Prop on a fast hit, which Rapier's own docs
+ * note "can increase performance, and in some cases, stability".
+ */
+export const RAGDOLL_CONTACT_SKIN = 0.01;
+
 /** Friction on ragdoll bone colliders (they should slide a little, not stick). */
 export const RAGDOLL_FRICTION = 0.9;
 
 /** Peak magnitude of the gentle, varied flop impulse applied on a post-Fall Respawn. */
 export const RESPAWN_FLOP_IMPULSE = 1.5;
+
+/**
+ * Fraction of its pre-hit velocity a Character's ragdoll keeps when the
+ * knockdown was a *crash* — a dash into a wall/Prop, a Bump, a Spinner (M2
+ * ticket 08). The collision absorbs most of the forward momentum, so the
+ * ragdoll tumbles rather than keeping full dash speed and rocketing through
+ * whatever it hit. A Fall keeps its momentum (no impact impulse ⇒ this doesn't
+ * apply).
+ */
+export const RAGDOLL_IMPACT_VELOCITY_SCALE = 0.2;
 
 /** {@link STAGGER_MS} in whole ticks. */
 export const STAGGER_TICKS = msToTicks(STAGGER_MS);

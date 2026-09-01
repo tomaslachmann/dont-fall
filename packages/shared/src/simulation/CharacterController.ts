@@ -12,6 +12,7 @@ import {
   GETUP_TICKS,
   GRAVITY_Y,
   GROUND_STICK_SPEED,
+  RAGDOLL_IMPACT_VELOCITY_SCALE,
   RAGDOLL_SETTLE_SPEED,
   RESPAWN_FLOP_IMPULSE,
   TICK_DT,
@@ -332,10 +333,16 @@ export class CharacterController {
 
   private beginRagdoll(): void {
     const at = this.body.translation();
-    const launch = { ...this.velocity }; // captured before resetMovementControllers zeroes it
+    const impulse = this.takeImpactImpulse();
+    // A crash (dash into a wall/Prop, a Bump, a Spinner — anything carrying an
+    // Impact impulse) absorbs most forward momentum: the ragdoll tumbles, it
+    // doesn't keep full dash speed and rocket through what it hit (ticket 08).
+    // A Fall carries no impulse and keeps its velocity.
+    const scale = lengthVec3(impulse) > 0 ? RAGDOLL_IMPACT_VELOCITY_SCALE : 1;
+    const launch = scaleVec3(this.velocity, scale); // captured before resetMovementControllers zeroes it
     this.collider.setEnabled(false);
     this.resetMovementControllers();
-    this.ragdoll.activate(vec3(at.x, at.y, at.z), launch, this.takeImpactImpulse());
+    this.ragdoll.activate(vec3(at.x, at.y, at.z), launch, impulse);
   }
 
   private beginGettingUp(): void {
@@ -389,9 +396,15 @@ export class CharacterController {
     const capsuleCentre = vec3(t.x, t.y, t.z);
 
     let position = capsuleCentre;
+    let velocity = this.velocity;
     let bones: BoneSnapshot[] = [];
     if (state === "Ragdoll") {
       position = this.ragdoll.rootPosition();
+      // The capsule's own velocity was zeroed the moment Ragdoll began
+      // (`resetMovementControllers`); report the ragdoll body's real velocity
+      // instead so a reconciling client has a real launch to hand its own
+      // ragdoll on a forced Bump snap (ticket 08 follow-up), not zero.
+      velocity = this.ragdoll.rootVelocity();
       bones = this.ragdoll.readBones();
     } else if (state === "GettingUp") {
       const elapsed = this.tickCount - this.getupStartTick;
@@ -404,7 +417,7 @@ export class CharacterController {
 
     return {
       position,
-      velocity: { ...this.velocity },
+      velocity: { ...velocity },
       grounded: this.grounded,
       motionState: state,
       teleported: this.teleportedThisTick,
@@ -423,27 +436,31 @@ export class CharacterController {
    * position-error check, or a discrete-state disagreement); this method just
    * applies it.
    *
-   * - **Server reports `Ragdoll`, local isn't down:** snap into Ragdoll now —
-   *   the discrete state is never smoothed (ADR 0006/0013), and this is the
-   *   headline case, a Bump the client had no way to predict. No input replay
-   *   follows: Ragdoll ignores input.
-   * - **Server reports `Ragdoll`/`GettingUp`, local already down:** re-anchor
-   *   the ragdoll to the server's pelvis so the two don't drift apart over the
+   * - **Server reports a down state, `forceRagdoll` set, local isn't down:**
+   *   snap into Ragdoll now — the discrete state is never smoothed (ADR
+   *   0006/0013). The caller passes `forceRagdoll` only for a Bump (a new
+   *   `bumpSeq`), never for a Ragdoll the client predicts itself (dash-into-
+   *   wall, a Fall) — that one the client's own state machine already ran, and
+   *   a stale `Ragdoll` snapshot arriving after recovery must not restart it
+   *   (ticket 08 — the bug this parameter fixes).
+   * - **Server reports a down state, local already down:** re-anchor the
+   *   ragdoll to the server's pelvis so the two don't drift apart over the
    *   knockdown, but never restart the cycle.
-   * - **Server reports `GettingUp` while local recovered to `Controlled`
-   *   first:** leave local alone — restarting a knockdown to match a state the
-   *   server is already leaving is worse than a few ticks of desync.
+   * - **Server reports a down state, local isn't down, `forceRagdoll` not set:**
+   *   do nothing — it's a knockdown the client predicts itself (and may have
+   *   already recovered from), or a stale snapshot of one.
    * - **Server reports `Controlled`/`Stagger`:** restore the capsule transform,
    *   velocity, ground flag, motion state and dash cooldown from the snapshot;
    *   the caller then replays buffered inputs from here.
    */
   reconcileTo(
     base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs">,
+    forceRagdoll = false,
   ): void {
     const serverDown = isDown(base.motionState);
 
     if (serverDown) {
-      if (base.motionState === "Ragdoll" && !isDown(this.machine.state)) {
+      if (forceRagdoll && !isDown(this.machine.state)) {
         this.velocity = { ...base.velocity };
         this.machine.snapTo("Ragdoll");
         this.beginRagdoll();

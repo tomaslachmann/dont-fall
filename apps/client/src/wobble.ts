@@ -1,4 +1,4 @@
-import { scaleVec3, subVec3, type Vec3 } from "@dont-fall/shared";
+import { lengthVec3, scaleVec3, subVec3, type Vec3 } from "@dont-fall/shared";
 
 /**
  * Procedural `Wobble` (ticket 07): a cosmetic lean of the Character's visual
@@ -17,6 +17,17 @@ export const WOBBLE_MAX_TILT = 0.5;
 
 /** How fast the lean eases toward its target (1/s) — higher settles quicker. */
 export const WOBBLE_SETTLE_RATE = 9;
+
+/**
+ * Render-frame position jump (units) above which {@link stepWobble} treats the
+ * move as a teleport, not motion (M2 ticket 08): a reconciliation snap or a
+ * Respawn moves the Character metres in one frame, which would otherwise slam
+ * the lean to its clamp and ring. Well above the ~0.35 u a full-speed dash
+ * covers in a 60 fps frame. The step is skipped and the last velocity kept —
+ * the same "snap through a discontinuity" rule `interpolateState` already uses
+ * for remote entities.
+ */
+export const WOBBLE_TELEPORT_DISTANCE = 1;
 
 export interface WobbleState {
   /** Lean forward (negative) / backward (positive), radians. */
@@ -47,6 +58,12 @@ export const stepWobble = (
   deltaSeconds: number,
 ): WobbleState => {
   if (deltaSeconds <= 0) return state;
+
+  // A frame where the Character jumped metres is a reconciliation snap or a
+  // Respawn, not motion — skip it and keep the last velocity, so the next
+  // frame's acceleration is measured from a sane baseline rather than the
+  // spike (ticket 08).
+  if (lengthVec3(subVec3(position, previousPosition)) > WOBBLE_TELEPORT_DISTANCE) return state;
 
   const velocity = scaleVec3(subVec3(position, previousPosition), 1 / deltaSeconds);
   const acceleration = scaleVec3(subVec3(velocity, state.velocity), 1 / deltaSeconds);

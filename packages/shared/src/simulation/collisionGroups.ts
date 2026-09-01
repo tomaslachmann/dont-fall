@@ -23,19 +23,20 @@ export const CHARACTER_GROUPS = collisionGroups(
 );
 
 /**
- * Ragdoll bones: collide with static geometry only — not the capsule, not each
- * other, and deliberately not Obstacles or Props either (ticket 06 scopes
- * Spinner/Prop interaction to the Controlled Character only; a downed
- * Character passing through them is an accepted M1 simplification, not an
- * oversight — revisit only if playtesting says it matters).
+ * Ragdoll bones: collide with static geometry and dynamic Props (M2 ticket 08 —
+ * playtesting showed a dash into a box flung the ragdoll straight through it).
+ * Still not the owning capsule, not each other (no self-collision for M2), not
+ * the Spinner, and not other players' capsules — the capsule stays the
+ * authority for player-vs-player. Ragdoll-vs-ragdoll is a deliberate later
+ * call (research §3.3).
  */
-export const RAGDOLL_GROUPS = collisionGroups(GROUP_RAGDOLL, GROUP_STATIC);
+export const RAGDOLL_GROUPS = collisionGroups(GROUP_RAGDOLL, GROUP_STATIC | GROUP_PROP);
 
 /** A Spinner's rotating bar: only needs to be seen by the Character. */
 export const OBSTACLE_GROUPS = collisionGroups(GROUP_OBSTACLE, GROUP_CHARACTER);
 
-/** Dynamic props: rest on static geometry, get pushed by the Character, and bump each other. */
+/** Dynamic props: rest on static geometry, get pushed by the Character or a ragdoll (ticket 08), and bump each other. */
 export const PROP_GROUPS = collisionGroups(
   GROUP_PROP,
-  GROUP_STATIC | GROUP_CHARACTER | GROUP_PROP,
+  GROUP_STATIC | GROUP_CHARACTER | GROUP_PROP | GROUP_RAGDOLL,
 );
