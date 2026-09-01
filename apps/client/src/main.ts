@@ -28,6 +28,7 @@ import {
 import { loadCharacterModel } from "./characterModel.js";
 import { FreeLookCamera, KeyboardInput } from "./input.js";
 import { createStage } from "./scene.js";
+import { NetMetrics } from "./netMetrics.js";
 import { SnapshotInterpolator } from "./snapshotInterpolation.js";
 import { TimeSync } from "./timeSync.js";
 
@@ -87,6 +88,8 @@ const main = async () => {
   const serverInterp = new SnapshotInterpolator();
   // The raw latest snapshot, kept only for `reconcile` (tick-aligned replay).
   let latestServerSnapshot: SimState | null = null;
+  let lastSnapshotArrivedAt = 0;
+  const netMetrics = new NetMetrics();
   // NTP-style clock sync (ADR 0019) — feeds the interpolation buffer's clock
   // and the net-graph RTT.
   const timeSync = new TimeSync();
@@ -156,6 +159,7 @@ const main = async () => {
       positionError > RECONCILE_POSITION_ERROR;
     if (!needsCorrection) return;
 
+    if (Number.isFinite(positionError)) netMetrics.recordCorrection(positionError);
     sim.reconcileCharacter(id, server);
     if (!serverDown) {
       // Realign the tick counter so replayed ticks see the right Spinner phase,
@@ -205,7 +209,9 @@ const main = async () => {
       timeSync.receivePong(message, performance.now());
     } else if (message.type === "snapshot") {
       latestServerSnapshot = message.state;
-      serverInterp.receive(message.state, performance.now(), message.serverTimeMs);
+      lastSnapshotArrivedAt = performance.now();
+      serverInterp.receive(message.state, lastSnapshotArrivedAt, message.serverTimeMs);
+      netMetrics.commandQueueDepth = message.commandQueueDepth;
       // Feedback for the prediction LEAD (ADR 0021): keep the server's command
       // queue near 1–2. Move `targetLead` slowly so it doesn't jerk.
       smoothedQueueDepth += (message.commandQueueDepth - smoothedQueueDepth) * 0.25;
@@ -418,13 +424,25 @@ const main = async () => {
       const cp = c.checkpointIndex === null ? "spawn" : `#${c.checkpointIndex + 1}`;
       const dashFill = Math.max(0, Math.min(10, Math.round((1 - c.dashCooldownMs / DASH_COOLDOWN_MS) * 10)));
       const dashBar = "#".repeat(dashFill) + "-".repeat(10 - dashFill);
+      netMetrics.rttMs = timeSync.rttMs;
+      netMetrics.clockOffsetMs = timeSync.serverClockOffsetMs;
+      netMetrics.snapshotAgeMs = now - lastSnapshotArrivedAt;
+      netMetrics.ackAgeTicks = predictionTick - (latestServerSnapshot?.characters[myId]?.lastInputTick ?? predictionTick);
+      netMetrics.predictedTick = predictionTick;
+      netMetrics.estServerTick = serverInterp.ready ? serverInterp.renderTick(now) : 0;
+      netMetrics.lead = appliedLead;
+      netMetrics.inputBufferDepth = inputBuffer.length;
+      netMetrics.interpBufferDepth = serverInterp.bufferDepth;
+      netMetrics.extrapolating = serverInterp.holdingLatest;
+
       hud.textContent =
         `DON'T FALL — M2 · predicted + reconciled\n` +
         `sim ${TICK_RATE_HZ} Hz · render ${fps.toFixed(0)} fps · tick ${predictionTick}\n` +
         `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · ${c.motionState}\n` +
         `checkpoint ${cp} · falls ${c.fallCount}\n` +
         `dash [${dashBar}]${c.dashCooldownMs === 0 ? " ready" : ""}\n` +
-        `WASD move · Space jump · Shift dash · mouse look`;
+        `WASD move · Space jump · Shift dash · mouse look\n` +
+        netMetrics.format();
     } else {
       hud.textContent = "DON'T FALL — M2 · connecting to server…";
     }

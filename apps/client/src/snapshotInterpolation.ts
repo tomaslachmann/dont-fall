@@ -82,6 +82,14 @@ export class SnapshotInterpolator {
     return this.buffer.length > 0 && this.anchorOffsetMs !== null;
   }
 
+  /** Buffered snapshots waiting to be played out — for the net-graph. */
+  get bufferDepth(): number {
+    return this.buffer.length;
+  }
+
+  /** True when the last {@link sample} had to hold the latest pose (buffer underrun). */
+  holdingLatest = false;
+
   /** The fractional server tick currently being rendered — for tick-driven visuals (Spinner phase). */
   renderTick(nowMs: number): number {
     return this.targetTickMs(nowMs) / TICK_MS;
@@ -92,9 +100,13 @@ export class SnapshotInterpolator {
     const target = this.targetTickMs(nowMs);
     const buf = this.buffer;
 
+    this.holdingLatest = false;
     if (target <= buf[0]!.tickMs) return interpolateState(buf[0]!.state, buf[0]!.state, 0);
     const last = buf.at(-1)!;
-    if (target >= last.tickMs) return interpolateState(last.state, last.state, 1); // buffer underrun — hold the latest
+    if (target >= last.tickMs) {
+      this.holdingLatest = true;
+      return interpolateState(last.state, last.state, 1); // buffer underrun — hold the latest
+    }
 
     for (let i = 1; i < buf.length; i += 1) {
       const hi = buf[i]!;
