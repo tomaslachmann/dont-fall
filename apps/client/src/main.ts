@@ -2,6 +2,7 @@ import {
   DASH_COOLDOWN_MS,
   DEFAULT_KILL_PLANE_Y,
   DEFAULT_SERVER_PORT,
+  INPUT_REDUNDANCY,
   MAX_BUFFERED_INPUT_TICKS,
   MAX_STEPS_PER_FRAME,
   PLAYGROUND_CHECKPOINTS,
@@ -89,6 +90,14 @@ const main = async () => {
   // NTP-style clock sync (ADR 0019) — feeds the interpolation buffer's clock
   // and the net-graph RTT.
   const timeSync = new TimeSync();
+  // Prediction LEAD (ADR 0021): how many ticks ahead of the estimated server
+  // tick the client predicts, so the server's command buffer never starves.
+  // `targetLead` is nudged from the server's reported `commandQueueDepth`;
+  // `appliedLead` catches up to it one tick per frame (no step jerk).
+  let smoothedQueueDepth = 1.5;
+  let targetLead = 2;
+  let appliedLead = 0;
+  let leadSeeded = false;
 
   const distance = (a: Vec3, b: Vec3): number => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
   const isDown = (state: CharacterSnapshot["motionState"]): boolean =>
@@ -185,6 +194,11 @@ const main = async () => {
     } else if (message.type === "snapshot") {
       latestServerSnapshot = message.state;
       serverInterp.receive(message.state, performance.now(), message.serverTimeMs);
+      // Feedback for the prediction LEAD (ADR 0021): keep the server's command
+      // queue near 1–2. Move `targetLead` slowly so it doesn't jerk.
+      smoothedQueueDepth += (message.commandQueueDepth - smoothedQueueDepth) * 0.25;
+      const nudge = smoothedQueueDepth < 1 ? 0.08 : smoothedQueueDepth > 2 ? -0.08 : 0;
+      targetLead = Math.max(1, Math.min(3, targetLead + nudge));
 
       if (localSim && myId) {
         const serverCharacter = message.state.characters[myId];
@@ -219,11 +233,14 @@ const main = async () => {
   });
   const pingInterval = setInterval(sendPing, 1000);
 
-  const sendInput = (tick: number, input: SimInputs): void => {
+  // Send the current tick's input plus a redundant tail of the last few unacked
+  // ones (ADR 0021) — `inputBuffer` is already pruned to `tick > acked` by
+  // `reconcile`, so its tail is exactly the unacknowledged set. A WebSocket
+  // head-of-line burst or reorder then loses nothing; the server dedupes by tick.
+  const sendInput = (): void => {
     if (socket.readyState !== WebSocket.OPEN) return;
-    // One-entry array for now; ticket 11.4 adds the redundant tail of unacked
-    // inputs (ADR 0021).
-    socket.send(JSON.stringify({ type: "input", inputs: [{ tick, input }] } satisfies ClientMessage));
+    const tail = inputBuffer.slice(-(INPUT_REDUNDANCY + 1));
+    socket.send(JSON.stringify({ type: "input", inputs: tail } satisfies ClientMessage));
   };
 
   let lastFrame = performance.now();
@@ -235,7 +252,13 @@ const main = async () => {
     fps += (1000 / Math.max(elapsedMs, 1) - fps) * 0.1;
 
     timeSync.tick(elapsedMs);
-    if (timeSync.ready) serverInterp.setServerClockOffsetMs(timeSync.serverClockOffsetMs);
+    if (timeSync.ready) {
+      serverInterp.setServerClockOffsetMs(timeSync.serverClockOffsetMs);
+      if (!leadSeeded) {
+        targetLead = Math.max(1, Math.min(3, Math.ceil(timeSync.rttMs / 2 / TICK_MS) + 1));
+        leadSeeded = true;
+      }
+    }
 
     if (connectionLost) {
       // Freeze on the last frame — no reconnect in M2 (ADR 0011). Render once
@@ -285,15 +308,26 @@ const main = async () => {
       // spiralling; EPSILON absorbs float drift so an exact multiple still runs
       // its last tick (same guard as `advanceFixed`).
       const EPSILON_MS = 1e-6;
+      // Catch `appliedLead` up to `targetLead` one tick at a time by adding (or,
+      // when bleeding off, removing) a single tick of prediction this frame
+      // (ADR 0021). `targetLead` moves slowly, so this converges without a jerk.
+      let leadStepMs = 0;
+      if (timeSync.ready && appliedLead < Math.round(targetLead)) {
+        leadStepMs = TICK_MS;
+        appliedLead += 1;
+      } else if (timeSync.ready && appliedLead > Math.round(targetLead)) {
+        leadStepMs = -TICK_MS;
+        appliedLead -= 1;
+      }
       predictionAccumulatorMs = Math.min(
-        predictionAccumulatorMs + elapsedMs,
+        predictionAccumulatorMs + elapsedMs + leadStepMs,
         TICK_MS * MAX_STEPS_PER_FRAME,
       );
       let steps = 0;
       while (predictionAccumulatorMs + EPSILON_MS >= TICK_MS && steps < MAX_STEPS_PER_FRAME) {
         predictionTick += 1;
         inputBuffer.push({ tick: predictionTick, input: sampledInput });
-        sendInput(predictionTick, sampledInput);
+        sendInput();
 
         renderPreviousSnapshot = localSim.snapshot();
         localSim.tick({ [myId]: sampledInput });
