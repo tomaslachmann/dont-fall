@@ -1,12 +1,13 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { pointInBox, type Box } from "../math/box.js";
-import { vec3, type Vec3 } from "../math/vec3.js";
+import { lengthVec3, normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
 import { characterSnapshot, type CharacterSnapshot, type SimState } from "../state/SimState.js";
 import type { FixedSimulation } from "../timing/FixedSimulation.js";
-import { DEFAULT_KILL_PLANE_Y, GRAVITY_Y } from "../tuning.js";
+import { BUMP_IMPULSE_SCALE, BUMP_LIFT_RATIO, DEFAULT_KILL_PLANE_Y, GRAVITY_Y } from "../tuning.js";
 import { CharacterController, type CollisionListener } from "./CharacterController.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
+import { MirrorCharacter } from "./MirrorCharacter.js";
 import { Prop, type PropConfig } from "./Prop.js";
 import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
 import { Spinner, type SpinnerConfig } from "./Spinner.js";
@@ -105,6 +106,14 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   private readonly props: Prop[];
   private readonly spinnerByHandle = new Map<number, Spinner>();
   private readonly propByHandle = new Map<number, Prop>();
+  /** Capsule collider handle → Character ID, so a Character-to-Character contact can find the Character it hit (ticket 04 — Bump). */
+  private readonly characterIdByHandle = new Map<number, string>();
+  /**
+   * Other players mirrored into this world as positioned obstacles (ADR 0012,
+   * ticket 04) — a client's local prediction world only. The server has real
+   * {@link CharacterController}s for every player and never populates this.
+   */
+  private readonly mirrors = new Map<string, MirrorCharacter>();
 
   private tickCount = 0;
 
@@ -146,24 +155,84 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     // is reused (e.g. a reconnect) before it was explicitly removed.
     this.removeCharacter(id);
 
-    const onCollision: CollisionListener = (colliderHandle, hitPoint, velocity) => {
+    const onCollision: CollisionListener = (colliderHandle, hitPoint, velocity, normal) => {
       const spinner = this.spinnerByHandle.get(colliderHandle);
       if (spinner) {
         this.characters.get(id)?.applyImpact(spinner.knockbackAt(hitPoint));
         return;
       }
+      const bumpedId = this.characterIdByHandle.get(colliderHandle);
+      if (bumpedId !== undefined && bumpedId !== id) {
+        this.resolveBump(id, bumpedId, velocity, normal);
+        return;
+      }
       this.propByHandle.get(colliderHandle)?.shove(velocity);
     };
 
-    this.characters.set(id, new CharacterController(this.world, point, onCollision));
+    const character = new CharacterController(this.world, point, onCollision);
+    this.characters.set(id, character);
+    this.characterIdByHandle.set(character.colliderHandle, id);
     this.progress.set(id, { respawnPoint: { ...point }, checkpointIndex: null, fallCount: 0 });
+  }
+
+  /**
+   * Character-to-Character Bump (ticket 04), resolved authoritatively here —
+   * never predicted on a client (ADR 0012). One-sided: only `bumpedId` takes
+   * the Impact; the `moverId` who ran into them is untouched and keeps their
+   * momentum (a Dash isn't cut short by hitting someone). The Impact magnitude
+   * is the *closing speed* — how fast the mover is approaching along the
+   * contact normal, net of the target's own motion — so a glancing brush or a
+   * target running away lands softer than a square head-on hit. Feeds the same
+   * `applyImpact` / `IMPACT_STAGGER_MIN` / `IMPACT_RAGDOLL_MIN` pipeline the
+   * Spinner and dash-into-wall already use.
+   */
+  private resolveBump(moverId: string, bumpedId: string, moverVelocity: Vec3, normal: Vec3): void {
+    const bumped = this.characters.get(bumpedId);
+    if (!bumped) return;
+
+    // `normal` points from the bumped Character back toward the mover, so
+    // `-normal` is "from the mover toward the target" — the push direction.
+    const toTarget = vec3(-normal.x, 0, -normal.z);
+    const approach = moverVelocity.x * toTarget.x + moverVelocity.z * toTarget.z;
+    if (approach <= 0) return; // the mover isn't actually driving into the target — no Bump
+
+    const relative = subVec3(moverVelocity, bumped.currentVelocity);
+    const closingSpeed = relative.x * toTarget.x + relative.z * toTarget.z;
+    if (closingSpeed <= 0) return;
+
+    const direction = normalizeVec3(vec3(-normal.x, BUMP_LIFT_RATIO, -normal.z));
+    bumped.applyImpact(scaleVec3(direction, closingSpeed * BUMP_IMPULSE_SCALE));
   }
 
   /** Remove a Character from the Match and free its Rapier bodies (ticket 01). */
   removeCharacter(id: string): void {
-    this.characters.get(id)?.dispose();
+    const character = this.characters.get(id);
+    if (character) this.characterIdByHandle.delete(character.colliderHandle);
+    character?.dispose();
     this.characters.delete(id);
     this.progress.delete(id);
+  }
+
+  /**
+   * Client-only (ADR 0012, ticket 04): reconcile this local prediction world's
+   * set of *other* players' mirror capsules against `poses` (every connected
+   * Character except the local one, positioned from the latest server
+   * snapshot). Adds mirrors that appeared, moves the rest, drops any that are
+   * gone. A mirror is a movement obstacle only — never simulated, never
+   * Bumped.
+   */
+  syncMirrorCharacters(poses: Record<string, Vec3>): void {
+    for (const [id, pose] of Object.entries(poses)) {
+      const existing = this.mirrors.get(id);
+      if (existing) existing.moveTo(pose);
+      else this.mirrors.set(id, new MirrorCharacter(this.world, pose));
+    }
+    for (const [id, mirror] of this.mirrors) {
+      if (!(id in poses)) {
+        mirror.dispose(this.world);
+        this.mirrors.delete(id);
+      }
+    }
   }
 
   private character(id: string): CharacterController {
@@ -195,6 +264,9 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     // queued before `world.step()` applies it, the same way each Character's
     // own `setNextKinematicTranslation` works.
     for (const spinner of this.spinners) spinner.tick(this.tickCount + 1);
+    // Mirrored other-players (client only) are re-placed from their latest
+    // snapshot pose every tick — they never move under their own physics.
+    for (const mirror of this.mirrors.values()) mirror.step();
 
     for (const [id, character] of this.characters) character.beginTick(inputs[id] ?? IDLE_INPUTS);
     this.world.step();

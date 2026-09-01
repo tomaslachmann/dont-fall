@@ -8,14 +8,14 @@ happening), the client shows no visible change.
 
 **Blocked by:** 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The local Character responds to input immediately (locally predicted), not after a
+- [x] The local Character responds to input immediately (locally predicted), not after a
       server round-trip
-- [ ] The client's predicted state is produced by re-running the exact same shared
+- [x] The client's predicted state is produced by re-running the exact same shared
       simulation step the server uses, given the same inputs (ADR 0003, ADR 0005)
-- [ ] Movement, jump, and dash — and their existing M1 tuning/feel — are indistinguishable
+- [x] Movement, jump, and dash — and their existing M1 tuning/feel — are indistinguishable
       from offline single-player play when nothing else interferes
-- [ ] Divergence between the client's prediction and the server's snapshot is handled
+- [x] Divergence between the client's prediction and the server's snapshot is handled
       with a minimal placeholder correction for now — full reconciliation is ticket 05,
       not required here

@@ -11,19 +11,27 @@ mover keeps their own momentum.
 
 **Blocked by:** 03.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Two clients can connect to the same server process and see each other's Characters
-- [ ] Each client renders the other's Character by interpolating between snapshots,
+- [x] Two clients can connect to the same server process and see each other's Characters
+- [x] Each client renders the other's Character by interpolating between snapshots,
       using the existing interpolation machinery extended to more than one Character
-- [ ] A Character cannot walk through another Character locally, on either client —
-      collision is solid, not just visual overlap
-- [ ] Character-to-Character contact computes an Impact magnitude from the two
-      Characters' relative velocity, reusing the existing Impact thresholds and
-      `CharacterStateMachine` — no new states
-- [ ] A fast Dash into another player crosses the Ragdoll threshold and knocks them
+      (`interpolateState` already handled N; client now draws the non-self ones)
+- [x] A Character cannot walk through another Character locally, on either client —
+      collision is solid, not just visual overlap (`CHARACTER_GROUPS` now sees
+      `GROUP_CHARACTER`; the client mirrors other players as `MirrorCharacter` capsules)
+- [x] Character-to-Character contact computes an Impact magnitude from the two
+      Characters' relative velocity (`resolveBump`, closing speed × `BUMP_IMPULSE_SCALE`),
+      reusing the existing Impact thresholds and `CharacterStateMachine` — no new states
+- [x] A fast Dash into another player crosses the Ragdoll threshold and knocks them
       down; an ordinary walking bump usually stays below the Stagger threshold
-- [ ] Only the Character on the receiving end of a Bump changes state; the moving
-      Character is unaffected and keeps moving
-- [ ] Bump is resolved authoritatively on the server only — a client never locally
-      decides that another player's Character should change state
+- [x] Only the Character on the receiving end of a Bump changes state; the moving
+      Character is unaffected and keeps moving (gated on the mover's own approach speed)
+- [x] Bump is resolved authoritatively on the server only — a client never locally
+      decides that another player's Character should change state (a `MirrorCharacter`
+      carries no `CharacterController`, so `resolveBump` never targets one)
+
+**Also fixed here:** a latent Rapier bug the second Character exposed — the
+kinematic character sweep took no collision-group filter, so it collided against
+*everything*, including another player's active ragdoll bones. Now passes
+`filterGroups: CHARACTER_GROUPS`.

@@ -33,6 +33,19 @@ export const PLAYGROUND_STATICS: Box[] = [
 
 export const PLAYGROUND_SPAWN: Vec3 = { x: 0, y: 1.2, z: 10.5 };
 
+/**
+ * Per-player spawn point on the start platform (M2 ticket 04): players are
+ * solid to each other now, so two joining at the same spot would spawn
+ * interpenetrating. Laid out as a grid across the platform (clear of the
+ * x = -3.2 wall), wrapping after 12 — the ADR 0011 player ceiling.
+ */
+export const playgroundSpawn = (index: number): Vec3 => {
+  const slot = ((index % 12) + 12) % 12;
+  const col = slot % 4; // 4 across
+  const row = Math.floor(slot / 4); // up to 3 back
+  return { x: -1.8 + col * 1.2, y: PLAYGROUND_SPAWN.y, z: PLAYGROUND_SPAWN.z - row * 1.5 };
+};
+
 export const PLAYGROUND_CHECKPOINTS: Checkpoint[] = [
   {
     respawn: { x: 0, y: 0.35, z: -1 },

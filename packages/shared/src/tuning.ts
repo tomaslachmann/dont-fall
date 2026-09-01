@@ -202,3 +202,22 @@ export const SPINNER_KNOCKBACK_LIFT = 2;
 
 /** Push impulse applied to a Prop per unit of the Character's horizontal speed. */
 export const PROP_PUSH_SCALE = 0.5;
+
+// --- Character-to-Character Bump (M2 ticket 04) -----------------------------
+
+/**
+ * Impact magnitude delivered to a Bumped Character per unit of *closing speed*
+ * (units/s) — how fast the mover is approaching along the contact normal,
+ * relative to the target's own motion. Tuned against the shared
+ * {@link IMPACT_STAGGER_MIN} / {@link IMPACT_RAGDOLL_MIN} thresholds: a plain
+ * walk into a standing player (closing ≈ {@link WALK_SPEED}) lands ~3.6, under
+ * Stagger — a physical shove, no state change; a dash near full speed (closing
+ * ≳ 15) clears {@link IMPACT_RAGDOLL_MIN} and knocks them down.
+ */
+export const BUMP_IMPULSE_SCALE = 0.6;
+
+/**
+ * Upward bias mixed into the Bump knockback direction before normalising, for
+ * a visible pop off the ground — same idea as {@link DASH_WALL_LIFT_RATIO}.
+ */
+export const BUMP_LIFT_RATIO = 0.3;

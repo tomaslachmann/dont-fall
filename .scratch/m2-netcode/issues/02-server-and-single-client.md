@@ -9,17 +9,17 @@ offline M1 client until then; this ticket proves the wire protocol works end to 
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Server runs a fixed 30 Hz loop stepping one authoritative `RapierSimulation`,
+- [x] Server runs a fixed 30 Hz loop stepping one authoritative `RapierSimulation`,
       reusing `packages/shared`'s existing fixed-timestep utilities
-- [ ] A client connects over WebSocket and receives an anonymous session ID identifying
+- [x] A client connects over WebSocket and receives an anonymous session ID identifying
       its own Character
-- [ ] Client sends its `SimInputs` once per simulation tick over the socket
-- [ ] Server broadcasts a JSON snapshot of the Match's Character collection to all
+- [x] Client sends its `SimInputs` once per simulation tick over the socket
+- [x] Server broadcasts a JSON snapshot of the Match's Character collection to all
       connected clients once per tick
-- [ ] The connecting client renders its own Character driven entirely by received
+- [x] The connecting client renders its own Character driven entirely by received
       snapshots (existing `interpolateState` machinery), with no local simulation of its
       own
-- [ ] Manually starting the server process and the client separately is enough to play —
+- [x] Manually starting the server process and the client separately is enough to play —
       no on-demand spin-up, no matchmaking (ADR 0011)

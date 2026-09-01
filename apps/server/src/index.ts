@@ -1,15 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SERVER_PORT,
   IDLE_INPUTS,
   PLAYGROUND_CHECKPOINTS,
   PLAYGROUND_PROPS,
-  PLAYGROUND_SPAWN,
   PLAYGROUND_SPINNERS,
   PLAYGROUND_STATICS,
   RapierSimulation,
   TICK_MS,
   initPhysics,
+  playgroundSpawn,
   type ClientMessage,
   type ServerMessage,
   type SimInputs,
@@ -53,16 +54,26 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
 
   const sockets = new Map<string, WebSocket>();
   const latestInputs = new Map<string, SimInputs>();
+  // Monotonic across the process so each joiner gets a distinct spawn slot even
+  // as others leave — two solid Characters must never spawn on the same spot.
+  let joinCount = 0;
 
   const wss = new WebSocketServer({ port: config.port ?? DEFAULT_SERVER_PORT });
 
   wss.on("connection", (socket) => {
     const id = randomUUID();
+    const spawn = playgroundSpawn(joinCount);
+    joinCount += 1;
     sockets.set(id, socket);
     latestInputs.set(id, IDLE_INPUTS);
-    simulation.addCharacter(id, PLAYGROUND_SPAWN);
+    simulation.addCharacter(id, spawn);
 
-    send(socket, { type: "welcome", id });
+    send(socket, { type: "welcome", id, spawn });
+
+    // A single client's socket erroring (an abrupt reset, a write to a
+    // half-closed pipe) must never take the Match down for everyone else
+    // (ADR 0011). 'close' still fires afterwards and does the cleanup.
+    socket.on("error", () => {});
 
     socket.on("message", (raw) => {
       // A malformed frame from one client must never take the Match down for
@@ -91,7 +102,10 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     }
   }, TICK_MS);
 
-  await new Promise<void>((resolve) => wss.once("listening", resolve));
+  await new Promise<void>((resolve, reject) => {
+    wss.once("listening", resolve);
+    wss.once("error", reject); // e.g. EADDRINUSE — reject instead of hanging forever
+  });
   const address = wss.address();
   const port = typeof address === "object" && address ? address.port : (config.port ?? DEFAULT_SERVER_PORT);
 
@@ -106,7 +120,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   };
 };
 
-const isMain = process.argv[1] === new URL(import.meta.url).pathname;
+const isMain = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
 if (isMain) {
   const server = await startServer();
   console.log(`DON'T FALL server listening on ws://localhost:${server.port}`);

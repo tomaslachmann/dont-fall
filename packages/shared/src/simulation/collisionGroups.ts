@@ -12,10 +12,14 @@ export const collisionGroups = (membership: number, filter: number): number =>
 /** Static geometry: it is in the static group and collides with everything. */
 export const STATIC_GROUPS = collisionGroups(GROUP_STATIC, 0xffff);
 
-/** The kinematic capsule: collides with static geometry, Obstacles and Props (never the ragdoll). */
+/**
+ * The kinematic capsule: collides with static geometry, Obstacles, Props and
+ * *other Characters* (ticket 04 — two players are solid to each other), never
+ * the ragdoll. Character-to-Character contact is what a Bump is computed from.
+ */
 export const CHARACTER_GROUPS = collisionGroups(
   GROUP_CHARACTER,
-  GROUP_STATIC | GROUP_OBSTACLE | GROUP_PROP,
+  GROUP_STATIC | GROUP_OBSTACLE | GROUP_PROP | GROUP_CHARACTER,
 );
 
 /**

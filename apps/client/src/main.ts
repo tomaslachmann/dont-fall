@@ -4,7 +4,6 @@ import {
   DEFAULT_SERVER_PORT,
   PLAYGROUND_CHECKPOINTS,
   PLAYGROUND_PROPS,
-  PLAYGROUND_SPAWN,
   PLAYGROUND_SPINNERS,
   PLAYGROUND_STATICS,
   RapierSimulation,
@@ -16,9 +15,11 @@ import {
   movementDirection,
   type ClientMessage,
   type PropSnapshot,
+  type RenderCharacter,
   type ServerMessage,
   type SimInputs,
   type SimState,
+  type Vec3,
 } from "@dont-fall/shared";
 import { loadCharacterModel } from "./characterModel.js";
 import { FreeLookCamera, KeyboardInput } from "./input.js";
@@ -86,14 +87,31 @@ const main = async () => {
         props: PLAYGROUND_PROPS,
         withDefaultCharacter: false,
       });
-      localSim.addCharacter(myId, PLAYGROUND_SPAWN);
+      // Seed the local prediction at the exact spawn the server used (the
+      // per-player spawn grid, ticket 04) — ticket 03's reconcile deliberately
+      // never corrects position, so prediction must start already aligned.
+      localSim.addCharacter(myId, message.spawn);
     } else if (message.type === "snapshot") {
       serverPreviousSnapshot = latestServerSnapshot ?? message.state;
       latestServerSnapshot = message.state;
       latestServerSnapshotReceivedAt = performance.now();
 
-      const serverCharacter = myId ? message.state.characters[myId] : undefined;
-      if (localSim && serverCharacter) localSim.reconcileCharacter(myId!, serverCharacter);
+      if (localSim && myId) {
+        const serverCharacter = message.state.characters[myId];
+        if (serverCharacter) localSim.reconcileCharacter(myId, serverCharacter);
+
+        // Every OTHER connected Character becomes a solid obstacle in the local
+        // prediction world (ADR 0012), positioned from this snapshot — so the
+        // local player's own predicted movement can't walk through them. A
+        // downed player's snapshot position is their ragdoll pelvis, so their
+        // mirror capsule sits low — an accepted M2 simplification (you can step
+        // over a floored body; you can't walk through a standing one).
+        const others: Record<string, Vec3> = {};
+        for (const [id, character] of Object.entries(message.state.characters)) {
+          if (id !== myId) others[id] = character.position;
+        }
+        localSim.syncMirrorCharacters(others);
+      }
     }
   });
   socket.addEventListener("error", (event) => console.error("DON'T FALL: connection error", event));
@@ -141,15 +159,26 @@ const main = async () => {
       const renderCharacter = render.characters[myId]!;
       const c = result.snapshot.characters[myId]!;
 
-      const props: PropSnapshot[] = latestServerSnapshot
+      // World this client doesn't predict — Props and every other player's
+      // Character — is drawn straight from the server broadcast, interpolated
+      // between the last two snapshots (ADR 0003).
+      const serverRender = latestServerSnapshot
         ? interpolateState(
             serverPreviousSnapshot ?? latestServerSnapshot,
             latestServerSnapshot,
             alphaSince(latestServerSnapshotReceivedAt, now),
-          ).props
-        : [];
+          )
+        : null;
+      const props: PropSnapshot[] = serverRender?.props ?? [];
+      const remoteCharacters: Record<string, RenderCharacter> = {};
+      if (serverRender) {
+        for (const [id, character] of Object.entries(serverRender.characters)) {
+          if (id !== myId) remoteCharacters[id] = character;
+        }
+      }
 
       stage.applyRenderState({ character: renderCharacter, props });
+      stage.applyRemoteCharacters(remoteCharacters);
       stage.updateCharacterAnimation(
         Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000,
         input.moveDirection,

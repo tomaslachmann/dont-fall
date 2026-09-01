@@ -20,7 +20,7 @@ import {
 } from "../tuning.js";
 import type { CharacterSnapshot } from "../state/SimState.js";
 import { CharacterStateMachine, type CharacterMotionState } from "./CharacterStateMachine.js";
-import { CHARACTER_GROUPS } from "./collisionGroups.js";
+import { CHARACTER_GROUPS, GROUP_CHARACTER } from "./collisionGroups.js";
 import { DashController, JumpController } from "./movementVerbs.js";
 import { Ragdoll } from "./Ragdoll.js";
 import { blendGettingUpBones, type BoneSnapshot } from "./ragdollSkeleton.js";
@@ -39,15 +39,18 @@ interface PendingRespawn {
 }
 
 /**
- * Reported once per Obstacle/Prop the Character's movement collides with this
- * tick (ticket 06) — `RapierSimulation` looks `colliderHandle` up against its
- * own Spinners/Props and decides what the contact does; `CharacterController`
- * only knows *that* something was hit and *where*.
+ * Reported once per Obstacle/Prop/other-Character the Character's movement
+ * collides with this tick (ticket 06, extended for Bump in ticket 04) —
+ * `RapierSimulation` looks `colliderHandle` up against its own Spinners/Props/
+ * Characters and decides what the contact does; `CharacterController` only
+ * knows *that* something was hit, *where*, how fast it was moving, and the
+ * contact `normal` (pointing from the thing hit back toward this Character).
  */
 export type CollisionListener = (
   colliderHandle: number,
   point: Vec3,
   characterVelocity: Vec3,
+  normal: Vec3,
 ) => void;
 
 /**
@@ -153,6 +156,16 @@ export class CharacterController {
     return vec3(t.x, t.y, t.z);
   }
 
+  /** This tick's capsule velocity (units/s). Used by `RapierSimulation` to compute a Bump's closing speed against another Character (ticket 04). */
+  get currentVelocity(): Vec3 {
+    return { ...this.velocity };
+  }
+
+  /** Handle of this Character's capsule collider, so `RapierSimulation` can recognise it as the thing another Character bumped into (ticket 04). */
+  get colliderHandle(): number {
+    return this.collider.handle;
+  }
+
   /** Whether a Fall-triggered respawn is queued for the top of the next tick. */
   get hasPendingRespawn(): boolean {
     return this.pendingRespawn !== null;
@@ -251,7 +264,17 @@ export class CharacterController {
     this.velocity.x = walk.x + dashBurst.x;
     this.velocity.z = walk.z + dashBurst.z;
 
-    this.rapierController.computeColliderMovement(this.collider, scaleVec3(this.velocity, TICK_DT));
+    // `filterGroups: CHARACTER_GROUPS` so the sweep honours collision groups
+    // the way the rest of the world does — without it the character controller
+    // collides against *everything*, including another Character's active
+    // ragdoll bones (ticket 04: two Characters, one down), which would wall-
+    // knock or block the mover on a body it should pass straight through.
+    this.rapierController.computeColliderMovement(
+      this.collider,
+      scaleVec3(this.velocity, TICK_DT),
+      undefined,
+      CHARACTER_GROUPS,
+    );
     const corrected = this.rapierController.computedMovement();
     this.grounded = this.rapierController.computedGrounded();
     if (this.grounded && this.velocity.y < 0) {
@@ -277,24 +300,30 @@ export class CharacterController {
    * burst moving at or above {@link DASH_WALL_MIN_SPEED_RATIO} of full speed,
    * blocked by a near-vertical surface, knocks the Character down (wall or
    * Spinner or Prop — whatever it hit) — a slow build-up or late-release hit
-   * is just a blocked walk. Every collision is also forwarded to
-   * {@link onCollision} so `RapierSimulation` can resolve Obstacle/Prop-
-   * specific reactions (Spinner Knockback, a shoved Prop).
+   * is just a blocked walk. Another Character is the exception: dashing into a
+   * player never knocks the *mover* down (ticket 04 — Bump is one-sided, only
+   * the one bumped goes down), so the wall-crash check skips Character
+   * colliders. Every collision is still forwarded to {@link onCollision} so
+   * `RapierSimulation` can resolve the contact — Spinner Knockback, a shoved
+   * Prop, or a Bump delivered to the other Character.
    */
   private resolveCollisions(dashSpeed: number): void {
     const dashingFastEnough = dashSpeed >= DASH_SPEED * DASH_WALL_MIN_SPEED_RATIO;
     const count = this.rapierController.numComputedCollisions();
     for (let i = 0; i < count; i += 1) {
       const collision = this.rapierController.computedCollision(i);
-      if (!collision) continue;
+      if (!collision?.collider) continue;
 
-      if (dashingFastEnough && Math.abs(collision.normal1.y) < WALL_NORMAL_MAX_Y) {
-        this.applyImpact(dashWallKnockback(vec3(collision.normal1.x, collision.normal1.y, collision.normal1.z)));
+      const hitCharacter = ((collision.collider.collisionGroups() >>> 16) & GROUP_CHARACTER) !== 0;
+      const normal = vec3(collision.normal1.x, collision.normal1.y, collision.normal1.z);
+
+      if (dashingFastEnough && !hitCharacter && Math.abs(normal.y) < WALL_NORMAL_MAX_Y) {
+        this.applyImpact(dashWallKnockback(normal));
       }
 
-      if (this.onCollision && collision.collider) {
+      if (this.onCollision) {
         const point = vec3(collision.witness1.x, collision.witness1.y, collision.witness1.z);
-        this.onCollision(collision.collider.handle, point, { ...this.velocity });
+        this.onCollision(collision.collider.handle, point, { ...this.velocity }, normal);
       }
     }
   }

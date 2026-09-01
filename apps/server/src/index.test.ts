@@ -24,7 +24,15 @@ describe("startServer", () => {
     const welcome = await nextMessage(socket);
 
     expect(welcome.type).toBe("welcome");
-    expect(typeof (welcome as { id: string }).id).toBe("string");
+    if (welcome.type !== "welcome") throw new Error("unreachable");
+    expect(typeof welcome.id).toBe("string");
+    // The client seeds its local prediction from this, so it must be where the
+    // server actually placed the Character (before it settles under gravity).
+    const snapshot = await nextMessage(socket);
+    if (snapshot.type !== "snapshot") throw new Error("unreachable");
+    const p = snapshot.state.characters[welcome.id]!.position;
+    expect(p.x).toBeCloseTo(welcome.spawn.x, 5);
+    expect(p.z).toBeCloseTo(welcome.spawn.z, 5);
     socket.close();
   });
 
@@ -60,6 +68,31 @@ describe("startServer", () => {
 
     expect(lastZ).toBeLessThan(startZ - 1); // NORTH walks toward -z
     socket.close();
+  });
+
+  it("puts both connected players in the snapshot, at distinct spawn points", async () => {
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    const aId = (await nextMessage(a) as { id: string }).id;
+    const b = connect(server.port);
+    const bId = (await nextMessage(b) as { id: string }).id;
+
+    let both: ServerMessage | undefined;
+    for (let i = 0; i < 30; i += 1) {
+      const message = await nextMessage(b);
+      if (message.type === "snapshot" && aId in message.state.characters && bId in message.state.characters) {
+        both = message;
+        break;
+      }
+    }
+    if (both?.type !== "snapshot") throw new Error("never saw both players in one snapshot");
+
+    const pa = both.state.characters[aId]!.position;
+    const pb = both.state.characters[bId]!.position;
+    expect(pa).not.toEqual(pb); // solid Characters must not spawn on the same spot
+
+    a.close();
+    b.close();
   });
 
   it("removes a disconnected client's Character so it stops appearing in broadcasts", async () => {

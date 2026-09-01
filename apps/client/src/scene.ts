@@ -1,5 +1,7 @@
 import {
   CAPSULE_BOTTOM_OFFSET,
+  CAPSULE_HALF_HEIGHT,
+  CAPSULE_RADIUS,
   DASH_SPEED,
   GETUP_MS,
   RAGDOLL_BONES,
@@ -70,8 +72,16 @@ export interface StageRenderState {
 export interface Stage {
   domElement: HTMLCanvasElement;
   render: () => void;
-  /** Place the Character mesh from an interpolated snapshot. Presentation only (ADR 0009). */
+  /** Place the local player's Character mesh from an interpolated snapshot. Presentation only (ADR 0009). */
   applyRenderState: (state: StageRenderState) => void;
+  /**
+   * Place every OTHER player's Character (ticket 04), keyed by session ID and
+   * interpolated from server snapshots — never predicted (ADR 0003). Meshes
+   * are pooled per ID and removed when an ID drops out of the set (a
+   * disconnect). Drawn as a plain tinted capsule, tipped over while the player
+   * is Ragdoll/GettingUp so a Bump reads at a glance.
+   */
+  applyRemoteCharacters: (characters: Record<string, RenderCharacter>) => void;
   /** Position the camera on a collision-resolved spring arm around `target`. */
   updateCamera: (target: Vec3, yaw: number, pitch: number) => void;
   /**
@@ -210,6 +220,14 @@ export const createStage = ({
   character.position.y = CAPSULE_BOTTOM_OFFSET; // arbitrary until the first applyRenderState
   scene.add(character);
 
+  // Other players (ticket 04): one pooled capsule per session ID. Kept
+  // deliberately plain — a different silhouette from the local MushroomKing so
+  // "that's someone else" reads instantly, and cheap enough to scale toward
+  // ADR 0011's 12-player ceiling without cloning a skinned rig per player.
+  const remoteGeometry = new THREE.CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_HALF_HEIGHT * 2, 6, 12);
+  const remoteMaterial = new THREE.MeshStandardMaterial({ color: 0x6ab0ff, roughness: 0.7 });
+  const remoteMeshes = new Map<string, THREE.Mesh>();
+
   const mixer = new THREE.AnimationMixer(characterModel.scene);
   const clipAction = (name: string): THREE.AnimationAction | null => {
     const clip = THREE.AnimationClip.findByName(characterModel.animations, name);
@@ -313,6 +331,29 @@ export const createStage = ({
         mesh.position.set(prop.position.x, prop.position.y, prop.position.z);
         mesh.quaternion.set(prop.rotation.x, prop.rotation.y, prop.rotation.z, prop.rotation.w);
         mesh.updateMatrixWorld();
+      }
+    },
+    applyRemoteCharacters: (characters) => {
+      for (const [id, rc] of Object.entries(characters)) {
+        let mesh = remoteMeshes.get(id);
+        if (!mesh) {
+          mesh = new THREE.Mesh(remoteGeometry, remoteMaterial);
+          scene.add(mesh);
+          remoteMeshes.set(id, mesh);
+        }
+        const down = rc.motionState === "Ragdoll" || rc.motionState === "GettingUp";
+        // `position` is the capsule centre while upright and the ragdoll pelvis
+        // (near the ground) while down — so tipping the capsule flat and
+        // dropping it to that lower point reads correctly as a floored body.
+        mesh.position.set(rc.position.x, rc.position.y, rc.position.z);
+        mesh.rotation.z = down ? Math.PI / 2 : 0;
+        mesh.updateMatrixWorld();
+      }
+      for (const [id, mesh] of remoteMeshes) {
+        if (!(id in characters)) {
+          scene.remove(mesh);
+          remoteMeshes.delete(id);
+        }
       }
     },
     updateCamera: (target, yaw, pitch) => {

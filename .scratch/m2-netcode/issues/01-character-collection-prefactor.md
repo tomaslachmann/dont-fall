@@ -8,14 +8,14 @@ M1 test behave identically with exactly one Character in the collection.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `SimState`/`RenderState` carry a collection of Characters (keyed by an ID), not one
+- [x] `SimState`/`RenderState` carry a collection of Characters (keyed by an ID), not one
       hardcoded `character` field
-- [ ] `RapierSimulation` can add and remove a Character by ID at runtime
-- [ ] The full existing M1 test suite passes, adapted only where a single-Character
+- [x] `RapierSimulation` can add and remove a Character by ID at runtime
+- [x] The full existing M1 test suite passes, adapted only where a single-Character
       access pattern becomes "the one Character in the collection" — no behaviour change
-- [ ] The single-player client runs identically to before: same feel, same HUD, no
+- [x] The single-player client runs identically to before: same feel, same HUD, no
       regression
-- [ ] Checkpoint/Fall/Respawn tracking, Impact/Ragdoll state, and Prop interactions all
+- [x] Checkpoint/Fall/Respawn tracking, Impact/Ragdoll state, and Prop interactions all
       still resolve correctly per-Character with a collection of size one

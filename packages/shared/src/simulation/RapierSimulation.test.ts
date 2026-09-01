@@ -770,3 +770,80 @@ describe("RapierSimulation — reconcileCharacter (ticket 03)", () => {
     expect(afterPosition.z).toBeCloseTo(beforePosition.z, 5);
   });
 });
+
+describe("RapierSimulation — Character-to-Character Bump (ticket 04)", () => {
+  const MOVER = DEFAULT_CHARACTER_ID;
+  const TARGET = "target";
+  const onGround = (z: number) => ({ x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z });
+
+  /** Mover at z=0, target a little to the north (−z); both settled on the ground. */
+  const twoCharacters = (gap: number): RapierSimulation => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-gap));
+    for (let n = 0; n < 10; n += 1) sim.tick({}); // settle both
+    return sim;
+  };
+
+  const step = (sim: RapierSimulation, seconds: number, moverInput: SimInputs) => {
+    for (let n = 0; n < Math.round(seconds * TICK_RATE_HZ); n += 1) {
+      sim.tick({ [MOVER]: moverInput });
+    }
+  };
+
+  it("makes two Characters solid — one cannot walk through the other", () => {
+    const sim = twoCharacters(1);
+    step(sim, 2, NORTH); // walk the mover straight at the target for 2s
+
+    const mover = sim.snapshot().characters[MOVER]!.position;
+    const target = sim.snapshot().characters[TARGET]!.position;
+    // Blocked: centres never get closer than roughly two capsule radii.
+    expect(mover.z - target.z).toBeGreaterThan(0.6);
+  });
+
+  it("a fast Dash into another player knocks THAT player down, and leaves the mover in control", () => {
+    const sim = twoCharacters(3.5);
+    step(sim, 0.9, input({ ...NORTH, dashHeld: true }));
+
+    expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Ragdoll");
+    expect(sim.snapshot().characters[MOVER]!.motionState).toBe("Controlled");
+  });
+
+  it("an ordinary walking bump does not change the other player's state", () => {
+    const sim = twoCharacters(0.9);
+    step(sim, 1.5, NORTH);
+
+    expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Controlled");
+  });
+
+  it("is one-sided: a stationary player standing in the way is not knocked down by the mover walking into them, and never bumps the mover", () => {
+    const sim = twoCharacters(0.9);
+    step(sim, 1.5, NORTH);
+
+    expect(sim.snapshot().characters[MOVER]!.motionState).toBe("Controlled");
+    expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Controlled");
+  });
+
+  it("does not Bump through a mirror capsule — mirrors are movement obstacles only, never Impact targets (ADR 0012)", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    for (let n = 0; n < 10; n += 1) sim.tick({});
+    sim.syncMirrorCharacters({ other: onGround(-3.5) });
+
+    step(sim, 0.9, input({ ...NORTH, dashHeld: true }));
+
+    // The local player dashed into the mirror: solid (blocked), but no Bump
+    // state change is ever predicted locally — the mover stays Controlled and
+    // there is no second real Character to have gone down.
+    expect(sim.snapshot().characters[MOVER]!.motionState).toBe("Controlled");
+    expect(Object.keys(sim.snapshot().characters)).toEqual([MOVER]);
+  });
+
+  it("drops a mirror when it is no longer in the synced set", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.syncMirrorCharacters({ a: onGround(-3), b: onGround(3) });
+    sim.syncMirrorCharacters({ a: onGround(-3) });
+    sim.tick({});
+    // b's capsule is gone: the mover can now walk through where it was.
+    step(sim, 2, input({ moveDirection: { x: 0, y: 0, z: 1 } }));
+    expect(sim.snapshot().characters[MOVER]!.position.z).toBeGreaterThan(3);
+  });
+});
