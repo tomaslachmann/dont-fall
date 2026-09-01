@@ -28,6 +28,7 @@ import { loadCharacterModel } from "./characterModel.js";
 import { FreeLookCamera, KeyboardInput } from "./input.js";
 import { createStage } from "./scene.js";
 import { SnapshotInterpolator } from "./snapshotInterpolation.js";
+import { TimeSync } from "./timeSync.js";
 
 /**
  * Cap on the per-frame delta fed to the Character model's animation/facing
@@ -85,6 +86,9 @@ const main = async () => {
   const serverInterp = new SnapshotInterpolator();
   // The raw latest snapshot, kept only for `reconcile` (tick-aligned replay).
   let latestServerSnapshot: SimState | null = null;
+  // NTP-style clock sync (ADR 0019) — feeds the interpolation buffer's clock
+  // and the net-graph RTT.
+  const timeSync = new TimeSync();
 
   const distance = (a: Vec3, b: Vec3): number => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
   const isDown = (state: CharacterSnapshot["motionState"]): boolean =>
@@ -176,9 +180,11 @@ const main = async () => {
       // per-player spawn grid, ticket 04) — ticket 03's reconcile deliberately
       // never corrects position, so prediction must start already aligned.
       localSim.addCharacter(myId, message.spawn);
+    } else if (message.type === "pong") {
+      timeSync.receivePong(message, performance.now());
     } else if (message.type === "snapshot") {
       latestServerSnapshot = message.state;
-      serverInterp.receive(message.state, performance.now());
+      serverInterp.receive(message.state, performance.now(), message.serverTimeMs);
 
       if (localSim && myId) {
         const serverCharacter = message.state.characters[myId];
@@ -200,7 +206,18 @@ const main = async () => {
   socket.addEventListener("close", () => {
     console.warn("DON'T FALL: disconnected from server");
     connectionLost = true;
+    clearInterval(pingInterval);
   });
+
+  // Time-sync probes (ADR 0019): a burst on connect to converge the estimate
+  // fast, then one a second to track drift and RTT changes.
+  const sendPing = (): void => {
+    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(timeSync.ping(performance.now())));
+  };
+  socket.addEventListener("open", () => {
+    for (let i = 0; i < 8; i += 1) setTimeout(sendPing, i * 40);
+  });
+  const pingInterval = setInterval(sendPing, 1000);
 
   const sendInput = (tick: number, input: SimInputs): void => {
     if (socket.readyState !== WebSocket.OPEN) return;
@@ -216,6 +233,9 @@ const main = async () => {
     const elapsedMs = now - lastFrame;
     lastFrame = now;
     fps += (1000 / Math.max(elapsedMs, 1) - fps) * 0.1;
+
+    timeSync.tick(elapsedMs);
+    if (timeSync.ready) serverInterp.setServerClockOffsetMs(timeSync.serverClockOffsetMs);
 
     if (connectionLost) {
       // Freeze on the last frame — no reconnect in M2 (ADR 0011). Render once
