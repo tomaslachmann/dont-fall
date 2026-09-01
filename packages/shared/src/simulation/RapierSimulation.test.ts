@@ -133,6 +133,22 @@ describe("RapierSimulation — Fall & Respawn", () => {
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.ragdollCause).toBe("Fall");
   });
 
+  it("phaseStartTick is stamped once, in sim-tick space, and repeated snapshot() calls don't move it", () => {
+    const sim = new RapierSimulation(config);
+    tick(sim, 0.5);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.phaseStartTick).toBe(0); // Controlled since tick 0
+
+    tickUntilFall(sim);
+    sim.tick({}); // Ragdoll entry
+    const entered = sim.snapshot().tick;
+    const stamped = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.phaseStartTick;
+    expect(stamped).toBe(entered);
+    // snapshot() is a pure read now — calling it again must not re-stamp.
+    for (let i = 0; i < 3; i += 1) {
+      expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.phaseStartTick).toBe(stamped);
+    }
+  });
+
   it("does not move the respawn point backward when walking back through an earlier Checkpoint", () => {
     const near: Checkpoint = {
       respawn: { x: -8, y: 1.5, z: 4 },

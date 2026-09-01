@@ -58,9 +58,8 @@ const main = async () => {
 
   let myId: string | null = null;
   // Issued in the welcome (ADR 0024). Stored for a future reclaim on reconnect;
-  // M2 does not reconnect. `config` carries the server's snapshot rate etc.
+  // M2 does not reconnect.
   let sessionToken: string | null = null;
-  let serverConfig: { snapshotHz: number; graceWindowMs: number } | null = null;
   // Set once the socket drops (tab still open, network/server gone). The game
   // loop freezes on the last frame and the HUD says so — there is no reconnect
   // in M2 (ADR 0011), a reload rejoins as a fresh player.
@@ -98,14 +97,15 @@ const main = async () => {
   // "not down" for a tick *before* this one hasn't seen the knockdown yet — it
   // is stale, not a disagreement, and must not revert the just-started ragdoll.
   let predictedDownAtTick: number | null = null;
-  // Prediction LEAD (ADR 0021): how many ticks ahead of the estimated server
-  // tick the client predicts, so the server's command buffer never starves.
-  // `targetLead` is nudged from the server's reported `commandQueueDepth`;
-  // `appliedLead` catches up to it one tick per frame (no step jerk).
+  // Prediction LEAD (ADR 0021): keep the server's command buffer near ~1.5 so it
+  // never starves. Pure feedback on the server-reported `commandQueueDepth` — at
+  // most one prediction tick injected or dropped per `LEAD_ADJUST_FRAMES`, so it
+  // converges over ~1 s with no jerk. Self-limiting (the condition stops firing
+  // once the queue is healthy), so a tick lost to the MAX_STEPS clamp just
+  // retries on the next window — there is no tracked counter to drift.
+  const LEAD_ADJUST_FRAMES = 12;
   let smoothedQueueDepth = 1.5;
-  let targetLead = 2;
-  let appliedLead = 0;
-  let leadSeeded = false;
+  let framesSinceLeadAdjust = LEAD_ADJUST_FRAMES;
 
   const distance = (a: Vec3, b: Vec3): number => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
   const isDown = (state: CharacterSnapshot["motionState"]): boolean =>
@@ -187,9 +187,8 @@ const main = async () => {
     if (message.type === "welcome") {
       myId = message.playerId;
       sessionToken = message.sessionToken;
-      serverConfig = message.config;
-      void sessionToken;
-      void serverConfig;
+      void sessionToken; // stored for a future reconnect; unused in M2
+      serverInterp.setSnapshotHz(message.config.snapshotHz);
       localSim = new RapierSimulation({
         statics: PLAYGROUND_STATICS,
         checkpoints: PLAYGROUND_CHECKPOINTS,
@@ -212,11 +211,7 @@ const main = async () => {
       lastSnapshotArrivedAt = performance.now();
       serverInterp.receive(message.state, lastSnapshotArrivedAt, message.serverTimeMs);
       netMetrics.commandQueueDepth = message.commandQueueDepth;
-      // Feedback for the prediction LEAD (ADR 0021): keep the server's command
-      // queue near 1–2. Move `targetLead` slowly so it doesn't jerk.
-      smoothedQueueDepth += (message.commandQueueDepth - smoothedQueueDepth) * 0.25;
-      const nudge = smoothedQueueDepth < 1 ? 0.08 : smoothedQueueDepth > 2 ? -0.08 : 0;
-      targetLead = Math.max(1, Math.min(3, targetLead + nudge));
+      smoothedQueueDepth += (message.commandQueueDepth - smoothedQueueDepth) * 0.2;
 
       if (localSim && myId) {
         const serverCharacter = message.state.characters[myId];
@@ -270,13 +265,7 @@ const main = async () => {
     fps += (1000 / Math.max(elapsedMs, 1) - fps) * 0.1;
 
     timeSync.tick(elapsedMs);
-    if (timeSync.ready) {
-      serverInterp.setServerClockOffsetMs(timeSync.serverClockOffsetMs);
-      if (!leadSeeded) {
-        targetLead = Math.max(1, Math.min(3, Math.ceil(timeSync.rttMs / 2 / TICK_MS) + 1));
-        leadSeeded = true;
-      }
-    }
+    if (timeSync.ready) serverInterp.setServerClockOffsetMs(timeSync.serverClockOffsetMs);
 
     if (connectionLost) {
       // Freeze on the last frame — no reconnect in M2 (ADR 0011). Render once
@@ -326,16 +315,18 @@ const main = async () => {
       // spiralling; EPSILON absorbs float drift so an exact multiple still runs
       // its last tick (same guard as `advanceFixed`).
       const EPSILON_MS = 1e-6;
-      // Catch `appliedLead` up to `targetLead` one tick at a time by adding (or,
-      // when bleeding off, removing) a single tick of prediction this frame
-      // (ADR 0021). `targetLead` moves slowly, so this converges without a jerk.
+      // LEAD feedback (ADR 0021): inject or drop at most one prediction tick per
+      // window, driven only by the observed server queue depth (see above).
+      framesSinceLeadAdjust += 1;
       let leadStepMs = 0;
-      if (timeSync.ready && appliedLead < Math.round(targetLead)) {
-        leadStepMs = TICK_MS;
-        appliedLead += 1;
-      } else if (timeSync.ready && appliedLead > Math.round(targetLead)) {
-        leadStepMs = -TICK_MS;
-        appliedLead -= 1;
+      if (timeSync.ready && framesSinceLeadAdjust >= LEAD_ADJUST_FRAMES) {
+        if (smoothedQueueDepth < 1) {
+          leadStepMs = TICK_MS;
+          framesSinceLeadAdjust = 0;
+        } else if (smoothedQueueDepth > 2.5) {
+          leadStepMs = -TICK_MS;
+          framesSinceLeadAdjust = 0;
+        }
       }
       predictionAccumulatorMs = Math.min(
         predictionAccumulatorMs + elapsedMs + leadStepMs,
@@ -416,9 +407,10 @@ const main = async () => {
       // Spinner phase is a pure function of the tick and the client can compute
       // it at any tick exactly — so render it at the *prediction* tick, matching
       // what the local Character's own collision runs against, not the delayed
-      // render tick (ADR 0025). `localSim` is synced to the server tick on each
-      // reconcile, so its tick counter + the render-fraction is that phase.
-      stage.updateSpinners(snapshot.tick + localAlpha);
+      // render tick (ADR 0025). Use the same render tick the Character itself is
+      // drawn at: `render` interpolates [previous, snapshot] by `localAlpha`, and
+      // `previous` is one tick behind `snapshot` (captured before `localSim.tick`).
+      stage.updateSpinners(snapshot.tick - 1 + localAlpha);
       stage.updateCamera(renderCharacter.position, look.yaw, look.pitch);
 
       const cp = c.checkpointIndex === null ? "spawn" : `#${c.checkpointIndex + 1}`;
@@ -430,7 +422,7 @@ const main = async () => {
       netMetrics.ackAgeTicks = predictionTick - (latestServerSnapshot?.characters[myId]?.lastInputTick ?? predictionTick);
       netMetrics.predictedTick = predictionTick;
       netMetrics.estServerTick = serverInterp.ready ? serverInterp.renderTick(now) : 0;
-      netMetrics.lead = appliedLead;
+      netMetrics.lead = smoothedQueueDepth; // effective lead = the server's buffered command count
       netMetrics.inputBufferDepth = inputBuffer.length;
       netMetrics.interpBufferDepth = serverInterp.bufferDepth;
       netMetrics.extrapolating = serverInterp.holdingLatest;

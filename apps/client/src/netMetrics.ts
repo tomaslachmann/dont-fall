@@ -51,7 +51,7 @@ export class NetMetrics {
     const c = (n: number) => n.toFixed(2);
     return (
       `net  rtt ${this.rttMs.toFixed(0)}ms · offset ${this.clockOffsetMs.toFixed(0)}ms · snap ${this.snapshotAgeMs.toFixed(0)}ms · ackAge ${this.ackAgeTicks}t\n` +
-      `pred ${this.predictedTick} · server~${this.estServerTick.toFixed(0)} · lead ${this.lead} · inBuf ${this.inputBufferDepth} · srvQ ${this.commandQueueDepth} · interpBuf ${this.interpBufferDepth}${this.extrapolating ? " · EXTRAP" : ""}\n` +
+      `pred ${this.predictedTick} · server~${this.estServerTick.toFixed(0)} · lead ${this.lead.toFixed(1)} · inBuf ${this.inputBufferDepth} · srvQ ${this.commandQueueDepth} · interpBuf ${this.interpBufferDepth}${this.extrapolating ? " · EXTRAP" : ""}\n` +
       `recon ${this.reconcilesPerSec}/s · corr p50 ${c(this.percentile(0.5))} p95 ${c(this.percentile(0.95))} max ${c(this.percentile(1))} · predProps ${this.predictedPropCount}`
     );
   }

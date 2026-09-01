@@ -206,7 +206,6 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
           } satisfies ServerMessage),
         );
       }
-      consecutiveTickFailures = 0;
     } catch (err) {
       // Rate-limit the log: a persistently broken sim shouldn't spam 30×/s.
       if (consecutiveTickFailures % TICK_RATE_HZ === 0) {

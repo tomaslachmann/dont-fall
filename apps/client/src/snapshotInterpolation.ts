@@ -40,7 +40,7 @@ interface Buffered {
  */
 export class SnapshotInterpolator {
   private readonly buffer: Buffered[] = [];
-  private readonly delayMs: number;
+  private delayMs: number;
 
   // Fallback clock: `localNow - latestTickMs`, anchored on the first snapshot and eased.
   private anchorOffsetMs: number | null = null;
@@ -50,6 +50,11 @@ export class SnapshotInterpolator {
   private latestServerTimeMs: number | null = null;
 
   constructor(snapshotHz: number = SNAPSHOT_HZ) {
+    this.delayMs = interpDelayMs(snapshotHz);
+  }
+
+  /** Adopt the server's advertised snapshot rate (from `WelcomeMessage.config`, ADR 0020). */
+  setSnapshotHz(snapshotHz: number): void {
     this.delayMs = interpDelayMs(snapshotHz);
   }
 

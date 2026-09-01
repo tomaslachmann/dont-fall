@@ -372,6 +372,14 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       character.endTick();
       this.updateCheckpoint(id);
       this.detectFall(id);
+      // Stamp the tick a `motionState` phase begins, in sim-tick space, exactly
+      // once (ADR 0023). Must be here, not in `snapshot()` — that is called
+      // several times per client frame and before `syncTick` in reconcile.
+      const progress = this.progress.get(id)!;
+      if (character.motionState !== progress.lastMotionState) {
+        progress.phaseStartTick = this.tickCount;
+        progress.lastMotionState = character.motionState;
+      }
     }
 
     // Client-only (ADR 0012 / 0016, ticket 06): every Prop is pinned to the
@@ -428,16 +436,8 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     const characters: Record<string, CharacterSnapshot> = {};
     for (const [id, character] of this.characters) {
       const progress = this.progress.get(id)!;
-      const state = character.snapshot();
-      // Stamp the tick a `motionState` phase begins, in sim-tick space, so the
-      // client can derive the GettingUp blend and the reconcile guard can
-      // compare it against `SimState.tick` (ADR 0023).
-      if (state.motionState !== progress.lastMotionState) {
-        progress.phaseStartTick = this.tickCount;
-        progress.lastMotionState = state.motionState;
-      }
       characters[id] = characterSnapshot({
-        ...state,
+        ...character.snapshot(),
         checkpointIndex: progress.checkpointIndex,
         fallCount: progress.fallCount,
         phaseStartTick: progress.phaseStartTick,

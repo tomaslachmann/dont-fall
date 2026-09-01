@@ -126,6 +126,34 @@ describe("client snapshot interpolation — smoothness under realistic arrival j
     expect(Math.min(...deltas)).toBeGreaterThanOrEqual(-1e-9);
   });
 
+  it("setSnapshotHz widens the playout delay — a 20 Hz stream underruns a 30 Hz-configured buffer, holds after adopting 20", () => {
+    const at20 = Array.from({ length: 40 }, (_, k) => ({ state: snapshotAtTick(k * 1.5), atMs: k * (TICK_MS * 1.5) + 3 }));
+    // (tick spacing 1.5 stands in for a 20 Hz snapshot rate on a 30 Hz sim.)
+    const rt = Array.from({ length: 200 }, (_, i) => i * RENDER_MS);
+
+    const def = new SnapshotInterpolator(); // 30 Hz default → 66.7 ms delay
+    const adopted = new SnapshotInterpolator();
+    adopted.setSnapshotHz(20); // → 100 ms delay
+
+    let nextD = 0;
+    let nextA = 0;
+    let defUnderruns = 0;
+    let adoptedUnderruns = 0;
+    for (const now of rt) {
+      while (nextD < at20.length && at20[nextD]!.atMs <= now) def.receive(at20[nextD++]!.state, now);
+      while (nextA < at20.length && at20[nextA]!.atMs <= now) adopted.receive(at20[nextA++]!.state, now);
+      if (def.ready) {
+        def.sample(now);
+        if (def.holdingLatest) defUnderruns += 1;
+      }
+      if (adopted.ready) {
+        adopted.sample(now);
+        if (adopted.holdingLatest) adoptedUnderruns += 1;
+      }
+    }
+    expect(adoptedUnderruns).toBeLessThan(defUnderruns);
+  });
+
   it("stays smooth over a long stream despite local↔server clock drift", () => {
     // Server clock runs 0.5% fast relative to the client's — offset would grow
     // unbounded without the ease-toward-observed correction.

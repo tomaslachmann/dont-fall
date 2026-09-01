@@ -12,6 +12,7 @@ import {
   GETUP_TICKS,
   GRAVITY_Y,
   GROUND_STICK_SPEED,
+  IMPACT_STAGGER_MIN,
   RAGDOLL_IMPACT_VELOCITY_SCALE,
   RAGDOLL_SETTLE_SPEED,
   RESPAWN_FLOP_IMPULSE,
@@ -193,6 +194,11 @@ export class CharacterController {
     return this.collider.handle;
   }
 
+  /** The current motion state — a cheap read (no bone/pose computation), for transition detection. */
+  get motionState(): CharacterMotionState {
+    return this.machine.state;
+  }
+
   /** Whether a Fall-triggered respawn is queued for the top of the next tick. */
   get hasPendingRespawn(): boolean {
     return this.pendingRespawn !== null;
@@ -206,7 +212,10 @@ export class CharacterController {
    */
   applyImpact(impulse: Vec3, cause: RagdollCause = "Bump"): void {
     const magnitude = lengthVec3(impulse);
-    this.pendingCause = cause;
+    // Only an impact big enough to change state names the cause of the knockdown
+    // it will trigger — a sub-threshold nudge from lingering contact must not
+    // overwrite a real cause latched earlier (ADR 0023).
+    if (magnitude >= IMPACT_STAGGER_MIN) this.pendingCause = cause;
     this.machine.impact(magnitude);
     if (!this.pendingImpact || magnitude > this.pendingImpact.magnitude) {
       this.pendingImpact = { magnitude, impulse: { ...impulse } };
