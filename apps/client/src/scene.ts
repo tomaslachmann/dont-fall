@@ -40,6 +40,16 @@ const FACING_TURN_SPEED = 14;
 const ANIMATION_CROSSFADE = 0.15;
 
 /**
+ * Procedural Wobble lean (ticket 07), temporarily OFF. It derives acceleration
+ * from render-frame `character.position` deltas, which a predicted + reconciled
+ * Character (M2) delivers unevenly — fixed 30 Hz prediction ticks sampled at a
+ * variable render rate, plus reconciliation snaps — so it reads as a micro-stutter
+ * / "lag" while just walking. Re-enable once it's driven from a simulation-owned
+ * velocity instead of position deltas (the same fix speed-lines already got).
+ */
+const WOBBLE_ENABLED = false;
+
+/**
  * Vertical distance from the ragdoll's pelvis (its `RenderState.character.position`
  * while Ragdoll/GettingUp) down to the feet — the pelvis rest offset from the
  * capsule centre plus the capsule's own centre-to-feet distance. Lets the
@@ -437,15 +447,17 @@ export const createStage = ({
       }
 
       if (visualState === "Controlled") {
-        // `stepWobble` itself skips a frame where `character.position` jumped
-        // metres (a reconciliation snap / Respawn) — see WOBBLE_TELEPORT_DISTANCE.
-        const yaw = character.rotation.y;
-        const forward: Vec3 = { x: Math.sin(yaw), y: 0, z: Math.cos(yaw) };
-        const right: Vec3 = { x: -Math.cos(yaw), y: 0, z: Math.sin(yaw) };
-        wobbleState = stepWobble(wobbleState, currentPosition, previousWobblePosition, forward, right, deltaSeconds);
+        if (WOBBLE_ENABLED) {
+          // `stepWobble` itself skips a frame where `character.position` jumped
+          // metres (a reconciliation snap / Respawn) — see WOBBLE_TELEPORT_DISTANCE.
+          const yaw = character.rotation.y;
+          const forward: Vec3 = { x: Math.sin(yaw), y: 0, z: Math.cos(yaw) };
+          const right: Vec3 = { x: -Math.cos(yaw), y: 0, z: Math.sin(yaw) };
+          wobbleState = stepWobble(wobbleState, currentPosition, previousWobblePosition, forward, right, deltaSeconds);
+          wobblePivot.rotation.x = -wobbleState.pitch;
+          wobblePivot.rotation.z = wobbleState.roll;
+        }
         previousWobblePosition = currentPosition;
-        wobblePivot.rotation.x = -wobbleState.pitch;
-        wobblePivot.rotation.z = wobbleState.roll;
 
         // Speed lines: driven directly by the Dash's own envelope value
         // (0 when not dashing, ramping via the same `dashEnvelope` curve

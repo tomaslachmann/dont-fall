@@ -98,6 +98,13 @@ export class CharacterController {
   private readonly collider: RAPIER.Collider;
   private readonly ragdoll: Ragdoll;
   private readonly onCollision: CollisionListener | undefined;
+  /**
+   * Whether this Character decides for itself when a knockdown ends (the
+   * Ragdoll body's own physics settle-check). `false` for the client's
+   * local-prediction Character — see `SimulationConfig.authoritative` /
+   * ADR 0015.
+   */
+  private readonly authoritative: boolean;
 
   private tickCount = 0;
   /** Capsule velocity (units/s): `x`/`z` set fresh each Controlled tick, `y` integrated. */
@@ -129,9 +136,10 @@ export class CharacterController {
   private getupStartTick = 0;
   private getupStartRoot: Vec3 = vec3();
 
-  constructor(world: RAPIER.World, spawn: Vec3, onCollision?: CollisionListener) {
+  constructor(world: RAPIER.World, spawn: Vec3, onCollision?: CollisionListener, authoritative = true) {
     this.world = world;
     this.onCollision = onCollision;
+    this.authoritative = authoritative;
 
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(spawn.x, spawn.y, spawn.z),
@@ -215,7 +223,13 @@ export class CharacterController {
     // Order matters: read prevState before the machine ticks; compute `settled`
     // from last tick's physics before this tick's world.step().
     const prevState = this.machine.state;
-    const settled = this.ragdoll.isActive && this.ragdoll.maxSpeed() < RAGDOLL_SETTLE_SPEED;
+    // A non-authoritative (client-prediction) Character never trusts its own
+    // settle-check to end a knockdown — only a server snapshot can (ADR 0015).
+    // Without this it could recover *ahead* of the server, which is exactly
+    // what reopens the double-knockdown bug ADR 0014 fixed: a later, slower
+    // snapshot still reporting the old episode would read as a fresh one.
+    const settled =
+      this.authoritative && this.ragdoll.isActive && this.ragdoll.maxSpeed() < RAGDOLL_SETTLE_SPEED;
     const state = this.machine.tick(settled);
 
     if (this.pendingRespawn) {
@@ -390,6 +404,12 @@ export class CharacterController {
     this.dashSpeed = 0;
   }
 
+  /** The GettingUp blend's current position — shared by `snapshot()` and `reconcileTo`'s position-tracking correction. */
+  private getupBlendedPosition(elapsed: number, capsuleCentre: Vec3): Vec3 {
+    const getupT = Math.min(1, Math.max(0, elapsed / GETUP_TICKS));
+    return lerpVec3(this.getupStartRoot, capsuleCentre, getupT);
+  }
+
   snapshot(): CharacterState {
     const state = this.machine.state;
     const t = this.body.translation();
@@ -408,10 +428,9 @@ export class CharacterController {
       bones = this.ragdoll.readBones();
     } else if (state === "GettingUp") {
       const elapsed = this.tickCount - this.getupStartTick;
-      const getupT = Math.min(1, Math.max(0, elapsed / GETUP_TICKS));
       // position rises smoothly from the settled pelvis to the standing capsule,
       // so there is no jump at the Ragdoll → GettingUp boundary
-      position = lerpVec3(this.getupStartRoot, capsuleCentre, getupT);
+      position = this.getupBlendedPosition(elapsed, capsuleCentre);
       bones = blendGettingUpBones(this.getupBones, capsuleCentre, elapsed);
     }
 
@@ -429,41 +448,48 @@ export class CharacterController {
   }
 
   /**
-   * Reconciliation base (ticket 05, ADR 0013): overwrite this Character's
-   * predicted state with the server's authoritative snapshot so the client can
-   * replay its not-yet-acknowledged inputs forward from here. The client is
-   * responsible for deciding *when* a correction is warranted (a tick-aligned
-   * position-error check, or a discrete-state disagreement); this method just
-   * applies it.
+   * Reconciliation base (ticket 05, ADR 0013, ADR 0015): overwrite this
+   * Character's predicted state with the server's authoritative snapshot so
+   * the client can replay its not-yet-acknowledged inputs forward from here.
+   * The client is responsible for deciding *when* a correction is warranted
+   * (a tick-aligned position-error check, or a discrete-state disagreement);
+   * this method just applies it.
    *
-   * - **Server reports a down state, `forceRagdoll` set, local isn't down:**
-   *   snap into Ragdoll now — the discrete state is never smoothed (ADR
-   *   0006/0013). The caller passes `forceRagdoll` only for a Bump (a new
-   *   `bumpSeq`), never for a Ragdoll the client predicts itself (dash-into-
-   *   wall, a Fall) — that one the client's own state machine already ran, and
-   *   a stale `Ragdoll` snapshot arriving after recovery must not restart it
-   *   (ticket 08 — the bug this parameter fixes).
-   * - **Server reports a down state, local already down:** re-anchor the
-   *   ragdoll to the server's pelvis so the two don't drift apart over the
-   *   knockdown, but never restart the cycle.
-   * - **Server reports a down state, local isn't down, `forceRagdoll` not set:**
-   *   do nothing — it's a knockdown the client predicts itself (and may have
-   *   already recovered from), or a stale snapshot of one.
+   * - **Server reports a down state:** always synced, unconditionally — enter
+   *   `Ragdoll` now if we weren't already down, then advance to `GettingUp`
+   *   too if the server has and we haven't, then re-anchor the pelvis to the
+   *   server's position. Safe (idempotent, never a duplicate knockdown)
+   *   specifically because a non-`authoritative` Character never decides on
+   *   its own when a knockdown ends (ADR 0015) — it can only ever be at or
+   *   behind the server's down-state, never ahead of it, so there is no
+   *   "stale vs. live" report left to tell apart. This restores ADR 0013's
+   *   original "any snapshot reporting a discrete state forces the snap"
+   *   rule; ADR 0014's `bumpSeq`/`forceRagdoll` gate is superseded.
    * - **Server reports `Controlled`/`Stagger`:** restore the capsule transform,
    *   velocity, ground flag, motion state and dash cooldown from the snapshot;
    *   the caller then replays buffered inputs from here.
    */
   reconcileTo(
     base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs">,
-    forceRagdoll = false,
   ): void {
     const serverDown = isDown(base.motionState);
 
     if (serverDown) {
-      if (forceRagdoll && !isDown(this.machine.state)) {
-        this.velocity = { ...base.velocity };
-        this.machine.snapTo("Ragdoll");
-        this.beginRagdoll();
+      if (this.machine.state !== base.motionState) {
+        if (!isDown(this.machine.state)) {
+          // A knockdown the client never predicted at all (or already wrongly
+          // recovered from — which can't happen once `authoritative` is
+          // false, but stays correct either way): flop now, at the server's
+          // real position, not wherever we last predicted.
+          this.body.setTranslation({ ...base.position }, false);
+          this.velocity = { ...base.velocity };
+          this.machine.snapTo("Ragdoll");
+          this.beginRagdoll();
+        }
+        if (base.motionState === "GettingUp" && this.machine.state !== "GettingUp") {
+          this.machine.snapTo("GettingUp");
+          this.beginGettingUp();
+        }
       }
       if (this.ragdoll.isActive) this.ragdoll.snapRootTo(base.position);
       return;

@@ -830,6 +830,166 @@ describe("RapierSimulation — dash into a wall", () => {
   });
 });
 
+describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09 playtest, ADR 0015)", () => {
+  const WALL: Box = { center: { x: 3, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 5 } };
+  const EAST = input({ moveDirection: { x: 1, y: 0, z: 0 } });
+  const DASH_EAST = input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true });
+  const isDownState = (m: string) => m === "Ragdoll" || m === "GettingUp";
+  const dist = (a: { x: number; y: number; z: number }, b: typeof a) =>
+    Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+
+  interface DashTraceStep {
+    client: string;
+    server: string;
+    clientPos: { x: number; y: number; z: number };
+    serverPos: { x: number; y: number; z: number };
+  }
+
+  /**
+   * A faithful miniature of `apps/client/src/main.ts`'s predict → send →
+   * reconcile loop, run entirely against two real `RapierSimulation`s with a
+   * fixed input latency — no network, no browser, deterministic. `server` is
+   * the authority (`authoritative` default `true`); `client` is what a player
+   * actually sees (`authoritative: false`, ADR 0015 — never trusts its own
+   * settle-check to end a knockdown). `dashInput` presses dash at `dashStep`
+   * (idle/hold `East` otherwise) — a caller can angle it to hit the wall
+   * off-centre. Returns each tick's motionState and position on both sides.
+   */
+  const runClientServerDash = (
+    latencyTicks: number,
+    steps: number,
+    dashInput: SimInputs = DASH_EAST,
+    dashStep = 10,
+  ): DashTraceStep[] => {
+    const server = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND, WALL] });
+    const client = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND, WALL], authoritative: false });
+
+    const clientInputs: { tick: number; input: SimInputs }[] = [];
+    const positionHistory = new Map<number, { x: number; y: number; z: number }>();
+    let clientTick = 0;
+    let serverIdx = -1;
+    const trace: DashTraceStep[] = [];
+
+    for (let step = 0; step < steps; step += 1) {
+      // Client predicts one tick, exactly like main.ts's fixed-timestep loop
+      // (main.ts:304-319). A single dash press toward the wall at `dashStep`,
+      // held East afterward — no further dash attempts, so nothing but the
+      // reconcile loop itself can change the outcome from here.
+      clientTick += 1;
+      const cmd = step === dashStep ? dashInput : EAST;
+      clientInputs.push({ tick: clientTick, input: cmd });
+      client.tick({ [DEFAULT_CHARACTER_ID]: cmd });
+      positionHistory.set(clientTick, { ...client.snapshot().characters[DEFAULT_CHARACTER_ID]!.position });
+
+      // Server consumes the input `latencyTicks` behind the client — ordinary
+      // network/processing latency, no jitter or loss needed.
+      if (step >= latencyTicks) serverIdx += 1;
+      const serverInput = serverIdx >= 0 ? clientInputs[serverIdx]!.input : IDLE_INPUTS;
+      server.tick({ [DEFAULT_CHARACTER_ID]: serverInput });
+      const acked = serverIdx + 1; // ~ server.lastInputTick
+      const s = server.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+
+      // ---- main.ts's reconcile(), post-ADR-0015 ----
+      const c = client.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      const serverDown = isDownState(s.motionState);
+      const localDown = isDownState(c.motionState);
+      const predictedAtAck = positionHistory.get(acked);
+      const positionError = predictedAtAck ? dist(predictedAtAck, s.position) : Infinity;
+      const needsCorrection =
+        serverDown || // authority says down — always sync (ADR 0015)
+        localDown || // we think we're down but the authority doesn't — always resync
+        s.motionState !== c.motionState ||
+        positionError > 0.2;
+
+      if (needsCorrection) {
+        client.reconcileCharacter(DEFAULT_CHARACTER_ID, s);
+        if (!serverDown) {
+          const unacked = clientInputs.filter((e) => e.tick > acked);
+          const replayed = client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unacked.map((e) => e.input));
+          positionHistory.clear();
+          unacked.forEach((e, i) => positionHistory.set(e.tick, replayed[i]!));
+        } else {
+          positionHistory.clear();
+        }
+      }
+
+      const c2 = client.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      trace.push({ client: c2.motionState, server: s.motionState, clientPos: c2.position, serverPos: s.position });
+    }
+    return trace;
+  };
+
+  it(
+    "brings the client down while the server is authoritatively Ragdolled from a wall crash the client " +
+      "mispredicted as merely blocked — instead of leaving it walking around for the whole episode (regression " +
+      "test for the 2026-09 playtest desync: server tick=725 lastInputTick=433 Ragdoll, client stayed Controlled)",
+    () => {
+      const trace = runClientServerDash(6, 150);
+
+      // Sanity: this run actually exercises the bug precondition — the
+      // *server* ran the full Ragdoll → GettingUp → Controlled episode, and
+      // the client's own prediction genuinely missed the crash (never itself
+      // called `beginRagdoll` for it) — this isn't passing because the client
+      // happened to predict the hit too.
+      expect(trace.some((t) => t.server === "Ragdoll")).toBe(true);
+      expect(trace.some((t) => t.server === "GettingUp")).toBe(true);
+      expect(trace.at(-1)?.server).toBe("Controlled");
+      expect(trace.some((t) => t.client === "Ragdoll" && t.server === "Controlled")).toBe(false);
+
+      // The property this whole netcode model is supposed to guarantee (ADR
+      // 0015): while the server has the Character authoritatively down, the
+      // client must show it down too — never a Character standing and
+      // walking around on one screen while the authority has it face-down on
+      // the other. Before ADR 0015 this failed: `reconcileCharacter` only
+      // forced Ragdoll on a rising `bumpSeq`, and a dash-into-wall knockdown
+      // never advances one by design (ticket 08) — so a client that mispredicted
+      // its own wall crash (exactly what the ordinary `RECONCILE_POSITION_ERROR`
+      // correction causes here, mid dash build-up) had no way to ever accept
+      // the server's Ragdoll. Now `reconcileTo`'s down branch is unconditional.
+      const clientWentDownWithServer = trace.some((t) => t.server === "Ragdoll" && t.client !== "Controlled");
+      expect(clientWentDownWithServer).toBe(true);
+    },
+  );
+
+  it(
+    "does not correct the local prediction's own position while GettingUp, unlike Ragdoll's snapRootTo — " +
+      "documents why main.ts must render the local Character from the server snapshot while down, not from " +
+      "here, once the server has confirmed the knockdown (the angled-hit playtest glitch)",
+    () => {
+      const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], authoritative: false });
+      sim.applyImpact(DEFAULT_CHARACTER_ID, { x: 0, y: 3, z: 12 });
+      tick(sim, 0.1);
+      expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
+
+      // The server has moved on to GettingUp — entering it here only updates
+      // the state, not the position (there's no ragdoll body left active for
+      // `reconcileTo` to `snapRootTo` once `beginGettingUp` deactivates it).
+      const gettingUp = (position: { x: number; y: number; z: number }) => ({
+        position,
+        velocity: { x: 0, y: 0, z: 0 },
+        grounded: false,
+        motionState: "GettingUp" as const,
+        dashCooldownMs: 0,
+      });
+      sim.reconcileCharacter(DEFAULT_CHARACTER_ID, gettingUp({ x: 5, y: RESTING_SPAWN.y, z: 5 }));
+      const afterEntry = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+
+      // A further server report during the same GettingUp, at a position
+      // that's drifted further still (an off-centre knockdown settles
+      // differently on each machine — ticket 09's known predicted-ragdoll
+      // jitter, more visible on a glancing/angled wall hit than a square
+      // one) — this is a documented no-op here, not a bug in this file; the
+      // fix lives in what `main.ts` chooses to render, not in reconciling
+      // this position harder.
+      sim.reconcileCharacter(DEFAULT_CHARACTER_ID, gettingUp({ x: 8, y: RESTING_SPAWN.y, z: 8 }));
+      const afterFurtherDrift = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+
+      expect(afterFurtherDrift.x).toBeCloseTo(afterEntry.x, 1);
+      expect(afterFurtherDrift.z).toBeCloseTo(afterEntry.z, 1);
+    },
+  );
+});
+
 describe("RapierSimulation — Character collection (ticket 01)", () => {
   it("holds exactly the default Character until another is added", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
@@ -883,22 +1043,18 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     dashCooldownMs: 0,
   });
 
-  it("snaps a locally-Controlled Character into Ragdoll on a forced Bump the client never predicted", () => {
+  it("snaps a locally-Controlled Character into Ragdoll the client never predicted (ADR 0015)", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
     tick(sim, 0.5);
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
 
-    sim.reconcileCharacter(
-      DEFAULT_CHARACTER_ID,
-      {
-        position: { x: 1, y: RESTING_SPAWN.y, z: 1 },
-        velocity: { x: 0, y: 0, z: 0 },
-        grounded: false,
-        motionState: "Ragdoll",
-        dashCooldownMs: 0,
-      },
-      true, // forceRagdoll — this is a Bump (a new bumpSeq)
-    );
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+      position: { x: 1, y: RESTING_SPAWN.y, z: 1 },
+      velocity: { x: 0, y: 0, z: 0 },
+      grounded: false,
+      motionState: "Ragdoll",
+      dashCooldownMs: 0,
+    });
 
     // Immediate — the discrete state is never delayed or smoothed (ADR 0013).
     const snap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -910,11 +1066,13 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     expect(snap.position.z).toBeCloseTo(1, 1);
   });
 
-  it("does NOT snap into Ragdoll for a server down-state that carries no forced Bump (a knockdown the client predicts itself)", () => {
+  it("still snaps into Ragdoll for a server down-state even with no local prediction at all — the server is the sole authority (ADR 0015)", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
     tick(sim, 0.5);
 
-    // Stale Ragdoll snapshot of a dash-wall the client already ran and recovered from.
+    // A knockdown the client's own prediction missed entirely (e.g. the
+    // dash-wall-speed threshold sensitivity ADR 0015 documents) — there is no
+    // `bumpSeq`/event id backing this any more, and there doesn't need to be.
     sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
       position: { x: 1, y: RESTING_SPAWN.y, z: 1 },
       velocity: { x: 0, y: 0, z: 0 },
@@ -923,20 +1081,28 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       dashCooldownMs: 0,
     });
 
-    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
   });
 
-  it("does not re-collapse a locally-recovered Character when the server is only as far as GettingUp", () => {
+  it("advances straight to GettingUp when the server reports it, even though the client never predicted the Ragdoll episode at all", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
     tick(sim, 0.5);
 
+    // A connection stall or similar missed the whole Ragdoll snapshot for
+    // this Character — the first report the client sees is already GettingUp.
     sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
       ...CONTROLLED(RESTING_SPAWN),
       motionState: "GettingUp",
     });
-    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
 
-    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
+    // Not "still Controlled" (the old, superseded bumpSeq-gated behavior) and
+    // not stuck in "Ragdoll" either — it advances the extra step, same as the
+    // server did, from a synthesized flop at the server's reported position.
+    const snap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(snap.motionState).toBe("GettingUp");
+
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("GettingUp");
   });
 
   it("restores the capsule to the server's position/velocity for a Controlled base", () => {
@@ -985,22 +1151,18 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     tick(sim, 0.5);
 
     // Server keeps reporting Ragdoll at a pelvis drifting north as the body
-    // slides; the client reconciles on every snapshot. The first is the forced
-    // Bump; the rest just track (no new bumpSeq).
+    // slides; the client reconciles on every snapshot (ADR 0015: unconditional
+    // while down, so repeating the same report every snapshot is idempotent).
     let serverZ = 0;
     for (let s = 0; s < 6; s += 1) {
       serverZ -= 0.15;
-      sim.reconcileCharacter(
-        DEFAULT_CHARACTER_ID,
-        {
-          position: { x: 0, y: RESTING_SPAWN.y - 0.5, z: serverZ },
-          velocity: { x: 0, y: 0, z: 0 },
-          grounded: false,
-          motionState: "Ragdoll",
-          dashCooldownMs: 0,
-        },
-        s === 0, // forceRagdoll only on the first (the Bump)
-      );
+      sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+        position: { x: 0, y: RESTING_SPAWN.y - 0.5, z: serverZ },
+        velocity: { x: 0, y: 0, z: 0 },
+        grounded: false,
+        motionState: "Ragdoll",
+        dashCooldownMs: 0,
+      });
       tick(sim, 0.1); // a few local ticks between snapshots
 
       const snap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;

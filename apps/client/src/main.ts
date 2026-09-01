@@ -84,14 +84,6 @@ const main = async () => {
   const inputBuffer: { tick: number; input: SimInputs }[] = [];
   const positionHistory = new Map<number, Vec3>();
 
-  // Discrete-state reconciliation (ticket 08): the client predicts its own
-  // dash-into-wall / Spinner knockdowns and lets its own state machine run
-  // them; the server flags the ones the client can mispredict — a Bump, a Fall
-  // at a ledge edge — with a rising `bumpSeq`, which the client force-applies
-  // exactly once. A stale `Ragdoll` snapshot arriving after local recovery
-  // carries no new `bumpSeq`, so it does nothing (no more double knockdowns).
-  let lastAppliedBumpSeq = 0;
-
   // Prop prediction (ticket 06, ADR 0012): ticks-of-grace left per Prop since
   // the local player last touched it. > 0 ⇒ the client simulates that Prop
   // locally (the push feels immediate) and renders its own result; 0 ⇒ the
@@ -110,9 +102,16 @@ const main = async () => {
 
   /**
    * Reconcile the local prediction against the server's authoritative snapshot
-   * for our own Character (ticket 05). The server echoes the last input tick it
-   * applied (`lastInputTick`); everything the client predicted past that point
-   * is replayed forward from the corrected base.
+   * for our own Character (ticket 05, ADR 0015). The server echoes the last
+   * input tick it applied (`lastInputTick`); everything the client predicted
+   * past that point is replayed forward from the corrected base.
+   *
+   * A server-reported down state (`Ragdoll`/`GettingUp`) is always synced,
+   * unconditionally — safe because `localSim` is non-`authoritative` (see its
+   * construction below): it never decides on its own when a knockdown ends,
+   * so it can only ever be at or behind the server's down-state, never ahead
+   * of it, and there is no "stale vs. live" report left to tell apart (ADR
+   * 0015 supersedes ADR 0014's `bumpSeq` gate).
    */
   const reconcile = (
     sim: RapierSimulation,
@@ -132,26 +131,17 @@ const main = async () => {
     const serverDown = isDown(server.motionState);
     const localDown = isDown(localChar.motionState);
 
-    // A knockdown the client couldn't reliably predict (a Bump, a Fall) — force
-    // it once. A dash-wall / Spinner knockdown carries no new bumpSeq and is
-    // never forced here; the client's own machine already ran it.
-    const bumped = server.bumpSeq > lastAppliedBumpSeq;
-    if (bumped) lastAppliedBumpSeq = server.bumpSeq;
-    const forceRagdoll = bumped && serverDown;
-
     const predictedAtAck = positionHistory.get(acked);
     const positionError = predictedAtAck ? distance(predictedAtAck, server.position) : Infinity;
 
     const needsCorrection =
-      forceRagdoll ||
-      (localDown && !serverDown) || // we predicted a knockdown the server didn't — get back up
-      (serverDown && localDown) || // both down — keep tracking the server's pelvis
-      (!serverDown &&
-        (server.motionState !== localChar.motionState || // e.g. a Stagger we missed / are holding too long
-          positionError > RECONCILE_POSITION_ERROR));
+      serverDown || // authority says down — always sync (fresh knock, phase change, or pelvis tracking)
+      localDown || // we think we're down but the authority doesn't — only the server ends a knockdown
+      server.motionState !== localChar.motionState || // e.g. a Stagger we missed / are holding too long
+      positionError > RECONCILE_POSITION_ERROR;
     if (!needsCorrection) return;
 
-    sim.reconcileCharacter(id, server, forceRagdoll);
+    sim.reconcileCharacter(id, server);
     if (!serverDown) {
       // Realign the tick counter so replayed ticks see the right Spinner phase,
       // reset any Prop we're pushing to the authoritative base so replay
@@ -183,6 +173,10 @@ const main = async () => {
         spinners: PLAYGROUND_SPINNERS,
         props: PLAYGROUND_PROPS,
         withDefaultCharacter: false,
+        // Never trust this Character's own settle-check to end a knockdown —
+        // only a server snapshot can (ADR 0015). Makes `reconcile`'s
+        // down-state sync safe to apply unconditionally.
+        authoritative: false,
       });
       // Seed the local prediction at the exact spawn the server used (the
       // per-player spawn grid, ticket 04) — ticket 03's reconcile deliberately
@@ -300,7 +294,6 @@ const main = async () => {
       const previous = renderPreviousSnapshot ?? snapshot;
       const localAlpha = predictionAccumulatorMs / TICK_MS;
       const render = interpolateState(previous, snapshot, localAlpha);
-      const renderCharacter = render.characters[myId]!;
       const c = snapshot.characters[myId]!;
       const input = sampledInput;
 
@@ -314,6 +307,26 @@ const main = async () => {
             alphaSince(latestServerSnapshotReceivedAt, now),
           )
         : null;
+
+      // While down, draw the local Character exactly like a remote one: from
+      // the interpolated server snapshot, not the local prediction (ADR 0015
+      // follow-up). `localSim` still runs its own cosmetic ragdoll physics for
+      // the ~half-RTT feel before the first confirming snapshot arrives, but
+      // once the server *has* confirmed the knockdown, its own down-state
+      // pose is jitter-free by construction (the same 30 Hz interpolation
+      // that already makes a remote Character's ragdoll look smooth) where
+      // the local one drifts from independent, per-machine ragdoll physics
+      // that only gets nudged back into rough alignment on every snapshot
+      // (`Ragdoll.snapRootTo`) and isn't corrected at all while `GettingUp` —
+      // a real reported glitch (an off-centre wall hit settles differently on
+      // each side, then pops straight when `Controlled` resumes). There is
+      // exactly one down-state position/pose on screen, and it's the server's.
+      const localDown = c.motionState === "Ragdoll" || c.motionState === "GettingUp";
+      const serverOwnCharacter = serverRender?.characters[myId];
+      const renderCharacter =
+        localDown && serverOwnCharacter && serverOwnCharacter.bones.length > 0
+          ? serverOwnCharacter
+          : render.characters[myId]!;
       // A Prop the local player is pushing is drawn from the local prediction
       // (immediate); every other Prop from the interpolated snapshot (ticket 06).
       // Nothing is drawn until the first snapshot — before that the local Props

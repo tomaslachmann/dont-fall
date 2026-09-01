@@ -10,7 +10,15 @@ option b).
 
 **Blocked by:** 08.
 
-**Status:** ready-for-agent
+**Status:** ready-for-agent. No longer a correctness dependency for anything — ticket 10 /
+ADR 0015 fixed the actual playtest bug (client-predicted-vs-server-authoritative knockdown
+*recovery* desync) independently of this ticket's scope (the local ragdoll *body*
+prediction). What remains here is jitter/resimulation-cost polish only: `Ragdoll.snapRootTo`
+re-anchoring a chaotic, per-machine-diverging 11-body sim every snapshot, and the
+resimulation cost of stepping an articulated body during replay (ADR 0013's flagged budget
+concern). The checklist's CS2-style timeout-revert item is no longer needed either —
+ADR 0015 already corrects a locally-predicted-but-unconfirmed Ragdoll on the very next
+snapshot, not on a timeout.
 
 **Needs an ADR.** This supersedes the implicit "the client predicts its own ragdoll"
 that tickets 03/05 introduced. ADR 0013's discrete-snap rule and ADR 0006's state machine

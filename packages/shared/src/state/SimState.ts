@@ -38,9 +38,11 @@ export interface CharacterSnapshot {
   /**
    * Monotonic counter, advanced each time this Character took a knockdown the
    * client could mispredict — a Bump from another player, or a Fall at a ledge
-   * edge (ticket 08). The client force-applies the state change once per new
-   * value; a dash-into-wall / Spinner knockdown carries no new `bumpSeq`, since
-   * the client's own state machine already ran it.
+   * edge (ticket 08); a dash-into-wall / Spinner knockdown carries no new
+   * `bumpSeq`. No longer consulted by reconciliation (ADR 0015 made every
+   * server-reported down state unconditional, superseding ADR 0014's
+   * `bumpSeq`-gated force) — retained as a plausible carrier for a future
+   * one-shot networked-event id (research §2.2: SFX/camera-kick gating).
    */
   bumpSeq: number;
   /**

@@ -57,6 +57,17 @@ export interface SimulationConfig {
    * immediately disposes a Character nothing uses.
    */
   withDefaultCharacter?: boolean;
+  /**
+   * Whether every Character added to this simulation decides for itself when
+   * a knockdown ends (`Ragdoll`/`GettingUp` recovering via the Ragdoll body's
+   * own physics settle-check). Defaults to `true` — the server, and every
+   * test that doesn't opt out, is the authority and must. The client's
+   * local-prediction `RapierSimulation` (`apps/client/src/main.ts`) sets this
+   * `false`: its own knockdown recovery is never trusted, only a server
+   * snapshot can end one (ADR 0015) — that's what makes reconciling a down
+   * state unconditional and safe (no more stale-vs-live ambiguity).
+   */
+  authoritative?: boolean;
 }
 
 const DEFAULT_SPAWN = vec3(0, 2, 0);
@@ -111,6 +122,8 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   private readonly statics: Box[];
   private readonly checkpoints: Checkpoint[];
   private readonly killPlaneY: number;
+  /** See `SimulationConfig.authoritative`. */
+  private readonly authoritative: boolean;
   private readonly spinners: Spinner[];
   private readonly props: Prop[];
   private readonly spinnerByHandle = new Map<number, Spinner>();
@@ -139,6 +152,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     this.statics = config.statics ?? [DEFAULT_GROUND];
     this.checkpoints = config.checkpoints ?? [];
     this.killPlaneY = config.killPlaneY ?? DEFAULT_KILL_PLANE_Y;
+    this.authoritative = config.authoritative ?? true;
 
     this.world = new RAPIER.World({ x: 0, y: GRAVITY_Y, z: 0 });
 
@@ -194,7 +208,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       }
     };
 
-    const character = new CharacterController(this.world, point, onCollision);
+    const character = new CharacterController(this.world, point, onCollision, this.authoritative);
     this.characters.set(id, character);
     this.characterIdByHandle.set(character.colliderHandle, id);
     this.progress.set(id, { respawnPoint: { ...point }, checkpointIndex: null, fallCount: 0, bumpSeq: 0 });
@@ -281,16 +295,17 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   /**
    * Ticket 05: overwrite a locally predicted Character with the server's
    * authoritative base so the client can replay its unacknowledged inputs
-   * forward from it (ADR 0013). `forceRagdoll` (ticket 08) triggers the
-   * knockdown itself — the client passes it only for a Bump (a new `bumpSeq`),
-   * never for a Ragdoll it predicts itself. See {@link CharacterController.reconcileTo}.
+   * forward from it (ADR 0013). A down `base.motionState` is always synced
+   * unconditionally (ADR 0015) — safe because a non-`authoritative` Character
+   * (the client's own) never decides on its own when a knockdown ends, so
+   * there is no "stale vs. live" report to tell apart. See
+   * {@link CharacterController.reconcileTo}.
    */
   reconcileCharacter(
     id: string,
     base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs">,
-    forceRagdoll = false,
   ): void {
-    this.character(id).reconcileTo(base, forceRagdoll);
+    this.character(id).reconcileTo(base);
   }
 
   /**

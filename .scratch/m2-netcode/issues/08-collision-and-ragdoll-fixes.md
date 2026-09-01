@@ -153,13 +153,21 @@ scope):
   produce a large frame-to-frame position delta. The fix is to consume an authoritative
   discontinuity signal (the way `interpolateState` does) instead of re-deriving one from
   distance, which needs threading a real "did a reconciliation just happen" flag from
-  `main.ts` through to `scene.ts` — a small API change, not a one-line fix. Low severity in
-  the meantime: the wrong branch only drops one frame's wobble reaction, never pins the
-  lean.
-- A genuine client-side misprediction of its own dash-wall/Spinner knockdown (no `bumpSeq`,
+  `main.ts` through to `scene.ts` — a small API change, not a one-line fix.
+  **Update (2026-09):** playtesting found the wider version of this — deriving the lean's
+  acceleration from render-frame position deltas at all reads as a walking micro-stutter
+  once the Character is predicted + reconciled (uneven 30 Hz-tick-at-variable-render-rate
+  sampling, on top of the snaps). **Wobble is now disabled** (`WOBBLE_ENABLED = false` in
+  `scene.ts`); re-enable once it's driven from a simulation-owned velocity, the same fix
+  speed-lines already got in the pre-M2 polish pass.
+- ~~A genuine client-side misprediction of its own dash-wall/Spinner knockdown (no `bumpSeq`,
   so no forcing signal) self-corrects only once the server's own Ragdoll episode times out.
   Accepted per ADR 0014 on the strength of ADR 0005's determinism guarantee for the
-  deterministic capsule/collision step — revisit if playtesting shows it happening.
+  deterministic capsule/collision step — revisit if playtesting shows it happening.~~
+  **Playtesting did show it happening** (2026-09, up to ~1.9 s of the client walking around
+  while the server held it Ragdoll) — fixed by ticket 10 / ADR 0015: the client never
+  decides on its own when a knockdown ends, so the server's report is always accepted
+  unconditionally, no `bumpSeq` needed.
 
 ---
 
