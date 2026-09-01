@@ -8,9 +8,9 @@ import {
   BUMP_LIFT_RATIO,
   DEFAULT_KILL_PLANE_Y,
   GRAVITY_Y,
-  IMPACT_STAGGER_MIN,
 } from "../tuning.js";
 import { CharacterController, type CollisionListener } from "./CharacterController.js";
+import type { CharacterMotionState } from "./CharacterStateMachine.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
 import { MirrorCharacter } from "./MirrorCharacter.js";
@@ -26,13 +26,15 @@ import { Spinner, type SpinnerConfig } from "./Spinner.js";
  */
 export const DEFAULT_CHARACTER_ID = "local";
 
-/** Per-Character progress that belongs to the world, not the Character itself: where it Checkpointed, how many times it has Fallen, and its unpredictable-knockdown counter. */
+/** Per-Character progress that belongs to the world, not the Character itself. */
 interface CharacterProgress {
   respawnPoint: Vec3;
   checkpointIndex: number | null;
   fallCount: number;
-  /** Count of knockdowns the client couldn't reliably predict — a Bump or a ledge-edge Fall (ticket 08). See `CharacterSnapshot.bumpSeq`. */
-  bumpSeq: number;
+  /** Sim tick the current `motionState` phase began — the client derives the GettingUp blend from it (ADR 0023). Epoch and cause come from `CharacterController.snapshot()`. */
+  phaseStartTick: number;
+  /** The `motionState` seen in the previous snapshot, for transition detection. */
+  lastMotionState: CharacterMotionState;
 }
 
 export interface SimulationConfig {
@@ -193,7 +195,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     const onCollision: CollisionListener = (colliderHandle, hitPoint, velocity, normal) => {
       const spinner = this.spinnerByHandle.get(colliderHandle);
       if (spinner) {
-        this.characters.get(id)?.applyImpact(spinner.knockbackAt(hitPoint));
+        this.characters.get(id)?.applyImpact(spinner.knockbackAt(hitPoint), "Spinner");
         return;
       }
       const bumpedId = this.characterIdByHandle.get(colliderHandle);
@@ -213,7 +215,13 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     const character = new CharacterController(this.world, point, onCollision, this.authoritative);
     this.characters.set(id, character);
     this.characterIdByHandle.set(character.colliderHandle, id);
-    this.progress.set(id, { respawnPoint: { ...point }, checkpointIndex: null, fallCount: 0, bumpSeq: 0 });
+    this.progress.set(id, {
+      respawnPoint: { ...point },
+      checkpointIndex: null,
+      fallCount: 0,
+      phaseStartTick: 0,
+      lastMotionState: "Controlled",
+    });
   }
 
   /**
@@ -229,8 +237,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    */
   private resolveBump(moverId: string, bumpedId: string, moverVelocity: Vec3, normal: Vec3): void {
     const bumped = this.characters.get(bumpedId);
-    const bumpedProgress = this.progress.get(bumpedId);
-    if (!bumped || !bumpedProgress) return;
+    if (!bumped) return;
 
     // `normal` points from the bumped Character back toward the mover, so
     // `-normal` is "from the mover toward the target" — the push direction.
@@ -244,12 +251,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
 
     const direction = normalizeVec3(vec3(-normal.x, BUMP_LIFT_RATIO, -normal.z));
     const magnitude = closingSpeed * BUMP_IMPULSE_SCALE;
-    bumped.applyImpact(scaleVec3(direction, magnitude));
-    // A Bump strong enough to change state is the one knockdown the client
-    // cannot predict — flag it so reconciliation force-applies it exactly once.
-    if (magnitude >= IMPACT_STAGGER_MIN) {
-      bumpedProgress.bumpSeq += 1;
-    }
+    bumped.applyImpact(scaleVec3(direction, magnitude), "Bump");
   }
 
   /** Remove a Character from the Match and free its Rapier bodies (ticket 01). */
@@ -419,10 +421,6 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     if (character.hasPendingRespawn || character.position.y >= this.killPlaneY) return;
 
     progress.fallCount += 1;
-    // A Fall is a knockdown the client can mispredict at a ledge edge (sub-tick
-    // position divergence) — flag it like a Bump so reconciliation force-applies
-    // it once if the client missed it (ticket 08).
-    progress.bumpSeq += 1;
     character.fall(progress.respawnPoint, progress.fallCount);
   }
 
@@ -430,11 +428,19 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     const characters: Record<string, CharacterSnapshot> = {};
     for (const [id, character] of this.characters) {
       const progress = this.progress.get(id)!;
+      const state = character.snapshot();
+      // Stamp the tick a `motionState` phase begins, in sim-tick space, so the
+      // client can derive the GettingUp blend and the reconcile guard can
+      // compare it against `SimState.tick` (ADR 0023).
+      if (state.motionState !== progress.lastMotionState) {
+        progress.phaseStartTick = this.tickCount;
+        progress.lastMotionState = state.motionState;
+      }
       characters[id] = characterSnapshot({
-        ...character.snapshot(),
+        ...state,
         checkpointIndex: progress.checkpointIndex,
         fallCount: progress.fallCount,
-        bumpSeq: progress.bumpSeq,
+        phaseStartTick: progress.phaseStartTick,
       });
     }
     return {

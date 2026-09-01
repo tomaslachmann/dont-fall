@@ -90,6 +90,11 @@ const main = async () => {
   // NTP-style clock sync (ADR 0019) — feeds the interpolation buffer's clock
   // and the net-graph RTT.
   const timeSync = new TimeSync();
+  // The prediction tick the local Character first went down on, or null while
+  // up (ADR 0023 prediction-tick guard). A server snapshot that reports
+  // "not down" for a tick *before* this one hasn't seen the knockdown yet — it
+  // is stale, not a disagreement, and must not revert the just-started ragdoll.
+  let predictedDownAtTick: number | null = null;
   // Prediction LEAD (ADR 0021): how many ticks ahead of the estimated server
   // tick the client predicts, so the server's command buffer never starves.
   // `targetLead` is nudged from the server's reported `commandQueueDepth`;
@@ -133,6 +138,13 @@ const main = async () => {
     const localChar = sim.snapshot().characters[id]!;
     const serverDown = isDown(server.motionState);
     const localDown = isDown(localChar.motionState);
+
+    // Prediction-tick guard (ADR 0023): the server can't have seen a knockdown
+    // it hasn't yet processed the input for. A "not down" report for an input
+    // tick before we predicted going down is stale — leave the ragdoll alone.
+    if (localDown && !serverDown && predictedDownAtTick !== null && acked < predictedDownAtTick) {
+      return;
+    }
 
     const predictedAtAck = positionHistory.get(acked);
     const positionError = predictedAtAck ? distance(predictedAtAck, server.position) : Infinity;
@@ -331,7 +343,12 @@ const main = async () => {
 
         renderPreviousSnapshot = localSim.snapshot();
         localSim.tick({ [myId]: sampledInput });
-        positionHistory.set(predictionTick, localSim.snapshot().characters[myId]!.position);
+        const predicted = localSim.snapshot().characters[myId]!;
+        positionHistory.set(predictionTick, predicted.position);
+        // Track the tick we first predicted going down, for the reconcile guard.
+        predictedDownAtTick = isDown(predicted.motionState)
+          ? (predictedDownAtTick ?? predictionTick)
+          : null;
 
         predictionAccumulatorMs -= TICK_MS;
         steps += 1;

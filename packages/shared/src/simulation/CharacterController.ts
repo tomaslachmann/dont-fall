@@ -19,7 +19,7 @@ import {
   WALK_SPEED,
   WALL_NORMAL_MAX_Y,
 } from "../tuning.js";
-import type { CharacterSnapshot } from "../state/SimState.js";
+import type { CharacterSnapshot, RagdollCause } from "../state/SimState.js";
 import { CharacterStateMachine, type CharacterMotionState } from "./CharacterStateMachine.js";
 import { CHARACTER_GROUPS, GROUP_CHARACTER } from "./collisionGroups.js";
 import { DashController, JumpController } from "./movementVerbs.js";
@@ -75,6 +75,10 @@ export interface CharacterState {
   motionState: CharacterMotionState;
   /** Monotonic count of Respawn teleports — the renderer snaps on a change (ADR 0023). */
   respawnCount: number;
+  /** Rises on every entry to `Ragdoll` (ADR 0023). */
+  ragdollEpoch: number;
+  /** Why the current / most recent knockdown happened (ADR 0023). */
+  ragdollCause: RagdollCause;
   dashCooldownMs: number;
   /** Whether a Dash burst is currently playing out (for the renderer to speed up the movement animation). */
   dashing: boolean;
@@ -118,6 +122,11 @@ export class CharacterController {
    * one-tick boolean was not.
    */
   private respawnCount = 0;
+  /** Rises on every entry to `Ragdoll` (ADR 0023). */
+  private ragdollEpoch = 0;
+  /** Cause latched on the last Ragdoll entry; `pendingCause` is what the next entry will latch. */
+  private ragdollCause: RagdollCause = "Fall";
+  private pendingCause: RagdollCause = "Fall";
   /** Set by {@link beginTick}, read by {@link endTick} once the shared `world.step()` has run. */
   private tickingRagdoll = false;
 
@@ -195,8 +204,9 @@ export class CharacterController {
    * vector is the shove applied to the ragdoll. If the Character is already down,
    * the shove flails it right away.
    */
-  applyImpact(impulse: Vec3): void {
+  applyImpact(impulse: Vec3, cause: RagdollCause = "Bump"): void {
     const magnitude = lengthVec3(impulse);
+    this.pendingCause = cause;
     this.machine.impact(magnitude);
     if (!this.pendingImpact || magnitude > this.pendingImpact.magnitude) {
       this.pendingImpact = { magnitude, impulse: { ...impulse } };
@@ -207,6 +217,7 @@ export class CharacterController {
   /** Queue a Fall respawn at `point`, applied at the top of the next {@link tick}. */
   fall(point: Vec3, fallCount: number): void {
     this.resetMovementControllers();
+    this.pendingCause = "Fall";
     this.machine.forceRagdoll();
     this.pendingRespawn = { point: { ...point }, fallCount };
   }
@@ -237,6 +248,13 @@ export class CharacterController {
     const settled =
       this.authoritative && this.ragdoll.isActive && this.ragdoll.maxSpeed() < RAGDOLL_SETTLE_SPEED;
     const state = this.machine.tick(settled);
+
+    // Every entry to Ragdoll is a new down episode (ADR 0023) — whether it came
+    // from an Impact, a forced Fall, or the Respawn flop.
+    if (state === "Ragdoll" && prevState !== "Ragdoll") {
+      this.ragdollEpoch += 1;
+      this.ragdollCause = this.pendingCause;
+    }
 
     if (this.pendingRespawn) {
       this.respawnAtCheckpoint(this.pendingRespawn);
@@ -341,7 +359,7 @@ export class CharacterController {
       const normal = vec3(collision.normal1.x, collision.normal1.y, collision.normal1.z);
 
       if (dashingFastEnough && !hitCharacter && Math.abs(normal.y) < WALL_NORMAL_MAX_Y) {
-        this.applyImpact(dashWallKnockback(normal));
+        this.applyImpact(dashWallKnockback(normal), "DashWall");
       }
 
       if (this.onCollision) {
@@ -446,6 +464,8 @@ export class CharacterController {
       grounded: this.grounded,
       motionState: state,
       respawnCount: this.respawnCount,
+      ragdollEpoch: this.ragdollEpoch,
+      ragdollCause: this.ragdollCause,
       dashCooldownMs: this.dash.cooldownMs,
       dashing: this.dash.isActive,
       dashSpeed: this.dashSpeed,

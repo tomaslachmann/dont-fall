@@ -121,14 +121,16 @@ describe("RapierSimulation — Fall & Respawn", () => {
     expect(character.checkpointIndex).toBeNull(); // no checkpoint reached
   });
 
-  it("advances bumpSeq on a Fall — a client at a ledge edge can mispredict it (ticket 08)", () => {
+  it("advances ragdollEpoch on a Fall and records the cause (ADR 0023)", () => {
     const sim = new RapierSimulation(config);
     tick(sim, 0.5);
-    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bumpSeq).toBe(0);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.ragdollEpoch).toBe(0);
 
     tickUntilFall(sim);
+    sim.tick({}); // the forced Ragdoll transition lands the tick after the Fall is detected
 
-    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bumpSeq).toBe(1);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.ragdollEpoch).toBe(1);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.ragdollCause).toBe("Fall");
   });
 
   it("does not move the respawn point backward when walking back through an earlier Checkpoint", () => {
@@ -805,14 +807,15 @@ describe("RapierSimulation — dash into a wall", () => {
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
   });
 
-  it("a dash-wall Ragdoll does not advance bumpSeq — the client predicts this one itself (ticket 08)", () => {
+  it("a dash-wall Ragdoll advances ragdollEpoch and records cause DashWall (ADR 0023)", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND, WALL] });
     tick(sim, 0.5);
     sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true }) });
     tick(sim, 1, input({ moveDirection: { x: 1, y: 0, z: 0 } }));
 
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
-    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bumpSeq).toBe(0);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.ragdollEpoch).toBe(1);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.ragdollCause).toBe("DashWall");
   });
 
   it("does not ragdoll from a wall hit right at the start of the build — only once fast enough", () => {
@@ -1239,14 +1242,15 @@ describe("RapierSimulation — Character-to-Character Bump (ticket 04)", () => {
     expect(sim.snapshot().characters[MOVER]!.motionState).toBe("Controlled");
   });
 
-  it("advances the bumped player's bumpSeq (an unpredictable knockdown), but not the mover's (ticket 08)", () => {
+  it("advances the bumped player's ragdollEpoch with cause Bump, but not the mover's (ADR 0023)", () => {
     const sim = twoCharacters(3.5);
-    expect(sim.snapshot().characters[TARGET]!.bumpSeq).toBe(0);
+    expect(sim.snapshot().characters[TARGET]!.ragdollEpoch).toBe(0);
 
     step(sim, 0.9, input({ ...NORTH, dashHeld: true }));
 
-    expect(sim.snapshot().characters[TARGET]!.bumpSeq).toBeGreaterThan(0);
-    expect(sim.snapshot().characters[MOVER]!.bumpSeq).toBe(0);
+    expect(sim.snapshot().characters[TARGET]!.ragdollEpoch).toBeGreaterThan(0);
+    expect(sim.snapshot().characters[TARGET]!.ragdollCause).toBe("Bump");
+    expect(sim.snapshot().characters[MOVER]!.ragdollEpoch).toBe(0);
   });
 
   it("an ordinary walking bump does not change the other player's state", () => {
