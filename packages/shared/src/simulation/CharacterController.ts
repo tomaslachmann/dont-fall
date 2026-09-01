@@ -93,6 +93,8 @@ export class CharacterController {
   private velocity: Vec3 = vec3();
   private grounded = false;
   private teleportedThisTick = false;
+  /** Set by {@link beginTick}, read by {@link endTick} once the shared `world.step()` has run. */
+  private tickingRagdoll = false;
 
   private readonly machine = new CharacterStateMachine();
   private readonly jump = new JumpController();
@@ -166,7 +168,15 @@ export class CharacterController {
     this.pendingRespawn = { point: { ...point }, fallCount };
   }
 
-  tick(input: SimInputs): void {
+  /**
+   * Advance one tick, split around the shared `world.step()` (ticket 02) so
+   * `RapierSimulation` can drive several Characters through a single step:
+   * {@link beginTick} queues this Character's movement/state-machine work,
+   * the caller steps the (one, shared) world, then {@link endTick} reads the
+   * result back. Single-Character callers (tests) may call both back to back
+   * with a `world.step()` between them, exactly like this used to be one method.
+   */
+  beginTick(input: SimInputs): void {
     this.teleportedThisTick = false;
 
     const jumpPressed = input.jumpHeld && !this.jumpHeldLastTick;
@@ -188,19 +198,30 @@ export class CharacterController {
     if (prevState === "Ragdoll" && state === "GettingUp") this.beginGettingUp();
     if (prevState === "GettingUp" && state === "Controlled") this.getupBones = [];
 
-    if (state === "Ragdoll") {
-      this.world.step();
+    this.tickingRagdoll = state === "Ragdoll";
+    if (!this.tickingRagdoll) {
+      this.beginCapsuleTick(input, jumpPressed, dashPressed);
+    }
+  }
+
+  /** The other half of {@link beginTick}, run after the shared `world.step()`. */
+  endTick(): void {
+    if (this.tickingRagdoll) {
       this.body.setTranslation(this.ragdoll.rootPosition(), false); // camera continuity
       this.grounded = false;
-    } else {
-      this.simulateCapsule(input, jumpPressed, dashPressed);
     }
-
     this.tickCount += 1;
   }
 
-  /** Controlled / Stagger / GettingUp: the kinematic capsule drives, input scaled by the state. */
-  private simulateCapsule(input: SimInputs, jumpPressed: boolean, dashPressed: boolean): void {
+  /** Single-Character convenience: {@link beginTick}, step this Character's own world, {@link endTick}. */
+  tick(input: SimInputs): void {
+    this.beginTick(input);
+    this.world.step();
+    this.endTick();
+  }
+
+  /** Controlled / Stagger / GettingUp: queue the kinematic capsule's movement, input scaled by the state. */
+  private beginCapsuleTick(input: SimInputs, jumpPressed: boolean, dashPressed: boolean): void {
     // Stagger dampens *all* movement input — walk, jump and dash — not just walk.
     const fullControl = this.machine.inputScale >= 1;
     const move = scaleVec3(input.moveDirection, this.machine.inputScale);
@@ -233,7 +254,9 @@ export class CharacterController {
       y: at.y + corrected.y,
       z: at.z + corrected.z,
     });
-    this.world.step();
+    // No world.step() here — the caller (RapierSimulation) steps once for
+    // every Character's queued movement (ticket 02); the single-Character
+    // `tick()` convenience above steps right after calling this.
   }
 
   /**

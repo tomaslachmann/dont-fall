@@ -8,7 +8,7 @@ import { CharacterController, type CollisionListener } from "./CharacterControll
 import type { Checkpoint } from "./Checkpoint.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
 import { Prop, type PropConfig } from "./Prop.js";
-import type { SimInputs } from "./SimInputs.js";
+import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
 import { Spinner, type SpinnerConfig } from "./Spinner.js";
 
 /**
@@ -39,6 +39,14 @@ export interface SimulationConfig {
   spinners?: SpinnerConfig[];
   /** Dynamic props (boxes/balls) the Character can bump and knock around (ticket 06). */
   props?: PropConfig[];
+  /**
+   * Whether to auto-create the single-player {@link DEFAULT_CHARACTER_ID}
+   * Character at `spawn` (ticket 01). Defaults to `true`; the server (ticket
+   * 02) sets this `false` and calls {@link RapierSimulation.addCharacter}
+   * with a real per-connection ID instead, so it never allocates and
+   * immediately disposes a Character nothing uses.
+   */
+  withDefaultCharacter?: boolean;
 }
 
 const DEFAULT_SPAWN = vec3(0, 2, 0);
@@ -86,7 +94,7 @@ export const initPhysics = (): Promise<void> => {
  *
  * `initPhysics()` must have resolved before constructing this.
  */
-export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
+export class RapierSimulation implements FixedSimulation<Record<string, SimInputs>, SimState> {
   private readonly world: RAPIER.World;
   private readonly characters = new Map<string, CharacterController>();
   private readonly progress = new Map<string, CharacterProgress>();
@@ -123,7 +131,9 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
     this.props = (config.props ?? []).map((c) => new Prop(this.world, c));
     for (const prop of this.props) this.propByHandle.set(prop.collider.handle, prop);
 
-    this.addCharacter(DEFAULT_CHARACTER_ID, config.spawn ?? DEFAULT_SPAWN);
+    if (config.withDefaultCharacter ?? true) {
+      this.addCharacter(DEFAULT_CHARACTER_ID, config.spawn ?? DEFAULT_SPAWN);
+    }
   }
 
   /**
@@ -162,28 +172,36 @@ export class RapierSimulation implements FixedSimulation<SimInputs, SimState> {
     return character;
   }
 
-  /**
-   * Deliver an Impact to the default Character (a shove from the Spinner, a
-   * wall dash…). See {@link CharacterController.applyImpact}. Scoped to the
-   * single-player default Character until ticket 04 needs to target others.
-   */
-  applyImpact(impulse: Vec3): void {
-    this.character(DEFAULT_CHARACTER_ID).applyImpact(impulse);
+  /** Deliver an Impact to Character `id` (a shove from the Spinner, a wall dash, a Bump…). See {@link CharacterController.applyImpact}. */
+  applyImpact(id: string, impulse: Vec3): void {
+    this.character(id).applyImpact(impulse);
   }
 
-  tick(input: SimInputs): void {
+  /**
+   * Advance every Character by one tick, keyed the same way as `inputs` — a
+   * Character with no entry this tick (a client whose packet hasn't arrived
+   * yet) simply idles. Every Character's movement is queued first, the Rapier
+   * `world` steps exactly once for all of them together, then each Character
+   * reads the result back — the split `beginTick`/`endTick` on
+   * `CharacterController` (ticket 02) is what makes one shared step possible.
+   */
+  tick(inputs: Record<string, SimInputs>): void {
     // Queue each Spinner's rotation for the tick about to run — it must be
-    // queued before `character.tick()`'s `world.step()` applies it, the same
-    // way the capsule's own `setNextKinematicTranslation` works.
+    // queued before `world.step()` applies it, the same way each Character's
+    // own `setNextKinematicTranslation` works.
     for (const spinner of this.spinners) spinner.tick(this.tickCount + 1);
 
-    // The Character must finish moving — including any queued respawn — before
-    // Checkpoint and Fall detection read its position for this tick. Only the
-    // default Character is driven until ticket 04 ticks every Character.
-    this.character(DEFAULT_CHARACTER_ID).tick(input);
+    for (const [id, character] of this.characters) character.beginTick(inputs[id] ?? IDLE_INPUTS);
+    this.world.step();
     this.tickCount += 1;
-    this.updateCheckpoint(DEFAULT_CHARACTER_ID);
-    this.detectFall(DEFAULT_CHARACTER_ID);
+
+    // Each Character must finish moving — including any queued respawn —
+    // before Checkpoint and Fall detection read its position for this tick.
+    for (const [id, character] of this.characters) {
+      character.endTick();
+      this.updateCheckpoint(id);
+      this.detectFall(id);
+    }
   }
 
   private updateCheckpoint(id: string): void {

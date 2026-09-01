@@ -17,3 +17,5 @@ export { Ragdoll } from "./simulation/Ragdoll.js";
 export * from "./simulation/RapierSimulation.js";
 export * from "./simulation/Spinner.js";
 export * from "./simulation/Prop.js";
+export * from "./playground.js";
+export * from "./net/protocol.js";

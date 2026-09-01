@@ -1,4 +1,8 @@
-import type { Box, Checkpoint, PropConfig, SpinnerConfig, Vec3 } from "@dont-fall/shared";
+import type { Box } from "./math/box.js";
+import type { Vec3 } from "./math/vec3.js";
+import type { Checkpoint } from "./simulation/Checkpoint.js";
+import type { PropConfig } from "./simulation/Prop.js";
+import type { SpinnerConfig } from "./simulation/Spinner.js";
 
 /**
  * The M1 scaffold playground: a run of platforms that step steadily downhill,
@@ -7,6 +11,10 @@ import type { Box, Checkpoint, PropConfig, SpinnerConfig, Vec3 } from "@dont-fal
  * kill-plane is the shared `DEFAULT_KILL_PLANE_Y`. Ticket 06 adds one Spinner on
  * the Checkpoint 1 platform and a few Props on the end platform. A later ticket
  * replaces all of this with a Segment-built Track.
+ *
+ * Lives in `packages/shared` (not the client) since ticket 02: the server's
+ * authoritative `RapierSimulation` and the client's scene-building both need
+ * the exact same level geometry.
  */
 
 const box = (center: Vec3, halfExtents: Vec3): Box => ({ center, halfExtents });

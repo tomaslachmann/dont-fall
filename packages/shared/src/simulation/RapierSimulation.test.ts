@@ -25,14 +25,14 @@ const input = (partial: Partial<SimInputs> = {}): SimInputs => ({ ...IDLE_INPUTS
 const NORTH = input({ moveDirection: { x: 0, y: 0, z: -1 } });
 
 const tick = (sim: RapierSimulation, seconds: number, i: SimInputs = IDLE_INPUTS) => {
-  for (let n = 0; n < Math.round(seconds * TICK_RATE_HZ); n += 1) sim.tick(i);
+  for (let n = 0; n < Math.round(seconds * TICK_RATE_HZ); n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: i });
 };
 
 /** Jump/settle, then hold `held` for `count` ticks, tracking the peak Y. */
 const peakYWhile = (sim: RapierSimulation, count: number, held: SimInputs): number => {
   let peak = -Infinity;
   for (let n = 0; n < count; n += 1) {
-    sim.tick(held);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: held });
     peak = Math.max(peak, sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y);
   }
   return peak;
@@ -40,7 +40,7 @@ const peakYWhile = (sim: RapierSimulation, count: number, held: SimInputs): numb
 
 const tickUntilFall = (sim: RapierSimulation): void => {
   for (let i = 0; i < 300; i += 1) {
-    sim.tick(NORTH);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
     if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.fallCount >= 1) return;
   }
   throw new Error("character never fell");
@@ -53,7 +53,7 @@ const tickUntilFall = (sim: RapierSimulation): void => {
  */
 const tickUntilControlled = (sim: RapierSimulation, maxTicks = 400): void => {
   for (let i = 0; i < maxTicks; i += 1) {
-    sim.tick(IDLE_INPUTS);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
     if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState === "Controlled") return;
   }
   throw new Error(`still ${sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState} after ${maxTicks} ticks`);
@@ -86,8 +86,8 @@ describe("RapierSimulation — walk", () => {
 
   it("advances the tick counter once per tick", () => {
     const sim = new RapierSimulation({ statics: [GROUND] });
-    sim.tick(IDLE_INPUTS);
-    sim.tick(IDLE_INPUTS);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
     expect(sim.snapshot().tick).toBe(2);
   });
 
@@ -171,7 +171,7 @@ describe("RapierSimulation — Fall & Respawn", () => {
     tick(sim, 0.5);
     tickUntilFall(sim);
 
-    sim.tick(NORTH); // the respawn tick
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }); // the respawn tick
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bones.length).toBe(11);
 
@@ -179,7 +179,7 @@ describe("RapierSimulation — Fall & Respawn", () => {
     for (let i = 0; i < 400; i += 1) {
       seen.add(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState);
       if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState === "Controlled") break;
-      sim.tick(NORTH); // input is ignored while ragdolling / getting up
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }); // input is ignored while ragdolling / getting up
     }
     expect(seen.has("Ragdoll")).toBe(true);
     expect(seen.has("GettingUp")).toBe(true);
@@ -190,10 +190,10 @@ describe("RapierSimulation — Fall & Respawn", () => {
     const sim = new RapierSimulation({ spawn: config.spawn, statics: [PLATFORM], killPlaneY: -8 });
     tick(sim, 0.5);
     tickUntilFall(sim);
-    sim.tick(NORTH);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
     const afterRespawn = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
 
-    for (let i = 0; i < 20; i += 1) sim.tick(input({ moveDirection: { x: 1, y: 0, z: 0 } }));
+    for (let i = 0; i < 20; i += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: { x: 1, y: 0, z: 0 } }) });
     // still ragdolling — the flopping body moves a little, but nowhere near a full walk
     expect(Math.abs(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x - afterRespawn.x)).toBeLessThan(1.5);
   });
@@ -203,10 +203,10 @@ describe("RapierSimulation — Fall & Respawn", () => {
     tick(sim, 0.5);
     tickUntilFall(sim);
 
-    sim.tick(NORTH); // respawn tick
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }); // respawn tick
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.teleported).toBe(true);
 
-    sim.tick(NORTH);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.teleported).toBe(false);
   });
 });
@@ -221,7 +221,7 @@ describe("RapierSimulation — jump", () => {
   it("lifts the Character clear of the ground on a jump", () => {
     const sim = settled();
     const restY = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
-    sim.tick(input({ jumpHeld: true })); // rising edge
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: true }) }); // rising edge
     const peak = peakYWhile(sim, 30, input({ jumpHeld: true }));
     expect(peak - restY).toBeGreaterThan(1.5);
   });
@@ -230,15 +230,15 @@ describe("RapierSimulation — jump", () => {
     const restY = settled().snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
 
     const tapper = settled();
-    tapper.tick(input({ jumpHeld: true }));
+    tapper.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: true }) });
     let tapPeak = -Infinity;
     for (let n = 0; n < 40; n += 1) {
-      tapper.tick(input({ jumpHeld: false })); // released straight away
+      tapper.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: false }) }); // released straight away
       tapPeak = Math.max(tapPeak, tapper.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y);
     }
 
     const holder = settled();
-    holder.tick(input({ jumpHeld: true }));
+    holder.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: true }) });
     const holdPeak = peakYWhile(holder, 40, input({ jumpHeld: true }));
 
     expect(holdPeak).toBeGreaterThan(tapPeak + 0.3);
@@ -248,15 +248,15 @@ describe("RapierSimulation — jump", () => {
   it("does not jump a second time in mid-air (no double jump)", () => {
     const singlePeak = (() => {
       const sim = settled();
-      sim.tick(input({ jumpHeld: true }));
+      sim.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: true }) });
       return peakYWhile(sim, 45, input({ jumpHeld: true }));
     })();
 
     const sim = settled();
-    sim.tick(input({ jumpHeld: true }));
-    for (let n = 0; n < 6; n += 1) sim.tick(input({ jumpHeld: true }));
-    sim.tick(input({ jumpHeld: false })); // release mid-air
-    sim.tick(input({ jumpHeld: true })); // press again mid-air
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: true }) });
+    for (let n = 0; n < 6; n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: true }) });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: false }) }); // release mid-air
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: true }) }); // press again mid-air
     const doublePeak = peakYWhile(sim, 45, input({ jumpHeld: true }));
 
     expect(doublePeak).toBeLessThanOrEqual(singlePeak + 0.15);
@@ -266,11 +266,11 @@ describe("RapierSimulation — jump", () => {
     const restY = settled().snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
 
     const normalHold = settled();
-    normalHold.tick(input({ jumpHeld: true }));
+    normalHold.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: true }) });
     const normalPeak = peakYWhile(normalHold, 45, input({ jumpHeld: true }));
 
     const foreverHold = settled();
-    foreverHold.tick(input({ jumpHeld: true }));
+    foreverHold.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: true }) });
     const foreverPeak = peakYWhile(foreverHold, 200, input({ jumpHeld: true }));
 
     // holding past the hold-time cap adds nothing — the extra float window is bounded
@@ -287,7 +287,7 @@ describe("RapierSimulation — jump", () => {
     tick(sim, 0.5);
 
     // walk north until the moment ground contact is lost
-    for (let n = 0; n < 60 && sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.grounded; n += 1) sim.tick(NORTH);
+    for (let n = 0; n < 60 && sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.grounded; n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
     const yAtEdge = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
 
     // jump immediately — inside the coyote window
@@ -303,7 +303,7 @@ describe("RapierSimulation — jump", () => {
       killPlaneY: -30,
     });
     tick(sim, 0.5);
-    for (let n = 0; n < 60 && sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.grounded; n += 1) sim.tick(NORTH);
+    for (let n = 0; n < 60 && sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.grounded; n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
 
     tick(sim, 0.4, NORTH); // fall for well over the coyote window
     const yBefore = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
@@ -332,7 +332,7 @@ describe("RapierSimulation — dash", () => {
 
     const dasher = settled();
     const dashStart = dasher.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z;
-    dasher.tick(input({ ...NORTH, dashHeld: true })); // dash press
+    dasher.tick({ [DEFAULT_CHARACTER_ID]: input({ ...NORTH, dashHeld: true }) }); // dash press
     tick(dasher, window, NORTH);
     const dashed = Math.abs(dasher.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z - dashStart);
 
@@ -343,7 +343,7 @@ describe("RapierSimulation — dash", () => {
     const sim = settled();
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.dashing).toBe(false);
 
-    sim.tick(input({ ...NORTH, dashHeld: true }));
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ ...NORTH, dashHeld: true }) });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.dashing).toBe(true);
 
     tick(sim, DASH_DURATION_MS / 1000 + 0.2, NORTH); // comfortably past the burst's end
@@ -354,7 +354,7 @@ describe("RapierSimulation — dash", () => {
     const sim = settled();
     tick(sim, 0.2, NORTH); // establish a facing
     const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
-    sim.tick(input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true })); // dash east
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true }) }); // dash east
     tick(sim, DASH_DURATION_MS / 1000, input({ moveDirection: { x: 1, y: 0, z: 0 } }));
     const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
     expect(after.x - before.x).toBeGreaterThan(1.5);
@@ -365,7 +365,7 @@ describe("RapierSimulation — dash", () => {
     const sim = settled();
     const stepZ = (i: SimInputs): number => {
       const z0 = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z;
-      sim.tick(i);
+      sim.tick({ [DEFAULT_CHARACTER_ID]: i });
       return Math.abs(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z - z0);
     };
 
@@ -385,7 +385,7 @@ describe("RapierSimulation — dash", () => {
     tick(sim, 0.2, IDLE_INPUTS); // let momentum settle, stick released
     const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
 
-    sim.tick(input({ dashHeld: true })); // dash with no move input
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ dashHeld: true }) }); // dash with no move input
     tick(sim, DASH_DURATION_MS / 1000, IDLE_INPUTS);
     const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
 
@@ -395,12 +395,12 @@ describe("RapierSimulation — dash", () => {
 
   it("enforces the cooldown — a second press mid-burst does not restart it", () => {
     const sim = settled();
-    sim.tick(input({ ...NORTH, dashHeld: true })); // first dash press
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ ...NORTH, dashHeld: true }) }); // first dash press
     tick(sim, 0.05, NORTH); // a few ticks into the burst, well before it ends
     const cooldownBeforeRetry = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.dashCooldownMs;
 
-    sim.tick(input({ ...NORTH, dashHeld: false }));
-    sim.tick(input({ ...NORTH, dashHeld: true })); // second press attempt, still on cooldown
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ ...NORTH, dashHeld: false }) });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ ...NORTH, dashHeld: true }) }); // second press attempt, still on cooldown
     const cooldownAfterRetry = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.dashCooldownMs;
 
     // Ticked down normally, not refreshed back up toward DASH_COOLDOWN_MS.
@@ -411,7 +411,7 @@ describe("RapierSimulation — dash", () => {
     const sim = settled();
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.dashCooldownMs).toBe(0);
 
-    sim.tick(input({ ...NORTH, dashHeld: true }));
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ ...NORTH, dashHeld: true }) });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.dashCooldownMs).toBeGreaterThan(DASH_COOLDOWN_MS * 0.8);
 
     tick(sim, DASH_COOLDOWN_MS / 1000 + 0.1, NORTH);
@@ -420,11 +420,11 @@ describe("RapierSimulation — dash", () => {
 
   it("does not start a Dash while airborne — grounded only", () => {
     const sim = settled();
-    sim.tick(input({ jumpHeld: true }));
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: true }) });
     tick(sim, 0.15, input({ jumpHeld: true })); // rising, now airborne
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.grounded).toBe(false);
 
-    sim.tick(input({ ...NORTH, dashHeld: true, jumpHeld: true })); // dash press while airborne
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ ...NORTH, dashHeld: true, jumpHeld: true }) }); // dash press while airborne
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.dashing).toBe(false);
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.dashCooldownMs).toBe(0); // ignored outright, not even queued
 
@@ -444,15 +444,15 @@ describe("RapierSimulation — Impact & ragdoll", () => {
 
   it("ignores a tiny Impact", () => {
     const sim = standing();
-    sim.applyImpact({ x: IMPACT_STAGGER_MIN - 1, y: 0, z: 0 });
-    sim.tick(IDLE_INPUTS);
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: IMPACT_STAGGER_MIN - 1, y: 0, z: 0 });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
   });
 
   it("staggers on a medium Impact — stays upright, walks slower, recovers", () => {
     const sim = standing();
-    sim.applyImpact({ x: (IMPACT_STAGGER_MIN + IMPACT_RAGDOLL_MIN) / 2, y: 0, z: 0 });
-    sim.tick(NORTH);
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: (IMPACT_STAGGER_MIN + IMPACT_RAGDOLL_MIN) / 2, y: 0, z: 0 });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Stagger");
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bones.length).toBe(0); // no ragdoll body
 
@@ -467,8 +467,8 @@ describe("RapierSimulation — Impact & ragdoll", () => {
 
   it("ragdolls on a hard Impact and shows 11 bones", () => {
     const sim = standing();
-    sim.applyImpact({ x: IMPACT_RAGDOLL_MIN + 5, y: 3, z: 0 });
-    sim.tick(IDLE_INPUTS);
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: IMPACT_RAGDOLL_MIN + 5, y: 3, z: 0 });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bones.length).toBe(11);
   });
@@ -476,9 +476,9 @@ describe("RapierSimulation — Impact & ragdoll", () => {
   it("the ragdoll does not explode — bones stay near the Character and finite", () => {
     const sim = standing();
     const origin = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
-    sim.applyImpact({ x: IMPACT_RAGDOLL_MIN + 4, y: 4, z: 0 });
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: IMPACT_RAGDOLL_MIN + 4, y: 4, z: 0 });
     for (let i = 0; i < 90; i += 1) {
-      sim.tick(IDLE_INPUTS);
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
       for (const b of sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bones) {
         expect(Number.isFinite(b.position.x + b.position.y + b.position.z)).toBe(true);
         expect(Math.hypot(b.position.x - origin.x, b.position.z - origin.z)).toBeLessThan(12);
@@ -489,7 +489,7 @@ describe("RapierSimulation — Impact & ragdoll", () => {
   it("gets back up and returns to Controlled near where it fell", () => {
     const sim = standing();
     const fellAt = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
-    sim.applyImpact({ x: IMPACT_RAGDOLL_MIN + 3, y: 3, z: 0 });
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: IMPACT_RAGDOLL_MIN + 3, y: 3, z: 0 });
     tickUntilControlled(sim, 500);
 
     const back = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
@@ -501,7 +501,7 @@ describe("RapierSimulation — Impact & ragdoll", () => {
 
   it("caps ragdoll time even if it never settles (RAGDOLL_MAX_MS)", () => {
     const sim = standing();
-    sim.applyImpact({ x: IMPACT_RAGDOLL_MIN, y: 1, z: 0 });
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: IMPACT_RAGDOLL_MIN, y: 1, z: 0 });
     tick(sim, RAGDOLL_MAX_MS / 1000 + 0.2);
     // it must have left Ragdoll (into GettingUp or already Controlled)
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).not.toBe("Ragdoll");
@@ -509,11 +509,11 @@ describe("RapierSimulation — Impact & ragdoll", () => {
 
   it("the camera-follow point never jumps at the Ragdoll → GettingUp handoff", () => {
     const sim = standing();
-    sim.applyImpact({ x: IMPACT_RAGDOLL_MIN + 3, y: 4, z: 0 });
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: IMPACT_RAGDOLL_MIN + 3, y: 4, z: 0 });
     let prev = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
     let maxStep = 0;
     for (let i = 0; i < 400; i += 1) {
-      sim.tick(IDLE_INPUTS);
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
       const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
       if (!c.teleported) {
         maxStep = Math.max(maxStep, Math.hypot(c.position.x - prev.x, c.position.y - prev.y, c.position.z - prev.z));
@@ -526,15 +526,15 @@ describe("RapierSimulation — Impact & ragdoll", () => {
 
   it("dampens jump and dash while Staggered, not just walking", () => {
     const sim = standing();
-    sim.applyImpact({ x: (IMPACT_STAGGER_MIN + IMPACT_RAGDOLL_MIN) / 2, y: 0, z: 0 });
-    sim.tick(input({ jumpHeld: true, dashHeld: true }));
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: (IMPACT_STAGGER_MIN + IMPACT_RAGDOLL_MIN) / 2, y: 0, z: 0 });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: true, dashHeld: true }) });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Stagger");
     const y0 = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
 
     // hammer jump+dash while staggered — the Character should barely leave the ground
     for (let i = 0; i < 4; i += 1) {
-      sim.tick(input({ jumpHeld: false, dashHeld: false }));
-      sim.tick(input({ ...NORTH, jumpHeld: true, dashHeld: true }));
+      sim.tick({ [DEFAULT_CHARACTER_ID]: input({ jumpHeld: false, dashHeld: false }) });
+      sim.tick({ [DEFAULT_CHARACTER_ID]: input({ ...NORTH, jumpHeld: true, dashHeld: true }) });
     }
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y - y0).toBeLessThan(0.4); // no real jump
   });
@@ -559,7 +559,7 @@ describe("RapierSimulation — Spinner", () => {
 
     let hit = false;
     for (let i = 0; i < 90; i += 1) {
-      sim.tick(IDLE_INPUTS);
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
       if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState !== "Controlled") {
         hit = true;
         break;
@@ -618,11 +618,11 @@ describe("RapierSimulation — dash into a wall", () => {
   it("ragdolls the Character when a dash is blocked by a wall", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND, WALL] });
     tick(sim, 0.5); // settle
-    sim.tick(input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true })); // dash toward the wall
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true }) }); // dash toward the wall
 
     let ragdolled = false;
     for (let i = 0; i < 20; i += 1) {
-      sim.tick(input({ moveDirection: { x: 1, y: 0, z: 0 } }));
+      sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: { x: 1, y: 0, z: 0 } }) });
       if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState === "Ragdoll") {
         ragdolled = true;
         break;
@@ -645,7 +645,7 @@ describe("RapierSimulation — dash into a wall", () => {
     const closeWall: Box = { center: { x: 1, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 5 } };
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND, closeWall] });
     tick(sim, 0.5);
-    sim.tick(input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true })); // dash press, contacts the wall immediately
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true }) }); // dash press, contacts the wall immediately
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
   });
 });
