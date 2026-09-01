@@ -713,12 +713,25 @@ describe("RapierSimulation — client Prop prediction (ticket 06)", () => {
 
     // Server says it's 3 units away — beyond PROP_HARD_CORRECT_DISTANCE.
     const corrected = sim.syncPropsToSnapshot([serverPose({ x: drifted.x + 3, y: drifted.y, z: drifted.z })]);
-    expect(corrected).toBe(true);
+    expect(corrected).toEqual([0]);
     expect(sim.snapshot().props[0]!.position.x).toBeCloseTo(drifted.x + 3, 2);
 
     // A small disagreement is left alone.
     const here = sim.snapshot().props[0]!.position;
-    expect(sim.syncPropsToSnapshot([serverPose({ x: here.x + 0.1, y: here.y, z: here.z })])).toBe(false);
+    expect(sim.syncPropsToSnapshot([serverPose({ x: here.x + 0.1, y: here.y, z: here.z })])).toEqual([]);
+  });
+
+  it("forceLive snaps a pushed Prop to the server pose regardless of divergence, without reporting it as a correction", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [airborneProp] });
+    sim.setLocallyLiveProps([0]);
+    sim.tick({});
+    const here = sim.snapshot().props[0]!.position;
+
+    // Tiny disagreement + forceLive: the Prop IS moved (replay base), but it's
+    // not a "you lost this Prop" hard-correct, so it isn't in the return.
+    const snapped = sim.syncPropsToSnapshot([serverPose({ x: here.x + 0.05, y: here.y, z: here.z })], true);
+    expect(snapped).toEqual([]);
+    expect(sim.snapshot().props[0]!.position.x).toBeCloseTo(here.x + 0.05, 3);
   });
 
   it("does not touch Props on the server (no sync calls) — they stay fully dynamic", () => {

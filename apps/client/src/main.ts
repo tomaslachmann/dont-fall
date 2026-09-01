@@ -141,7 +141,7 @@ const main = async () => {
       // re-pushes it from there (not a position local prediction advanced), then
       // re-run every unacknowledged input forward from the corrected base.
       sim.syncTick(serverTick);
-      sim.resetLivePropsToSnapshot(serverProps);
+      sim.syncPropsToSnapshot(serverProps, true);
       const replayed = sim.replayLocalCharacter(id, unacked.map((entry) => entry.input));
       positionHistory.clear();
       unacked.forEach((entry, i) => {
@@ -177,10 +177,18 @@ const main = async () => {
       latestServerSnapshotReceivedAt = performance.now();
 
       if (localSim && myId) {
+        // Props first: fresh follow poses must be in place before `reconcile`'s
+        // replay steps run (ticket 06). A Prop the local player is pushing that
+        // the server clearly resolved elsewhere (another player shoved it) is
+        // hard-corrected here and dropped back to following the snapshot.
+        const snappedProps = localSim.syncPropsToSnapshot(message.state.props);
+        for (const i of snappedProps) propPushGrace[i] = 0;
+
         const serverCharacter = message.state.characters[myId];
         if (serverCharacter) {
           reconcile(localSim, myId, serverCharacter, message.state.tick, message.state.props);
         }
+        if (snappedProps.length > 0) renderPreviousSnapshot = localSim.snapshot(); // don't blend across the jump
 
         // Every OTHER connected Character becomes a solid obstacle in the local
         // prediction world (ADR 0012), positioned from this snapshot — so the
@@ -193,12 +201,6 @@ const main = async () => {
           if (id !== myId) others[id] = character.position;
         }
         localSim.syncMirrorCharacters(others);
-
-        // Props follow the authoritative snapshot; one the local player is
-        // actively pushing keeps its local simulation unless it has diverged
-        // far enough that the server clearly resolved it elsewhere (ticket 06).
-        const propHardCorrected = localSim.syncPropsToSnapshot(message.state.props);
-        if (propHardCorrected) renderPreviousSnapshot = localSim.snapshot(); // don't blend across the jump
       }
     }
   });

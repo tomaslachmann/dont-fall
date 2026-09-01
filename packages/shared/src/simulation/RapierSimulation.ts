@@ -372,39 +372,30 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   /**
    * Client-only (ticket 06, ADR 0012): take the server's authoritative Prop
    * poses. Props the local player isn't pushing follow these exactly from the
-   * next tick; a Prop that *is* being pushed locally is left alone unless it
-   * has diverged past {@link PROP_HARD_CORRECT_DISTANCE} from the server's
-   * resolution (another player shoved the same Prop), in which case it is
-   * hard-corrected to match — the same policy ADR 0013 uses for the Character.
-   * Returns whether any live Prop was hard-corrected, so the client can stop
-   * render interpolation blending across the jump.
+   * next tick. A Prop that *is* being pushed locally is left alone — unless
+   * `forceLive` is set (a reconciliation is about to replay, so it must start
+   * from the authoritative base like the Character does, ADR 0013), or it has
+   * diverged past {@link PROP_HARD_CORRECT_DISTANCE} from the server's
+   * resolution (another player shoved the same Prop). Returns the indices of
+   * live Props that were snapped, so the client can stop render interpolation
+   * blending across the jump and drop its local-simulation grace for them.
+   *
+   * Call this *before* {@link reconcileCharacter} so a replay sees fresh poses.
    */
-  syncPropsToSnapshot(poses: readonly PropSnapshot[]): boolean {
+  syncPropsToSnapshot(poses: readonly PropSnapshot[], forceLive = false): number[] {
     this.followPoses = poses.map((p) => ({ position: { ...p.position }, rotation: { ...p.rotation } }));
-    let hardCorrected = false;
+    const snapped: number[] = [];
     for (const i of this.locallyLiveProps) {
       const pose = poses[i];
       const prop = this.props[i];
       if (!pose || !prop) continue;
-      if (lengthVec3(subVec3(prop.snapshot().position, pose.position)) > PROP_HARD_CORRECT_DISTANCE) {
+      const diverged = lengthVec3(subVec3(prop.snapshot().position, pose.position)) > PROP_HARD_CORRECT_DISTANCE;
+      if (forceLive || diverged) {
         prop.follow(pose);
-        hardCorrected = true;
+        if (diverged) snapped.push(i);
       }
     }
-    return hardCorrected;
-  }
-
-  /**
-   * Client-only (ticket 06): snap every locally-simulated Prop to the server's
-   * pose before a reconciliation replay, so the replayed ticks re-push it from
-   * the same authoritative base the character is reset to (ADR 0013) rather
-   * than from a position local prediction already advanced.
-   */
-  resetLivePropsToSnapshot(poses: readonly PropSnapshot[]): void {
-    for (const i of this.locallyLiveProps) {
-      const pose = poses[i];
-      if (pose) this.props[i]?.follow(pose);
-    }
+    return snapped;
   }
 
   private updateCheckpoint(id: string): void {
