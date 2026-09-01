@@ -191,3 +191,51 @@ A full-viewport view shown *outside* a running Round — main menu, lobby,
 settings, account/registration, results, the Bet screen. Screens are React
 (ADR 0008).
 _Avoid_: menu, page, view, route
+
+## Networking
+
+Its own subdomain. These terms mean this exact thing in code, commits, and ADRs;
+concrete numbers (30 Hz, delays, window sizes) live in `docs/networking-model.md`,
+not here.
+
+**Tick**:
+One step of the fixed-rate authoritative simulation. The unit of game time. The
+server advances one Tick at a fixed rate; the client predicts at the same rate.
+_Avoid_: frame (that is a render concept), step, update
+
+**Snapshot**:
+The authoritative world state at one Tick, as sent to clients — the wire form of
+the simulation state. A Character's slice of a Snapshot is a `CharacterSnapshot`.
+Note: **"state" alone is ambiguous** — say *motion state* for a Character's
+Controlled/Stagger/Ragdoll/GettingUp, and *Snapshot* (or *sim state* for the
+in-memory `SimState` object) for the networked world state. Never just "state".
+_Avoid_: packet, update, world state
+
+**Command** (**Input**):
+One Tick's worth of a Player's intent, sent client → server. "Input" is the
+existing code term (`SimInputs`); "Command" is the same thing in netcode prose.
+
+**Prediction**:
+The client running the shared simulation for its *own* Character immediately,
+without waiting for the server, so movement feels instant. Only the local
+Character, only input-driven state (ADR 0003).
+
+**Reconciliation**:
+Correcting the client's Prediction when a Snapshot disagrees: reset to the
+server's state for the last acknowledged Tick, replay the unacknowledged
+Commands (ADR 0013).
+
+**Interpolation Delay**:
+How far in the past the client renders everything it does *not* predict —
+remote Characters, Props, ragdoll bones — so it always has two Snapshots to
+interpolate between (ADR 0017, 0020).
+
+**Authority**:
+Who decides the true value of something. The server has Authority over all
+game state; a client never asserts its own position, only sends Commands.
+
+**Epoch**:
+A monotonic counter identifying a discrete episode (a knockdown —
+`ragdollEpoch`; a Respawn — `respawnCount`) so a one-shot effect fires exactly
+once even if the Snapshot carrying it is seen across many frames. Never a
+one-Tick boolean.

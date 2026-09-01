@@ -9,10 +9,14 @@ motion. The local Character's kinematic-capsule prediction slides against them e
 like it already does against statics and Spinners — so a player can't locally walk
 through another player or through a Prop while waiting for the next correction.
 
-The one exception is a Prop the local player is actively pushing: for that duration its
+~~The one exception is a Prop the local player is actively pushing: for that duration its
 motion *is* locally simulated, so the push feels immediate rather than delayed until the
-next snapshot, and it is hard-corrected the instant the server disagrees — the same
-correction policy ADR 0013 uses for the local Character itself.
+next snapshot, and it is hard-corrected the instant the server disagrees.~~ **Superseded by
+ADR 0016:** that exception is removed — Props are never locally predicted. The
+predict-then-hard-correct read as the box jumping backward on release. A pushed Prop is
+now, like every other Prop, an obstacle pinned to the interpolated snapshot pose; it moves
+only on the server, drawn a beat behind ("heavy box"). The main rule below stands with no
+carve-out.
 
 Without this, the core fantasy — "physical chaos and player interaction: bumping,
 shoving, and falling" (CLAUDE.md) — would fail exactly where it matters most: a Bump

@@ -69,6 +69,55 @@ Explicitly declined at the same time (via a direct decision): dropping local pre
 `Controlled` movement too. `Controlled` is nothing but input reaction; predicting it is the
 whole point of ADR 0002/0003/0005/0013. Staying on that design.
 
+## Part 3 — player-vs-player collision proxy (clipping through the other player)
+
+Same root shape again: the other players' mirror capsules (ADR 0012) were positioned from
+the **raw latest snapshot**, updated **once per snapshot**, while the other player is *drawn*
+from the interpolated render position, updated every frame. Between snapshots the drawn body
+glides forward and the mirror stays frozen — so running at where you *see* the other player
+put you into empty space (their collision proxy was still a snapshot behind), reading as
+"I run straight through them". Not a reversal of ADR 0012, a refinement of where it places
+the proxy:
+
+- `main.ts` now refreshes the mirrors **every frame** from `serverRender` (the same
+  interpolated position the renderer draws), not once per snapshot from the raw pose — "what
+  you see is what you collide with".
+- A player who is **down** (`Ragdoll`/`GettingUp`) gets **no mirror at all** — you run
+  through a floored body rather than snag on a half-buried pelvis-height capsule. Makes the
+  M2 "you can step over a floored body" simplification explicit and clean instead of a
+  weird catch.
+- **No extrapolation toward "now"** — the proxy sits exactly where the body is drawn, ~1
+  snapshot + interp-delay behind the other player's true server position. A fast head-on is
+  still resolved authoritatively by the server ~½ RTT later (the mover predicts being
+  blocked from where they *saw* the other player; the server bumps from where they *are*).
+  That residual is inherent to ADR 0003/0012 (predict only your own Character) — the lever
+  to shrink it further is clamped velocity extrapolation of the mirror, deferred until
+  playtesting says the block timing feels off.
+
+**Symptom "delay on the other player's ragdoll after I hit them" — not a bug, inherent.**
+Bump is server-authoritative (ADR 0012); the bumped player's knockdown lands ~1 RTT after
+the mover's client saw contact. Removing that means predicting other players' reactions,
+which ADR 0003 rejects ("desync exactly where it hurts most"). A cosmetic client-side flinch
+on the mirror is possible future polish, out of scope here.
+
+## Part 4 — the box still wasn't smooth: naive snapshot interpolation (ADR 0017)
+
+After Parts 1–3 the box *tracked* right but still juddered while pushed. Diagnosed with a
+feedback loop (`snapshotInterpolation.test.ts`): `main.ts` lerped between the last two
+*received* snapshots with `alpha = (now - arrivedAt) / TICK_MS`, assuming zero arrival
+jitter. Real `setInterval` + socket + parse jitter meant consecutive snapshots were rarely
+a clean tick apart — box drawn too fast then snapped (arrivals < a tick apart) or frozen
+(arrivals > a tick apart). Rendered per-frame speed swung ~68% around the mean for a
+constant-speed source.
+
+Fix: `apps/client/src/snapshotInterpolation.ts` — `SnapshotInterpolator`, a standard
+render-delay interpolation buffer. Snapshots keyed by *server* time (jitter-free), local
+clock anchored to server clock, render the non-predicted world `INTERP_DELAY_MS` (1.5
+ticks) of server time in the past, lerp between the two bracketing buffered snapshots. Also
+feeds the Spinner phase and the Prop/mirror obstacle poses. ADR 0017. Everything
+non-predicted is now ~50 ms in the past (vs ~33 ms + jitter) and smooth; the predicted
+local Character is unchanged.
+
 ## Tests
 
 `packages/shared/src/simulation/RapierSimulation.test.ts`:
@@ -82,8 +131,18 @@ whole point of ADR 0002/0003/0005/0013. Staying on that design.
   added a test for `Ragdoll → GettingUp` advancing without a fresh knockdown, and a test
   documenting that `reconcileTo` deliberately does *not* correct the local prediction's own
   `GettingUp` position (the reason main.ts renders that from the server instead).
+- `"RapierSimulation — Character-to-Character Bump (ticket 04)"` block: a mirror re-synced
+  every tick from a moving position stays solid — the local player piles up behind it and
+  never tunnels through in the gap between updates.
+- `"RapierSimulation — client Props are pinned obstacles"` block: a Prop re-pinned every
+  tick to an advancing pose stays a smooth obstacle the pushing player tracks (no
+  per-snapshot sawtooth).
+- `apps/client/src/snapshotInterpolation.test.ts`: the naive interpolation renders a
+  constant-speed box jerkily under realistic arrival jitter (reproduces the bug);
+  `SnapshotInterpolator` renders the same stream smoothly, holds (never jumps back) on a
+  late snapshot, and stays smooth over a long stream despite clock drift.
 
-All 133 shared tests, plus client/server suites, pass. Typecheck clean across the monorepo.
+All shared + client + server suites pass. Typecheck clean across the monorepo.
 
 **No test seam for the render-layer change**: `apps/client/src/main.ts` is the un-exported
 browser entry point — no unit-test boundary. Verified by code review; needs a live playtest

@@ -127,3 +127,15 @@ half (this ADR's main content) is fully covered in `packages/shared`; the render
 choice is verified by code review and needs a live playtest to confirm visually, not an
 automated test. Flagged, not silently skipped — worth revisiting if `main.ts`'s render
 selection logic grows enough to be worth extracting into a testable pure function.
+
+
+---
+
+## Amended by ADR 0023 (2026-09)
+
+The revert path this ADR describes — bring the client back up when the server says it never
+went down — needs a **prediction-tick guard** that this ADR removed along with the
+`downSincePredictionTick` band-aid. ADR 0023 restores it in a clean, `bumpSeq`-free form:
+the client tags its predicted ragdoll with prediction tick `P` and ignores any non-down
+snapshot with `tick < P`. Everything else in this ADR stands; `bumpSeq` is renamed to
+`ragdollEpoch` and now rises on every knockdown.

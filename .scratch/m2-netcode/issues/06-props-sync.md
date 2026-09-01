@@ -10,7 +10,16 @@ from different sides.
 
 **Blocked by:** 04.
 
-**Status:** done
+**Status:** done — **prediction half reverted by ADR 0016 (2026-09).** Predicting a
+pushed Prop and hard-correcting it on server disagreement read as the box visibly jumping
+backward the moment you stopped pushing (`propPushGrace` lapses → switch from the
+advanced local prediction to the ~½ RTT-behind interpolated server pose). Props are now
+*never* predicted: drawn from the interpolated snapshot, and pinned each tick as an
+obstacle in the local prediction world. Removed: `setLocallyLiveProps` / `getContactedProps`
+/ `PROP_LOCAL_SIM_GRACE_TICKS` / `PROP_HARD_CORRECT_DISTANCE` / `syncPropsToSnapshot`'s
+`forceLive`+return / `main.ts`'s `propPushGrace`. What survives of this ticket: Props on
+the wire, drawn consistently on every client, and solid as obstacles. The checklist items
+below about immediate local push / contact reporting / hard-correct no longer hold.
 
 - [x] Every Prop's position and orientation is part of the server's broadcast snapshot
       (`SimState.props` — since ticket 02; each `PropSnapshot` carries position + rotation)

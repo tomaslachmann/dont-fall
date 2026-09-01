@@ -667,7 +667,7 @@ describe("RapierSimulation — dynamic props", () => {
   });
 });
 
-describe("RapierSimulation — client Prop prediction (ticket 06)", () => {
+describe("RapierSimulation — client Props are pinned obstacles, never predicted (ticket 06, ADR 0016)", () => {
   const airborneProp = {
     shape: { kind: "box" as const, halfExtents: { x: 0.4, y: 0.4, z: 0.4 } },
     center: { x: 6, y: 5, z: 0 }, // well above the ground, so gravity is obvious if it simulates
@@ -677,9 +677,8 @@ describe("RapierSimulation — client Prop prediction (ticket 06)", () => {
     rotation: { x: 0, y: 0, z: 0, w: 1 },
   });
 
-  it("pins a Prop the local player isn't touching to the snapshot pose — never simulates it (no gravity)", () => {
+  it("pins a Prop to the snapshot pose — never simulates it (no gravity)", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [airborneProp] });
-    sim.setLocallyLiveProps([]);
     sim.syncPropsToSnapshot([serverPose({ x: 6, y: 5, z: 0 })]);
 
     tick(sim, 2); // would fall ~metres under gravity if simulated
@@ -692,14 +691,13 @@ describe("RapierSimulation — client Prop prediction (ticket 06)", () => {
   it("follows a moving snapshot pose exactly", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [airborneProp] });
     for (let step = 0; step < 5; step += 1) {
-      sim.setLocallyLiveProps([]);
       sim.syncPropsToSnapshot([serverPose({ x: 6 + step, y: 5, z: 0 })]);
       sim.tick({});
       expect(sim.snapshot().props[0]!.position.x).toBeCloseTo(6 + step, 3);
     }
   });
 
-  it("reports the Prop index the Character's movement touched, and simulates it once it's live", () => {
+  it("is a solid obstacle the local player slides against, but the player's push never moves it locally (ADR 0016)", () => {
     const groundProp = {
       shape: { kind: "box" as const, halfExtents: { x: 0.4, y: 0.4, z: 0.4 } },
       center: { x: 0, y: 0.4, z: -1.5 }, // on the ground, north of spawn
@@ -708,25 +706,23 @@ describe("RapierSimulation — client Prop prediction (ticket 06)", () => {
     sim.syncPropsToSnapshot([serverPose(groundProp.center)]);
     tick(sim, 0.5);
 
-    // Walk into it; once contact is reported the client would mark it live.
-    let everContacted = false;
-    for (let i = 0; i < 20; i += 1) {
-      sim.setLocallyLiveProps(everContacted ? [0] : []);
+    const startZ = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z;
+    for (let i = 0; i < 40; i += 1) {
+      sim.syncPropsToSnapshot([serverPose(groundProp.center)]); // server: Prop hasn't moved
       sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
-      if (sim.getContactedProps().includes(0)) everContacted = true;
     }
-    expect(everContacted).toBe(true);
 
-    const start = sim.snapshot().props[0]!.position;
-    for (let i = 0; i < 20; i += 1) {
-      sim.setLocallyLiveProps([0]);
-      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
-    }
-    const moved = sim.snapshot().props[0]!.position;
-    expect(Math.hypot(moved.x - start.x, moved.z - start.z)).toBeGreaterThan(0.2);
+    // The Prop is exactly where the server put it — the local push did nothing to it.
+    const prop = sim.snapshot().props[0]!.position;
+    expect(prop.x).toBeCloseTo(groundProp.center.x, 3);
+    expect(prop.z).toBeCloseTo(groundProp.center.z, 3);
+    // ...and it blocked the player: they didn't walk through to the far side.
+    const moverZ = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z;
+    expect(moverZ).toBeLessThan(startZ); // did advance toward it
+    expect(moverZ).toBeGreaterThan(groundProp.center.z + 0.5); // but stopped short, not through
   });
 
-  it("keeps a Prop's shove when it's touched but not yet marked live, so a tap moves it locally right away", () => {
+  it("a Prop re-pinned every tick to an advancing pose stays a smooth obstacle — the pushing player tracks it, no per-snapshot sawtooth (main.ts's per-frame prop pin)", () => {
     const groundProp = {
       shape: { kind: "box" as const, halfExtents: { x: 0.4, y: 0.4, z: 0.4 } },
       center: { x: 0, y: 0.4, z: -1.2 },
@@ -734,45 +730,25 @@ describe("RapierSimulation — client Prop prediction (ticket 06)", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [groundProp] });
     sim.syncPropsToSnapshot([serverPose(groundProp.center)]);
     tick(sim, 0.5);
-    const start = sim.snapshot().props[0]!.position;
 
-    // Walk into it for a few ticks WITHOUT ever marking it live (setLocallyLiveProps stays []).
-    for (let i = 0; i < 6; i += 1) {
-      sim.setLocallyLiveProps([]);
+    // The server pushes the box north (−z) a little each tick; the client
+    // re-pins it every tick from that (interpolated) pose while the player
+    // walks north into it.
+    let propZ = groundProp.center.z;
+    let prevGap = Infinity;
+    for (let i = 0; i < 50; i += 1) {
+      propZ -= 0.06;
+      sim.syncPropsToSnapshot([serverPose({ x: 0, y: 0.4, z: propZ })]);
       sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+      const gap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z - propZ;
+      // The player stays a roughly constant short distance behind the moving
+      // box every tick — never lurching (the sawtooth would show as the gap
+      // swinging wide then snapping closed).
+      if (i > 15) expect(Math.abs(gap - prevGap)).toBeLessThan(0.08);
+      prevGap = gap;
     }
-
-    const moved = sim.snapshot().props[0]!.position;
-    expect(Math.hypot(moved.x - start.x, moved.z - start.z)).toBeGreaterThan(0.05);
-  });
-
-  it("hard-corrects a live Prop that has diverged far from the server's resolution, and reports it", () => {
-    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [airborneProp] });
-    sim.setLocallyLiveProps([0]); // pretend the local player is pushing it
-    sim.tick({});
-    const drifted = sim.snapshot().props[0]!.position;
-
-    // Server says it's 3 units away — beyond PROP_HARD_CORRECT_DISTANCE.
-    const corrected = sim.syncPropsToSnapshot([serverPose({ x: drifted.x + 3, y: drifted.y, z: drifted.z })]);
-    expect(corrected).toEqual([0]);
-    expect(sim.snapshot().props[0]!.position.x).toBeCloseTo(drifted.x + 3, 2);
-
-    // A small disagreement is left alone.
-    const here = sim.snapshot().props[0]!.position;
-    expect(sim.syncPropsToSnapshot([serverPose({ x: here.x + 0.1, y: here.y, z: here.z })])).toEqual([]);
-  });
-
-  it("forceLive snaps a pushed Prop to the server pose regardless of divergence, without reporting it as a correction", () => {
-    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [airborneProp] });
-    sim.setLocallyLiveProps([0]);
-    sim.tick({});
-    const here = sim.snapshot().props[0]!.position;
-
-    // Tiny disagreement + forceLive: the Prop IS moved (replay base), but it's
-    // not a "you lost this Prop" hard-correct, so it isn't in the return.
-    const snapped = sim.syncPropsToSnapshot([serverPose({ x: here.x + 0.05, y: here.y, z: here.z })], true);
-    expect(snapped).toEqual([]);
-    expect(sim.snapshot().props[0]!.position.x).toBeCloseTo(here.x + 0.05, 3);
+    // And it did follow the box north the whole way, not get stuck at the start.
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z).toBeLessThan(-1.5);
   });
 
   it("does not touch Props on the server (no sync calls) — they stay fully dynamic", () => {
@@ -1289,5 +1265,26 @@ describe("RapierSimulation — Character-to-Character Bump (ticket 04)", () => {
     // b's capsule is gone: the mover can now walk through where it was.
     step(sim, 2, input({ moveDirection: { x: 0, y: 0, z: 1 } }));
     expect(sim.snapshot().characters[MOVER]!.position.z).toBeGreaterThan(3);
+  });
+
+  it("a mirror re-synced every tick from a moving position stays solid — the local player piles up behind it, never through it (main.ts's per-frame mirror refresh)", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    for (let n = 0; n < 10; n += 1) sim.tick({});
+
+    // The other player is ahead of the local player and moving the same way,
+    // slower; their mirror is refreshed every tick from where they'd be drawn.
+    const SOUTH = input({ moveDirection: { x: 0, y: 0, z: 1 } });
+    let mirrorZ = 1.5;
+    for (let n = 0; n < 90; n += 1) {
+      mirrorZ += 0.08; // slower than the mover's ~0.2 u/tick
+      sim.syncMirrorCharacters({ other: onGround(mirrorZ) });
+      sim.tick({ [MOVER]: SOUTH });
+    }
+
+    // The mover caught up and is blocked right behind the capsule — never
+    // tunnels past it in the gap between position updates.
+    const moverZ = sim.snapshot().characters[MOVER]!.position.z;
+    expect(moverZ).toBeLessThan(mirrorZ - 0.4); // did not overtake
+    expect(moverZ).toBeGreaterThan(mirrorZ - 1.3); // did close the distance (isn't just left behind)
   });
 });
