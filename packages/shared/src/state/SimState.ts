@@ -18,10 +18,12 @@ export interface CharacterSnapshot {
   /** How many times this Character has Fallen and Respawned. */
   fallCount: number;
   /**
-   * True only on the tick a Respawn teleported the Character. The renderer must
-   * snap rather than interpolate through this frame.
+   * Monotonic count of Respawn teleports (ADR 0023, Q9). The renderer holds the
+   * last value it saw per Character and snaps — no interpolation — when it
+   * changes. A one-tick boolean was lost whenever the interpolation buffer
+   * skipped or coalesced the exact respawn tick.
    */
-  teleported: boolean;
+  respawnCount: number;
   /** Milliseconds left on the Dash cooldown; 0 means Dash is ready. */
   dashCooldownMs: number;
   /** Whether a Dash burst is currently playing out (as opposed to merely on cooldown). */
@@ -76,7 +78,7 @@ export interface CharacterSnapshotFields {
   motionState?: CharacterMotionState;
   checkpointIndex?: number | null;
   fallCount?: number;
-  teleported?: boolean;
+  respawnCount?: number;
   dashCooldownMs?: number;
   dashing?: boolean;
   dashSpeed?: number;
@@ -92,7 +94,7 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   motionState: fields.motionState ?? "Controlled",
   checkpointIndex: fields.checkpointIndex ?? null,
   fallCount: fields.fallCount ?? 0,
-  teleported: fields.teleported ?? false,
+  respawnCount: fields.respawnCount ?? 0,
   dashCooldownMs: fields.dashCooldownMs ?? 0,
   dashing: fields.dashing ?? false,
   dashSpeed: fields.dashSpeed ?? 0,

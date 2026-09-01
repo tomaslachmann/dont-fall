@@ -57,7 +57,7 @@ export const interpolateState = (
   for (const [id, n] of Object.entries(next.characters)) {
     const p = prev.characters[id] ?? n;
     const bodySwapped = p.bones.length !== n.bones.length;
-    const t = n.teleported || bodySwapped ? 1 : clamp01(alpha);
+    const t = n.respawnCount !== p.respawnCount || bodySwapped ? 1 : clamp01(alpha);
 
     characters[id] = {
       position: lerpVec3(p.position, n.position, t),

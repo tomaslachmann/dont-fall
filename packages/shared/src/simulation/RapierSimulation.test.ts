@@ -209,16 +209,19 @@ describe("RapierSimulation — Fall & Respawn", () => {
     expect(Math.abs(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x - afterRespawn.x)).toBeLessThan(1.5);
   });
 
-  it("flags the teleport only on the respawn tick", () => {
+  it("advances respawnCount once per Respawn and holds it steady between (ADR 0023, Q9)", () => {
     const sim = new RapierSimulation({ spawn: config.spawn, statics: [PLATFORM], killPlaneY: -8 });
     tick(sim, 0.5);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.respawnCount).toBe(0);
+
     tickUntilFall(sim);
-
     sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }); // respawn tick
-    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.teleported).toBe(true);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.respawnCount).toBe(1);
 
-    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
-    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.teleported).toBe(false);
+    // Stable between respawns — not a one-tick pulse (a skipped snapshot must
+    // still be able to observe the change against a last-seen value).
+    for (let i = 0; i < 5; i += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.respawnCount).toBe(1);
   });
 });
 
@@ -548,14 +551,16 @@ describe("RapierSimulation — Impact & ragdoll", () => {
     const sim = standing();
     sim.applyImpact(DEFAULT_CHARACTER_ID, { x: IMPACT_RAGDOLL_MIN + 3, y: 4, z: 0 });
     let prev = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    let prevRespawnCount = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.respawnCount;
     let maxStep = 0;
     for (let i = 0; i < 400; i += 1) {
       sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
       const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-      if (!c.teleported) {
+      if (c.respawnCount === prevRespawnCount) {
         maxStep = Math.max(maxStep, Math.hypot(c.position.x - prev.x, c.position.y - prev.y, c.position.z - prev.z));
       }
       prev = c.position;
+      prevRespawnCount = c.respawnCount;
       if (c.motionState === "Controlled" && i > 20) break;
     }
     expect(maxStep).toBeLessThan(0.35); // no ~0.7 pop, no discontinuity

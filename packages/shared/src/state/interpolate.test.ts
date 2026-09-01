@@ -10,9 +10,9 @@ const prop = (x: number): PropSnapshot => ({ position: { x, y: 0, z: 0 }, rotati
 
 const ID = "p1";
 
-const stateAt = (x: number, teleported = false, props: PropSnapshot[] = []): SimState => ({
+const stateAt = (x: number, respawnCount = 0, props: PropSnapshot[] = []): SimState => ({
   tick: 0,
-  characters: { [ID]: characterSnapshot({ position: { x, y: x * 2, z: x * 3 }, teleported }) },
+  characters: { [ID]: characterSnapshot({ position: { x, y: x * 2, z: x * 3 }, respawnCount }) },
   props,
 });
 
@@ -43,9 +43,14 @@ describe("interpolateState", () => {
     expect(interpolateState(stateAt(0), stateAt(10), -1).characters[ID]!.position.x).toBe(0);
   });
 
-  it("snaps to the next pose without blending when next was teleported", () => {
-    const render = interpolateState(stateAt(0), stateAt(10, true), 0.5);
+  it("snaps to the next pose without blending when respawnCount changed between prev and next", () => {
+    const render = interpolateState(stateAt(0, 0), stateAt(10, 1), 0.5);
     expect(render.characters[ID]!.position).toEqual({ x: 10, y: 20, z: 30 });
+  });
+
+  it("interpolates normally once respawnCount is stable again", () => {
+    const render = interpolateState(stateAt(0, 1), stateAt(10, 1), 0.5);
+    expect(render.characters[ID]!.position.x).toBe(5);
   });
 
   it("interpolates ragdoll bone positions while the motion state holds", () => {
@@ -72,8 +77,8 @@ describe("interpolateState", () => {
 
   it("interpolates Prop positions independently of the Character", () => {
     const render = interpolateState(
-      stateAt(0, false, [prop(0)]),
-      stateAt(0, true, [prop(10)]), // Character teleports; the Prop keeps moving normally
+      stateAt(0, 0, [prop(0)]),
+      stateAt(0, 1, [prop(10)]), // Character respawns; the Prop keeps moving normally
       0.5,
     );
     expect(render.props[0]!.position.x).toBe(5);

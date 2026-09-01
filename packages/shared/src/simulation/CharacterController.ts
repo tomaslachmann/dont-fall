@@ -73,7 +73,8 @@ export interface CharacterState {
   velocity: Vec3;
   grounded: boolean;
   motionState: CharacterMotionState;
-  teleported: boolean;
+  /** Monotonic count of Respawn teleports — the renderer snaps on a change (ADR 0023). */
+  respawnCount: number;
   dashCooldownMs: number;
   /** Whether a Dash burst is currently playing out (for the renderer to speed up the movement animation). */
   dashing: boolean;
@@ -110,7 +111,13 @@ export class CharacterController {
   /** Capsule velocity (units/s): `x`/`z` set fresh each Controlled tick, `y` integrated. */
   private velocity: Vec3 = vec3();
   private grounded = false;
-  private teleportedThisTick = false;
+  /**
+   * Monotonic count of Respawn teleports (ADR 0023 / Q9). The renderer holds the
+   * last value it saw and snaps (no interpolation) when it changes — robust
+   * against the interpolation buffer skipping the exact respawn tick, which a
+   * one-tick boolean was not.
+   */
+  private respawnCount = 0;
   /** Set by {@link beginTick}, read by {@link endTick} once the shared `world.step()` has run. */
   private tickingRagdoll = false;
 
@@ -213,7 +220,6 @@ export class CharacterController {
    * with a `world.step()` between them, exactly like this used to be one method.
    */
   beginTick(input: SimInputs): void {
-    this.teleportedThisTick = false;
 
     const jumpPressed = input.jumpHeld && !this.jumpHeldLastTick;
     const dashPressed = input.dashHeld && !this.dashHeldLastTick;
@@ -375,7 +381,7 @@ export class CharacterController {
 
   private respawnAtCheckpoint(respawn: PendingRespawn): void {
     this.pendingRespawn = null;
-    this.teleportedThisTick = true;
+    this.respawnCount += 1;
     this.getupBones = [];
     this.pendingImpact = null;
     this.collider.setEnabled(false);
@@ -439,7 +445,7 @@ export class CharacterController {
       velocity: { ...velocity },
       grounded: this.grounded,
       motionState: state,
-      teleported: this.teleportedThisTick,
+      respawnCount: this.respawnCount,
       dashCooldownMs: this.dash.cooldownMs,
       dashing: this.dash.isActive,
       dashSpeed: this.dashSpeed,
