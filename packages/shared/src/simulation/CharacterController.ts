@@ -68,6 +68,8 @@ export const dashWallKnockback = (normal: Vec3): Vec3 => {
 export interface CharacterState {
   /** The point the camera follows: capsule centre while upright, pelvis while ragdolling. */
   position: Vec3;
+  /** Capsule velocity (units/s) this tick — a reconciling client restores it as a replay base (ticket 05). */
+  velocity: Vec3;
   grounded: boolean;
   motionState: CharacterMotionState;
   teleported: boolean;
@@ -330,9 +332,10 @@ export class CharacterController {
 
   private beginRagdoll(): void {
     const at = this.body.translation();
+    const launch = { ...this.velocity }; // captured before resetMovementControllers zeroes it
     this.collider.setEnabled(false);
     this.resetMovementControllers();
-    this.ragdoll.activate(vec3(at.x, at.y, at.z), { ...this.velocity }, this.takeImpactImpulse());
+    this.ragdoll.activate(vec3(at.x, at.y, at.z), launch, this.takeImpactImpulse());
   }
 
   private beginGettingUp(): void {
@@ -401,6 +404,7 @@ export class CharacterController {
 
     return {
       position,
+      velocity: { ...this.velocity },
       grounded: this.grounded,
       motionState: state,
       teleported: this.teleportedThisTick,
@@ -412,39 +416,59 @@ export class CharacterController {
   }
 
   /**
-   * Ticket 03's minimal placeholder correction for a locally predicted
-   * Character: force it into Ragdoll to match the server when the server
-   * reports a Ragdoll this Character had no way to predict — most importantly
-   * a Bump from another player (ticket 04). This is the *only* correction
-   * ticket 03 makes.
+   * Reconciliation base (ticket 05, ADR 0013): overwrite this Character's
+   * predicted state with the server's authoritative snapshot so the client can
+   * replay its not-yet-acknowledged inputs forward from here. The client is
+   * responsible for deciding *when* a correction is warranted (a tick-aligned
+   * position-error check, or a discrete-state disagreement); this method just
+   * applies it.
    *
-   * Only a `Ragdoll` report forces, never `GettingUp`: a lone local ragdoll
-   * body can settle faster than the server's (1 body here vs N there), or
-   * the intervening `Ragdoll` snapshots can be dropped, leaving the server in
-   * `GettingUp` while local prediction is already back in `Controlled` —
-   * forcing there would restart a whole fresh Ragdoll + get-up cycle and
-   * re-collapse a player the server already has upright. Missing the tail of
-   * a knockdown by a few ticks is the lesser evil for a placeholder; ticket
-   * 05's input replay closes that gap properly.
-   *
-   * It deliberately does *not* touch continuous position. Comparing "my
-   * predicted position now" against "the server's latest snapshot" conflates
-   * real misprediction with plain network latency: that snapshot reflects a
-   * state from roughly one round-trip ago, so during ordinary movement the
-   * gap is always ~speed × RTT — at Dash speed even a 60–100 ms RTT exceeds
-   * any reasonable snap threshold on essentially every tick, producing a
-   * constant backward tug that reads as jitter, not smoothing. Correcting
-   * position needs the server's report lined up against what *this client*
-   * predicted for that same tick (buffered input replay) — that is ticket
-   * 05's job (ADR 0013), not this one.
+   * - **Server reports `Ragdoll`, local isn't down:** snap into Ragdoll now —
+   *   the discrete state is never smoothed (ADR 0006/0013), and this is the
+   *   headline case, a Bump the client had no way to predict. No input replay
+   *   follows: Ragdoll ignores input.
+   * - **Server reports `Ragdoll`/`GettingUp`, local already down:** re-anchor
+   *   the ragdoll to the server's pelvis so the two don't drift apart over the
+   *   knockdown, but never restart the cycle.
+   * - **Server reports `GettingUp` while local recovered to `Controlled`
+   *   first:** leave local alone — restarting a knockdown to match a state the
+   *   server is already leaving is worse than a few ticks of desync.
+   * - **Server reports `Controlled`/`Stagger`:** restore the capsule transform,
+   *   velocity, ground flag, motion state and dash cooldown from the snapshot;
+   *   the caller then replays buffered inputs from here.
    */
-  reconcile(server: Pick<CharacterSnapshot, "motionState">): void {
-    if (server.motionState === "Ragdoll" && !isDown(this.machine.state)) {
-      this.machine.forceRagdoll();
+  reconcileTo(
+    base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs">,
+  ): void {
+    const serverDown = isDown(base.motionState);
+
+    if (serverDown) {
+      if (base.motionState === "Ragdoll" && !isDown(this.machine.state)) {
+        this.velocity = { ...base.velocity };
+        this.machine.snapTo("Ragdoll");
+        this.beginRagdoll();
+      }
+      if (this.ragdoll.isActive) this.ragdoll.snapRootTo(base.position);
+      return;
     }
-    // Otherwise: trust local prediction. Given identical inputs and the same
-    // deterministic shared step (ADR 0003, ADR 0005), local and server stay
-    // close modulo that fixed latency offset, with no unbounded drift.
+
+    if (isDown(this.machine.state)) this.returnToControlled();
+    this.body.setTranslation({ ...base.position }, false);
+    this.velocity = { ...base.velocity };
+    this.grounded = base.grounded;
+    this.machine.snapTo(base.motionState);
+    this.dash.restoreCooldownMs(base.dashCooldownMs);
+    this.jump.reset(); // stale coyote/hold bookkeeping would let replay grant a jump the server won't
+    this.pendingRespawn = null; // a Fall the client predicted but the server (this base) hasn't seen
+  }
+
+  /** Undo a local Ragdoll/GettingUp the server says never happened (or is already over): freeze and hide the bones, re-enable the capsule. */
+  private returnToControlled(): void {
+    if (this.ragdoll.isActive) this.ragdoll.deactivate();
+    this.collider.setEnabled(true);
+    this.getupBones = [];
+    this.pendingImpact = null;
+    this.resetMovementControllers();
   }
 
   /** Remove this Character's capsule body, character controller and ragdoll bones from the world (ticket 01: `removeCharacter`). */

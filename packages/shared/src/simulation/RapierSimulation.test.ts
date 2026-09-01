@@ -708,66 +708,147 @@ describe("RapierSimulation — Character collection (ticket 01)", () => {
   });
 });
 
-describe("RapierSimulation — reconcileCharacter (ticket 03)", () => {
-  it("forces Ragdoll when the server reports it but the local prediction missed it entirely", () => {
+describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
+  const CONTROLLED = (position: { x: number; y: number; z: number }) => ({
+    position,
+    velocity: { x: 0, y: 0, z: 0 },
+    grounded: true,
+    motionState: "Controlled" as const,
+    dashCooldownMs: 0,
+  });
+
+  it("snaps a locally-Controlled Character into Ragdoll when the server reports a Bump it never predicted", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
     tick(sim, 0.5);
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
 
-    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, { motionState: "Ragdoll" });
-    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS }); // forceRagdoll takes effect on the next tick
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+      position: { x: 1, y: RESTING_SPAWN.y, z: 1 },
+      velocity: { x: 0, y: 0, z: 0 },
+      grounded: false,
+      motionState: "Ragdoll",
+      dashCooldownMs: 0,
+    });
 
-    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
+    // Immediate — the discrete state is never delayed or smoothed (ADR 0013).
+    const snap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(snap.motionState).toBe("Ragdoll");
+    expect(snap.bones.length).toBeGreaterThan(0);
+    // ...and re-anchored near the server's reported pelvis, not left at the
+    // stale predicted spot.
+    expect(snap.position.x).toBeCloseTo(1, 1);
+    expect(snap.position.z).toBeCloseTo(1, 1);
   });
 
   it("does not re-collapse a locally-recovered Character when the server is only as far as GettingUp", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
     tick(sim, 0.5);
-    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
 
-    // Server's bumped Character has already progressed to GettingUp; local
-    // prediction settled faster and is back in Controlled. Forcing Ragdoll
-    // here would restart a whole fresh knockdown — so it must not.
-    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, { motionState: "GettingUp" });
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+      ...CONTROLLED(RESTING_SPAWN),
+      motionState: "GettingUp",
+    });
     sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
 
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
   });
 
-  it("does NOT correct continuous position, even on a large disagreement — that gap is latency, not misprediction (ticket 05's job)", () => {
+  it("restores the capsule to the server's position/velocity for a Controlled base", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
     tick(sim, 0.5);
-    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
 
-    // A server snapshot from a full round-trip ago places the Character
-    // metres away — during ordinary movement this is the normal steady-state
-    // gap (~speed × RTT), not a real divergence, so ticket 03 leaves it be.
-    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, { motionState: "Controlled" });
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, CONTROLLED({ x: 4, y: RESTING_SPAWN.y, z: -3 }));
 
-    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
-    expect(after.x).toBeCloseTo(before.x, 5);
-    expect(after.z).toBeCloseTo(before.z, 5);
-
-    tick(sim, 1); // and no correction creeps in over subsequent ticks either
-    const later = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
-    expect(later.x).toBeCloseTo(before.x, 2);
-    expect(later.z).toBeCloseTo(before.z, 2);
+    const p = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    expect(p.x).toBeCloseTo(4, 3);
+    expect(p.z).toBeCloseTo(-3, 3);
   });
 
-  it("does nothing when the Character is already down locally", () => {
+  it("brings a locally-Ragdolling Character back under control when the server says it never went down", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
     tick(sim, 0.5);
-    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: 0, y: 3, z: 12 }); // hard enough to Ragdoll
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: 0, y: 3, z: 12 });
     tick(sim, 0.1);
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
-    const beforePosition = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
 
-    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, { motionState: "Ragdoll" });
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, CONTROLLED({ x: 0, y: RESTING_SPAWN.y, z: 0 }));
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
 
-    const afterPosition = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
-    expect(afterPosition.x).toBeCloseTo(beforePosition.x, 5);
-    expect(afterPosition.y).toBeCloseTo(beforePosition.y, 5);
-    expect(afterPosition.z).toBeCloseTo(beforePosition.z, 5);
+    const snap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(snap.motionState).toBe("Controlled");
+    expect(snap.bones.length).toBe(0);
+  });
+
+  it("replays buffered inputs forward from the reconciled base, one shared step per input", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
+    tick(sim, 0.5);
+
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, CONTROLLED({ x: 0, y: RESTING_SPAWN.y, z: 0 }));
+    const walkNorth: SimInputs = input({ moveDirection: { x: 0, y: 0, z: -1 } });
+    const positions = sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, Array<SimInputs>(10).fill(walkNorth));
+
+    expect(positions).toHaveLength(10);
+    // 10 ticks of walking north from z=0 moves clearly toward −z, monotonically.
+    expect(positions[9]!.z).toBeLessThan(positions[0]!.z);
+    expect(positions[9]!.z).toBeLessThan(-1);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z).toBeCloseTo(positions[9]!.z, 5);
+  });
+
+  it("a Bump reconciled over several snapshots stays down and tracks the server without rubber-banding", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
+    tick(sim, 0.5);
+
+    // Server keeps reporting Ragdoll at a pelvis drifting north as the body
+    // slides; the client reconciles on every snapshot.
+    let serverZ = 0;
+    for (let s = 0; s < 6; s += 1) {
+      serverZ -= 0.15;
+      sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+        position: { x: 0, y: RESTING_SPAWN.y - 0.5, z: serverZ },
+        velocity: { x: 0, y: 0, z: 0 },
+        grounded: false,
+        motionState: "Ragdoll",
+        dashCooldownMs: 0,
+      });
+      tick(sim, 0.1); // a few local ticks between snapshots
+
+      const snap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      expect(snap.motionState).toBe("Ragdoll"); // never bounces back to Controlled
+      expect(Math.abs(snap.position.z - serverZ)).toBeLessThan(0.6); // stays near the server
+    }
+  });
+
+  it("syncTick realigns the tick counter so replay runs against the server's Spinner phase", () => {
+    const sim = new RapierSimulation({
+      spawn: RESTING_SPAWN,
+      statics: [GROUND],
+      spinners: [{ center: { x: 0, y: 0, z: 8 }, armLength: 2, halfHeight: 0.4, armRadius: 0.3, angularSpeed: 4 }],
+    });
+    tick(sim, 2); // localSim tick counter now well ahead of a fresh server
+
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, CONTROLLED(RESTING_SPAWN));
+    sim.syncTick(5); // server is only 5 ticks in
+    // Replay runs without throwing and the Character ends where the inputs put it.
+    const positions = sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, Array<SimInputs>(5).fill(IDLE_INPUTS));
+    expect(positions).toHaveLength(5);
+    expect(sim.snapshot().tick).toBe(10); // 5 (synced) + 5 (replayed)
+  });
+
+  it("replay runs Fall detection — a replayed step off the kill plane respawns instead of recording an under-floor position", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 },
+      statics: [{ center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 1.5, y: 0.5, z: 1.5 } }], // small platform
+      killPlaneY: -6,
+    });
+    tick(sim, 0.3);
+
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, CONTROLLED({ x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 }));
+    // Walk south off the edge and keep going — enough replayed ticks to fall past the kill plane.
+    const walkSouth: SimInputs = input({ moveDirection: { x: 0, y: 0, z: 1 } });
+    sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, Array<SimInputs>(60).fill(walkSouth));
+
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.fallCount).toBeGreaterThan(0);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y).toBeGreaterThan(-6);
   });
 });
 

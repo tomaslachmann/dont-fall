@@ -246,9 +246,49 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     this.character(id).applyImpact(impulse);
   }
 
-  /** Ticket 03: snap a locally predicted Character `id` down when the server reports a Ragdoll it couldn't predict. See {@link CharacterController.reconcile}. */
-  reconcileCharacter(id: string, server: Pick<CharacterSnapshot, "motionState">): void {
-    this.character(id).reconcile(server);
+  /**
+   * Ticket 05: overwrite a locally predicted Character with the server's
+   * authoritative base so the client can replay its unacknowledged inputs
+   * forward from it (ADR 0013). See {@link CharacterController.reconcileTo}.
+   */
+  reconcileCharacter(
+    id: string,
+    base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs">,
+  ): void {
+    this.character(id).reconcileTo(base);
+  }
+
+  /**
+   * Ticket 05: realign the tick counter to the server's, so Spinner phase —
+   * a pure function of the tick — is correct for the replay that follows a
+   * reconciliation, rather than running on this client's own slowly-drifting
+   * count. The counter is a plain integer with no accumulated state, so
+   * setting it (backward, to the snapshot's tick) is safe.
+   */
+  syncTick(serverTick: number): void {
+    this.tickCount = serverTick;
+  }
+
+  /**
+   * Ticket 05: re-run one Character's own buffered inputs forward from a
+   * freshly-reconciled base — one full shared {@link tick} per input — to
+   * catch it back up to the present prediction tick (Bernier-style local
+   * replay: only this machine's own inputs, against its own corrected state;
+   * ADR 0013). Returns the Character's position after each replayed tick so the
+   * client can rebuild its tick-aligned position history.
+   *
+   * Routes through {@link tick} so Spinner phase, Checkpoint and Fall
+   * detection all stay coherent during the replay (call {@link syncTick}
+   * first). A few extra `world.step()`s do nudge dynamic Props slightly — an
+   * accepted M2 approximation; Prop sync is ticket 06.
+   */
+  replayLocalCharacter(id: string, inputs: readonly SimInputs[]): Vec3[] {
+    const positions: Vec3[] = [];
+    for (const input of inputs) {
+      this.tick({ [id]: input });
+      positions.push({ ...this.character(id).snapshot().position });
+    }
+    return positions;
   }
 
   /**

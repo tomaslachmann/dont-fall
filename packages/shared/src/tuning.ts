@@ -221,3 +221,24 @@ export const BUMP_IMPULSE_SCALE = 0.6;
  * a visible pop off the ground — same idea as {@link DASH_WALL_LIFT_RATIO}.
  */
 export const BUMP_LIFT_RATIO = 0.3;
+
+// --- Client reconciliation (M2 ticket 05, ADR 0013) ------------------------
+
+/**
+ * How far (units) the client's *tick-aligned* prediction may sit from the
+ * server's authoritative position before a reconciliation fires — the
+ * comparison is same-tick (predicted position at the acknowledged input tick
+ * vs the server's report for that tick), so this can be small: it is real
+ * misprediction, not the ~speed × RTT latency gap ticket 03 could not tell
+ * apart. Below it, the deterministic shared step (ADR 0005) has kept client
+ * and server together and no correction is needed.
+ */
+export const RECONCILE_POSITION_ERROR = 0.2;
+
+/**
+ * Cap on how many recent prediction ticks the client keeps buffered inputs /
+ * positions for (~4 s at {@link TICK_RATE_HZ}). A reconciliation never needs to
+ * reach past roughly one round trip; this only bounds memory if snapshots stop
+ * arriving (a stalled or dropped connection).
+ */
+export const MAX_BUFFERED_INPUT_TICKS = 120;

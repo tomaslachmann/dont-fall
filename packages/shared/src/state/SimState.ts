@@ -8,6 +8,8 @@ export type { CharacterMotionState, BoneSnapshot, PropSnapshot };
 export interface CharacterSnapshot {
   /** The point the camera follows: capsule centre while upright, pelvis while ragdolling. */
   position: Vec3;
+  /** Capsule velocity (units/s) — carried so a reconciling client can restore it as a replay base (ticket 05). */
+  velocity: Vec3;
   /** Whether the character controller reported ground contact last tick. */
   grounded: boolean;
   motionState: CharacterMotionState;
@@ -26,6 +28,13 @@ export interface CharacterSnapshot {
   dashing: boolean;
   /** Current horizontal speed (units/s) contributed by an active Dash burst; 0 when not dashing. */
   dashSpeed: number;
+  /**
+   * The highest `InputMessage.tick` the server had applied for this Character
+   * as of this snapshot — the reconciliation acknowledgement (ticket 05). 0
+   * before any input has arrived. Only meaningful to the client that owns this
+   * Character; every other client ignores it.
+   */
+  lastInputTick: number;
   /**
    * Per-bone transforms while `motionState` is `Ragdoll` or `GettingUp`, in
    * `RAGDOLL_BONES` order; empty otherwise (the renderer draws the capsule).
@@ -52,6 +61,7 @@ export interface SimState {
 
 export interface CharacterSnapshotFields {
   position: Vec3;
+  velocity?: Vec3;
   grounded?: boolean;
   motionState?: CharacterMotionState;
   checkpointIndex?: number | null;
@@ -60,11 +70,13 @@ export interface CharacterSnapshotFields {
   dashCooldownMs?: number;
   dashing?: boolean;
   dashSpeed?: number;
+  lastInputTick?: number;
   bones?: BoneSnapshot[];
 }
 
 export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSnapshot => ({
   position: { ...fields.position },
+  velocity: fields.velocity ? { ...fields.velocity } : { x: 0, y: 0, z: 0 },
   grounded: fields.grounded ?? false,
   motionState: fields.motionState ?? "Controlled",
   checkpointIndex: fields.checkpointIndex ?? null,
@@ -73,5 +85,6 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   dashCooldownMs: fields.dashCooldownMs ?? 0,
   dashing: fields.dashing ?? false,
   dashSpeed: fields.dashSpeed ?? 0,
+  lastInputTick: fields.lastInputTick ?? 0,
   bones: fields.bones ?? [],
 });

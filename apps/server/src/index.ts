@@ -53,7 +53,19 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   });
 
   const sockets = new Map<string, WebSocket>();
-  const latestInputs = new Map<string, SimInputs>();
+  // One input per client is consumed per server tick (ticket 05): a short
+  // per-client queue absorbs network jitter, `lastApplied` fills a tick a
+  // client's packet hasn't arrived for, and `lastInputTick` — the tick number
+  // of the input actually applied — is echoed in the snapshot as the
+  // reconciliation acknowledgement so the client replays exactly the inputs
+  // the server hasn't processed yet.
+  const inputQueues = new Map<string, { tick: number; input: SimInputs }[]>();
+  const lastApplied = new Map<string, SimInputs>();
+  const lastInputTicks = new Map<string, number>();
+  // A fast/hitching client can briefly outrun the tick rate; keep only the
+  // newest few so the server never falls a growing number of ticks behind a
+  // client's intent.
+  const MAX_QUEUED_INPUTS = 6;
   // Monotonic across the process so each joiner gets a distinct spawn slot even
   // as others leave — two solid Characters must never spawn on the same spot.
   let joinCount = 0;
@@ -65,7 +77,9 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     const spawn = playgroundSpawn(joinCount);
     joinCount += 1;
     sockets.set(id, socket);
-    latestInputs.set(id, IDLE_INPUTS);
+    inputQueues.set(id, []);
+    lastApplied.set(id, IDLE_INPUTS);
+    lastInputTicks.set(id, 0);
     simulation.addCharacter(id, spawn);
 
     send(socket, { type: "welcome", id, spawn });
@@ -84,19 +98,45 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       } catch {
         return;
       }
-      if (message.type === "input") latestInputs.set(id, message.input);
+      if (message.type === "input" && typeof message.tick === "number" && Number.isFinite(message.tick)) {
+        const queue = inputQueues.get(id);
+        if (!queue) return;
+        // Drop anything not newer than what's been applied (a reordered or
+        // duplicate frame) and keep the queue bounded.
+        if (message.tick > (lastInputTicks.get(id) ?? 0)) {
+          queue.push({ tick: message.tick, input: message.input });
+          queue.sort((a, b) => a.tick - b.tick);
+          while (queue.length > MAX_QUEUED_INPUTS) queue.shift();
+        }
+      }
     });
 
     socket.on("close", () => {
       sockets.delete(id);
-      latestInputs.delete(id);
+      inputQueues.delete(id);
+      lastApplied.delete(id);
+      lastInputTicks.delete(id);
       simulation.removeCharacter(id);
     });
   });
 
   const interval = setInterval(() => {
-    simulation.tick(Object.fromEntries(latestInputs));
-    const payload = JSON.stringify({ type: "snapshot", state: simulation.snapshot() } satisfies ServerMessage);
+    const tickInputs: Record<string, SimInputs> = {};
+    for (const id of sockets.keys()) {
+      const next = inputQueues.get(id)?.shift();
+      if (next) {
+        lastApplied.set(id, next.input);
+        lastInputTicks.set(id, next.tick);
+      }
+      tickInputs[id] = lastApplied.get(id) ?? IDLE_INPUTS;
+    }
+
+    simulation.tick(tickInputs);
+    const state = simulation.snapshot();
+    for (const [id, character] of Object.entries(state.characters)) {
+      character.lastInputTick = lastInputTicks.get(id) ?? 0;
+    }
+    const payload = JSON.stringify({ type: "snapshot", state } satisfies ServerMessage);
     for (const socket of sockets.values()) {
       if (socket.readyState === socket.OPEN) socket.send(payload);
     }

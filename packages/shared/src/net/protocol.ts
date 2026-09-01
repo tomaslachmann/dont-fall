@@ -28,9 +28,17 @@ export interface SnapshotMessage {
 
 export type ServerMessage = WelcomeMessage | SnapshotMessage;
 
-/** Client → server, sent once per simulation tick: this client's current input. */
+/**
+ * Client → server, sent once per predicted simulation tick: this client's
+ * input, tagged with the client-side prediction tick it belongs to. The
+ * server echoes the last `tick` it applied back in
+ * `CharacterSnapshot.lastInputTick`, which is how the client knows which
+ * buffered inputs are still unacknowledged and must be replayed after a
+ * reconciliation (ticket 05, ADR 0013).
+ */
 export interface InputMessage {
   type: "input";
+  tick: number;
   input: SimInputs;
 }
 

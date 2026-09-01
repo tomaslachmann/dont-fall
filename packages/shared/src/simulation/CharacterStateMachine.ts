@@ -63,6 +63,20 @@ export class CharacterStateMachine {
   }
 
   /**
+   * Hard-set the state to the server's, discarding any queued Impact/force and
+   * resetting the in-state timer (ticket 05 reconciliation, ADR 0013 — a
+   * discrete-state correction snaps, never blends). `timer` seeds the new
+   * state's elapsed ticks when the server's own progress through it is known
+   * (e.g. a Stagger that is already partway done); it defaults to a fresh entry.
+   */
+  snapTo(state: CharacterMotionState, timer = 0): void {
+    this.motionState = state;
+    this.timer = timer;
+    this.pendingImpact = 0;
+    this.forcedRagdoll = false;
+  }
+
+  /**
    * Advance one tick. `ragdollSettled` is whether the ragdoll body's fastest bone
    * is below {@link RAGDOLL_SETTLE_SPEED} — only meaningful while in `Ragdoll`.
    */

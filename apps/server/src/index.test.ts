@@ -1,4 +1,4 @@
-import type { ServerMessage, SimInputs } from "@dont-fall/shared";
+import type { ClientMessage, ServerMessage, SimInputs } from "@dont-fall/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { startServer, type MatchServer } from "./index.js";
@@ -16,6 +16,9 @@ const nextMessage = (socket: WebSocket): Promise<ServerMessage> =>
   new Promise((resolve) => socket.once("message", (raw) => resolve(JSON.parse(raw.toString()) as ServerMessage)));
 
 const NORTH: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false };
+
+const sendInput = (socket: WebSocket, tick: number, input: SimInputs): void =>
+  socket.send(JSON.stringify({ type: "input", tick, input } satisfies ClientMessage));
 
 describe("startServer", () => {
   it("assigns each connecting client an anonymous session ID", async () => {
@@ -60,13 +63,20 @@ describe("startServer", () => {
     const startZ = first.state.characters[id]!.position.z;
 
     let lastZ = startZ;
+    let lastSnapshot: ServerMessage | undefined;
     for (let i = 0; i < 30; i += 1) {
-      socket.send(JSON.stringify({ type: "input", input: NORTH }));
+      sendInput(socket, i + 1, NORTH);
       const message = await nextMessage(socket);
-      if (message.type === "snapshot") lastZ = message.state.characters[id]!.position.z;
+      if (message.type === "snapshot") {
+        lastZ = message.state.characters[id]!.position.z;
+        lastSnapshot = message;
+      }
     }
 
     expect(lastZ).toBeLessThan(startZ - 1); // NORTH walks toward -z
+    // The server echoes the last input tick it applied, for reconciliation (ticket 05).
+    if (lastSnapshot?.type !== "snapshot") throw new Error("unreachable");
+    expect(lastSnapshot.state.characters[id]!.lastInputTick).toBeGreaterThan(0);
     socket.close();
   });
 

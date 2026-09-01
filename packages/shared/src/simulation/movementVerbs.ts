@@ -101,6 +101,17 @@ export class DashController {
     return this.cooldownTicks * TICK_MS;
   }
 
+  /**
+   * Restore the cooldown from a reconciliation base (ticket 05) — the server's
+   * `dashCooldownMs`, rounded back to whole ticks. Any burst in progress is
+   * ended: mid-dash reconciliation is rare and the server snapshot doesn't
+   * carry enough to resume the burst envelope mid-flight.
+   */
+  restoreCooldownMs(ms: number): void {
+    this.cooldownTicks = Math.max(0, Math.round(ms / TICK_MS));
+    this.ticksLeft = 0;
+  }
+
   /** Whether a burst is currently playing out (as opposed to merely on cooldown). */
   get isActive(): boolean {
     return this.ticksLeft > 0;

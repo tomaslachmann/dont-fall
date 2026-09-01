@@ -150,6 +150,25 @@ export class Ragdoll {
     return vec3(t.x, t.y, t.z);
   }
 
+  /**
+   * Shift the whole ragdoll so its pelvis sits at `root`, keeping the current
+   * pose and bone velocities (ticket 05 reconciliation): the client's own
+   * ragdoll flops on a stale trajectory once a Bump it never predicted has
+   * landed, so each server snapshot re-anchors it to the authoritative pelvis
+   * rather than letting the two drift apart for the length of the knockdown.
+   */
+  snapRootTo(root: Vec3): void {
+    if (!this.active) return;
+    const pelvis = this.byName.get("pelvis")!.translation();
+    const dx = root.x - pelvis.x;
+    const dy = root.y - pelvis.y;
+    const dz = root.z - pelvis.z;
+    for (const { body } of this.bones) {
+      const t = body.translation();
+      body.setTranslation({ x: t.x + dx, y: t.y + dy, z: t.z + dz }, true);
+    }
+  }
+
   /** Per-bone world transforms in {@link RAGDOLL_BONES} order. */
   readBones(): BoneSnapshot[] {
     return this.bones.map(({ body }) => {
