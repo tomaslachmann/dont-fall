@@ -18,12 +18,15 @@ import {
   WALK_SPEED,
   WALL_NORMAL_MAX_Y,
 } from "../tuning.js";
+import type { CharacterSnapshot } from "../state/SimState.js";
 import { CharacterStateMachine, type CharacterMotionState } from "./CharacterStateMachine.js";
 import { CHARACTER_GROUPS } from "./collisionGroups.js";
 import { DashController, JumpController } from "./movementVerbs.js";
 import { Ragdoll } from "./Ragdoll.js";
 import { blendGettingUpBones, type BoneSnapshot } from "./ragdollSkeleton.js";
 import type { SimInputs } from "./SimInputs.js";
+
+const isDown = (state: CharacterMotionState): boolean => state === "Ragdoll" || state === "GettingUp";
 
 interface PendingImpact {
   magnitude: number;
@@ -68,6 +71,8 @@ export interface CharacterState {
   dashCooldownMs: number;
   /** Whether a Dash burst is currently playing out (for the renderer to speed up the movement animation). */
   dashing: boolean;
+  /** Current horizontal speed (units/s) contributed by an active Dash burst; 0 when not dashing. Drives the speed-lines effect directly — no noisy derivation from position needed. */
+  dashSpeed: number;
   bones: BoneSnapshot[];
 }
 
@@ -99,6 +104,13 @@ export class CharacterController {
   private readonly machine = new CharacterStateMachine();
   private readonly jump = new JumpController();
   private readonly dash = new DashController();
+  /**
+   * Current horizontal speed (units/s) contributed by an active Dash burst —
+   * the exact `dashEnvelope` curve already driving the physics, exposed
+   * directly so the renderer's speed-lines effect doesn't have to derive it
+   * (noisily) from position deltas. 0 whenever no burst is active.
+   */
+  private dashSpeed = 0;
   private jumpHeldLastTick = false;
   private dashHeldLastTick = false;
 
@@ -235,6 +247,7 @@ export class CharacterController {
     // Dash only starts while grounded (a walking burst, not an air dash); an
     // already-active burst keeps running if it carries the Character off an edge.
     const dashBurst = this.dash.beginTick(move, fullControl && dashPressed && this.grounded);
+    this.dashSpeed = lengthVec3(dashBurst);
     this.velocity.x = walk.x + dashBurst.x;
     this.velocity.z = walk.z + dashBurst.z;
 
@@ -335,6 +348,7 @@ export class CharacterController {
     this.velocity = vec3();
     this.jump.reset();
     this.dash.reset();
+    this.dashSpeed = 0;
   }
 
   snapshot(): CharacterState {
@@ -363,8 +377,45 @@ export class CharacterController {
       teleported: this.teleportedThisTick,
       dashCooldownMs: this.dash.cooldownMs,
       dashing: this.dash.isActive,
+      dashSpeed: this.dashSpeed,
       bones,
     };
+  }
+
+  /**
+   * Ticket 03's minimal placeholder correction for a locally predicted
+   * Character: force it into Ragdoll to match the server when the server
+   * reports a Ragdoll this Character had no way to predict — most importantly
+   * a Bump from another player (ticket 04). This is the *only* correction
+   * ticket 03 makes.
+   *
+   * Only a `Ragdoll` report forces, never `GettingUp`: a lone local ragdoll
+   * body can settle faster than the server's (1 body here vs N there), or
+   * the intervening `Ragdoll` snapshots can be dropped, leaving the server in
+   * `GettingUp` while local prediction is already back in `Controlled` —
+   * forcing there would restart a whole fresh Ragdoll + get-up cycle and
+   * re-collapse a player the server already has upright. Missing the tail of
+   * a knockdown by a few ticks is the lesser evil for a placeholder; ticket
+   * 05's input replay closes that gap properly.
+   *
+   * It deliberately does *not* touch continuous position. Comparing "my
+   * predicted position now" against "the server's latest snapshot" conflates
+   * real misprediction with plain network latency: that snapshot reflects a
+   * state from roughly one round-trip ago, so during ordinary movement the
+   * gap is always ~speed × RTT — at Dash speed even a 60–100 ms RTT exceeds
+   * any reasonable snap threshold on essentially every tick, producing a
+   * constant backward tug that reads as jitter, not smoothing. Correcting
+   * position needs the server's report lined up against what *this client*
+   * predicted for that same tick (buffered input replay) — that is ticket
+   * 05's job (ADR 0013), not this one.
+   */
+  reconcile(server: Pick<CharacterSnapshot, "motionState">): void {
+    if (server.motionState === "Ragdoll" && !isDown(this.machine.state)) {
+      this.machine.forceRagdoll();
+    }
+    // Otherwise: trust local prediction. Given identical inputs and the same
+    // deterministic shared step (ADR 0003, ADR 0005), local and server stay
+    // close modulo that fixed latency offset, with no unbounded drift.
   }
 
   /** Remove this Character's capsule body, character controller and ragdoll bones from the world (ticket 01: `removeCharacter`). */

@@ -60,9 +60,13 @@ const FRAGMENT_SHADER = /* glsl */ `
     float angle = atan(centered.y, centered.x);
     float dist = length(centered);
 
-    // Sample noise along the angle only (radius-independent) so it reads as
-    // streaks radiating outward; drifting slowly over time for a live feel.
-    float n = noise(vec2(angle * 28.0, uTime * 0.6));
+    // Sample noise at a point orbiting a circle of radius 28 at this angle
+    // (rather than feeding the raw angle straight into noise) so the pattern
+    // is exactly periodic — no seam where atan2 wraps from -PI to PI. Adding
+    // uTime to the angle before taking cos/sin keeps that periodicity for any
+    // point in time while still slowly rotating the whole pattern for a live feel.
+    vec2 ring = vec2(cos(angle + uTime * 0.6), sin(angle + uTime * 0.6)) * 28.0;
+    float n = noise(ring);
 
     float centerMaskStart = 0.32;
     float centerMaskEdge = 0.4;

@@ -24,6 +24,8 @@ export interface CharacterSnapshot {
   dashCooldownMs: number;
   /** Whether a Dash burst is currently playing out (as opposed to merely on cooldown). */
   dashing: boolean;
+  /** Current horizontal speed (units/s) contributed by an active Dash burst; 0 when not dashing. */
+  dashSpeed: number;
   /**
    * Per-bone transforms while `motionState` is `Ragdoll` or `GettingUp`, in
    * `RAGDOLL_BONES` order; empty otherwise (the renderer draws the capsule).
@@ -57,6 +59,7 @@ export interface CharacterSnapshotFields {
   teleported?: boolean;
   dashCooldownMs?: number;
   dashing?: boolean;
+  dashSpeed?: number;
   bones?: BoneSnapshot[];
 }
 
@@ -69,5 +72,6 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   teleported: fields.teleported ?? false,
   dashCooldownMs: fields.dashCooldownMs ?? 0,
   dashing: fields.dashing ?? false,
+  dashSpeed: fields.dashSpeed ?? 0,
   bones: fields.bones ?? [],
 });

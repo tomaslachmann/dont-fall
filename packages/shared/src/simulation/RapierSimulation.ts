@@ -177,6 +177,11 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     this.character(id).applyImpact(impulse);
   }
 
+  /** Ticket 03: snap a locally predicted Character `id` down when the server reports a Ragdoll it couldn't predict. See {@link CharacterController.reconcile}. */
+  reconcileCharacter(id: string, server: Pick<CharacterSnapshot, "motionState">): void {
+    this.character(id).reconcile(server);
+  }
+
   /**
    * Advance every Character by one tick, keyed the same way as `inputs` — a
    * Character with no entry this tick (a client whose packet hasn't arrived

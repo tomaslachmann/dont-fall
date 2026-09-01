@@ -4,14 +4,20 @@ import {
   DEFAULT_SERVER_PORT,
   PLAYGROUND_CHECKPOINTS,
   PLAYGROUND_PROPS,
+  PLAYGROUND_SPAWN,
   PLAYGROUND_SPINNERS,
   PLAYGROUND_STATICS,
+  RapierSimulation,
   TICK_MS,
   TICK_RATE_HZ,
+  advanceFixed,
+  initPhysics,
   interpolateState,
   movementDirection,
   type ClientMessage,
+  type PropSnapshot,
   type ServerMessage,
+  type SimInputs,
   type SimState,
 } from "@dont-fall/shared";
 import { loadCharacterModel } from "./characterModel.js";
@@ -20,16 +26,18 @@ import { createStage } from "./scene.js";
 
 /**
  * Cap on the per-frame delta fed to the Character model's animation/facing
- * update. Bounds the render-only animation step so a backgrounded-tab
- * refocus can't snap the facing or jump the clip.
+ * update. `advanceFixed` already bounds how many sim ticks a stalled frame
+ * can catch up on; this bounds the render-only animation step the same way,
+ * so a backgrounded-tab refocus can't snap the facing or jump the clip.
  */
 const MAX_ANIMATION_DELTA_MS = 100;
 
 /**
- * No local simulation in ticket 02 — the client renders entirely from the
- * server's broadcast snapshots. `alpha` here is driven by wall-clock time
- * since the latest snapshot arrived (not a local tick accumulator), clamped
- * so a late/dropped packet holds the last pose rather than overshooting.
+ * Interpolation fraction for world content this client does NOT predict
+ * (Spinner rotation, Props — ADR 0003 predicts only the local Character),
+ * driven by wall-clock time since the latest server snapshot arrived rather
+ * than a local tick accumulator, since that snapshot's arrival cadence is
+ * the only clock this client has for it.
  */
 const alphaSince = (receivedAtMs: number, now: number): number =>
   Math.max(0, Math.min(1, (now - receivedAtMs) / TICK_MS));
@@ -37,7 +45,7 @@ const alphaSince = (receivedAtMs: number, now: number): number =>
 const main = async () => {
   const hud = document.getElementById("hud")!;
   const lockPrompt = document.getElementById("lock-prompt")!;
-  const characterModel = await loadCharacterModel();
+  const [, characterModel] = await Promise.all([initPhysics(), loadCharacterModel()]);
 
   const stage = createStage({
     statics: PLAYGROUND_STATICS,
@@ -51,27 +59,49 @@ const main = async () => {
   const look = new FreeLookCamera(stage.domElement);
 
   let myId: string | null = null;
-  let previousSnapshot: SimState | null = null;
-  let latestSnapshot: SimState | null = null;
-  let latestSnapshotReceivedAt = 0;
+
+  // The local Character is predicted by re-running the exact same shared
+  // simulation step the server uses (ticket 03) — its own RapierSimulation,
+  // ticked every frame from local input, corrected only when the server
+  // disagrees (`reconcileCharacter`).
+  let localSim: RapierSimulation | null = null;
+  let localAccumulatorMs = 0;
+  let localPreviousSnapshot: SimState | undefined;
+
+  // World content this client does not predict — Spinner rotation, Props —
+  // comes straight from the server's own broadcast (ADR 0003).
+  let serverPreviousSnapshot: SimState | null = null;
+  let latestServerSnapshot: SimState | null = null;
+  let latestServerSnapshotReceivedAt = 0;
 
   const socket = new WebSocket(`ws://${location.hostname}:${DEFAULT_SERVER_PORT}`);
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data as string) as ServerMessage;
     if (message.type === "welcome") {
       myId = message.id;
+      localSim = new RapierSimulation({
+        statics: PLAYGROUND_STATICS,
+        checkpoints: PLAYGROUND_CHECKPOINTS,
+        spinners: PLAYGROUND_SPINNERS,
+        props: PLAYGROUND_PROPS,
+        withDefaultCharacter: false,
+      });
+      localSim.addCharacter(myId, PLAYGROUND_SPAWN);
     } else if (message.type === "snapshot") {
-      previousSnapshot = latestSnapshot ?? message.state;
-      latestSnapshot = message.state;
-      latestSnapshotReceivedAt = performance.now();
+      serverPreviousSnapshot = latestServerSnapshot ?? message.state;
+      latestServerSnapshot = message.state;
+      latestServerSnapshotReceivedAt = performance.now();
+
+      const serverCharacter = myId ? message.state.characters[myId] : undefined;
+      if (localSim && serverCharacter) localSim.reconcileCharacter(myId!, serverCharacter);
     }
   });
   socket.addEventListener("error", (event) => console.error("DON'T FALL: connection error", event));
   socket.addEventListener("close", () => console.warn("DON'T FALL: disconnected from server"));
 
-  // Sends this client's current input once per simulation tick (30 Hz),
-  // independent of render rate — the server, not this loop, decides when a
-  // tick actually advances the Match.
+  // Relays this client's input to the server once per simulation tick,
+  // independent of local prediction — the server never trusts client state,
+  // only client input (ADR 0002).
   setInterval(() => {
     if (socket.readyState !== WebSocket.OPEN) return;
     const moveDirection = movementDirection(keyboard.movementKeys(), look.yaw);
@@ -90,33 +120,58 @@ const main = async () => {
     lastFrame = now;
     fps += (1000 / Math.max(elapsedMs, 1) - fps) * 0.1;
 
-    if (myId && latestSnapshot) {
-      const c = latestSnapshot.characters[myId];
-      if (c) {
-        const alpha = alphaSince(latestSnapshotReceivedAt, now);
-        const render = interpolateState(previousSnapshot ?? latestSnapshot, latestSnapshot, alpha);
-        const renderCharacter = render.characters[myId]!;
-        stage.applyRenderState({ character: renderCharacter, props: render.props });
-        stage.updateCharacterAnimation(
-          Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000,
-          movementDirection(keyboard.movementKeys(), look.yaw),
-          c.grounded,
-          c.dashing,
-        );
-        stage.updateSpinners(latestSnapshot.tick + alpha);
-        stage.updateCamera(renderCharacter.position, look.yaw, look.pitch);
+    if (myId && localSim) {
+      const input: SimInputs = {
+        moveDirection: movementDirection(keyboard.movementKeys(), look.yaw),
+        jumpHeld: keyboard.jumpHeld(),
+        dashHeld: keyboard.dashHeld(),
+      };
+      const result = advanceFixed({
+        simulation: localSim,
+        input: { [myId]: input },
+        accumulatorMs: localAccumulatorMs,
+        elapsedMs,
+        ...(localPreviousSnapshot ? { previousSnapshot: localPreviousSnapshot } : {}),
+      });
+      localAccumulatorMs = result.accumulatorMs;
+      localPreviousSnapshot = result.previousSnapshot;
 
-        const cp = c.checkpointIndex === null ? "spawn" : `#${c.checkpointIndex + 1}`;
-        const dashFill = Math.max(0, Math.min(10, Math.round((1 - c.dashCooldownMs / DASH_COOLDOWN_MS) * 10)));
-        const dashBar = "#".repeat(dashFill) + "-".repeat(10 - dashFill);
-        hud.textContent =
-          `DON'T FALL — M2 · networked\n` +
-          `sim ${TICK_RATE_HZ} Hz · render ${fps.toFixed(0)} fps · tick ${latestSnapshot.tick}\n` +
-          `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · ${c.motionState}\n` +
-          `checkpoint ${cp} · falls ${c.fallCount}\n` +
-          `dash [${dashBar}]${c.dashCooldownMs === 0 ? " ready" : ""}\n` +
-          `WASD move · Space jump · Shift dash · mouse look`;
+      const localAlpha = localAccumulatorMs / TICK_MS;
+      const render = interpolateState(result.previousSnapshot, result.snapshot, localAlpha);
+      const renderCharacter = render.characters[myId]!;
+      const c = result.snapshot.characters[myId]!;
+
+      const props: PropSnapshot[] = latestServerSnapshot
+        ? interpolateState(
+            serverPreviousSnapshot ?? latestServerSnapshot,
+            latestServerSnapshot,
+            alphaSince(latestServerSnapshotReceivedAt, now),
+          ).props
+        : [];
+
+      stage.applyRenderState({ character: renderCharacter, props });
+      stage.updateCharacterAnimation(
+        Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000,
+        input.moveDirection,
+        c.grounded,
+        c.dashing,
+        c.dashSpeed,
+      );
+      if (latestServerSnapshot) {
+        stage.updateSpinners(latestServerSnapshot.tick + alphaSince(latestServerSnapshotReceivedAt, now));
       }
+      stage.updateCamera(renderCharacter.position, look.yaw, look.pitch);
+
+      const cp = c.checkpointIndex === null ? "spawn" : `#${c.checkpointIndex + 1}`;
+      const dashFill = Math.max(0, Math.min(10, Math.round((1 - c.dashCooldownMs / DASH_COOLDOWN_MS) * 10)));
+      const dashBar = "#".repeat(dashFill) + "-".repeat(10 - dashFill);
+      hud.textContent =
+        `DON'T FALL — M2 · predicted\n` +
+        `sim ${TICK_RATE_HZ} Hz · render ${fps.toFixed(0)} fps · tick ${result.snapshot.tick}\n` +
+        `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · ${c.motionState}\n` +
+        `checkpoint ${cp} · falls ${c.fallCount}\n` +
+        `dash [${dashBar}]${c.dashCooldownMs === 0 ? " ready" : ""}\n` +
+        `WASD move · Space jump · Shift dash · mouse look`;
     } else {
       hud.textContent = "DON'T FALL — M2 · connecting to server…";
     }

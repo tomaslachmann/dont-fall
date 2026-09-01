@@ -4,7 +4,6 @@ import {
   GETUP_MS,
   RAGDOLL_BONES,
   spinnerAngleAt,
-  WALK_SPEED,
   yawQuat,
   type Box,
   type CharacterMotionState,
@@ -26,14 +25,6 @@ import {
 } from "./camera/springArm.js";
 import { createSpeedLines } from "./speedLines.js";
 import { initialWobbleState, stepWobble } from "./wobble.js";
-
-/**
- * Speed, in units/s, at which the speed-lines effect starts to appear and
- * reaches full intensity — anything at or below a plain walk shows nothing;
- * a full-speed Dash shows it fully.
- */
-const SPEED_LINES_MIN_SPEED = WALK_SPEED;
-const SPEED_LINES_MAX_SPEED = DASH_SPEED;
 
 const BACKGROUND_COLOR = 0x0b0e14;
 
@@ -92,14 +83,18 @@ export interface Stage {
   /**
    * Advance the Character model's animation and turn it to face
    * `moveDirection` (world-space, zero when idle). Purely cosmetic and
-   * render-rate driven (ADR 0004) — `moveDirection`/`grounded`/`dashing` are
-   * read straight from input/the latest snapshot, never fed back into the sim.
+   * render-rate driven (ADR 0004) — `moveDirection`/`grounded`/`dashing`/
+   * `dashSpeed` are read straight from input/the latest snapshot, never fed
+   * back into the sim. `dashSpeed` (0 when not dashing) drives the
+   * speed-lines effect directly — a simulation-owned value, not derived from
+   * position, so it is immune to reconciliation noise/pops.
    */
   updateCharacterAnimation: (
     deltaSeconds: number,
     moveDirection: Vec3,
     grounded: boolean,
     dashing: boolean,
+    dashSpeed: number,
   ) => void;
 }
 
@@ -336,7 +331,7 @@ export const createStage = ({
         mesh.updateMatrixWorld();
       }
     },
-    updateCharacterAnimation: (deltaSeconds, moveDirection, grounded, dashing) => {
+    updateCharacterAnimation: (deltaSeconds, moveDirection, grounded, dashing, dashSpeed) => {
       const currentPosition: Vec3 = { x: character.position.x, y: character.position.y, z: character.position.z };
       // Lazily seeded so the very first call (before any real movement) reads
       // as zero velocity rather than a jump from an arbitrary creation-time value.
@@ -392,12 +387,12 @@ export const createStage = ({
         wobblePivot.rotation.x = -wobbleState.pitch;
         wobblePivot.rotation.z = wobbleState.roll;
 
-        // Speed lines: driven by actual observed horizontal speed (the same
-        // velocity Wobble already computed), not the `dashing` flag directly —
-        // reads correctly for the Dash's own gradual build/release curve.
-        const speed = Math.hypot(wobbleState.velocity.x, wobbleState.velocity.z);
-        const intensity = (speed - SPEED_LINES_MIN_SPEED) / (SPEED_LINES_MAX_SPEED - SPEED_LINES_MIN_SPEED);
-        speedLines.setIntensity(intensity);
+        // Speed lines: driven directly by the Dash's own envelope value
+        // (0 when not dashing, ramping via the same `dashEnvelope` curve
+        // driving the physics) rather than a velocity derived from position
+        // deltas — a simulation-owned value needs no noise margin and can't
+        // be perturbed by a reconciliation correction.
+        speedLines.setIntensity(dashSpeed / DASH_SPEED);
       }
     },
   };
