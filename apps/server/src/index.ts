@@ -1,13 +1,16 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SERVER_PORT,
+  GRACE_WINDOW_MS,
   IDLE_INPUTS,
   PLAYGROUND_CHECKPOINTS,
   PLAYGROUND_PROPS,
   PLAYGROUND_SPINNERS,
   PLAYGROUND_STATICS,
   RapierSimulation,
+  SNAPSHOT_HZ,
   TICK_MS,
   TICK_RATE_HZ,
   initPhysics,
@@ -98,7 +101,15 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     lastInputTicks.set(id, 0);
     simulation.addCharacter(id, spawn);
 
-    send(socket, { type: "welcome", id, spawn });
+    send(socket, {
+      type: "welcome",
+      playerId: id,
+      // A bearer credential the client presents on reconnect (ADR 0024). M2
+      // issues it; no reconnect logic acts on it yet.
+      sessionToken: randomBytes(32).toString("base64url"),
+      spawn,
+      config: { snapshotHz: SNAPSHOT_HZ, graceWindowMs: GRACE_WINDOW_MS },
+    });
 
     // A single client's socket erroring (an abrupt reset, a write to a
     // half-closed pipe) must never take the Match down for everyone else
@@ -114,16 +125,25 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       } catch {
         return;
       }
-      if (message.type === "input" && typeof message.tick === "number" && Number.isFinite(message.tick)) {
+      if (message.type === "ping" && typeof message.clientTimeMs === "number") {
+        // Transport echo for the client's clock sync (ADR 0019). No server state.
+        send(socket, { type: "pong", clientTimeMs: message.clientTimeMs, serverTimeMs: performance.now() });
+        return;
+      }
+      if (message.type === "input" && Array.isArray(message.inputs)) {
         const queue = inputQueues.get(id);
         if (!queue) return;
-        // Drop anything not newer than what's been applied (a reordered or
-        // duplicate frame) and keep the queue bounded.
-        if (message.tick > (lastInputTicks.get(id) ?? 0)) {
-          queue.push({ tick: message.tick, input: message.input });
-          queue.sort((a, b) => a.tick - b.tick);
-          while (queue.length > MAX_QUEUED_INPUTS) queue.shift();
+        // Each packet carries the current input plus a redundant tail of recent
+        // ones (ADR 0021). Dedupe by tick against what's been applied and
+        // what's already queued; a head-of-line burst or reorder loses nothing.
+        for (const entry of message.inputs) {
+          if (typeof entry?.tick !== "number" || !Number.isFinite(entry.tick)) continue;
+          if (entry.tick <= (lastInputTicks.get(id) ?? 0)) continue;
+          if (queue.some((q) => q.tick === entry.tick)) continue;
+          queue.push({ tick: entry.tick, input: entry.input });
         }
+        queue.sort((a, b) => a.tick - b.tick);
+        while (queue.length > MAX_QUEUED_INPUTS) queue.shift();
       }
     });
 
@@ -157,9 +177,22 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       for (const [id, character] of Object.entries(state.characters)) {
         character.lastInputTick = lastInputTicks.get(id) ?? 0;
       }
-      const payload = JSON.stringify({ type: "snapshot", state } satisfies ServerMessage);
-      for (const socket of sockets.values()) {
-        if (socket.readyState === socket.OPEN) trySend(socket, payload);
+      // Per-client payload: `serverTimeMs` is the same for all, `commandQueueDepth`
+      // is this client's own un-applied input backlog (feeds its LEAD, ADR 0021).
+      // One `JSON.stringify` per client — negligible at M2 scale, and the shape
+      // binary + delta encoding will need anyway.
+      const serverTimeMs = performance.now();
+      for (const [id, socket] of sockets) {
+        if (socket.readyState !== socket.OPEN) continue;
+        trySend(
+          socket,
+          JSON.stringify({
+            type: "snapshot",
+            state,
+            serverTimeMs,
+            commandQueueDepth: inputQueues.get(id)?.length ?? 0,
+          } satisfies ServerMessage),
+        );
       }
       consecutiveTickFailures = 0;
     } catch (err) {

@@ -272,3 +272,35 @@ export const RECONCILE_POSITION_ERROR = 0.2;
  * arriving (a stalled or dropped connection).
  */
 export const MAX_BUFFERED_INPUT_TICKS = 120;
+
+// --- Wire protocol v2 (ADR 0018–0025; docs/networking-model.md) -------------
+
+/**
+ * Snapshots per second the server broadcasts. Decoupled from {@link TICK_RATE_HZ}
+ * in code (ADR 0020); M2 ships at 1:1 (30/30). The target for the 12-player path
+ * is 20, adopted only after binary encoding lands.
+ */
+export const SNAPSHOT_HZ = 30;
+
+/**
+ * How long (ms) a disconnected Character stays parked and its `sessionToken`
+ * stays valid (ADR 0024). 90 s — the returning-player hold for a co-op/party
+ * game (revised up from a 45 s draft, which was the separate "new player claims
+ * the freed slot" window).
+ */
+export const GRACE_WINDOW_MS = 90_000;
+
+/**
+ * `cl_interp_ratio` — how many snapshot intervals of playout delay the client
+ * renders the non-predicted world behind (ADR 0020). Valve's default and the
+ * near-universal smoothness-vs-accuracy compromise. Interp delay =
+ * `clamp(INTERP_RATIO / snapshotHz * 1000, min, 250)` ms.
+ */
+export const INTERP_RATIO = 2;
+
+/**
+ * How many of the last unacknowledged inputs the client re-sends in every
+ * packet (ADR 0021) — a fixed count, not RTT-adaptive (Quake `cl_packetdup`).
+ * The packet always carries the current tick's input plus this many older ones.
+ */
+export const INPUT_REDUNDANCY = 2;

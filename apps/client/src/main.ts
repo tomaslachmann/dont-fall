@@ -54,6 +54,10 @@ const main = async () => {
   const look = new FreeLookCamera(stage.domElement);
 
   let myId: string | null = null;
+  // Issued in the welcome (ADR 0024). Stored for a future reclaim on reconnect;
+  // M2 does not reconnect. `config` carries the server's snapshot rate etc.
+  let sessionToken: string | null = null;
+  let serverConfig: { snapshotHz: number; graceWindowMs: number } | null = null;
   // Set once the socket drops (tab still open, network/server gone). The game
   // loop freezes on the last frame and the HUD says so — there is no reconnect
   // in M2 (ADR 0011), a reload rejoins as a fresh player.
@@ -152,7 +156,11 @@ const main = async () => {
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data as string) as ServerMessage;
     if (message.type === "welcome") {
-      myId = message.id;
+      myId = message.playerId;
+      sessionToken = message.sessionToken;
+      serverConfig = message.config;
+      void sessionToken;
+      void serverConfig;
       localSim = new RapierSimulation({
         statics: PLAYGROUND_STATICS,
         checkpoints: PLAYGROUND_CHECKPOINTS,
@@ -196,7 +204,9 @@ const main = async () => {
 
   const sendInput = (tick: number, input: SimInputs): void => {
     if (socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ type: "input", tick, input } satisfies ClientMessage));
+    // One-entry array for now; ticket 11.4 adds the redundant tail of unacked
+    // inputs (ADR 0021).
+    socket.send(JSON.stringify({ type: "input", inputs: [{ tick, input }] } satisfies ClientMessage));
   };
 
   let lastFrame = performance.now();
