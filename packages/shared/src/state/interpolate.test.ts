@@ -6,7 +6,7 @@ import { interpolateState } from "./interpolate.js";
 import { characterSnapshot, type CharacterMotionState, type SimState } from "./SimState.js";
 
 const bone = (x: number): BoneSnapshot => ({ position: { x, y: 0, z: 0 }, rotation: IDENTITY_QUAT });
-const prop = (x: number): PropSnapshot => ({ position: { x, y: 0, z: 0 }, rotation: IDENTITY_QUAT });
+const prop = (x: number): PropSnapshot => ({ position: { x, y: 0, z: 0 }, rotation: IDENTITY_QUAT, atRest: false });
 
 const ID = "p1";
 

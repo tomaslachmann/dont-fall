@@ -680,6 +680,7 @@ describe("RapierSimulation — client Props are pinned obstacles, never predicte
   const serverPose = (pos: { x: number; y: number; z: number }) => ({
     position: pos,
     rotation: { x: 0, y: 0, z: 0, w: 1 },
+    atRest: false,
   });
 
   it("pins a Prop to the snapshot pose — never simulates it (no gravity)", () => {
@@ -760,6 +761,21 @@ describe("RapierSimulation — client Props are pinned obstacles, never predicte
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [airborneProp] });
     tick(sim, 1.5);
     expect(sim.snapshot().props[0]!.position.y).toBeLessThan(4); // fell under gravity
+  });
+
+  it("a moving Prop's snapshot carries velocity; a settled one is atRest with no velocity (ADR 0022)", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [airborneProp] });
+    sim.tick({}); // one step — the box is now falling
+    const falling = sim.snapshot().props[0]!;
+    expect(falling.atRest).toBe(false);
+    expect(falling.velocity).toBeDefined();
+    expect(Math.abs(falling.velocity!.y)).toBeGreaterThan(0);
+
+    tick(sim, 8); // land and settle to sleep
+    const settled = sim.snapshot().props[0]!;
+    expect(settled.atRest).toBe(true);
+    expect(settled.velocity).toBeUndefined();
+    expect(settled.angularVelocity).toBeUndefined();
   });
 });
 

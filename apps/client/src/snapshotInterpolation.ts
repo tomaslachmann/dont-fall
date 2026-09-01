@@ -1,14 +1,15 @@
-import { interpolateState, TICK_MS, type RenderState, type SimState } from "@dont-fall/shared";
+import { INTERP_RATIO, interpolateState, SNAPSHOT_HZ, TICK_MS, type RenderState, type SimState } from "@dont-fall/shared";
 
 /**
  * How far behind "now" (in server time) the client renders everything it does
- * not predict — Props, other players, this player's own ragdoll. One and a half
- * ticks: enough that the two snapshots bracketing the render moment have
- * essentially always arrived despite `setInterval` firing late and unevenly and
- * the socket adding variable delay, without adding more visible latency than
- * ADR 0003 already prices in.
+ * not predict — Props, other players, this player's own ragdoll. A function of
+ * the *snapshot* rate, not the tick rate (ADR 0020, Valve's
+ * `max(cl_interp, cl_interp_ratio / cl_updaterate)` capped at 0.25 s): enough
+ * playout room that the two snapshots bracketing the render moment have
+ * essentially always arrived. At 30 Hz snapshots, ratio 2 → 66.7 ms.
  */
-export const INTERP_DELAY_MS = TICK_MS * 1.5;
+export const interpDelayMs = (snapshotHz: number): number =>
+  Math.min(250, Math.max(TICK_MS, (INTERP_RATIO / snapshotHz) * 1000));
 
 /** How quickly the local↔server clock offset eases toward each fresh observation (per snapshot). */
 const OFFSET_EASE = 0.02;
@@ -43,6 +44,11 @@ export class SnapshotInterpolator {
   private readonly buffer: Buffered[] = [];
   /** `localNow - serverMs` for the stream — set on the first snapshot, then eased for clock drift. */
   private offsetMs: number | null = null;
+  private readonly delayMs: number;
+
+  constructor(snapshotHz: number = SNAPSHOT_HZ) {
+    this.delayMs = interpDelayMs(snapshotHz);
+  }
 
   /** Feed a freshly received snapshot. `nowMs` is `performance.now()` at receipt. */
   receive(state: SimState, nowMs: number): void {
@@ -90,6 +96,6 @@ export class SnapshotInterpolator {
   }
 
   private targetServerMs(nowMs: number): number {
-    return nowMs - (this.offsetMs ?? 0) - INTERP_DELAY_MS;
+    return nowMs - (this.offsetMs ?? 0) - this.delayMs;
   }
 }

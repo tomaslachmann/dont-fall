@@ -393,7 +393,11 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * `reconcile` calls it with the raw acked-snapshot poses before a replay.
    */
   syncPropsToSnapshot(poses: readonly PropSnapshot[]): void {
-    this.followPoses = poses.map((p) => ({ position: { ...p.position }, rotation: { ...p.rotation } }));
+    this.followPoses = poses.map((p) => ({
+      position: { ...p.position },
+      rotation: { ...p.rotation },
+      atRest: p.atRest,
+    }));
   }
 
   private updateCheckpoint(id: string): void {

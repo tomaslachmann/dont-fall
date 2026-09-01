@@ -26,7 +26,7 @@ const BOX_STEP = 0.2; // units the box moves per server tick (a steady push)
 const snapshotAtTick = (tick: number): SimState => ({
   tick,
   characters: {},
-  props: [{ position: { x: tick * BOX_STEP, y: 0.4, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 } }],
+  props: [{ position: { x: tick * BOX_STEP, y: 0.4, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, atRest: false }],
 });
 
 interface Arrival {
@@ -117,9 +117,9 @@ describe("client snapshot interpolation — smoothness under realistic arrival j
   });
 
   it("holds the latest pose without jumping backward when a snapshot is late (buffer underrun)", () => {
-    // One snapshot arrives very late — 40 ms past nominal, past the interp delay.
+    // One snapshot arrives very late — well past the interp delay (~66.7 ms at 30 Hz).
     const late = jitteredArrivals(20);
-    late[12]!.atMs = 12 * TICK_MS + 55;
+    late[12]!.atMs = 12 * TICK_MS + 90;
     const rendered = renderBuffered(late, renderTimes.slice(0, 40));
     const deltas = frameDeltas(rendered);
     // The box may briefly hold (delta ≈ 0) but must never move backward.

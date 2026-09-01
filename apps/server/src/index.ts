@@ -157,6 +157,12 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   });
 
   let consecutiveTickFailures = 0;
+  // Snapshot rate is decoupled from the tick rate (ADR 0020): the sim steps
+  // every tick, but a snapshot goes out only every `1000 / SNAPSHOT_HZ` ms of
+  // simulated time. At M2's 30/30 that is every tick; the accumulator lets the
+  // 12-player path drop to 20 Hz later with no other change.
+  const SNAPSHOT_INTERVAL_MS = 1000 / SNAPSHOT_HZ;
+  let snapshotAccumulatorMs = 0;
   const interval = setInterval(() => {
     // The Match loop must survive a bad tick (a physics edge case, a NaN) —
     // one hiccup crashing the process would drop every connected player. Log
@@ -173,6 +179,12 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       }
 
       simulation.tick(tickInputs);
+      consecutiveTickFailures = 0;
+
+      snapshotAccumulatorMs += TICK_MS;
+      if (snapshotAccumulatorMs < SNAPSHOT_INTERVAL_MS) return;
+      snapshotAccumulatorMs -= SNAPSHOT_INTERVAL_MS;
+
       const state = simulation.snapshot();
       for (const [id, character] of Object.entries(state.characters)) {
         character.lastInputTick = lastInputTicks.get(id) ?? 0;

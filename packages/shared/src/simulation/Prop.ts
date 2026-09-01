@@ -17,6 +17,16 @@ export interface PropConfig {
 export interface PropSnapshot {
   position: Vec3;
   rotation: Quat;
+  /**
+   * Linear velocity (units/s). Present only when `atRest` is false — a
+   * re-simulating client needs it to converge instead of replaying from a
+   * standstill every snapshot (ADR 0022). `{0,0,0}` when omitted.
+   */
+  velocity?: Vec3;
+  /** Angular velocity (rad/s). Same rule as {@link velocity}. */
+  angularVelocity?: Vec3;
+  /** The Rapier body is sleeping — it has come to rest (ADR 0022). */
+  atRest: boolean;
 }
 
 const DEFAULT_MASS = 4;
@@ -89,6 +99,15 @@ export class Prop {
   snapshot(): PropSnapshot {
     const t = this.body.translation();
     const r = this.body.rotation();
-    return { position: vec3(t.x, t.y, t.z), rotation: { x: r.x, y: r.y, z: r.z, w: r.w } };
+    const atRest = this.body.isSleeping();
+    const base: PropSnapshot = {
+      position: vec3(t.x, t.y, t.z),
+      rotation: { x: r.x, y: r.y, z: r.z, w: r.w },
+      atRest,
+    };
+    if (atRest) return base;
+    const v = this.body.linvel();
+    const w = this.body.angvel();
+    return { ...base, velocity: vec3(v.x, v.y, v.z), angularVelocity: vec3(w.x, w.y, w.z) };
   }
 }
