@@ -8,6 +8,13 @@ primary sources.
 
 Read this first. Change it whenever the model changes; never let it drift from the code.
 
+**Implementation status (2026-09-02):** protocol v2 is on branch `m2-protocol-v2` —
+wire shapes, `respawnCount`, time sync, redundant input + LEAD, `PropSnapshot`
+velocity + interp-delay formula, ragdoll epoch/cause/`phaseStartTick` + prediction-tick
+guard, Spinner at the prediction tick, and the net-graph overlay are done. **Pushed-Prop
+prediction (§5) is not yet implemented** — Props are still interpolated-only (ADR 0016
+behaviour) until that pass. See `.scratch/m2-netcode/issues/11-protocol-v2-index.md`.
+
 ---
 
 ## 1. The three rates

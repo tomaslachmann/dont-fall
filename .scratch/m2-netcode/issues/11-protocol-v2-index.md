@@ -4,7 +4,12 @@ The grilling session (2026-09) settled the M2 network protocol. Spec: `docs/netw
 ADRs: 0018–0025, plus amendment notes on 0015/0016/0017. This is the implementation surface,
 in dependency order. Each item becomes its own ticket file (`12-…`, `13-…`, …) when picked up.
 
-**Status:** planned. Nothing here is implemented yet — the code still runs protocol v1.
+**Status (2026-09-02):** 11.1–11.5, 11.7, 11.9 landed on branch `m2-protocol-v2`.
+11.6 landed except its deferred parts (sparse bones list, full local-ragdoll-body
+removal, one-shot-effect gating helper — nothing to gate yet). **11.8 (pushed-Prop
+prediction) is the remaining substantial piece** — feel-sensitive, needs a playtest to
+validate, kept for a focused pass. All tests green (134 shared + 36 client + 10 server),
+typecheck clean.
 
 ---
 
