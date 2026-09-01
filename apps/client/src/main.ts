@@ -407,11 +407,12 @@ const main = async () => {
         c.dashing,
         c.dashSpeed,
       );
-      if (serverInterp.ready) {
-        // Spinner phase is a pure function of the tick — feed it the same
-        // fractional server tick the interpolation buffer is rendering.
-        stage.updateSpinners(serverInterp.renderTick(now));
-      }
+      // Spinner phase is a pure function of the tick and the client can compute
+      // it at any tick exactly — so render it at the *prediction* tick, matching
+      // what the local Character's own collision runs against, not the delayed
+      // render tick (ADR 0025). `localSim` is synced to the server tick on each
+      // reconcile, so its tick counter + the render-fraction is that phase.
+      stage.updateSpinners(snapshot.tick + localAlpha);
       stage.updateCamera(renderCharacter.position, look.yaw, look.pitch);
 
       const cp = c.checkpointIndex === null ? "spawn" : `#${c.checkpointIndex + 1}`;
