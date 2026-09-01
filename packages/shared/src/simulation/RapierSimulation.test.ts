@@ -626,6 +626,108 @@ describe("RapierSimulation — dynamic props", () => {
   });
 });
 
+describe("RapierSimulation — client Prop prediction (ticket 06)", () => {
+  const airborneProp = {
+    shape: { kind: "box" as const, halfExtents: { x: 0.4, y: 0.4, z: 0.4 } },
+    center: { x: 6, y: 5, z: 0 }, // well above the ground, so gravity is obvious if it simulates
+  };
+  const serverPose = (pos: { x: number; y: number; z: number }) => ({
+    position: pos,
+    rotation: { x: 0, y: 0, z: 0, w: 1 },
+  });
+
+  it("pins a Prop the local player isn't touching to the snapshot pose — never simulates it (no gravity)", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [airborneProp] });
+    sim.setLocallyLiveProps([]);
+    sim.syncPropsToSnapshot([serverPose({ x: 6, y: 5, z: 0 })]);
+
+    tick(sim, 2); // would fall ~metres under gravity if simulated
+
+    const p = sim.snapshot().props[0]!.position;
+    expect(p.y).toBeCloseTo(5, 3);
+    expect(p.x).toBeCloseTo(6, 3);
+  });
+
+  it("follows a moving snapshot pose exactly", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [airborneProp] });
+    for (let step = 0; step < 5; step += 1) {
+      sim.setLocallyLiveProps([]);
+      sim.syncPropsToSnapshot([serverPose({ x: 6 + step, y: 5, z: 0 })]);
+      sim.tick({});
+      expect(sim.snapshot().props[0]!.position.x).toBeCloseTo(6 + step, 3);
+    }
+  });
+
+  it("reports the Prop index the Character's movement touched, and simulates it once it's live", () => {
+    const groundProp = {
+      shape: { kind: "box" as const, halfExtents: { x: 0.4, y: 0.4, z: 0.4 } },
+      center: { x: 0, y: 0.4, z: -1.5 }, // on the ground, north of spawn
+    };
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [groundProp] });
+    sim.syncPropsToSnapshot([serverPose(groundProp.center)]);
+    tick(sim, 0.5);
+
+    // Walk into it; once contact is reported the client would mark it live.
+    let everContacted = false;
+    for (let i = 0; i < 20; i += 1) {
+      sim.setLocallyLiveProps(everContacted ? [0] : []);
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+      if (sim.getContactedProps().includes(0)) everContacted = true;
+    }
+    expect(everContacted).toBe(true);
+
+    const start = sim.snapshot().props[0]!.position;
+    for (let i = 0; i < 20; i += 1) {
+      sim.setLocallyLiveProps([0]);
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    }
+    const moved = sim.snapshot().props[0]!.position;
+    expect(Math.hypot(moved.x - start.x, moved.z - start.z)).toBeGreaterThan(0.2);
+  });
+
+  it("keeps a Prop's shove when it's touched but not yet marked live, so a tap moves it locally right away", () => {
+    const groundProp = {
+      shape: { kind: "box" as const, halfExtents: { x: 0.4, y: 0.4, z: 0.4 } },
+      center: { x: 0, y: 0.4, z: -1.2 },
+    };
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [groundProp] });
+    sim.syncPropsToSnapshot([serverPose(groundProp.center)]);
+    tick(sim, 0.5);
+    const start = sim.snapshot().props[0]!.position;
+
+    // Walk into it for a few ticks WITHOUT ever marking it live (setLocallyLiveProps stays []).
+    for (let i = 0; i < 6; i += 1) {
+      sim.setLocallyLiveProps([]);
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    }
+
+    const moved = sim.snapshot().props[0]!.position;
+    expect(Math.hypot(moved.x - start.x, moved.z - start.z)).toBeGreaterThan(0.05);
+  });
+
+  it("hard-corrects a live Prop that has diverged far from the server's resolution, and reports it", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [airborneProp] });
+    sim.setLocallyLiveProps([0]); // pretend the local player is pushing it
+    sim.tick({});
+    const drifted = sim.snapshot().props[0]!.position;
+
+    // Server says it's 3 units away — beyond PROP_HARD_CORRECT_DISTANCE.
+    const corrected = sim.syncPropsToSnapshot([serverPose({ x: drifted.x + 3, y: drifted.y, z: drifted.z })]);
+    expect(corrected).toBe(true);
+    expect(sim.snapshot().props[0]!.position.x).toBeCloseTo(drifted.x + 3, 2);
+
+    // A small disagreement is left alone.
+    const here = sim.snapshot().props[0]!.position;
+    expect(sim.syncPropsToSnapshot([serverPose({ x: here.x + 0.1, y: here.y, z: here.z })])).toBe(false);
+  });
+
+  it("does not touch Props on the server (no sync calls) — they stay fully dynamic", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [airborneProp] });
+    tick(sim, 1.5);
+    expect(sim.snapshot().props[0]!.position.y).toBeLessThan(4); // fell under gravity
+  });
+});
+
 describe("RapierSimulation — dash into a wall", () => {
   const WALL: Box = { center: { x: 3, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 5 } };
 

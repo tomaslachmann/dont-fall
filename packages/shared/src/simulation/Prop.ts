@@ -21,6 +21,7 @@ export interface PropSnapshot {
 
 const DEFAULT_MASS = 4;
 const DEFAULT_FRICTION = 0.6;
+const ZERO = { x: 0, y: 0, z: 0 };
 
 /**
  * A dynamic physics prop (box or ball) the Character can bump and knock around
@@ -69,6 +70,20 @@ export class Prop {
     const current = this.body.linvel();
     const alongPush = (current.x * push.x + current.z * push.z) / pushSpeed;
     if (alongPush < pushSpeed) this.body.applyImpulse(push, true);
+  }
+
+  /**
+   * Client prediction only (ticket 06, ADR 0012): pin the Prop to the server's
+   * snapshot pose, inert. A Prop nobody local is pushing is never simulated on
+   * the client — it just follows the authoritative snapshot, the same as a
+   * mirrored other-player Character. Velocity is zeroed so it doesn't
+   * accumulate gravity or a stale shove between the ticks it's followed.
+   */
+  follow(pose: PropSnapshot): void {
+    this.body.setTranslation(pose.position, true);
+    this.body.setRotation(pose.rotation, true);
+    this.body.setLinvel(ZERO, true);
+    this.body.setAngvel(ZERO, true);
   }
 
   snapshot(): PropSnapshot {

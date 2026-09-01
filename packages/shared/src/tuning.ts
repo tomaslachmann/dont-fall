@@ -198,10 +198,27 @@ export const SPINNER_KNOCKBACK_SCALE = 0.6;
 /** Extra upward Knockback (units/s) added to every Spinner hit, for a visible pop. */
 export const SPINNER_KNOCKBACK_LIFT = 2;
 
-// --- Dynamic props (ticket 06) -----------------------------------------------
+// --- Dynamic props (M1 ticket 06 / M2 ticket 06) ---------------------------
 
 /** Push impulse applied to a Prop per unit of the Character's horizontal speed. */
 export const PROP_PUSH_SCALE = 0.5;
+
+/**
+ * How long (ticks) a Prop stays locally simulated on a client after the local
+ * player last touched it (M2 ticket 06). A short grace so a brief loss of
+ * contact mid-push doesn't snap the Prop back to the server snapshot and then
+ * immediately hand it back; once it lapses, the Prop returns to purely
+ * following the authoritative snapshot.
+ */
+export const PROP_LOCAL_SIM_GRACE_TICKS = 8;
+
+/**
+ * Distance (units) a locally-simulated Prop may diverge from the server's
+ * snapshot before the client hard-corrects it mid-push (M2 ticket 06) — e.g.
+ * another player shoved the same Prop from the other side and the server
+ * resolved it somewhere the local prediction didn't.
+ */
+export const PROP_HARD_CORRECT_DISTANCE = 0.5;
 
 // --- Character-to-Character Bump (M2 ticket 04) -----------------------------
 

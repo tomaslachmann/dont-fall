@@ -3,12 +3,18 @@ import { pointInBox, type Box } from "../math/box.js";
 import { lengthVec3, normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
 import { characterSnapshot, type CharacterSnapshot, type SimState } from "../state/SimState.js";
 import type { FixedSimulation } from "../timing/FixedSimulation.js";
-import { BUMP_IMPULSE_SCALE, BUMP_LIFT_RATIO, DEFAULT_KILL_PLANE_Y, GRAVITY_Y } from "../tuning.js";
+import {
+  BUMP_IMPULSE_SCALE,
+  BUMP_LIFT_RATIO,
+  DEFAULT_KILL_PLANE_Y,
+  GRAVITY_Y,
+  PROP_HARD_CORRECT_DISTANCE,
+} from "../tuning.js";
 import { CharacterController, type CollisionListener } from "./CharacterController.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
 import { MirrorCharacter } from "./MirrorCharacter.js";
-import { Prop, type PropConfig } from "./Prop.js";
+import { Prop, type PropConfig, type PropSnapshot } from "./Prop.js";
 import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
 import { Spinner, type SpinnerConfig } from "./Spinner.js";
 
@@ -106,6 +112,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   private readonly props: Prop[];
   private readonly spinnerByHandle = new Map<number, Spinner>();
   private readonly propByHandle = new Map<number, Prop>();
+  private readonly propIndexByHandle = new Map<number, number>();
   /** Capsule collider handle → Character ID, so a Character-to-Character contact can find the Character it hit (ticket 04 — Bump). */
   private readonly characterIdByHandle = new Map<number, string>();
   /**
@@ -114,6 +121,14 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * {@link CharacterController}s for every player and never populates this.
    */
   private readonly mirrors = new Map<string, MirrorCharacter>();
+
+  // --- Client-only Prop prediction (ticket 06, ADR 0012) --------------------
+  /** Prop indices a Character's movement touched this tick — the client reads this to decide which Props to keep locally simulating. */
+  private readonly contactedProps = new Set<number>();
+  /** Prop indices the client is currently simulating locally (the local player is pushing them); all others just follow the snapshot. */
+  private readonly locallyLiveProps = new Set<number>();
+  /** Latest authoritative pose per Prop, from the server snapshot — non-live Props are pinned here every tick. */
+  private followPoses: (PropSnapshot | undefined)[] = [];
 
   private tickCount = 0;
 
@@ -138,7 +153,10 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     for (const spinner of this.spinners) this.spinnerByHandle.set(spinner.collider.handle, spinner);
 
     this.props = (config.props ?? []).map((c) => new Prop(this.world, c));
-    for (const prop of this.props) this.propByHandle.set(prop.collider.handle, prop);
+    this.props.forEach((prop, i) => {
+      this.propByHandle.set(prop.collider.handle, prop);
+      this.propIndexByHandle.set(prop.collider.handle, i);
+    });
 
     if (config.withDefaultCharacter ?? true) {
       this.addCharacter(DEFAULT_CHARACTER_ID, config.spawn ?? DEFAULT_SPAWN);
@@ -166,7 +184,11 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
         this.resolveBump(id, bumpedId, velocity, normal);
         return;
       }
-      this.propByHandle.get(colliderHandle)?.shove(velocity);
+      const propIndex = this.propIndexByHandle.get(colliderHandle);
+      if (propIndex !== undefined) {
+        this.contactedProps.add(propIndex);
+        this.props[propIndex]!.shove(velocity);
+      }
     };
 
     const character = new CharacterController(this.world, point, onCollision);
@@ -300,6 +322,8 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * `CharacterController` (ticket 02) is what makes one shared step possible.
    */
   tick(inputs: Record<string, SimInputs>): void {
+    this.contactedProps.clear();
+
     // Queue each Spinner's rotation for the tick about to run — it must be
     // queued before `world.step()` applies it, the same way each Character's
     // own `setNextKinematicTranslation` works.
@@ -318,6 +342,68 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       character.endTick();
       this.updateCheckpoint(id);
       this.detectFall(id);
+    }
+
+    // Client-only (ADR 0012, ticket 06): every Prop the local player is NOT
+    // pushing is pinned to the authoritative snapshot pose for this tick — it
+    // is never simulated locally. A Prop touched *this* tick is exempt too, so
+    // the shove that just landed survives the pin (it goes fully live next tick
+    // once the client marks it). On the server `followPoses` is empty, so every
+    // Prop stays fully dynamic and authoritative.
+    for (let i = 0; i < this.props.length; i += 1) {
+      const pose = this.followPoses[i];
+      if (pose && !this.locallyLiveProps.has(i) && !this.contactedProps.has(i)) {
+        this.props[i]!.follow(pose);
+      }
+    }
+  }
+
+  /** Client-only (ticket 06): Prop indices a Character's movement touched this tick. */
+  getContactedProps(): number[] {
+    return [...this.contactedProps];
+  }
+
+  /** Client-only (ticket 06): the set of Props the local player is actively pushing, so they keep being simulated locally rather than snapped to the snapshot. */
+  setLocallyLiveProps(indices: Iterable<number>): void {
+    this.locallyLiveProps.clear();
+    for (const i of indices) this.locallyLiveProps.add(i);
+  }
+
+  /**
+   * Client-only (ticket 06, ADR 0012): take the server's authoritative Prop
+   * poses. Props the local player isn't pushing follow these exactly from the
+   * next tick; a Prop that *is* being pushed locally is left alone unless it
+   * has diverged past {@link PROP_HARD_CORRECT_DISTANCE} from the server's
+   * resolution (another player shoved the same Prop), in which case it is
+   * hard-corrected to match — the same policy ADR 0013 uses for the Character.
+   * Returns whether any live Prop was hard-corrected, so the client can stop
+   * render interpolation blending across the jump.
+   */
+  syncPropsToSnapshot(poses: readonly PropSnapshot[]): boolean {
+    this.followPoses = poses.map((p) => ({ position: { ...p.position }, rotation: { ...p.rotation } }));
+    let hardCorrected = false;
+    for (const i of this.locallyLiveProps) {
+      const pose = poses[i];
+      const prop = this.props[i];
+      if (!pose || !prop) continue;
+      if (lengthVec3(subVec3(prop.snapshot().position, pose.position)) > PROP_HARD_CORRECT_DISTANCE) {
+        prop.follow(pose);
+        hardCorrected = true;
+      }
+    }
+    return hardCorrected;
+  }
+
+  /**
+   * Client-only (ticket 06): snap every locally-simulated Prop to the server's
+   * pose before a reconciliation replay, so the replayed ticks re-push it from
+   * the same authoritative base the character is reset to (ADR 0013) rather
+   * than from a position local prediction already advanced.
+   */
+  resetLivePropsToSnapshot(poses: readonly PropSnapshot[]): void {
+    for (const i of this.locallyLiveProps) {
+      const pose = poses[i];
+      if (pose) this.props[i]?.follow(pose);
     }
   }
 
