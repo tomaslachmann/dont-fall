@@ -13,8 +13,8 @@ self-playtest and we're happy just shoving the Character off a ledge.
 
 **Status:** ready-for-agent
 
-- [ ] Procedural `Wobble` on the visual mesh while `Controlled`; zero effect on the capsule
-- [ ] Wobble settles when idle, exaggerates on sharp turns / hard stops
-- [ ] Every M1 tuning constant reviewed and set for feel, all named in `packages/shared`
-- [ ] A short written note in `docs/milestones/M1.md` recording the final values and the playtest verdict
-- [ ] M1 checklist in `docs/milestones/M1.md` fully checked
+- [x] Procedural `Wobble` on the visual mesh while `Controlled`; zero effect on the capsule
+- [x] Wobble settles when idle, exaggerates on sharp turns / hard stops
+- [x] Every M1 tuning constant reviewed and set for feel, all named in `packages/shared`
+- [x] A short written note in `docs/milestones/M1.md` recording the final values and the playtest verdict
+- [x] M1 checklist in `docs/milestones/M1.md` fully checked

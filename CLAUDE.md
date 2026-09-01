@@ -9,19 +9,20 @@ Design philosophy: **Easy to understand. Hard to master. Hilarious when you fail
 
 ## Status
 
-Working through **M1** — a local physics playground (`docs/milestones/M1.md`).
-Tickets in `.scratch/m1-playground/issues/`.
+**M1 done** — a local physics playground (`docs/milestones/M1.md`, fully checked).
+Tickets 01–07 in `.scratch/m1-playground/issues/`: monorepo + fixed 30 Hz sim + render
+interpolation (01); Rapier kinematic-capsule Character, WASD, spring-arm camera,
+pointer-lock free-look (02, 02b); platforms + Fall + Checkpoint respawn with a lockout
+penalty (03); jump + dash (04); ragdoll state machine (05); `CharacterController`
+extracted from `RapierSimulation` (05b); Spinner Obstacle, dynamic Props, dash-into-a-
+wall Ragdoll (06); procedural Wobble + feel-tuning pass (07). Plus a pre-M2 polish pass
+on Dash (nitro-style build-up, speed-gated wall Ragdoll, speed-lines effect) and a
+MushroomKing character model swap. See ADRs 0006 / 0009 / 0010.
 
-- **Tickets 01–06 done.** Monorepo + fixed 30 Hz sim + render interpolation
-  (01); Rapier kinematic-capsule Character, WASD, spring-arm camera, pointer-lock
-  free-look (02, 02b); platforms + Fall + Checkpoint respawn with a lockout
-  penalty (03); jump + dash (04); ragdoll state machine (05); `CharacterController`
-  extracted from `RapierSimulation` (05b); Spinner Obstacle, dynamic Props,
-  dash-into-a-wall Ragdoll (06). See `.scratch/m1-playground/issues/` and ADRs
-  0006 / 0009 / 0010.
-- **Next:** ticket 07 — Wobble + M1 feel-tuning playtest (closes M1).
-
-No multiplayer, backend, lobby, or accounts until M1 proves the core loop is fun.
+**Now designing M2** — netcode (`docs/milestones/M2.md`). Design settled via a grilling
+session cross-checked against `docs/research/m2-netcode-transport.md` and
+`docs/research/m2-client-reconciliation.md`; recorded as ADR 0011 / 0012 / 0013.
+**Next:** break M2.md's checklist into tickets and start implementing.
 
 ## Tech stack
 
@@ -69,7 +70,7 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 | Milestone | Goal |
 |-----------|------|
 | **M1** | Local physics playground. "Fun to walk, jump, bump, and fall." |
-| **M2** | Netcode — 2+ players in the same playground, authoritative server. |
+| **M2** | Netcode — 2 players validated, architected for up to 12 (ADR 0011), authoritative server. |
 | **M3** | Procedural Segments — build a Track from Modules. |
 | **M4** | Match structure — Rounds, Qualification, Time Limit. First Screens: React shell + lobby/results (ADR 0008). |
 | later | Power-ups, Grab, Betting/Spectator, level themes, the Skyfall final. |
