@@ -9,13 +9,17 @@ instead of requiring a typed-in ID.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] track-service validates every `Segment.moduleId` against the real Module library at
-      save/generate time; rejects with a clear 400 error naming the bad id(s)
-- [ ] `GET /tracks` returns every stored Track's id/name/author/createdAt (not the full Segment
-      data — keep the list payload small)
-- [ ] Track builder has a "Browse" view/panel: lists existing Tracks by name, clicking one loads it
-      (replacing manual ID entry as the primary path; direct-by-id load can stay as a fallback)
-- [ ] Manually verified: attempt to save a Track with a bogus `moduleId` and confirm it's rejected;
-      save two named Tracks and confirm both appear in Browse
+- [x] track-service (`validate.ts`'s `unknownModuleIds`) validates every `Segment.moduleId`
+      against `MODULE_LIBRARY` at save time; rejects with a 400 naming the bad id(s). Not applied
+      to `/tracks/generate` — it only ever picks ids from `MODULE_LIBRARY` itself, so it's valid
+      by construction; validating there too would be pure ceremony
+- [x] `GET /tracks` returns every stored Track's id/name/createdAt (not the full Segment data). No
+      `author` field yet — that's ticket 10's Revision/authorId work, not this ticket's
+- [x] Track builder has a "Browse" panel (`api.ts`'s `listTracks`): lists existing Tracks by name
+      + id, clicking one loads it; manual ID entry (`Load` button) stays as a fallback
+- [x] Manually verified live (both a running process via curl, and a real browser via Playwright):
+      a bogus `moduleId` save is rejected with the id named in the error; saved a second named
+      Track, opened Browse, saw both (newest first), clicked the M1 entry and confirmed it loaded
+      (6 Segments) and the panel closed. Zero console errors

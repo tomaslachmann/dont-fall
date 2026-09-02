@@ -129,6 +129,38 @@ describe("track-service", () => {
     expect(res.status).toBe(400);
   });
 
+  it("400s a save whose Segments reference an unknown Module id (ticket 09)", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const badTrack: Track = [{ moduleId: "not-a-real-module", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+    const res = await fetch(`http://localhost:${service.port}/tracks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ track: badTrack }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("not-a-real-module");
+  });
+
+  it("GET /tracks lists every stored Track by id/name/createdAt (ticket 09)", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    await fetch(`http://localhost:${service.port}/tracks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "my track", track: SAMPLE_TRACK }),
+    });
+
+    const res = await fetch(`http://localhost:${service.port}/tracks`);
+    expect(res.status).toBe(200);
+    const list = (await res.json()) as { id: string; name: string | null; createdAt: number }[];
+    // The M1 seed plus the one just saved.
+    expect(list.length).toBeGreaterThanOrEqual(2);
+    expect(list.some((t) => t.name === "my track")).toBe(true);
+    expect(list.some((t) => t.id === M1_SEED_TRACK_ID)).toBe(true);
+    // Full Segment data should NOT be in the list payload.
+    expect(list[0]).not.toHaveProperty("track");
+  });
+
   it("persists a saved Track across a process restart (same dbPath)", async () => {
     service = await startTrackService({ port: 0, dbPath });
     const saveRes = await fetch(`http://localhost:${service.port}/tracks`, {

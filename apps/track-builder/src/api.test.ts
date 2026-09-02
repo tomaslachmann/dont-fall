@@ -1,6 +1,6 @@
 import type { Track } from "@dont-fall/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadTrack, saveTrack } from "./api.js";
+import { listTracks, loadTrack, saveTrack } from "./api.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -61,5 +61,23 @@ describe("loadTrack", () => {
       vi.fn(async () => new Response(JSON.stringify({ error: "not found" }), { status: 404 })),
     );
     await expect(loadTrack("http://x", "ghost")).rejects.toThrow(/404/);
+  });
+});
+
+describe("listTracks", () => {
+  it("GETs /tracks and returns the listing", async () => {
+    const listing = [{ id: "a", name: "A", createdAt: 1 }];
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(listing), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await listTracks("http://x");
+
+    expect(result).toEqual(listing);
+    expect(fetchMock).toHaveBeenCalledWith("http://x/tracks");
+  });
+
+  it("throws on a non-ok response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
+    await expect(listTracks("http://x")).rejects.toThrow(/500/);
   });
 });

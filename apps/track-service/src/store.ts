@@ -10,6 +10,12 @@ export interface StoredTrack {
   track: Track;
 }
 
+export interface TrackListing {
+  id: string;
+  name: string | null;
+  createdAt: number;
+}
+
 const toStored = (row: typeof tracks.$inferSelect): StoredTrack => ({
   id: row.id,
   name: row.name,
@@ -41,6 +47,20 @@ export const getAnyTrack = (db: TrackDb): StoredTrack | undefined => {
   const row = db.select().from(tracks).orderBy(sql`RANDOM()`).limit(1).get();
   return row ? toStored(row) : undefined;
 };
+
+/**
+ * Lists every stored Track's id/name/createdAt (not the full Segment data —
+ * ticket 09: fetch-by-known-id-only stops being a real "share" mechanism
+ * once there are multiple user-created Tracks, so the builder needs
+ * something to Browse). `author` isn't listed yet — that field doesn't
+ * exist until ticket 10's Revision/authorId work lands.
+ */
+export const listTracks = (db: TrackDb): TrackListing[] =>
+  db
+    .select({ id: tracks.id, name: tracks.name, createdAt: tracks.createdAt })
+    .from(tracks)
+    .orderBy(sql`${tracks.createdAt} DESC`)
+    .all();
 
 /** Seeds `track` under `id` only if the table is currently empty (idempotent startup seeding). */
 export const seedIfEmpty = (db: TrackDb, id: string, name: string, track: Track): void => {

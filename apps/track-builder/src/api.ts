@@ -23,3 +23,16 @@ export const loadTrack = async (baseUrl: string, id: string): Promise<StoredTrac
   if (!res.ok) throw new Error(`load failed: HTTP ${res.status}`);
   return (await res.json()) as StoredTrackResponse;
 };
+
+export interface TrackListing {
+  id: string;
+  name: string | null;
+  createdAt: number;
+}
+
+/** Lists every stored Track (`GET /tracks`, ticket 09) — the Browse panel's data source. */
+export const listTracks = async (baseUrl: string): Promise<TrackListing[]> => {
+  const res = await fetch(`${baseUrl}/tracks`);
+  if (!res.ok) throw new Error(`list failed: HTTP ${res.status}`);
+  return (await res.json()) as TrackListing[];
+};

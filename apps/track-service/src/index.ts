@@ -4,7 +4,8 @@ import type { Track } from "@dont-fall/shared";
 import { DEFAULT_TRACK_SERVICE_PORT, MODULE_LIBRARY, M1_TRACK } from "@dont-fall/shared";
 import { openDb, type TrackDb } from "./db.js";
 import { generateRandomTrack } from "./generate.js";
-import { getAnyTrack, getTrackById, saveTrack, seedIfEmpty } from "./store.js";
+import { getAnyTrack, getTrackById, listTracks, saveTrack, seedIfEmpty } from "./store.js";
+import { unknownModuleIds } from "./validate.js";
 
 /**
  * track-service (ADR 0028): the single source of truth for Tracks, separate
@@ -91,11 +92,21 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
       json(res, 400, { error: "body.track must be a Segment[] (moduleId, position, rotation)" });
       return;
     }
+    const unknown = unknownModuleIds(body.track, MODULE_LIBRARY);
+    if (unknown.length > 0) {
+      json(res, 400, { error: `unknown Module id(s): ${unknown.join(", ")}` });
+      return;
+    }
     const saved = saveTrack(db, {
       track: body.track,
       ...(typeof body.name === "string" ? { name: body.name } : {}),
     });
     json(res, 201, saved);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/tracks") {
+    json(res, 200, listTracks(db));
     return;
   }
 

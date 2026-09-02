@@ -1,5 +1,5 @@
 import { MODULE_LIBRARY, type Track } from "@dont-fall/shared";
-import { loadTrack, saveTrack } from "./api.js";
+import { listTracks, loadTrack, saveTrack } from "./api.js";
 import { startPlaytest, type Playtest } from "./playtest.js";
 import { deleteSegment, duplicateSegment, insertSegment, rotateSegment } from "./trackEdit.js";
 import { TrackHistory } from "./trackHistory.js";
@@ -18,6 +18,8 @@ const undoButton = $<HTMLButtonElement>("undo");
 const redoButton = $<HTMLButtonElement>("redo");
 const inspector = $("inspector");
 const inspectorLabel = $("inspector-label");
+const browsePanel = $("browse");
+const browseList = $("browse-list");
 
 const history = new TrackHistory([]);
 let selectedIndex: number | undefined;
@@ -144,17 +146,59 @@ $("save").addEventListener("click", () => {
   })();
 });
 
+const loadById = async (id: string): Promise<void> => {
+  try {
+    const stored = await loadTrack(serviceUrlInput.value, id);
+    history.reset(stored.track);
+    trackNameInput.value = stored.name ?? "";
+    trackIdInput.value = stored.id;
+    select(undefined);
+    rerender();
+    setStatus(`loaded "${stored.id}" (${history.track.length} Segment(s))`);
+  } catch (err) {
+    setStatus(`load failed: ${(err as Error).message}`);
+  }
+};
+
 $("load").addEventListener("click", () => {
+  void loadById(trackIdInput.value.trim() || "m1-playground");
+});
+
+// Browse (ticket 09) — fetch-by-known-id-only isn't a real "share" mechanism
+// once there are multiple user-created Tracks; this lists what track-service
+// actually has instead of requiring a typed-in id.
+$("browse-toggle").addEventListener("click", () => {
+  if (!browsePanel.hidden) {
+    browsePanel.hidden = true;
+    return;
+  }
   void (async () => {
     try {
-      const stored = await loadTrack(serviceUrlInput.value, trackIdInput.value.trim() || "m1-playground");
-      history.reset(stored.track);
-      trackNameInput.value = stored.name ?? "";
-      select(undefined);
-      rerender();
-      setStatus(`loaded "${stored.id}" (${history.track.length} Segment(s))`);
+      const tracks = await listTracks(serviceUrlInput.value);
+      browseList.replaceChildren();
+      for (const t of tracks) {
+        const row = document.createElement("div");
+        row.className = "track-entry";
+
+        const name = document.createElement("span");
+        name.className = "name";
+        name.textContent = t.name ?? "(untitled)";
+        row.appendChild(name);
+
+        const id = document.createElement("span");
+        id.className = "id";
+        id.textContent = t.id;
+        row.appendChild(id);
+
+        row.addEventListener("click", () => {
+          browsePanel.hidden = true;
+          void loadById(t.id);
+        });
+        browseList.appendChild(row);
+      }
+      browsePanel.hidden = false;
     } catch (err) {
-      setStatus(`load failed: ${(err as Error).message}`);
+      setStatus(`browse failed: ${(err as Error).message}`);
     }
   })();
 });
@@ -171,6 +215,7 @@ playtestButton.addEventListener("click", () => {
     void (async () => {
       editCanvas.style.display = "none";
       inspector.hidden = true;
+      browsePanel.hidden = true;
       mode = "playtest";
       playtestButton.textContent = "Stop playtest";
       setStatus("playtest — WASD move · Space jump · Shift dash");
