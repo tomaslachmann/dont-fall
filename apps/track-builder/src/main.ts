@@ -1,7 +1,7 @@
 import { MODULE_LIBRARY, type Track } from "@dont-fall/shared";
 import { listTracks, loadTrack, saveTrack } from "./api.js";
 import { startPlaytest, type Playtest } from "./playtest.js";
-import { deleteSegment, duplicateSegment, insertSegment, rotateSegment } from "./trackEdit.js";
+import { deleteSegment, duplicateSegment, insertSegment, removeLast, rotateSegment } from "./trackEdit.js";
 import { TrackHistory } from "./trackHistory.js";
 import { createModulePreview, createTrackViewport } from "./viewport.js";
 
@@ -46,17 +46,24 @@ const select = (index: number | undefined): void => {
   }
 };
 
+// `setTrack` rebuilds the whole Three.js Group (fresh `segmentIndex` tags), so
+// it never preserves a selection highlight itself — every caller re-asserts
+// the correct highlight afterward via `select(...)`, which is also the only
+// thing that ever calls `viewport.setSelected` (previously `rerender` did
+// too, with a stale pre-edit index a following `select` immediately
+// overwrote — code review, ticket 08).
 const rerender = (): void => {
   viewport.setTrack(MODULE_LIBRARY, history.track);
-  viewport.setSelected(selectedIndex);
   undoButton.disabled = !history.canUndo;
   redoButton.disabled = !history.canRedo;
   setStatus(`${history.track.length} Segment(s)`);
 };
 
-const applyEdit = (next: Track): void => {
+/** Applies an edit and selects the resulting Segment in one step — the pattern every mutating action (insert/rotate/duplicate/delete) shares. */
+const applyEdit = (next: Track, nextSelected: number | undefined): void => {
   history.apply(next);
   rerender();
+  select(nextSelected);
 };
 
 // Module palette — one entry per Module in the library, each with its own
@@ -78,60 +85,74 @@ for (const [moduleId, module] of Object.entries(MODULE_LIBRARY)) {
   entry.addEventListener("click", () => {
     if (mode !== "edit") return;
     const insertAt = selectedIndex !== undefined ? selectedIndex + 1 : history.track.length;
-    applyEdit(insertSegment(history.track, MODULE_LIBRARY, insertAt, moduleId));
-    select(insertAt);
+    applyEdit(insertSegment(history.track, MODULE_LIBRARY, insertAt, moduleId), insertAt);
   });
 
   paletteList.appendChild(entry);
   previewRenders.push(createModulePreview(canvas, module));
 }
 
+// The inspector/browse overlays are DOM children of #viewport (positioned
+// over the canvas) — stop their own clicks from reaching the viewport's
+// click-to-pick listener below, rather than that listener trying to
+// allowlist every overlay by identity (code review, ticket 08: a fragile
+// `e.target !== editCanvas` check that a future new overlay could silently
+// bypass).
+inspector.addEventListener("click", (e) => e.stopPropagation());
+browsePanel.addEventListener("click", (e) => e.stopPropagation());
+
 // Click a placed Segment in the overview to select it; click empty space to
-// deselect. The inspector panel is a DOM child of #viewport (positioned over
-// the canvas) — its own button clicks bubble up here too, so ignore anything
-// that didn't land on the canvas itself.
+// deselect. A drag-to-orbit (OrbitControls) still fires a native `click` on
+// mouseup at the drag's end point — only treat it as a pick if the pointer
+// barely moved between press and release (code review, ticket 08).
+const DRAG_THRESHOLD_PX = 5;
+let pointerDownAt: { x: number; y: number } | undefined;
+viewportContainer.addEventListener("pointerdown", (e) => {
+  pointerDownAt = { x: e.clientX, y: e.clientY };
+});
 viewportContainer.addEventListener("click", (e) => {
   if (mode !== "edit") return;
-  if (e.target !== editCanvas) return;
+  const moved = pointerDownAt ? Math.hypot(e.clientX - pointerDownAt.x, e.clientY - pointerDownAt.y) : 0;
+  if (moved > DRAG_THRESHOLD_PX) return;
   const index = viewport.pick(e.clientX, e.clientY);
   select(index);
 });
 
 $("rotate-left").addEventListener("click", () => {
   if (selectedIndex === undefined) return;
-  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, Math.PI / 2));
-  select(selectedIndex);
+  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, Math.PI / 2), selectedIndex);
 });
 
 $("rotate-right").addEventListener("click", () => {
   if (selectedIndex === undefined) return;
-  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, -Math.PI / 2));
-  select(selectedIndex);
+  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, -Math.PI / 2), selectedIndex);
 });
 
 $("duplicate").addEventListener("click", () => {
   if (selectedIndex === undefined) return;
-  const duplicatedAt = selectedIndex + 1;
-  applyEdit(duplicateSegment(history.track, MODULE_LIBRARY, selectedIndex));
-  select(duplicatedAt);
+  applyEdit(duplicateSegment(history.track, MODULE_LIBRARY, selectedIndex), selectedIndex + 1);
 });
 
 $("delete").addEventListener("click", () => {
   if (selectedIndex === undefined) return;
-  applyEdit(deleteSegment(history.track, MODULE_LIBRARY, selectedIndex));
-  select(undefined);
+  applyEdit(deleteSegment(history.track, MODULE_LIBRARY, selectedIndex), undefined);
+});
+
+$("remove-last").addEventListener("click", () => {
+  if (history.track.length === 0) return;
+  applyEdit(removeLast(history.track), undefined);
 });
 
 undoButton.addEventListener("click", () => {
   history.undo();
-  select(undefined);
   rerender();
+  select(undefined);
 });
 
 redoButton.addEventListener("click", () => {
   history.redo();
-  select(undefined);
   rerender();
+  select(undefined);
 });
 
 $("save").addEventListener("click", () => {
@@ -152,8 +173,8 @@ const loadById = async (id: string): Promise<void> => {
     history.reset(stored.track);
     trackNameInput.value = stored.name ?? "";
     trackIdInput.value = stored.id;
-    select(undefined);
     rerender();
+    select(undefined);
     setStatus(`loaded "${stored.id}" (${history.track.length} Segment(s))`);
   } catch (err) {
     setStatus(`load failed: ${(err as Error).message}`);

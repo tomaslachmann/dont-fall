@@ -1,7 +1,7 @@
 import type { Module, Track } from "@dont-fall/shared";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { boundingRadius, buildModuleGroup } from "./render.js";
+import { boundingRadius, buildModuleGroup, disposeGroup } from "./render.js";
 
 /**
  * A small, self-contained preview of one Module — the palette's "visual
@@ -91,6 +91,7 @@ export const createTrackViewport = (container: HTMLElement): TrackViewport => {
   return {
     setTrack(modules, track) {
       scene.remove(trackGroup);
+      disposeGroup(trackGroup);
       trackGroup = new THREE.Group();
       track.forEach((segment, index) => {
         const module = modules[segment.moduleId];
@@ -144,6 +145,7 @@ export const createTrackViewport = (container: HTMLElement): TrackViewport => {
     },
     dispose() {
       window.removeEventListener("resize", resize);
+      disposeGroup(trackGroup);
       controls.dispose();
       renderer.dispose();
     },

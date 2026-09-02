@@ -55,6 +55,22 @@ export const buildModuleGroup = (module: Module): THREE.Group => {
   return group;
 };
 
+/**
+ * Frees every Mesh's geometry/material under `group` (code review, ticket 08)
+ * — `buildModuleGroup` allocates a fresh `BoxGeometry`/`MeshStandardMaterial`
+ * per static/prop/spinner/checkpoint, so a discarded Group leaks GPU buffers
+ * if `setTrack` (the whole-Track overview, called on every edit now, not
+ * just append) doesn't dispose the previous one before replacing it.
+ */
+export const disposeGroup = (group: THREE.Object3D): void => {
+  group.traverse((node) => {
+    if (!(node instanceof THREE.Mesh)) return;
+    node.geometry.dispose();
+    const materials = Array.isArray(node.material) ? node.material : [node.material];
+    for (const material of materials) material.dispose();
+  });
+};
+
 /** Half the diagonal of `group`'s bounding box — used to frame a preview camera. */
 export const boundingRadius = (group: THREE.Group): number => {
   const box = new THREE.Box3().setFromObject(group);

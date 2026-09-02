@@ -128,6 +128,32 @@ describe("rotateSegment", () => {
   });
 });
 
+describe("index bounds validation (code review, ticket 08)", () => {
+  const track = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);
+
+  it("deleteSegment rejects an out-of-range index", () => {
+    expect(() => deleteSegment(track, MODULES, 5)).toThrow(/out of range/);
+    expect(() => deleteSegment(track, MODULES, -1)).toThrow(/out of range/);
+  });
+
+  it("duplicateSegment rejects an out-of-range index", () => {
+    expect(() => duplicateSegment(track, MODULES, 5)).toThrow(/out of range/);
+  });
+
+  it("rotateSegment rejects an out-of-range index", () => {
+    expect(() => rotateSegment(track, MODULES, 5, Math.PI / 2)).toThrow(/out of range/);
+  });
+
+  it("insertSegment rejects an out-of-range index but allows inserting at track.length", () => {
+    expect(() => insertSegment(track, MODULES, 5, "start")).toThrow(/out of range/);
+    expect(() => insertSegment(track, MODULES, track.length, "start")).not.toThrow();
+  });
+
+  it("rotateSegment rejects a delta that isn't a multiple of 90°", () => {
+    expect(() => rotateSegment(track, MODULES, 0, Math.PI / 4)).toThrow(/multiple of 90/);
+  });
+});
+
 describe("rechainFrom", () => {
   it("leaves everything before fromIndex untouched", () => {
     const track = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);

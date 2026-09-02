@@ -1,6 +1,7 @@
 import {
   addVec3,
   findSocket,
+  isMultipleOf90,
   placeAfter,
   rotateYaw,
   subVec3,
@@ -8,6 +9,19 @@ import {
   type Segment,
   type Track,
 } from "@dont-fall/shared";
+
+const assertIndexInRange = (fn: string, track: Track, index: number): void => {
+  if (!Number.isInteger(index) || index < 0 || index >= track.length) {
+    throw new Error(`${fn}: index ${index} is out of range for a Track of length ${track.length}`);
+  }
+};
+
+/** Same bound as {@link assertIndexInRange} but allows `index === track.length` (an append/insert-at-end). */
+const assertInsertIndexInRange = (fn: string, track: Track, index: number): void => {
+  if (!Number.isInteger(index) || index < 0 || index > track.length) {
+    throw new Error(`${fn}: index ${index} is out of range for a Track of length ${track.length}`);
+  }
+};
 
 /**
  * Re-derives every Segment from `fromIndex` onward via `placeAfter`, chained
@@ -42,6 +56,7 @@ export const insertSegment = (
   index: number,
   moduleId: string,
 ): Track => {
+  assertInsertIndexInRange("insertSegment", track, index);
   const placeholder: Segment = { moduleId, position: { x: 0, y: 0, z: 0 }, rotation: 0 };
   const withPlaceholder = [...track.slice(0, index), placeholder, ...track.slice(index)];
   return rechainFrom(withPlaceholder, modules, index);
@@ -53,6 +68,7 @@ export const appendModule = (track: Track, moduleId: string, modules: Record<str
 
 /** Removes the Segment at `index` (any index, not just the last) and re-chains everything after it. */
 export const deleteSegment = (track: Track, modules: Record<string, Module>, index: number): Track => {
+  assertIndexInRange("deleteSegment", track, index);
   const without = track.filter((_, i) => i !== index);
   return rechainFrom(without, modules, Math.min(index, without.length));
 };
@@ -61,8 +77,10 @@ export const deleteSegment = (track: Track, modules: Record<string, Module>, ind
 export const removeLast = (track: Track): Track => track.slice(0, -1);
 
 /** Duplicates the Segment at `index`, inserting the copy right after it. */
-export const duplicateSegment = (track: Track, modules: Record<string, Module>, index: number): Track =>
-  insertSegment(track, modules, index + 1, track[index]!.moduleId);
+export const duplicateSegment = (track: Track, modules: Record<string, Module>, index: number): Track => {
+  assertIndexInRange("duplicateSegment", track, index);
+  return insertSegment(track, modules, index + 1, track[index]!.moduleId);
+};
 
 const TWO_PI = Math.PI * 2;
 const normalizeYaw = (yaw: number): number => ((yaw % TWO_PI) + TWO_PI) % TWO_PI;
@@ -87,6 +105,14 @@ export const rotateSegment = (
   index: number,
   deltaRadians: number,
 ): Track => {
+  assertIndexInRange("rotateSegment", track, index);
+  if (!isMultipleOf90(deltaRadians)) {
+    throw new Error(`rotateSegment: deltaRadians ${deltaRadians} is not a multiple of 90° (ADR 0031)`);
+  }
+  // Defensive, not redundant: `track` isn't guaranteed already-settled — it
+  // may have come from `history.reset` (a Track loaded from track-service,
+  // possibly saved by a different, less careful caller than this module's
+  // own edit functions).
   const settled = rechainFrom(track, modules, index);
   const segment = settled[index]!;
   const module = modules[segment.moduleId];
