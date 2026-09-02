@@ -51,11 +51,10 @@ defect (see ADR 0026):
    inputs applied by tick number" holds by construction — the property the same-tick
    reconciliation compare relies on. On a starved tick our server's step count runs ahead
    of the inputs it has applied, producing a **systematic ~0.2 u bias** in the reported
-   position. ADR 0026 hides this with a render offset; removing it at the source (server
-   simulates `input[serverTick]`, missing input repeats the last applied one, `lastInputTick`
-   = the last tick actually simulated) is **ticket 13**, deferred pending an integration
-   test against `apps/server` — the headless prediction harness fakes the client/server
-   tick epoch and cannot validate it. A superseding ADR is owed if and when that ships.
+   position. ADR 0026 hides this with a render offset; removing it at the source is
+   **ticket 13 — shipped as ADR 0027**, once an integration test against a real, timer-driven
+   `apps/server` existed to validate it (the headless prediction harness fakes the
+   client/server tick epoch and cannot).
 2. **The LEAD *drop* subtracts a full `TICK_MS` from the prediction accumulator at once**,
    which yanks the render-interpolation alpha — a connection-quality-scaled backward pop.
    ADR 0026 changes the drop to a continuous small drain (the inject side stays

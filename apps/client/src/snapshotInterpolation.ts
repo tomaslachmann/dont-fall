@@ -100,6 +100,18 @@ export class SnapshotInterpolator {
     return this.targetTickMs(nowMs) / TICK_MS;
   }
 
+  /**
+   * The client's best live estimate of the server's *current* tick — not
+   * delayed by {@link interpDelayMs} like {@link renderTick} (that's for what
+   * to draw; this is for what the server is *simulating right now*). ADR 0027:
+   * the client's own prediction-tick counter is seeded from this (plus a
+   * LEAD), once, so its tick numbers share the server's epoch — required for
+   * the server to consume `input[serverTick]` instead of FIFO.
+   */
+  estimatedServerTick(nowMs: number): number {
+    return this.estimatedServerTickMs(nowMs) / TICK_MS;
+  }
+
   /** The interpolated render state for wall-clock `nowMs`. Call {@link ready} first. */
   sample(nowMs: number): RenderState {
     const target = this.targetTickMs(nowMs);
@@ -127,15 +139,17 @@ export class SnapshotInterpolator {
 
   /** Current server-tick time to render at, in ms (already `interpDelayMs` in the past). */
   private targetTickMs(nowMs: number): number {
-    let estServerTickMs: number;
+    return this.estimatedServerTickMs(nowMs) - this.delayMs;
+  }
+
+  /** The live estimate of the server's current tick time (ms), with no render delay subtracted. */
+  private estimatedServerTickMs(nowMs: number): number {
     if (this.pingOffsetMs !== null && this.latestServerTimeMs !== null && this.latestTickMs !== null) {
       // server-now (in its own perf clock) minus when it built the latest
       // snapshot = real server time elapsed since, transit latency included.
       const elapsedSinceLatest = nowMs + this.pingOffsetMs - this.latestServerTimeMs;
-      estServerTickMs = this.latestTickMs + elapsedSinceLatest;
-    } else {
-      estServerTickMs = nowMs - (this.anchorOffsetMs ?? 0);
+      return this.latestTickMs + elapsedSinceLatest;
     }
-    return estServerTickMs - this.delayMs;
+    return nowMs - (this.anchorOffsetMs ?? 0);
   }
 }

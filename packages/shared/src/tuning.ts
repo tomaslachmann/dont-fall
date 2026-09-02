@@ -366,6 +366,30 @@ export const LEAD_DRAIN_FRACTION = 0.15;
  */
 export const MAX_BUFFERED_INPUT_TICKS = 120;
 
+// --- Tick-addressed server input (ADR 0027) ---------------------------------
+
+/**
+ * Clamp bounds (ticks) on the one-time initial LEAD estimate — `ceil((rtt/2) /
+ * TICK_MS) + 1`, Overwatch's "½ RTT + one command frame" — used to seed the
+ * client's `predictionTick` into the server's own tick space on the first
+ * estimate (ADR 0027). Ongoing drift is corrected by the existing
+ * `commandQueueDepth` feedback (ADR 0021); this only sets a sane starting point
+ * so that feedback isn't fighting a wildly-wrong guess for the first second.
+ */
+export const INITIAL_LEAD_TICKS_MIN = 1;
+/**
+ * 6, not the ongoing LEAD band's smaller ceiling: this only sizes the ONE-TIME
+ * initial guess before any feedback has run, and a worse-than-median RTT
+ * (`docs/…/13-tick-addressed-server-input.md`'s own "bad" profile — 90 ms
+ * one-way, ±45 ms jitter, ~270 ms worst-case RTT) needs `ceil(270/2/33.3) + 1
+ * = ceil(4.05) + 1 = 6` ticks of lead just to land the input in time on the
+ * very first packets. Clamping this to the same low ceiling as steady-state
+ * LEAD understates a genuinely bad connection's real starting requirement —
+ * pinned by `tickAddressedInput.integration.test.ts` against a real,
+ * timer-driven server.
+ */
+export const INITIAL_LEAD_TICKS_MAX = 6;
+
 // --- Wire protocol v2 (ADR 0018–0025; docs/networking-model.md) -------------
 
 /**

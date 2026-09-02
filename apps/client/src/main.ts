@@ -4,6 +4,8 @@ import {
   DASH_COOLDOWN_MS,
   DEFAULT_KILL_PLANE_Y,
   DEFAULT_SERVER_PORT,
+  INITIAL_LEAD_TICKS_MAX,
+  INITIAL_LEAD_TICKS_MIN,
   INPUT_REDUNDANCY,
   LEAD_DRAIN_FRACTION,
   MAX_BUFFERED_INPUT_TICKS,
@@ -80,6 +82,13 @@ const main = async () => {
   // stepped once per fixed sim tick from local input.
   let localSim: RapierSimulation | null = null;
   let predictionTick = 0; // this client's own monotonic sim-tick counter
+  // ADR 0027: `predictionTick`'s numbering is seeded, once, into the server's
+  // own tick space (`estimatedServerTick + an initial LEAD`) as soon as both
+  // estimates are ready — required so the server can apply `input[serverTick]`
+  // instead of FIFO next-in-queue. Before that, the counter free-runs from 0;
+  // those low tick numbers are meaningless to the server and simply go
+  // unmatched (repeat-filled) for the brief pre-connect window.
+  let predictionTickSeeded = false;
   let predictionAccumulatorMs = 0;
   let renderPreviousSnapshot: SimState | undefined; // state one tick behind, for render interpolation
 
@@ -357,6 +366,21 @@ const main = async () => {
       // Prop obstacles are placed from it (below).
       const serverRender = serverInterp.ready ? serverInterp.sample(now) : null;
 
+      // ADR 0027: seed `predictionTick` into the server's own tick space, once,
+      // as soon as both estimates are available. Ongoing drift afterward is
+      // corrected by the existing LEAD feedback below (ADR 0021) — this only
+      // needs to land in the right ballpark, not stay exact forever.
+      if (!predictionTickSeeded && timeSync.ready && serverInterp.ready) {
+        const leadTicks = Math.max(
+          INITIAL_LEAD_TICKS_MIN,
+          Math.min(INITIAL_LEAD_TICKS_MAX, Math.ceil(timeSync.rttMs / 2 / TICK_MS) + 1),
+        );
+        predictionTick = Math.round(serverInterp.estimatedServerTick(now)) + leadTicks;
+        inputBuffer.length = 0;
+        positionHistory.clear();
+        predictionTickSeeded = true;
+      }
+
       // Refresh the obstacles this client's prediction slides against — other
       // players' mirror capsules (ADR 0012) and every Prop (ADR 0016) — every
       // frame from the *interpolated* render pose, so an obstacle sits exactly
@@ -550,7 +574,7 @@ const main = async () => {
       netMetrics.snapshotAgeMs = now - lastSnapshotArrivedAt;
       netMetrics.ackAgeTicks = predictionTick - (latestServerSnapshot?.characters[myId]?.lastInputTick ?? predictionTick);
       netMetrics.predictedTick = predictionTick;
-      netMetrics.estServerTick = serverInterp.ready ? serverInterp.renderTick(now) : 0;
+      netMetrics.estServerTick = serverInterp.ready ? serverInterp.estimatedServerTick(now) : 0;
       netMetrics.lead = smoothedQueueDepth; // effective lead = the server's buffered command count
       netMetrics.inputBufferDepth = inputBuffer.length;
       netMetrics.interpBufferDepth = serverInterp.bufferDepth;

@@ -27,9 +27,16 @@ Character (~1 walk-step backward, ~1×/s while walking). Diagnosed with
   `RECONCILE_POSITION_ERROR` with `RECONCILE_POSITION_EPSILON` / `RECONCILE_HARDSNAP_M` /
   `CAPSULE_ERR_HALFLIFE_MS`; `main.ts` wires the capsule offset + gentle LEAD drain; net-graph
   shows `capOff`. All tests green (147 shared + 75 client + 10 server), typecheck clean.
-- **`13-tick-addressed-server-input.md`** — ADR 0021 forward note: server simulates
-  `input[serverTick]` instead of FIFO, removing the systematic ~0.2 u bias at the source.
-  **Deferred** — needs a server integration test the headless harness can't run.
+- **`13-tick-addressed-server-input.md`** — ADR 0021 forward note, shipped as **ADR 0027**:
+  server simulates `input[serverTick]` instead of FIFO, removing the systematic ~0.2 u bias
+  at the source. **Done (2026-09-02).** `apps/server/src/index.ts` (server-owned
+  `serverTick`, tick-matched queue lookup, honest `lastInputTick` ack); `main.ts` seeds
+  `predictionTick` into the server's tick space once, sized from measured RTT
+  (`INITIAL_LEAD_TICKS_MIN`/`_MAX`, `packages/shared/src/tuning.ts`); validated by the new
+  `apps/server/src/tickAddressedInput.integration.test.ts` (a real `startServer` + a real,
+  timer-driven client over a real loopback WebSocket with modelled latency/jitter — the
+  integration test this ticket was blocked on). All tests green (148 shared + 77 client +
+  12 server), typecheck clean.
 
 ---
 

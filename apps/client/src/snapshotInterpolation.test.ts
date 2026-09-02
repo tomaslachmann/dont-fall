@@ -154,6 +154,18 @@ describe("client snapshot interpolation — smoothness under realistic arrival j
     expect(adoptedUnderruns).toBeLessThan(defUnderruns);
   });
 
+  it("estimatedServerTick tracks the live server tick, undelayed (unlike renderTick)", () => {
+    const interp = new SnapshotInterpolator();
+    interp.setServerClockOffsetMs(0); // client and server clocks share an epoch, for this test
+    const serverTimeMs = 10 * TICK_MS; // the server built the tick-10 snapshot at this server-clock reading
+    const arrivedAtMs = serverTimeMs + 5; // 5 ms transit
+    interp.receive(snapshotAtTick(10), arrivedAtMs, serverTimeMs);
+    const now = arrivedAtMs + 20; // 20 ms later, no new snapshot yet
+    // renderTick is interpDelayMs behind; estimatedServerTick is not.
+    expect(interp.estimatedServerTick(now)).toBeGreaterThan(interp.renderTick(now));
+    expect(interp.estimatedServerTick(now)).toBeCloseTo(10 + 25 / TICK_MS, 3);
+  });
+
   it("stays smooth over a long stream despite local↔server clock drift", () => {
     // Server clock runs 0.5% fast relative to the client's — offset would grow
     // unbounded without the ease-toward-observed correction.

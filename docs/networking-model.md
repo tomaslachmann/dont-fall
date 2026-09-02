@@ -22,9 +22,17 @@ drain) — **ticket 12, done.** `RECONCILE_POSITION_ERROR` is gone from the code
 `RECONCILE_POSITION_EPSILON` / `RECONCILE_HARDSNAP_M` / `CAPSULE_ERR_HALFLIFE_MS`
 replace it (`packages/shared/src/tuning.ts`), the shared decay helper lives at
 `packages/shared/src/state/errorOffset.ts`, and `main.ts` wires the capsule offset +
-gentle LEAD drain. ADR 0021's forward note → **ticket 13** (server simulates
-`input[serverTick]`, deferred pending an integration test — still open; the systematic
-~0.2 u bias is hidden, not removed).
+gentle LEAD drain.
+
+ADR 0021's forward note → **ADR 0027 / ticket 13, done.** The server applies
+`input[serverTick]` instead of FIFO next-in-queue (`apps/server/src/index.ts`); the client
+seeds `predictionTick` into the server's own tick space once, sized from measured RTT
+(`INITIAL_LEAD_TICKS_MIN`/`_MAX`, `packages/shared/src/tuning.ts`); validated by
+`apps/server/src/tickAddressedInput.integration.test.ts` — a real `startServer` process
+against a real, timer-driven client, the integration test the headless harness couldn't
+provide. The systematic ~0.2 u bias is removed at the source, not just hidden — ADR 0026's
+offset stays, to hide the smaller residual (real jitter, cross-machine FP) any predict/
+reconcile loop still has.
 
 Remaining deferred bits: sparse bones list, full local-ragdoll-body removal, a profiling
 pass on N simultaneously-predicted Props, and ticket 13.
@@ -56,7 +64,7 @@ prediction, wire data, and handoff. Adding an entity means placing it in a row.
 
 | Entity | Status | Authority | Client predicts? | Wire data (per snapshot) | Handoff / correction | ADR |
 |---|---|---|---|---|---|---|
-| **Character — local** | Built | Server | **Yes** — full sim replay | `position, velocity, grounded, motionState, checkpointIndex, fallCount, respawnCount, dashCooldownMs, dashing, dashSpeed, lastInputTick, ragdollEpoch, ragdollCause, phaseStartTick, bones` | Local replay from the acked tick; sim reconciles unconditionally, the *continuous transform* eases in via a decaying render-time error offset (half-life ≈ 100 ms), discrete `motionState` snaps and zeroes the offset | 0003, 0005, 0013, 0026 |
+| **Character — local** | Built | Server | **Yes** — full sim replay | `position, velocity, grounded, motionState, checkpointIndex, fallCount, respawnCount, dashCooldownMs, dashing, dashSpeed, lastInputTick, ragdollEpoch, ragdollCause, phaseStartTick, bones` | Local replay from the acked tick; sim reconciles unconditionally, the *continuous transform* eases in via a decaying render-time error offset (half-life ≈ 100 ms), discrete `motionState` snaps and zeroes the offset | 0003, 0005, 0013, 0026, 0027 |
 | **Character — remote** | Built | Server | No | same shape; `lastInputTick` ignored | Render-delay interpolation buffer (§4); snap on `respawnCount` / `motionState` change | 0003, 0012, 0017 |
 | **Ragdoll (a downed Character)** | Built | Server (full 11-body sim) | Transition only (`motionState` snaps for feel); **not** the physics | `bones` (all 11, from the server), `ragdollEpoch`, `ragdollCause`, `phaseStartTick` | No local ragdoll body. Bones interpolated like a remote entity. Prediction-tick guard on revert (§6) | 0006, 0015, 0023 |
 | **Prop — passive** (crate/ball at rest or moved by another player) | Built | Server | No | `position, rotation, velocity, angularVelocity, atRest` (velocities omitted when `atRest`) | Render-delay interpolation buffer; a pinned obstacle in the local prediction world | 0012, 0016→0022, 0017 |
@@ -217,19 +225,28 @@ estimatedServerTick(now) ≈ lastTickReceived + (now - lastSnapshotArrivedAt) / 
 Overwatch-style time dilation (servoing client sim speed) is **not** needed — it fights
 packet-loss starvation, which TCP doesn't have.
 
-### 4.3 Input LEAD (ADR 0021, forward note; ADR 0026)
+### 4.3 Input LEAD (ADR 0021; ADR 0026; ADR 0027)
 
 The client runs its prediction tick ahead of `estimatedServerTick` so the server's command
 buffer never starves.
 
-- Initial estimate: `LEAD = clamp(ceil((rtt/2) / TICK_MS) + 1, 1, 3)` ticks.
-- Then a **feedback loop**: the server reports `commandQueueDepth` in every snapshot; the
-  client nudges `LEAD` toward "queue depth ≈ 1–2" **gradually**. The *inject* side (queue
-  starving) is responsive; the *drop* side drains a fat queue by a small fraction of a tick
-  per frame — never a full `TICK_MS` at once, which yanks the render alpha (ADR 0026).
-- **Known gap:** the server consumes queued input FIFO, not `input[serverTick]`, so a
-  starved tick biases its reported position ~one walk-step ahead of the client's
-  prediction. ADR 0026's render offset hides it; ticket 13 removes it at the source.
+- One-time seed into the **server's own tick space** (ADR 0027):
+  `predictionTick = round(estimatedServerTick(now)) + initialLeadTicks`, where
+  `initialLeadTicks = clamp(ceil((rtt/2) / TICK_MS) + 1, INITIAL_LEAD_TICKS_MIN,
+  INITIAL_LEAD_TICKS_MAX)`. Gated on the time-sync and interpolation buffer both being ready;
+  before that, `predictionTick` free-runs from 0 and its low tick numbers are simply
+  unmatched by the server (repeat-filled), at no cost.
+- Then a **feedback loop** (unchanged from ADR 0021): the server reports `commandQueueDepth`
+  in every snapshot; the client nudges `LEAD` toward "queue depth ≈ 1–2" **gradually**. The
+  *inject* side (queue starving) is responsive; the *drop* side drains a fat queue by a small
+  fraction of a tick per frame — never a full `TICK_MS` at once, which yanks the render alpha
+  (ADR 0026).
+- The server applies `input[serverTick]` (ADR 0027), not FIFO next-in-queue — so
+  "physics steps == inputs applied by tick number" holds by construction, and a momentarily
+  starved tick no longer biases the server's reported position ahead of the client's own
+  prediction for it. The systematic ~0.2u bias this closed is gone at the source; ADR 0026's
+  render offset remains, to hide the smaller residual (real jitter beyond LEAD, cross-machine
+  Rapier FP residue) that any predict/reconcile loop still has.
 
 ### 4.4 Correcting the local Character (ADR 0026)
 

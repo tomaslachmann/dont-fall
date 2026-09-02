@@ -1,5 +1,5 @@
-import type { ClientMessage, ServerMessage, SimInputs } from "@dont-fall/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { RapierSimulation, type ClientMessage, type ServerMessage, type SimInputs } from "@dont-fall/shared";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { startServer, type MatchServer } from "./index.js";
 
@@ -84,22 +84,26 @@ describe("startServer", () => {
     const first = await nextMessage(socket);
     if (first.type !== "snapshot") throw new Error("unreachable");
     const startZ = first.state.characters[welcome.playerId]!.position.z;
+    // ADR 0027: the server applies `input[serverTick]`, so tick numbers must
+    // share the server's own tick space — not an arbitrary small counter,
+    // which would already be stale by the time it arrives.
+    const base = first.state.tick;
 
-    // One packet carrying ticks 1..10, then re-send 6..10 (the redundant tail) —
-    // the server must apply each tick once and walk the Character north.
-    sendInputs(socket, Array.from({ length: 10 }, (_, i) => ({ tick: i + 1, input: NORTH })));
-    sendInputs(socket, Array.from({ length: 5 }, (_, i) => ({ tick: i + 6, input: NORTH })));
+    // One packet carrying the next 10 ticks, then re-send the last 5 (the
+    // redundant tail) — the server must apply each tick once and walk north.
+    sendInputs(socket, Array.from({ length: 10 }, (_, i) => ({ tick: base + 1 + i, input: NORTH })));
+    sendInputs(socket, Array.from({ length: 5 }, (_, i) => ({ tick: base + 6 + i, input: NORTH })));
 
     let acked = 0;
     let z = startZ;
-    for (let i = 0; i < 30 && acked < 10; i += 1) {
+    for (let i = 0; i < 30 && acked < base + 10; i += 1) {
       const m = await nextMessage(socket);
       if (m.type === "snapshot") {
         acked = m.state.characters[welcome.playerId]!.lastInputTick;
         z = m.state.characters[welcome.playerId]!.position.z;
       }
     }
-    expect(acked).toBe(10); // every batched tick applied, no dupes stuck in the queue
+    expect(acked).toBe(base + 10); // every batched tick applied, no dupes stuck in the queue
     expect(z).toBeLessThan(startZ); // and it actually moved
     socket.close();
   });
@@ -127,12 +131,16 @@ describe("startServer", () => {
     if (first.type !== "snapshot") throw new Error("unreachable");
     const startZ = first.state.characters[id]!.position.z;
 
+    // Chase the server's own tick each iteration (ADR 0027) — a small lead so
+    // a packet isn't already stale by the time it's simulated.
+    let tick = first.state.tick;
     let lastZ = startZ;
     let lastSnapshot: ServerMessage | undefined;
     for (let i = 0; i < 30; i += 1) {
-      sendInput(socket, i + 1, NORTH);
+      sendInput(socket, tick + 2, NORTH);
       const message = await nextMessage(socket);
       if (message.type === "snapshot") {
+        tick = message.state.tick;
         lastZ = message.state.characters[id]!.position.z;
         lastSnapshot = message;
       }
@@ -143,6 +151,68 @@ describe("startServer", () => {
     if (lastSnapshot?.type !== "snapshot") throw new Error("unreachable");
     expect(lastSnapshot.state.characters[id]!.lastInputTick).toBeGreaterThan(0);
     socket.close();
+  });
+
+  it("a single failed physics tick does not permanently desync serverTick from state.tick (ADR 0027)", async () => {
+    // `RapierSimulation.tick()` only advances its own tick count after
+    // `world.step()` succeeds. Force exactly one throw, mid-session (once a
+    // real client is already connected and walking, not on the server's cold
+    // start before anyone's joined), and prove the server's own tick counter
+    // doesn't advance past it either — which would desync every subsequent
+    // input match against that client, forever.
+    let armed = false;
+    let failuresInjected = 0;
+    const realTick = RapierSimulation.prototype.tick;
+    const patched = vi.spyOn(RapierSimulation.prototype, "tick").mockImplementation(function (
+      this: RapierSimulation,
+      ...args: Parameters<typeof realTick>
+    ) {
+      if (armed && failuresInjected === 0) {
+        failuresInjected += 1;
+        throw new Error("injected physics failure");
+      }
+      return realTick.apply(this, args);
+    });
+    try {
+      server = await startServer({ port: 0 });
+      const socket = connect(server.port);
+      const welcome = await nextMessage(socket);
+      const id = (welcome as { playerId: string }).playerId;
+
+      const first = await nextMessage(socket);
+      if (first.type !== "snapshot") throw new Error("unreachable");
+      const startZ = first.state.characters[id]!.position.z;
+
+      let tick = first.state.tick;
+      let lastZ = startZ;
+      let prevAcked = -1;
+      const ackGaps: number[] = [];
+      for (let i = 0; i < 40; i += 1) {
+        if (i === 10) armed = true; // client is already up and walking — now inject the failure
+        sendInput(socket, tick + 2, NORTH);
+        const message = await nextMessage(socket);
+        if (message.type === "snapshot") {
+          tick = message.state.tick;
+          lastZ = message.state.characters[id]!.position.z;
+          const acked = message.state.characters[id]!.lastInputTick;
+          if (prevAcked >= 0) ackGaps.push(acked - prevAcked);
+          prevAcked = acked;
+        }
+      }
+
+      expect(failuresInjected).toBe(1); // the forced failure actually fired
+      expect(lastZ).toBeLessThan(startZ - 1); // still walked normally through and after it
+      // Every gap between consecutive acks is exactly 1 — `state.tick` and
+      // the server's own input-matching tick never drift apart, even across
+      // the injected failure. A permanent desync (the bug this test guards
+      // against) would show up as every gap *after* the failure jumping to 0
+      // (the ack stuck repeating the tick that failed) while `state.tick`
+      // itself kept advancing underneath it.
+      expect(ackGaps.every((g) => g === 1)).toBe(true);
+      socket.close();
+    } finally {
+      patched.mockRestore();
+    }
   });
 
   it("puts both connected players in the snapshot, at distinct spawn points", async () => {
@@ -227,10 +297,22 @@ describe("startServer — disconnects (ticket 07)", () => {
     );
     expect(gone).toBe(true);
 
-    // The survivor's own input still works — the Match kept running.
-    for (let i = 0; i < 20; i += 1) sendInput(survivor, i + 1, NORTH);
-    const moved = await drainUntil(survivor, (m) => m.state.characters[survivorId]!.lastInputTick > 0);
-    expect(moved).toBe(true);
+    // The survivor's own input still works — the Match kept running. Chase
+    // the server's own tick each iteration (ADR 0027), same as any real client.
+    const baseline = await nextMessage(survivor);
+    if (baseline.type !== "snapshot") throw new Error("unreachable");
+    const startZ = baseline.state.characters[survivorId]!.position.z;
+    let tick = baseline.state.tick;
+    let z = startZ;
+    for (let i = 0; i < 20; i += 1) {
+      sendInput(survivor, tick + 2, NORTH);
+      const m = await nextMessage(survivor);
+      if (m.type === "snapshot") {
+        tick = m.state.tick;
+        z = m.state.characters[survivorId]!.position.z;
+      }
+    }
+    expect(z).toBeLessThan(startZ - 0.3); // it actually moved, not just an advancing ack
     survivor.close();
   });
 
@@ -246,10 +328,21 @@ describe("startServer — disconnects (ticket 07)", () => {
     if (bWelcome.type !== "welcome") throw new Error("unreachable");
     expect(bWelcome.playerId).not.toBe(aId);
 
-    const startZ = bWelcome.spawn.z;
-    for (let i = 0; i < 30; i += 1) sendInput(b, i + 1, NORTH);
-    const walked = await drainUntil(b, (m) => m.state.characters[bWelcome.playerId]!.position.z < startZ - 1);
-    expect(walked).toBe(true);
+    const first = await nextMessage(b);
+    if (first.type !== "snapshot") throw new Error("unreachable");
+    const startZ = first.state.characters[bWelcome.playerId]!.position.z;
+    // Chase the server's own tick each iteration (ADR 0027).
+    let tick = first.state.tick;
+    let z = startZ;
+    for (let i = 0; i < 30; i += 1) {
+      sendInput(b, tick + 2, NORTH);
+      const m = await nextMessage(b);
+      if (m.type === "snapshot") {
+        tick = m.state.tick;
+        z = m.state.characters[bWelcome.playerId]!.position.z;
+      }
+    }
+    expect(z).toBeLessThan(startZ - 1);
     b.close();
   });
 });

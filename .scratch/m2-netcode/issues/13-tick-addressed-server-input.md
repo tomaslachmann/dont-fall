@@ -5,7 +5,9 @@ A **superseding ADR is owed** if and when this ships (it changes the client↔se
 contract). **Research:** `docs/research/m2-prediction-reconciliation-loop.md` §1, §2, §5a.
 
 **Blocked by:** ticket 12 should land first (it makes the residual invisible, so this can
-be validated calmly). **Status: not started — needs an integration test before implementation.**
+be validated calmly). **Status: done (2026-09-02) — shipped as ADR 0027.** The integration
+test (`apps/server/src/tickAddressedInput.integration.test.ts`) was built first per this
+ticket's own gate, then the server/client changes landed against it.
 
 ---
 
