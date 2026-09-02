@@ -527,9 +527,17 @@ const main = async () => {
           CAPSULE_ERR_FLAT_EPSILON_M,
         );
       }
-      // Only the drawn mesh carries the offset — the camera, obstacle/mirror
-      // sync, and every gameplay read use the raw pose (Fiedler: smoothing
-      // must never feed back into the sim or anything derived from it).
+      // Obstacle/mirror sync and every gameplay read use the raw pose
+      // (Fiedler: smoothing must never feed back into the sim or anything
+      // that drives further simulation). The camera is not one of those —
+      // it is a pure rendering leaf with zero downstream physics
+      // consequence — so it follows the same offset-smoothed pose as the
+      // drawn mesh (`visualCharacter`, below), not the raw one: a 2026-09
+      // playtest found the camera visibly jerking on ordinary corrections
+      // (walking, no dash, no Prop involved) because it was still fed the
+      // raw stream. Harness-confirmed: the raw stream carries the exact
+      // same ~20 cm pop this offset was built to eliminate
+      // (`predictionRegression.harness.test.ts`, "the CAMERA target").
       const visualCharacter: RenderCharacter = localDown
         ? renderCharacter
         : { ...renderCharacter, position: addVec3(renderCharacter.position, capsuleErrorOffset) };
@@ -564,7 +572,7 @@ const main = async () => {
       // drawn at: `render` interpolates [previous, snapshot] by `localAlpha`, and
       // `previous` is one tick behind `snapshot` (captured before `localSim.tick`).
       stage.updateSpinners(snapshot.tick - 1 + localAlpha);
-      stage.updateCamera(renderCharacter.position, look.yaw, look.pitch);
+      stage.updateCamera(visualCharacter.position, look.yaw, look.pitch);
 
       const cp = c.checkpointIndex === null ? "spawn" : `#${c.checkpointIndex + 1}`;
       const dashFill = Math.max(0, Math.min(10, Math.round((1 - c.dashCooldownMs / DASH_COOLDOWN_MS) * 10)));

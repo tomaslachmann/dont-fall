@@ -327,7 +327,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    */
   reconcileCharacter(
     id: string,
-    base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs">,
+    base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs" | "dashing">,
   ): void {
     this.character(id).reconcileTo(base);
   }
@@ -408,8 +408,23 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     // `followPoses` is empty, so every Prop stays fully dynamic and
     // authoritative. A Prop the render layer is predicting (ADR 0022) is left
     // to simulate freely — it is seeded from the server on every reconcile.
+    //
+    // Also skipped: a Prop contacted THIS tick (`contactedProps`, set above by
+    // `onCollision`, which runs during `beginTick` — before `world.step()`).
+    // `predictedProps` is only updated once per FRAME, from the render layer,
+    // AFTER this tick's `consumeContactedProps()` has even been read — so on
+    // the very tick a contact first registers, the Prop is *never* in
+    // `predictedProps` yet. Without this exemption the shove (applied moments
+    // ago, in this same tick's `beginTick`) gets pinned straight back to the
+    // stale pre-shove pose before anyone outside this method ever sees it
+    // moved — a regression from ticket 06's original same-tick exemption
+    // (`!contactedProps.has(i)`), dropped when ADR 0016 removed Prop
+    // prediction entirely and never restored when ADR 0022 (ticket 11.8)
+    // reintroduced it. Restored here, unconditionally (not gated on
+    // `authoritative`) — `contactedProps` is already only ever populated on a
+    // non-authoritative sim, so it's empty (a no-op) on the server.
     for (let i = 0; i < this.props.length; i += 1) {
-      if (this.predictedProps.has(i)) continue;
+      if (this.predictedProps.has(i) || this.contactedProps.has(i)) continue;
       const pose = this.followPoses[i];
       if (pose) this.props[i]!.follow(pose);
     }

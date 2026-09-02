@@ -502,10 +502,14 @@ export class CharacterController {
    *   rule; ADR 0014's `bumpSeq`/`forceRagdoll` gate is superseded.
    * - **Server reports `Controlled`/`Stagger`:** restore the capsule transform,
    *   velocity, ground flag, motion state and dash cooldown from the snapshot;
-   *   the caller then replays buffered inputs from here.
+   *   the caller then replays buffered inputs from here. `dashing` tells the
+   *   dash controller whether an in-progress local burst should keep playing
+   *   out (see {@link DashController.restoreCooldownMs}) —
+   *   reconciliation must not silently truncate a burst the server agrees is
+   *   still happening.
    */
   reconcileTo(
-    base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs">,
+    base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs" | "dashing">,
   ): void {
     const serverDown = isDown(base.motionState);
 
@@ -535,7 +539,7 @@ export class CharacterController {
     this.velocity = { ...base.velocity };
     this.grounded = base.grounded;
     this.machine.snapTo(base.motionState);
-    this.dash.restoreCooldownMs(base.dashCooldownMs);
+    this.dash.restoreCooldownMs(base.dashCooldownMs, base.dashing);
     this.jump.reset(); // stale coyote/hold bookkeeping would let replay grant a jump the server won't
     this.pendingRespawn = null; // a Fall the client predicted but the server (this base) hasn't seen
   }

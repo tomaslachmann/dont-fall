@@ -274,6 +274,7 @@ class FaithfulClient {
       grounded: true,
       motionState: "Controlled",
       dashCooldownMs: 0,
+      dashing: false, // this client never dashes — walks only (north/south)
     });
     this.sim.syncTick(serverTick);
     const replayed = this.sim.replayLocalCharacter(

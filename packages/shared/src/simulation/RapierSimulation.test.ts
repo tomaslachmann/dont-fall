@@ -3,6 +3,7 @@ import type { Box } from "../math/box.js";
 import {
   CAPSULE_BOTTOM_OFFSET,
   DASH_COOLDOWN_MS,
+  DASH_COOLDOWN_TICKS,
   DASH_DURATION_MS,
   DASH_SPEED,
   IMPACT_RAGDOLL_MIN,
@@ -478,6 +479,175 @@ describe("RapierSimulation — dash", () => {
     const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z;
     expect(Math.abs(after - before)).toBeLessThan(WALK_SPEED * 0.15 * 1.5); // plain air control only
   });
+
+  it("a routine reconcile mid-burst kills the dash outright — even a no-op correction that fully agrees with the client (regression)", () => {
+    // Reconciliation now fires far more readily (ADR 0026's epsilon-gated
+    // sim correction replaces the old one-walk-step "correct or ignore" gate)
+    // — and a dash's high speed (15 u/s vs 6 u/s walking) makes even a tiny
+    // same-tick phase slip cross that epsilon almost every tick during a
+    // burst. `reconcileTo` restores `dashCooldownMs` unconditionally on every
+    // non-down reconcile, and `DashController.restoreCooldownMs` always zeros
+    // `ticksLeft` — even though `CharacterSnapshot` separately reports
+    // `dashing`/`dashSpeed`, which `reconcileCharacter`'s `base` type doesn't
+    // even accept. So a reconcile that agrees with the client on literally
+    // everything (position, velocity, motionState, cooldown) still ends the
+    // burst outright.
+    const sim = settled();
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ ...NORTH, dashHeld: true }) }); // dash press
+    tick(sim, 0.1, NORTH); // a few ticks into the burst, well before it ends
+    const midBurst = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(midBurst.dashing).toBe(true); // still actively dashing going into the reconcile
+
+    // Reconcile with a "server" snapshot that is the client's own current
+    // state, verbatim — the strongest form of "this correction should be
+    // invisible": nothing about position, velocity, motionState, or cooldown
+    // disagrees.
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+      position: { ...midBurst.position },
+      velocity: { ...midBurst.velocity },
+      grounded: midBurst.grounded,
+      motionState: midBurst.motionState,
+      dashCooldownMs: midBurst.dashCooldownMs,
+      dashing: midBurst.dashing,
+    });
+
+    const afterReconcile = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(afterReconcile.dashing).toBe(true); // the burst must survive an agreeing reconcile
+    expect(afterReconcile.dashSpeed).toBeGreaterThan(0);
+  });
+
+  it("reconcile-then-replay mid-burst does not double-count elapsed ticks — the burst must not end early (regression)", () => {
+    // The previous test reconciles directly against the client's OWN current
+    // state and never replays afterward — it can't catch a bug in how
+    // `ticksLeft` carries across a reconcile that targets an OLDER (acked)
+    // tick, which `main.ts` always immediately follows with a replay of the
+    // ticks since. That's the real shape every reconcile actually takes.
+    //
+    // `truth` plays out one, uninterrupted dash burst — the ground truth for
+    // "how far into the burst have N ticks actually gotten". `client` predicts
+    // the same K ticks ahead, then gets reconciled to `truth`'s OLDER state at
+    // tick `acked` (a few ticks behind, simulating latency) and replays the
+    // `unacked` inputs forward — exactly `main.ts`'s reconcile() + replayLocalCharacter().
+    // If `ticksLeft` isn't correctly rolled back to its value AS OF the acked
+    // tick before replay re-advances it, replay double-decrements: the dash
+    // ends early on the client while `truth` (and thus the real server) is
+    // still mid-burst — surfacing next reconcile as the server suddenly
+    // reporting a position AHEAD of the client's (now prematurely stopped)
+    // one, i.e. a forward pop, worst right at the tail of the burst.
+    const truth = settled();
+    const client = settled();
+    const K = 20; // well into the burst, comfortably before it ends
+    const ACKED_LAG = 5; // ticks of latency between "acked" and "current"
+
+    let ackedSnapshot: ReturnType<typeof truth.snapshot>["characters"][string] | null = null;
+    const unackedInputs: SimInputs[] = [];
+    for (let t = 1; t <= K; t += 1) {
+      const dashInput = input({ ...NORTH, dashHeld: t === 1 });
+      truth.tick({ [DEFAULT_CHARACTER_ID]: dashInput });
+      client.tick({ [DEFAULT_CHARACTER_ID]: dashInput });
+      if (t === K - ACKED_LAG) ackedSnapshot = truth.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      if (t > K - ACKED_LAG) unackedInputs.push(dashInput);
+    }
+    if (!ackedSnapshot) throw new Error("unreachable");
+
+    // Reconcile the client to the server's OLDER (acked) report, then replay
+    // exactly the inputs since — `main.ts`'s real reconcile() + replayLocalCharacter().
+    client.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+      position: { ...ackedSnapshot.position },
+      velocity: { ...ackedSnapshot.velocity },
+      grounded: ackedSnapshot.grounded,
+      motionState: ackedSnapshot.motionState,
+      dashCooldownMs: ackedSnapshot.dashCooldownMs,
+      dashing: ackedSnapshot.dashing,
+    });
+    client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unackedInputs);
+
+    const truthNow = truth.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    const clientNow = client.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    // A true no-op correction (truth and client never actually disagreed on
+    // anything real) must land the client at the exact same point in the
+    // burst as the undisturbed ground truth — same dashing state, same speed
+    // (within float noise), same position. Any drift here is the client's
+    // OWN reconcile/replay bookkeeping diverging, not a real discrepancy.
+    expect(clientNow.dashing).toBe(truthNow.dashing);
+    expect(clientNow.dashSpeed).toBeCloseTo(truthNow.dashSpeed, 2);
+    expect(clientNow.position.z).toBeCloseTo(truthNow.position.z, 2);
+  });
+
+  it("reconciles EVERY tick, across two back-to-back dashes — dashSpeed/dashCooldownMs always land exactly on truth's own, everywhere (regression)", () => {
+    // The single-reconcile test above proves the bookkeeping is *correct* at
+    // one point; this proves it stays correct under continuous reconciliation
+    // (the realistic case under ADR 0026's low epsilon — see the ADR 0026
+    // amendment) across MULTIPLE dashes in a row, the reported symptom
+    // ("několikrát po sobě... lehký jump dopředu na konci" — several times in
+    // a row, a slight forward jump at the end).
+    //
+    // This asserts `dashSpeed`/`dashCooldownMs` specifically, not position.
+    // Investigating an earlier draft's position-based assertion (which failed
+    // even after the fixes below) traced the residual to something else
+    // entirely: reconciling literally EVERY tick — an unrealistically extreme
+    // stress no real jitter/LEAD ever produces — surfaces a small (~1 tick's
+    // worth of current speed) position residual from `reconcileTo`'s
+    // `body.setTranslation(...)` (a teleport) not perfectly matching a
+    // continuously-simulated capsule's contact/solver state one tick later.
+    // Confirmed pre-existing and NOT dash-specific: the identical residual,
+    // at the identical ~1-walk-step scale, appears reconciling plain walking
+    // (no dash at all) this hard too. That is ADR 0026's render-offset's job
+    // to hide (ticket 12) and ADR 0027's job to make rare (ticket 13) — both
+    // already shipped — not something to chase inside `DashController`. What
+    // IS specific to dash, and what regressed here, is `dashSpeed`/
+    // `dashCooldownMs` themselves ever disagreeing with truth — which they
+    // must not, at any point in either burst, including the tail where the
+    // reported "lehký jump dopředu" was seen.
+    const LONG_GROUND: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 20, y: 0.5, z: 100 } };
+    const longGround = () => {
+      const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [LONG_GROUND] });
+      tick(sim, 0.5);
+      return sim;
+    };
+    const truth = longGround();
+    const client = longGround();
+    const LAG = 3; // ticks of simulated latency
+    const TOTAL = 100; // comfortably covers two full dashes (30 ticks) + the 45-tick cooldown between them
+    const SECOND_PRESS_TICK = DASH_COOLDOWN_TICKS + 2; // cooldown has just cleared — press again immediately
+
+    const truthHistory: ReturnType<typeof truth.snapshot>["characters"][string][] = [];
+    const inputHistory: SimInputs[] = [];
+    let worstDashSpeedGap = 0;
+    let worstCooldownGapMs = 0;
+    let dashingMismatches = 0;
+
+    for (let t = 1; t <= TOTAL; t += 1) {
+      const dashInput = input({ ...NORTH, dashHeld: t === 1 || t === SECOND_PRESS_TICK });
+      truth.tick({ [DEFAULT_CHARACTER_ID]: dashInput });
+      client.tick({ [DEFAULT_CHARACTER_ID]: dashInput });
+      truthHistory.push(truth.snapshot().characters[DEFAULT_CHARACTER_ID]!);
+      inputHistory.push(dashInput);
+
+      if (t > LAG) {
+        const ackedIdx = t - LAG - 1; // 0-based index into truthHistory for tick (t - LAG)
+        const acked = truthHistory[ackedIdx]!;
+        client.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+          position: { ...acked.position },
+          velocity: { ...acked.velocity },
+          grounded: acked.grounded,
+          motionState: acked.motionState,
+          dashCooldownMs: acked.dashCooldownMs,
+          dashing: acked.dashing,
+        });
+        client.replayLocalCharacter(DEFAULT_CHARACTER_ID, inputHistory.slice(ackedIdx + 1));
+        const afterSnap = client.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+        const truthAtT = truthHistory[t - 1]!;
+        if (afterSnap.dashing !== truthAtT.dashing) dashingMismatches += 1;
+        worstDashSpeedGap = Math.max(worstDashSpeedGap, Math.abs(afterSnap.dashSpeed - truthAtT.dashSpeed));
+        worstCooldownGapMs = Math.max(worstCooldownGapMs, Math.abs(afterSnap.dashCooldownMs - truthAtT.dashCooldownMs));
+      }
+    }
+
+    expect(dashingMismatches).toBe(0);
+    expect(worstDashSpeedGap).toBeLessThan(0.01);
+    expect(worstCooldownGapMs).toBeLessThan(1); // float-noise floor only, not a whole tick's worth
+  });
 });
 
 describe("RapierSimulation — Impact & ragdoll", () => {
@@ -803,6 +973,44 @@ describe("RapierSimulation — client Props are pinned obstacles, never predicte
     expect(client.snapshot().props[0]!.position.y).toBeCloseTo(5, 3);
   });
 
+  it("a shove on the very tick a Prop is first contacted survives that tick — it isn't re-pinned away before the render layer can mark it predicted (regression)", () => {
+    const groundProp = {
+      shape: { kind: "box" as const, halfExtents: { x: 0.4, y: 0.4, z: 0.4 } },
+      center: { x: 0, y: 0.4, z: -1.2 },
+    };
+    const client = new RapierSimulation({
+      spawn: RESTING_SPAWN,
+      statics: [GROUND],
+      props: [groundProp],
+      authoritative: false,
+    });
+    client.syncPropsToSnapshot([serverPose(groundProp.center)]);
+    tick(client, 0.5); // settle
+
+    // Walk toward the box, re-pinning every tick from the (unchanged) server
+    // pose exactly like main.ts's per-frame prop sync — but crucially,
+    // WITHOUT ever calling setPredictedProps: the render layer only learns a
+    // contact happened AFTER this tick, via consumeContactedProps(), so
+    // predictedProps stays empty through the very tick contact first occurs.
+    let contactTick = -1;
+    let posBeforeContact = { ...client.snapshot().props[0]!.position };
+    let posAfterContact = { ...posBeforeContact };
+    for (let i = 0; i < 60 && contactTick < 0; i += 1) {
+      client.syncPropsToSnapshot([serverPose(groundProp.center)]);
+      posBeforeContact = { ...client.snapshot().props[0]!.position };
+      client.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+      posAfterContact = { ...client.snapshot().props[0]!.position };
+      if (client.consumeContactedProps().includes(0)) contactTick = i;
+    }
+
+    expect(contactTick).toBeGreaterThanOrEqual(0); // contact actually happened
+    // The shove moved the box within this same tick — it must not have been
+    // silently discarded by the every-tick pin before the render layer had
+    // any chance to mark the Prop predicted (which only happens next frame).
+    const moved = Math.hypot(posAfterContact.x - posBeforeContact.x, posAfterContact.z - posBeforeContact.z);
+    expect(moved).toBeGreaterThan(0.001);
+  });
+
   it("reports the Prop the local capsule contacted, once, and clears on read (ADR 0022)", () => {
     const groundProp = {
       shape: { kind: "box" as const, halfExtents: { x: 0.4, y: 0.4, z: 0.4 } },
@@ -908,6 +1116,101 @@ describe("RapierSimulation — dash into a wall", () => {
     tick(sim, 0.5);
     sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true }) }); // dash press, contacts the wall immediately
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
+  });
+
+  it("across a sweep of approach angles: where the Character falls vs where it stands once Controlled resumes after GettingUp", () => {
+    // Single authoritative sim (this is a server-side physics question, not a
+    // client-reconcile one) — dash into the same wall at increasingly oblique
+    // angles (0° = straight-on, up to a shallow glancing hit) and record three
+    // points in the episode: the tick motionState first becomes "Ragdoll"
+    // (impact), the tick it becomes "GettingUp" (the ragdoll has settled —
+    // `beginGettingUp` reports `getupStartRoot` verbatim at elapsed=0, per
+    // `getupBlendedPosition`), and the tick it's back to "Controlled" (recovery
+    // complete). A wide-enough wall (z ±5) keeps every angle in this sweep
+    // hitting the same face.
+    //
+    // `fall → recovered` (logged, not asserted) grows with approach angle
+    // (~0.24 u at 0° up to ~1.26 u at 60°) — confirmed intentional, not a
+    // bug: `dashWallKnockback` bounces off the wall's own normal regardless of
+    // approach angle, but `beginRagdoll`'s launch velocity is
+    // `this.velocity * RAGDOLL_IMPACT_VELOCITY_SCALE` — the Character's OWN
+    // velocity at impact, whose lateral (Z, along-the-wall) component grows
+    // with `sin(angle)`. A glancing hit keeps more sideways momentum than a
+    // square one, carrying the ragdoll further along the wall before it
+    // settles — a reasonable "physical chaos" outcome for this game, not
+    // something to clamp. Left unasserted here on purpose so a future
+    // `RAGDOLL_IMPACT_VELOCITY_SCALE` retune isn't fighting a brittle bound.
+    type Pos = { x: number; y: number; z: number };
+    const dist = (a: Pos, b: Pos) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    const ANGLES_DEG = [0, 15, 30, 45, 60];
+    const results: { angleDeg: number; fall: Pos; settled: Pos; recovered: Pos }[] = [];
+
+    for (const angleDeg of ANGLES_DEG) {
+      const rad = (angleDeg * Math.PI) / 180;
+      const moveDir = { x: Math.cos(rad), y: 0, z: Math.sin(rad) };
+      const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND, WALL] });
+      tick(sim, 0.5); // settle
+      sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: moveDir, dashHeld: true }) }); // dash press, angled
+
+      let fall: Pos | null = null;
+      let settled: Pos | null = null;
+      let recovered: Pos | null = null;
+      let prevState = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState;
+      // RAGDOLL_MAX_MS (4 s) + GETUP_MS (0.45 s) worst case, comfortably covered.
+      for (let i = 0; i < 200 && !recovered; i += 1) {
+        sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: moveDir }) });
+        const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+        if (prevState !== "Ragdoll" && c.motionState === "Ragdoll") fall = { ...c.position };
+        if (prevState === "Ragdoll" && c.motionState === "GettingUp") settled = { ...c.position };
+        if (prevState === "GettingUp" && c.motionState === "Controlled") recovered = { ...c.position };
+        prevState = c.motionState;
+      }
+
+      if (!fall || !settled || !recovered) {
+        throw new Error(`angle ${angleDeg}°: episode did not complete within budget (fall=${!!fall} settled=${!!settled} recovered=${!!recovered})`);
+      }
+      results.push({ angleDeg, fall, settled, recovered });
+    }
+
+    // Horizontal (x/z) distance only — NOT full 3D. `settled` is the ragdoll's
+    // pelvis root, lying at roughly ground height (~0.2); `recovered` is the
+    // STANDING capsule's own centre (~CAPSULE_BOTTOM_OFFSET ≈ 0.85 above
+    // ground). A ~0.6-0.7 *vertical* rise between them is `getupBlendedPosition`
+    // working exactly as designed — the getup animation standing the
+    // Character up from flat on the ground — not a bug. What must NOT move is
+    // the horizontal footprint: nothing accepts fresh movement input again
+    // until Controlled resumes, so a real bug here would show up as sideways
+    // drift, not vertical rise.
+    const horiz = (a: Pos, b: Pos) => Math.hypot(a.x - b.x, a.z - b.z);
+    console.log(
+      results
+        .map((r) => {
+          const fallToRecovered = dist(r.fall, r.recovered);
+          const settledToRecoveredVertical = r.recovered.y - r.settled.y;
+          const settledToRecoveredHoriz = horiz(r.settled, r.recovered);
+          return (
+            `  ${r.angleDeg}°: fall=(${r.fall.x.toFixed(2)},${r.fall.y.toFixed(2)},${r.fall.z.toFixed(2)}) ` +
+            `settled=(${r.settled.x.toFixed(2)},${r.settled.y.toFixed(2)},${r.settled.z.toFixed(2)}) ` +
+            `recovered=(${r.recovered.x.toFixed(2)},${r.recovered.y.toFixed(2)},${r.recovered.z.toFixed(2)}) ` +
+            `|fall→recovered|=${fallToRecovered.toFixed(3)} settled→recovered: vertical(rise)=${settledToRecoveredVertical.toFixed(3)} horizontal=${settledToRecoveredHoriz.toFixed(3)}`
+          );
+        })
+        .join("\n"),
+    );
+
+    for (const r of results) {
+      // The Character stands up roughly on the spot — no sideways drift
+      // during the getup blend, regardless of approach angle.
+      expect(horiz(r.settled, r.recovered)).toBeLessThan(0.3);
+      // The vertical rise is real and expected (standing up), bounded to a
+      // sane range around GETUP_CAPSULE_LIFT rather than asserted away.
+      expect(r.recovered.y - r.settled.y).toBeGreaterThan(0.4);
+      expect(r.recovered.y - r.settled.y).toBeLessThan(0.9);
+      // And the Character must not still be embedded in/past the wall (x=3,
+      // half-extent 0.5, so the near face is x=2.5) — it settles on the near
+      // side, roughly where it hit, not through it.
+      expect(r.recovered.x).toBeLessThan(2.5);
+    }
   });
 });
 
@@ -1051,6 +1354,7 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
         grounded: false,
         motionState: "GettingUp" as const,
         dashCooldownMs: 0,
+        dashing: false,
       });
       sim.reconcileCharacter(DEFAULT_CHARACTER_ID, gettingUp({ x: 5, y: RESTING_SPAWN.y, z: 5 }));
       const afterEntry = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
@@ -1122,6 +1426,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     grounded: true,
     motionState: "Controlled" as const,
     dashCooldownMs: 0,
+    dashing: false,
   });
 
   it("snaps a locally-Controlled Character into Ragdoll the client never predicted (ADR 0015)", () => {
@@ -1135,6 +1440,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       grounded: false,
       motionState: "Ragdoll",
       dashCooldownMs: 0,
+      dashing: false,
     });
 
     // Immediate — the discrete state is never delayed or smoothed (ADR 0013).
@@ -1160,6 +1466,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       grounded: false,
       motionState: "Ragdoll",
       dashCooldownMs: 0,
+      dashing: false,
     });
 
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
@@ -1243,6 +1550,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
         grounded: false,
         motionState: "Ragdoll",
         dashCooldownMs: 0,
+        dashing: false,
       });
       tick(sim, 0.1); // a few local ticks between snapshots
 

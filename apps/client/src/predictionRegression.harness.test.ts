@@ -1068,4 +1068,46 @@ describe("60 fps render cap — proposal must hold here", () => {
       if (capsuleHalfLifeMs >= 75) expect(m.worstBackCm).toBeLessThan(2.5);
     }
   });
+
+  // 2026-09 playtest follow-up: the mesh pop was fixed (above), but the
+  // camera was STILL reported jerking — during plain walking, not just a
+  // dash, with or without ever touching a Prop. Root cause: `main.ts`'s
+  // `stage.updateCamera(...)` call was fed `renderCharacter.position` — the
+  // RAW, un-offset sim pose — never `visualCharacter.position` (raw +
+  // capsuleErrorOffset). ADR 0026 said "camera-follow ... use the raw pose
+  // (Fiedler: never smooth into the sim)" — but Fiedler's rule is about not
+  // feeding a smoothed value BACK INTO the simulation (collision,
+  // obstacle/mirror sync, gameplay logic); the camera is a pure rendering
+  // leaf with zero downstream physics consequence, so grouping it with
+  // "gameplay reads" was an over-generalization, not a reasoned
+  // camera-specific requirement. Fixed: `main.ts` now feeds the camera
+  // `visualCharacter.position`, same as the mesh.
+  //
+  // This harness has no seam into `main.ts` itself (a DOM/WebSocket
+  // closure), so it cannot assert the fixed wiring directly — what it CAN,
+  // and does, prove is *why* the fix is necessary: the raw stream
+  // (`h.rendered[].simPos`, what the camera used to follow) still carries
+  // the same ~20 cm pop the offset stream (`.pos`, what the mesh — and now
+  // the camera too — follows) was built to eliminate.
+  it("PROPOSAL @60 fps — the raw stream (what the camera used to follow) still pops even where the mesh is clean", () => {
+    const results: { label: string; mesh: number; camera: number; backPops: number }[] = [];
+    for (const { label, opts } of NET_PACING) {
+      const h = run(new Harness(at60({ ...opts, ...PROPOSAL })), 4);
+      const rawStream = h.rendered.map((p) => ({ ...p, pos: p.simPos })); // what the camera today follows
+      const meshMetrics = metrics(h); // what the mesh follows (already fixed)
+      const cameraMetrics = metrics({ ...h, rendered: rawStream } as typeof h);
+      results.push({ label, mesh: meshMetrics.worstBackCm, camera: cameraMetrics.worstBackCm, backPops: cameraMetrics.backPops });
+      console.log(
+        `  ${label}: mesh worstBack=${meshMetrics.worstBackCm.toFixed(1)}cm · ` +
+          `camera(raw) worstBack=${cameraMetrics.worstBackCm.toFixed(1)}cm backPops=${cameraMetrics.backPops}`,
+      );
+    }
+    // The mesh stays clean everywhere (already asserted elsewhere: < 2.5cm on
+    // every profile). The camera — following the raw, un-offset stream — does
+    // NOT get that guarantee at all: at least the harder network profiles
+    // must show it visibly exceeding the mesh's clean bound, proving the
+    // offset fix never reached the camera.
+    const worstCamera = Math.max(...results.map((r) => r.camera));
+    expect(worstCamera).toBeGreaterThan(2.5);
+  });
 });

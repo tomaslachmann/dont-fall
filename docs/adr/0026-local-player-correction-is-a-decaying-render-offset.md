@@ -90,3 +90,82 @@ otherwise ships as decided: `packages/shared/src/state/errorOffset.ts` exports
 calls directly for the capsule and which `propPrediction.ts`'s `decayPropError` now also
 calls internally (after computing its own near/far-blended half-life) — one decay
 implementation, two callers, per the "one mechanism, two consumers" invariant.
+
+## Amendment (2026-09, Dash-reconcile regression)
+
+**This ADR's own epsilon change surfaced a separate, pre-existing bug — and made it the
+norm instead of a rare edge case.** `CharacterController.reconcileTo` calls
+`DashController.restoreCooldownMs(base.dashCooldownMs)` unconditionally on every non-down
+reconcile, and that method has always zeroed `ticksLeft` outright — ending any dash burst
+currently playing out, even one the server's own snapshot confirms is still legitimately in
+flight (`CharacterSnapshot.dashing`/`dashSpeed`, which `reconcileCharacter`'s Pick type never
+even accepted). Under the old `RECONCILE_POSITION_ERROR = 0.2` threshold this was a rare
+inconvenience — Dash moves ~2.5× walk speed, so it still crossed the old threshold somewhat
+readily, but not on *every* tick. This ADR's `RECONCILE_POSITION_EPSILON = 0.02` (a
+float-noise floor) crosses on nearly every tick of a burst under any ordinary jitter, so a
+reconcile — and the dash-ending side effect — now fires **almost every dash, consistently**:
+the burst's speed contribution collapses to zero mid-flight, a hard velocity discontinuity
+that reads as the dash stuttering/re-triggering, plus a camera/position jerk from the abrupt
+deceleration.
+
+**Fix (final form — two iterations after the first draft below turned out incomplete):**
+`reconcileCharacter` / `reconcileTo`'s base type gained `dashing`;
+`DashController.restoreCooldownMs(ms, stillDashing)` now only zeros `ticksLeft` when the
+server *disagrees* that a burst is still active, and otherwise **re-derives `ticksLeft` from
+the reported cooldown** (`elapsedSinceStart = DASH_COOLDOWN_TICKS + 1 - cooldownTicks`,
+`ticksLeft = DASH_DURATION_TICKS - elapsedSinceStart` — the `+1` because the press tick sets
+`cooldownTicks` fresh without decrementing it that same tick, one out of phase with
+`ticksLeft`) rather than leaving `this.ticksLeft` as whatever it currently reads. `dir` is
+never touched by this path (it's set once, from the client's own prediction, when the burst
+starts, and stays valid across any number of later reconciles).
+
+Two bugs surfaced only once tested against *repeated* reconciliation, not a single one-off
+correction:
+1. **First draft left `ticksLeft` untouched** ("if already active, don't zero it"). Wrong:
+   the caller always replays the unacked ticks forward again after reconciling, and by the
+   time `restoreCooldownMs` runs, this Character's own `ticksLeft` already reflects every one
+   of those ticks (predicted once, about to be predicted again) — leaving it as-is
+   double-decrements once replay re-advances it, ending the burst early.
+2. **Second draft gated the fix on `this.ticksLeft > 0` measured *before* reconciling**
+   ("only resume if this Character was already active"), intended as a "don't invent a burst
+   from nothing" safety rail. Also wrong, for the same reason: that pre-reconcile value
+   reflects the client's own free-running prediction *past* the acked tick, not whether the
+   ACKED tick itself had an active burst — which `stillDashing` already says directly. Under
+   frequent reconciliation this occasionally read `ticksLeft == 0` (the free-running
+   prediction had already ticked itself to 0 one step ahead of the acked tick) and silently
+   discarded a burst the server confirmed was still live *at that tick* — the exact
+   "several dashes in a row, a slight forward jump at the end" report. Removed: `stillDashing`
+   alone is sufficient (this path only ever reconciles the local player's own Character, whose
+   dash is always client-predicted first, so `dir` is always meaningful whenever the server
+   confirms a burst).
+
+Regression tests: `RapierSimulation.test.ts` › "a routine reconcile mid-burst kills the dash
+outright..." (single reconcile, direct call — the first bug), "reconcile-then-replay
+mid-burst does not double-count elapsed ticks..." (single reconcile *through a replay* — the
+off-by-one), and "reconciles EVERY tick, across two back-to-back dashes..." (continuous
+reconciliation across two dashes — the `wasActive` bug; asserts `dashSpeed`/`dashCooldownMs`
+specifically, not position — see that test's own comment for why position is the wrong metric
+here).
+
+## Amendment (2026-09, camera still followed the raw pose)
+
+**The dash and Prop-timing fixes above did not fully explain the reported glitch —**
+playtesting after both landed still showed the *camera* jerking, during plain walking (no
+dash) and independent of ever touching a Prop. Root cause: this ADR's own
+"camera-follow ... use the raw pose" line was taken literally in `main.ts` —
+`stage.updateCamera(...)` was fed `renderCharacter.position` (the raw sim pose), never
+`visualCharacter.position` (raw + `capsuleErrorOffset`). Fiedler's "never smooth into the
+sim" is about not feeding a smoothed value back into anything that drives *further*
+simulation (collision, obstacle/mirror sync, gameplay reads) — the camera has no such
+downstream consequence, so grouping it with those was an over-generalization. Every
+reconcile that the offset was built to hide from the drawn mesh was, in effect, still shown
+in full to the camera — same magnitude, same frequency (harness-confirmed: the raw stream
+carries the identical ~20 cm pop the mesh's offset stream eliminates, on the exact profiles
+where the mesh already reads as clean).
+
+**Fix:** `main.ts`'s `stage.updateCamera(...)` now reads `visualCharacter.position` (the same
+value the mesh renders at), not `renderCharacter.position`. Nothing else changes — collision,
+mirror/obstacle sync and gameplay reads still use the raw pose. Harness-documented (no seam
+into `main.ts` itself to assert the wiring directly):
+`predictionRegression.harness.test.ts` › "the raw stream (what the camera used to follow)
+still pops even where the mesh is clean".

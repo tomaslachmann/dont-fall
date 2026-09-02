@@ -96,3 +96,23 @@ Still owed (unchanged): a playtest to tune `PROP_PREDICT_GRACE_TICKS` and the ro
 decay band (the `0.5 / 0.1` dot values map to 120°–168°, so almost all real angular error
 currently decays at the slow 200 ms half-life — may want it more aggressive), and the
 N-simultaneously-predicted-Props profiling pass.
+
+## Amendment (2026-09, same-tick pin regression)
+
+**Ticket 06's original implementation exempted a Prop from the every-tick pin if it had
+been contacted in that same tick** (`&& !this.contactedProps.has(i)`), so a fresh shove's
+movement survived at least until the next frame. ADR 0016 (2026-09) correctly removed this
+along with all Prop-prediction machinery when Props stopped being predicted at all — but
+when this ADR reintroduced prediction, the pin loop's exemption was only restored for
+`predictedProps` (the render layer's *next-frame* decision), not for `contactedProps` (this
+tick's *not-yet-classified* contact). `predictedProps` is set once per frame, before the
+predict loop, from the previous frame's `consumeContactedProps()` read — so on the exact
+tick a contact first registers, the Prop is in neither set yet, and the shove (applied
+moments earlier in the same tick's `beginTick`) was immediately pinned straight back to the
+stale pre-shove pose before it was ever visible. Most noticeable during a Dash, since
+`resolveCollisions` shoves a Prop on the same collision that can also trigger `DashWall`.
+
+**Fix:** `RapierSimulation.tick()`'s pin loop restored the same-tick exemption
+(`this.predictedProps.has(i) || this.contactedProps.has(i)`). Regression test:
+`RapierSimulation.test.ts` › "a shove on the very tick a Prop is first contacted survives
+that tick...".
