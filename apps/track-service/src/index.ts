@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { Track } from "@dont-fall/shared";
-import { M1_TRACK } from "@dont-fall/shared";
+import { DEFAULT_TRACK_SERVICE_PORT, M1_TRACK } from "@dont-fall/shared";
 import { openDb, type TrackDb } from "./db.js";
 import { getAnyTrack, getTrackById, saveTrack, seedIfEmpty } from "./store.js";
 
@@ -13,7 +13,7 @@ import { getAnyTrack, getTrackById, saveTrack, seedIfEmpty } from "./store.js";
  * assembled one (ticket 06) are both just rows in the same table; this
  * service never distinguishes them.
  */
-export const DEFAULT_TRACK_SERVICE_PORT = 8081;
+export { DEFAULT_TRACK_SERVICE_PORT };
 export const M1_SEED_TRACK_ID = "m1-playground";
 
 export interface TrackService {

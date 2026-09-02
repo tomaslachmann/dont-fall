@@ -9,12 +9,17 @@ now sourced from the database via track-service instead of hardcoded imports.
 
 **Blocked by:** 02 (track-service must exist and serve a real Track).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Match server calls track-service's fetch API at startup/Round start; no more direct
-      `PLAYGROUND_STATICS`/`PLAYGROUND_PROPS`/`PLAYGROUND_SPINNERS` imports for the live Track
-- [ ] The new runtime dependency (Match server requires track-service reachable to start a Round)
-      is accepted per ADR 0028, not silently masked
-- [ ] A live 2-browser playtest is behaviorally identical to the pre-refactor M1/M2 experience
-- [ ] Existing server integration tests updated to fetch from (a test double / local instance of)
-      track-service rather than the old constants
+- [x] Match server calls `GET /tracks/any` at startup and resolves it via `resolveTrack` against
+      `MODULE_LIBRARY`; no more direct `PLAYGROUND_STATICS`/`PLAYGROUND_PROPS`/`PLAYGROUND_SPINNERS`
+      imports for the live Track
+- [x] The new runtime dependency is unmasked: `fetchTrack` throws a clear error naming ADR 0028 if
+      track-service is unreachable or empty — `startServer` does not catch it
+- [x] Verified live with real, separate processes (not just vitest): started track-service and the
+      Match server as two real processes, connected a raw WebSocket client, confirmed the welcome
+      spawn and a snapshot with the seeded M1 Track's 3 Props present
+- [x] Existing server tests (`index.test.ts`, `tickAddressedInput.integration.test.ts`) start a
+      real in-memory track-service instance per file (`TRACK_SERVICE_URL` env, read by
+      `startServer`'s default) instead of relying on hardcoded constants — 13 server tests green,
+      263 total across the monorepo

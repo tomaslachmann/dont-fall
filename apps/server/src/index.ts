@@ -3,23 +3,41 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SERVER_PORT,
+  DEFAULT_TRACK_SERVICE_PORT,
   GRACE_WINDOW_MS,
   IDLE_INPUTS,
-  PLAYGROUND_CHECKPOINTS,
-  PLAYGROUND_PROPS,
-  PLAYGROUND_SPINNERS,
-  PLAYGROUND_STATICS,
+  MODULE_LIBRARY,
   RapierSimulation,
   SNAPSHOT_HZ,
   TICK_MS,
   TICK_RATE_HZ,
   initPhysics,
   playgroundSpawn,
+  resolveTrack,
   type ClientMessage,
   type ServerMessage,
   type SimInputs,
+  type Track,
 } from "@dont-fall/shared";
 import { WebSocketServer, type WebSocket } from "ws";
+
+/**
+ * Fetches a fully-resolved Track from track-service (ADR 0028) — the Match
+ * server never holds Module data or generates a Track itself, whether it's
+ * hand-built or randomly assembled makes no difference here. Failure is
+ * fatal and unmasked: this is a real runtime dependency the server accepted
+ * on purpose (ADR 0028's trade-off), not a fallback-to-hardcoded-content path.
+ */
+const fetchTrack = async (trackServiceUrl: string): Promise<Track> => {
+  const res = await fetch(`${trackServiceUrl}/tracks/any`);
+  if (!res.ok) {
+    throw new Error(
+      `track-service unreachable or has no Track at ${trackServiceUrl} (ADR 0028): HTTP ${res.status}`,
+    );
+  }
+  const body = (await res.json()) as { track: Track };
+  return body.track;
+};
 
 /**
  * The authoritative match server (ADR 0002, ticket 02): one `RapierSimulation`
@@ -37,6 +55,8 @@ export interface MatchServer {
 export interface StartServerConfig {
   /** Port to listen on. `0` asks the OS for an ephemeral port. Defaults to {@link DEFAULT_SERVER_PORT}. */
   port?: number;
+  /** track-service base URL (ADR 0028). Defaults to `TRACK_SERVICE_URL` env, then localhost:{@link DEFAULT_TRACK_SERVICE_PORT}. */
+  trackServiceUrl?: string;
 }
 
 /**
@@ -61,13 +81,21 @@ const send = (socket: WebSocket, message: ServerMessage): void => {
 export const startServer = async (config: StartServerConfig = {}): Promise<MatchServer> => {
   await initPhysics();
 
+  // ADR 0028: the Match server never holds Module data or generates a Track
+  // itself — it always just fetches one, resolved against every Module the
+  // shared package currently knows (`MODULE_LIBRARY`).
+  const trackServiceUrl =
+    config.trackServiceUrl ?? process.env.TRACK_SERVICE_URL ?? `http://localhost:${DEFAULT_TRACK_SERVICE_PORT}`;
+  const track = await fetchTrack(trackServiceUrl);
+  const { statics, checkpoints, spinners, props } = resolveTrack(MODULE_LIBRARY, track);
+
   // The Match starts with no players; ticket 01's single-player default
   // Character is opted out here rather than added and immediately disposed.
   const simulation = new RapierSimulation({
-    statics: PLAYGROUND_STATICS,
-    checkpoints: PLAYGROUND_CHECKPOINTS,
-    spinners: PLAYGROUND_SPINNERS,
-    props: PLAYGROUND_PROPS,
+    statics,
+    checkpoints,
+    spinners,
+    props,
     withDefaultCharacter: false,
   });
 

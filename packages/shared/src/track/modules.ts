@@ -65,3 +65,10 @@ export const M1_TRACK: Track = chainTrack(
   ["start", "bridge", "checkpoint-spinner", "bridge-2", "checkpoint-end-props", "sandbox"],
   { x: 0, y: 0, z: 10 },
 );
+
+/**
+ * Every Module currently known to the shared package — what the Match server
+ * resolves a fetched Track against (ADR 0028). Grows as more Modules are
+ * authored; today it's exactly M1's set.
+ */
+export const MODULE_LIBRARY: Record<string, Module> = M1_MODULES;

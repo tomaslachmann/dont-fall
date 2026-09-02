@@ -1,7 +1,24 @@
 import { RapierSimulation, type ClientMessage, type ServerMessage, type SimInputs } from "@dont-fall/shared";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { startTrackService, type TrackService } from "@dont-fall/track-service";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { startServer, type MatchServer } from "./index.js";
+
+// ADR 0028: the Match server now has a hard runtime dependency on track-service.
+// One shared instance for this whole file, pointed to by TRACK_SERVICE_URL, so
+// every existing `startServer({ port: 0 })` call site below keeps working
+// unchanged — `startServer` picks up the env var as its default.
+let trackService: TrackService;
+
+beforeAll(async () => {
+  trackService = await startTrackService({ port: 0, dbPath: ":memory:" });
+  process.env.TRACK_SERVICE_URL = `http://localhost:${trackService.port}`;
+});
+
+afterAll(async () => {
+  await trackService.close();
+  delete process.env.TRACK_SERVICE_URL;
+});
 
 let server: MatchServer | undefined;
 

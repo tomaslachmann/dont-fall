@@ -98,3 +98,10 @@ export type ClientMessage = InputMessage | PingMessage | ReclaimMessage;
 
 /** Default port the server listens on and the client connects to when nothing else is configured. */
 export const DEFAULT_SERVER_PORT = 8080;
+
+/**
+ * Default port track-service (ADR 0028/0029) listens on. The Match server
+ * fetches its Track from here at startup — a real runtime dependency, not
+ * optional (ADR 0028's accepted trade-off).
+ */
+export const DEFAULT_TRACK_SERVICE_PORT = 8081;
