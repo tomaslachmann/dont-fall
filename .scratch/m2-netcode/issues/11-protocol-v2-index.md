@@ -13,6 +13,20 @@ decaying error offset), `RapierSimulation.setPredictedProps` / `consumeContacted
 profiling pass on N simultaneously-predicted Props at 30 Hz / 12 players (ADR 0022).
 All tests green (141 shared + 50 client + 10 server), typecheck clean.
 
+**Post-v2 defect (2026-09):** implementing v2 surfaced a reconciliation pop of the local
+Character (~1 walk-step backward, ~1×/s while walking). Diagnosed with
+`apps/client/src/predictionRegression.harness.test.ts`; researched in
+`docs/research/m2-prediction-reconciliation-loop.md`. Two follow-on tickets:
+
+- **`12-local-player-correction-smoothing.md`** — ADR 0026: the local correction is the
+  same decaying render offset ADR 0022 ships for Props; sim reconciles unconditionally;
+  `RECONCILE_POSITION_ERROR = 0.2` retired; gentle LEAD drain. Harness-validated at a
+  60 fps cap across network/machine conditions (worst backward step ~22 cm → < 1.5 cm).
+  **Do now.**
+- **`13-tick-addressed-server-input.md`** — ADR 0021 forward note: server simulates
+  `input[serverTick]` instead of FIFO, removing the systematic ~0.2 u bias at the source.
+  **Deferred** — needs a server integration test the headless harness can't run.
+
 ---
 
 ## 11.1 — `protocol.ts` v2: the wire shapes (do first, mechanical)

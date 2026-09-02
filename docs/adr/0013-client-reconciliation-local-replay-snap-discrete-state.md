@@ -34,3 +34,13 @@ snap discrete/logical state outright.
   transform (position/rotation) — it must never be applied across a state-machine
   transition, matching the precedent ADR 0006 already set on the remote-interpolation
   side.
+
+## Superseded in part by ADR 0026 (2026-09)
+
+The deferred "positional error-smoothing … as feel-tuning" is now decided: it is a
+**decaying render-time error offset** (the ADR 0022 mechanism, `0.5^(dt/halfLife)`,
+half-life ≈ 100 ms), and the *simulation* reconciles **unconditionally** on any real
+disagreement — the `RECONCILE_POSITION_ERROR = 0.2` correct-or-ignore threshold is retired
+(it happened to equal one 30 Hz walk-step, so a one-tick phase slip parked on it and
+popped). Local replay and "discrete state always snaps" — the core of this ADR — stand
+unchanged. See `docs/research/m2-prediction-reconciliation-loop.md`.

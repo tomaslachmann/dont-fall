@@ -250,5 +250,5 @@ other Prop is Interpolation-only (ADR 0022).
 The gap between where the client *renders* a predicted body and where its
 physics body actually is. The body always holds the authoritative state; the
 offset is what decays to zero over several frames so a Reconciliation eases in
-instead of popping (Fiedler; ADR 0022, and the deferred capsule smoothing in
-ADR 0013).
+instead of popping (Fiedler). One mechanism, two users: the Contacted Prop
+(ADR 0022) and the local Character's own correction (ADR 0026).
