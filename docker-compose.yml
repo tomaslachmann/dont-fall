@@ -1,0 +1,18 @@
+# Local dev for track-service (ADR 0028/0029) — the project's first Docker
+# usage. The ephemeral per-Match `apps/server` is unaffected: it stays a
+# manually-started process (ADR 0002/0011), not part of this compose file.
+#
+#   docker compose up --build track-service
+#
+services:
+  track-service:
+    build:
+      context: .
+      dockerfile: apps/track-service/Dockerfile
+    ports:
+      - "8081:8081"
+    volumes:
+      - track-service-data:/data
+
+volumes:
+  track-service-data:

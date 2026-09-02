@@ -5,4 +5,5 @@ packages:
 # esbuild (via vite / vitest) needs its postinstall to fetch its native binary.
 # pnpm 11 gates build scripts; this is pnpm's own approval format.
 allowBuilds:
+  better-sqlite3: true
   esbuild: true

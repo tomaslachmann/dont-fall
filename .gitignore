@@ -3,3 +3,7 @@ dist/
 *.tsbuildinfo
 .DS_Store
 coverage/
+apps/track-service/data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
