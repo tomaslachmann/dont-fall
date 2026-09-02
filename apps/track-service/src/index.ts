@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { Track } from "@dont-fall/shared";
-import { DEFAULT_TRACK_SERVICE_PORT, M1_TRACK } from "@dont-fall/shared";
+import { DEFAULT_TRACK_SERVICE_PORT, MODULE_LIBRARY, M1_TRACK } from "@dont-fall/shared";
 import { openDb, type TrackDb } from "./db.js";
+import { generateRandomTrack } from "./generate.js";
 import { getAnyTrack, getTrackById, saveTrack, seedIfEmpty } from "./store.js";
 
 /**
@@ -95,6 +96,35 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
       ...(typeof body.name === "string" ? { name: body.name } : {}),
     });
     json(res, 201, saved);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/tracks/generate") {
+    let body: { name?: unknown; count?: unknown } = {};
+    const raw = await readBody(req);
+    if (raw) {
+      try {
+        body = JSON.parse(raw) as typeof body;
+      } catch {
+        json(res, 400, { error: "invalid JSON body" });
+        return;
+      }
+    }
+    const count = typeof body.count === "number" && body.count > 0 ? Math.floor(body.count) : undefined;
+    let track: Track;
+    try {
+      track = generateRandomTrack(Object.keys(MODULE_LIBRARY), count);
+    } catch (err) {
+      json(res, 500, { error: (err as Error).message });
+      return;
+    }
+    // A randomly-generated Track is saved exactly like a hand-built one
+    // (ADR 0028) — no separate runtime path, no flag distinguishing it.
+    const saved = saveTrack(db, {
+      track,
+      ...(typeof body.name === "string" ? { name: body.name } : {}),
+    });
+    json(res, 201, { ...saved, track });
     return;
   }
 

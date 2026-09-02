@@ -74,6 +74,37 @@ describe("track-service", () => {
     expect(body).toEqual({ id, name: "hand-built test track", track: SAMPLE_TRACK });
   });
 
+  it("generates a random Track and persists it exactly like a hand-built one (ADR 0028)", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    const genRes = await fetch(`http://localhost:${service.port}/tracks/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "generated track", count: 4 }),
+    });
+    expect(genRes.status).toBe(201);
+    const generated = (await genRes.json()) as { id: string; track: Track };
+    expect(generated.track).toHaveLength(4);
+    expect(generated.id).not.toBe(M1_SEED_TRACK_ID);
+
+    // Fetched back exactly like any other Track — no "is this random?" flag.
+    const getRes = await fetch(`http://localhost:${service.port}/tracks/${generated.id}`);
+    expect(getRes.status).toBe(200);
+    const body = (await getRes.json()) as { id: string; name: string | null; track: Track };
+    expect(body).toEqual({ id: generated.id, name: "generated track", track: generated.track });
+  });
+
+  it("generate produces a different Track on repeated calls (not a fixed fixture)", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const call = () =>
+      fetch(`http://localhost:${service!.port}/tracks/generate`, { method: "POST" }).then(
+        (res) => res.json() as Promise<{ track: Track }>,
+      );
+    const results = await Promise.all([call(), call(), call(), call(), call()]);
+    const serialized = results.map((r) => JSON.stringify(r.track));
+    expect(new Set(serialized).size).toBeGreaterThan(1);
+  });
+
   it("/tracks/any returns some stored Track without needing its id", async () => {
     service = await startTrackService({ port: 0, dbPath });
     const res = await fetch(`http://localhost:${service.port}/tracks/any`);

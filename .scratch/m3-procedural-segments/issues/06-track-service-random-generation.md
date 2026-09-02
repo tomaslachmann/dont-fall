@@ -7,12 +7,17 @@ Match server and the builder never need to know how a given Track came to exist.
 
 **Blocked by:** 01 (Module library to pick from), 02 (store + schema to persist into).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A generate endpoint assembles a valid, chainable sequence of Modules purely by construction
-      (uniform footprint means no compatibility checking is needed)
-- [ ] The generated Track is persisted exactly like a hand-built one — same schema, same fetch
-      path, no "is this random?" flag needed by any consumer
-- [ ] Repeated calls produce different valid Tracks
-- [ ] A Track produced this way is fetchable by ID and (if ticket 03 is already done) runnable by
-      the Match server with no special-casing
+- [x] `POST /tracks/generate` (`generate.ts`'s `generateRandomTrack` + `chainTrack`) assembles a
+      valid, chainable sequence of Modules purely by construction — no compatibility checking,
+      per the uniform footprint (ADR 0030); optional `{ name, count }` body
+- [x] The generated Track is persisted via the exact same `saveTrack` path a hand-built one uses —
+      same schema, same `GET /tracks/:id` fetch, no "is this random?" flag anywhere (ADR 0028)
+- [x] Repeated calls produce different valid Tracks (verified both live via curl and in a test
+      asserting 5 parallel calls aren't all identical)
+- [x] A Track produced this way is fetchable by ID with the identical shape a hand-built Track
+      has — the Match server (ticket 03, already done) has zero branching on Track origin, so it
+      is runnable with no special-casing by construction, not just by claim
+- [x] 5 new tests (17 total in track-service); manually smoke-tested against a real running
+      process with both default and custom `count`/`name`
