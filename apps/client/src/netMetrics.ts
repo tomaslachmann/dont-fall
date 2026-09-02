@@ -22,6 +22,8 @@ export class NetMetrics {
   interpBufferDepth = 0;
   extrapolating = false;
   predictedPropCount = 0;
+  /** `‖capsuleErrorOffset‖` (ADR 0026) — how far the drawn mesh currently sits from the raw sim pose. */
+  capsuleOffsetM = 0;
 
   private readonly corrections: number[] = [];
   private reconcileTimes: number[] = [];
@@ -52,7 +54,7 @@ export class NetMetrics {
     return (
       `net  rtt ${this.rttMs.toFixed(0)}ms · offset ${this.clockOffsetMs.toFixed(0)}ms · snap ${this.snapshotAgeMs.toFixed(0)}ms · ackAge ${this.ackAgeTicks}t\n` +
       `pred ${this.predictedTick} · server~${this.estServerTick.toFixed(0)} · lead ${this.lead.toFixed(1)} · inBuf ${this.inputBufferDepth} · srvQ ${this.commandQueueDepth} · interpBuf ${this.interpBufferDepth}${this.extrapolating ? " · EXTRAP" : ""}\n` +
-      `recon ${this.reconcilesPerSec}/s · corr p50 ${c(this.percentile(0.5))} p95 ${c(this.percentile(0.95))} max ${c(this.percentile(1))} · predProps ${this.predictedPropCount}`
+      `recon ${this.reconcilesPerSec}/s · corr p50 ${c(this.percentile(0.5))} p95 ${c(this.percentile(0.95))} max ${c(this.percentile(1))} · predProps ${this.predictedPropCount} · capOff ${c(this.capsuleOffsetM)}`
     );
   }
 }

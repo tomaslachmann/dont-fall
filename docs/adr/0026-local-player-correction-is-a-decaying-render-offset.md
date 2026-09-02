@@ -79,3 +79,14 @@ makes them invisible, it does not make them rare (that is ADR 0027's concern).
   deferred to ADR 0027 pending an integration test the headless harness cannot run.
 - `docs/networking-model.md` §2 (Character — local, "Handoff / correction" column) and the
   invariants list are updated to describe the offset.
+
+## Amendment (2026-09, ticket 12 implementation)
+
+The offset is **position-only**. `CharacterSnapshot` carries no rotation/facing field —
+unlike a Prop, the Character model's facing is driven client-side from movement input, not
+replicated — so there is nothing to reconcile a "facing half-life" against. The decision
+otherwise ships as decided: `packages/shared/src/state/errorOffset.ts` exports
+`decayPositionOffset(offset, dtMs, halfLifeMs, hardSnapM, flatEpsilonM?)`, which `main.ts`
+calls directly for the capsule and which `propPrediction.ts`'s `decayPropError` now also
+calls internally (after computing its own near/far-blended half-life) — one decay
+implementation, two callers, per the "one mechanism, two consumers" invariant.

@@ -8,6 +8,8 @@ this fix; the `PROPOSAL` constant there is exactly this ticket's config.
 
 **Blocked by:** nothing (works on top of the shipped protocol v2). **Does NOT need** ticket 13.
 
+**Status: done (2026-09-02).**
+
 ---
 
 ## The defect (given — traced, not to re-verify)

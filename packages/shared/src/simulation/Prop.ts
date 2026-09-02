@@ -114,14 +114,24 @@ export class Prop {
    * §6.3, matching Unity Ultimate Glove Ball's `BallStateSync` ll. 326–339) —
    * it is our extension, not a Fiedler citation. Angular velocity is snapped
    * unconditionally — Fiedler's rule for derivative quantities.
+   *
+   * No `pose.velocity` at all means the *server* reports the Prop `atRest` —
+   * not a real zero target to align against, just an omitted field. Treating
+   * it as one would always pass the `dot >= 0` gate (anything dotted with the
+   * zero vector is 0) and force-zero a Prop the local Character just pushed,
+   * every time, before the server has had a chance to see the push — so that
+   * case skips the velocity write entirely and leaves the local prediction to
+   * run (and settle) on its own.
    */
   applyAuthoritativeState(pose: PropSnapshot): void {
     this.body.setTranslation(pose.position, true);
     this.body.setRotation(pose.rotation, true);
-    const target = pose.velocity ?? ZERO;
-    const current = this.body.linvel();
-    const aligned = current.x * target.x + current.y * target.y + current.z * target.z;
-    if (aligned >= 0) this.body.setLinvel(target, true);
+    if (pose.velocity) {
+      const current = this.body.linvel();
+      const aligned =
+        current.x * pose.velocity.x + current.y * pose.velocity.y + current.z * pose.velocity.z;
+      if (aligned >= 0) this.body.setLinvel(pose.velocity, true);
+    }
     this.body.setAngvel(pose.angularVelocity ?? ZERO, true);
   }
 

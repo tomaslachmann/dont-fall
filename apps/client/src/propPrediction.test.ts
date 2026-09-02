@@ -1,5 +1,11 @@
 import type { PropSnapshot } from "@dont-fall/shared";
-import { dotQuat, yawQuat } from "@dont-fall/shared";
+import {
+  PROP_ERR_HALFLIFE_FAR_MS,
+  PROP_ERR_ROT_HARDSNAP_DOT,
+  decayPositionOffset,
+  dotQuat,
+  yawQuat,
+} from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
 import {
   PropPredictionController,
@@ -49,6 +55,21 @@ describe("decayPropError", () => {
     expect(decayPropError(e, TICK_MS).rotation).toEqual({ x: 0, y: 0, z: 0, w: 1 });
   });
 
+  it("uses the far half-life for the worst *reachable* rotation error — just above the hard-snap boundary", () => {
+    // PROP_ERR_ROT_HARDSNAP_DOT (0.26) sits above PROP_ERR_ROT_DOT_LO (0.1), so
+    // the blend's low end used to be unreachable: every rotDot below 0.26 was
+    // claimed by the hard-snap branch first, and the far half-life (fast decay
+    // for a big error) was never actually used. A rotDot just above that
+    // boundary is the worst error the blend ever sees, so it should decay at
+    // (very close to) PROP_ERR_HALFLIFE_FAR_MS, not some slower blended value.
+    const w0 = PROP_ERR_ROT_HARDSNAP_DOT + 0.0001;
+    const angle = 2 * Math.acos(w0);
+    const e = { position: { x: 0, y: 0, z: 0 }, rotation: yawQuat(angle) };
+    const after = decayPropError(e, PROP_ERR_HALFLIFE_FAR_MS);
+    const expectedW = Math.cos(angle / 4); // slerp halfway toward identity over one far half-life
+    expect(Math.abs(after.rotation.w)).toBeCloseTo(expectedW, 2);
+  });
+
   it("blends the rotation offset toward identity", () => {
     const e = { position: { x: 0, y: 0, z: 0 }, rotation: yawQuat(0.6) };
     const before = Math.abs(dotQuat(e.rotation, { x: 0, y: 0, z: 0, w: 1 }));
@@ -63,6 +84,16 @@ describe("decayPropError", () => {
     const oneStep = decayPropError(e, 16).position.x;
     const twoSteps = decayPropError(decayPropError(e, 8), 8).position.x;
     expect(twoSteps).toBeCloseTo(oneStep, 4);
+  });
+
+  it("its position decay is the shared, configurable-half-life helper the local Character reuses (ADR 0026)", () => {
+    // A small error decays with the near half-life — same number `decayPositionOffset`
+    // would produce called directly with that half-life explicit.
+    const small = { position: { x: 0.1, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 } };
+    expect(decayPropError(small, 200).position.x).toBeCloseTo(
+      decayPositionOffset(small.position, 200, 200, Number.POSITIVE_INFINITY).x,
+      5,
+    );
   });
 });
 

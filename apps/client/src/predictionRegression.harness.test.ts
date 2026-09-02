@@ -16,15 +16,20 @@
  */
 
 import {
+  CAPSULE_ERR_FLAT_EPSILON_M,
+  CAPSULE_ERR_HALFLIFE_MS,
+  LEAD_DRAIN_FRACTION,
   MAX_BUFFERED_INPUT_TICKS,
   MAX_STEPS_PER_FRAME,
   PLAYGROUND_CHECKPOINTS,
   PLAYGROUND_PROPS,
   PLAYGROUND_SPINNERS,
   PLAYGROUND_STATICS,
-  RECONCILE_POSITION_ERROR,
+  RECONCILE_HARDSNAP_M,
+  RECONCILE_POSITION_EPSILON,
   RapierSimulation,
   TICK_MS,
+  decayPositionOffset,
   type CharacterSnapshot,
   type PropSnapshot,
   type SimInputs,
@@ -33,6 +38,14 @@ import {
   interpolateState,
   playgroundSpawn,
 } from "@dont-fall/shared";
+
+/**
+ * The pre-ADR-0026 "correct or ignore" threshold, kept here only so the
+ * baseline/differential scenarios below can still reproduce the original
+ * reported bug for comparison. It is not a tuning constant any more —
+ * `RECONCILE_POSITION_ERROR` no longer exists in `packages/shared`.
+ */
+const LEGACY_RECONCILE_THRESHOLD = 0.2;
 import { beforeAll, describe, expect, it } from "vitest";
 import { NetMetrics } from "./netMetrics.js";
 import { PropPredictionController, graceTicksForRtt } from "./propPrediction.js";
@@ -69,7 +82,7 @@ interface HarnessOpts {
   disable118: boolean;
   /** LEAD feedback band [injectBelow, dropAbove] on smoothed commandQueueDepth. Current code: [1, 2.5]. */
   leadBand: [number, number];
-  /** Override RECONCILE_POSITION_ERROR. */
+  /** Override the (harness-local) legacy correct-or-ignore threshold. */
   reconcileThreshold: number;
   /** Use the pre-code-review LEAD algorithm (maintained appliedLead→targetLead, RTT-seeded) instead of the current queue-feedback one. */
   legacyLead: boolean;
@@ -110,13 +123,13 @@ const DEFAULTS: HarnessOpts = {
   walkIntoWall: false,
   disable118: false,
   leadBand: [1, 2.5],
-  reconcileThreshold: RECONCILE_POSITION_ERROR,
+  reconcileThreshold: LEGACY_RECONCILE_THRESHOLD,
   legacyLead: false,
   serverInputModel: "fifo",
-  reconcileEpsilon: RECONCILE_POSITION_ERROR,
-  hardSnapM: 2.0,
+  reconcileEpsilon: LEGACY_RECONCILE_THRESHOLD,
+  hardSnapM: RECONCILE_HARDSNAP_M,
   capsuleErrorOffset: false,
-  capsuleHalfLifeMs: 100,
+  capsuleHalfLifeMs: CAPSULE_ERR_HALFLIFE_MS,
   immediateLeadInject: false,
   sendInputEveryFrame: false,
   gentleLeadDrain: false,
@@ -126,18 +139,18 @@ const DEFAULTS: HarnessOpts = {
   walkDir: "north",
 };
 
-/** The proposal's capsule error offset — Fiedler `0.5^(dt/halfLife)` decay, hard-snap past `hardSnapM`, zero below a mm epsilon. */
+/**
+ * The proposal's capsule error offset — delegates to the real shipped
+ * `decayPositionOffset` (ADR 0026) so this harness can't silently drift from
+ * what `main.ts` actually runs.
+ */
 const decayOffset = (
   o: { x: number; y: number; z: number },
   dtMs: number,
   halfLifeMs: number,
   hardSnapM: number,
-): { x: number; y: number; z: number } => {
-  const mag = Math.hypot(o.x, o.y, o.z);
-  if (mag > hardSnapM || mag < 0.003) return { x: 0, y: 0, z: 0 };
-  const retain = Math.pow(0.5, dtMs / halfLifeMs);
-  return { x: o.x * retain, y: o.y * retain, z: o.z * retain };
-};
+): { x: number; y: number; z: number } =>
+  decayPositionOffset(o, dtMs, halfLifeMs, hardSnapM, CAPSULE_ERR_FLAT_EPSILON_M);
 
 interface Delivered<T> {
   at: number;
@@ -558,7 +571,7 @@ class Harness {
       } else if (this.o.gentleLeadDrain) {
         // drain a fat queue continuously by a small slice — never a full-tick
         // jump that yanks the render alpha (the bad-connection backward pop).
-        if (this.smoothedQueueDepth > this.o.leadBand[1]) leadStepMs = -TICK_MS * 0.15;
+        if (this.smoothedQueueDepth > this.o.leadBand[1]) leadStepMs = -TICK_MS * LEAD_DRAIN_FRACTION;
       } else if (
         this.framesSinceLeadAdjust >= this.LEAD_ADJUST_FRAMES &&
         this.smoothedQueueDepth > this.o.leadBand[1]
@@ -741,7 +754,7 @@ const report = (label: string, h: Harness): void => {
   if (e.length) {
     const pct = (p: number) => e[Math.min(e.length - 1, Math.floor(p * e.length))]!.toFixed(3);
     console.log(
-      `  same-tick positionError over ${e.length} snapshots: p50=${pct(0.5)} p90=${pct(0.9)} p99=${pct(0.99)} max=${e.at(-1)!.toFixed(3)} (threshold ${RECONCILE_POSITION_ERROR})`,
+      `  same-tick positionError over ${e.length} snapshots: p50=${pct(0.5)} p90=${pct(0.9)} p99=${pct(0.99)} max=${e.at(-1)!.toFixed(3)} (legacy threshold ${LEGACY_RECONCILE_THRESHOLD})`,
     );
   }
 };
@@ -857,10 +870,10 @@ describe("prediction regression harness — walking straight (Phase 1 diagnostic
 // integration test against apps/server. Everything below is harness-validatable.
 const PROPOSAL: Partial<HarnessOpts> = {
   keepAckedInHistory: true, // §5c
-  reconcileEpsilon: 0.02, // §5d — retire the 0.2 correct-or-ignore threshold
-  hardSnapM: 2.0, // §5d
+  reconcileEpsilon: RECONCILE_POSITION_EPSILON, // §5d — retires the 0.2 correct-or-ignore threshold
+  hardSnapM: RECONCILE_HARDSNAP_M, // §5d
   capsuleErrorOffset: true, // §5e — the decaying render-time offset (ADR 0022 machinery)
-  capsuleHalfLifeMs: 100, // §5e
+  capsuleHalfLifeMs: CAPSULE_ERR_HALFLIFE_MS, // §5e
   gentleLeadDrain: true, // 5f (partial) — continuous queue drain, no full-tick alpha yank
 };
 // §5f (immediate LEAD inject / send-every-frame) tested separately — as prototyped

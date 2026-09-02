@@ -311,14 +311,52 @@ export const BUMP_LIFT_RATIO = 0.3;
 
 /**
  * How far (units) the client's *tick-aligned* prediction may sit from the
- * server's authoritative position before a reconciliation fires — the
+ * server's authoritative position before the *simulation* reconciles — the
  * comparison is same-tick (predicted position at the acknowledged input tick
- * vs the server's report for that tick), so this can be small: it is real
- * misprediction, not the ~speed × RTT latency gap ticket 03 could not tell
- * apart. Below it, the deterministic shared step (ADR 0005) has kept client
- * and server together and no correction is needed.
+ * vs the server's report for that tick). ADR 0026: this is a float-noise
+ * floor, not a "some visible drift is fine" gate — a hard `0.2` threshold
+ * used to equal exactly one 30 Hz walk-step (`WALK_SPEED / TICK_RATE_HZ`),
+ * which let an ordinary one-tick phase slip pop the rendered pose. The
+ * simulation now reconciles on any real disagreement; the render-time
+ * {@link CAPSULE_ERR_HALFLIFE_MS} offset is what makes that invisible.
  */
-export const RECONCILE_POSITION_ERROR = 0.2;
+export const RECONCILE_POSITION_EPSILON = 0.02;
+
+/**
+ * Position error (units) past which a reconciliation drops the local
+ * Character's render-time error offset and snaps outright instead of easing —
+ * that far apart is a genuine desync, not something to rubber-band across
+ * (ADR 0026). Reuses {@link PROP_ERR_HARDSNAP_M}'s Fiedler-derived value.
+ */
+export const RECONCILE_HARDSNAP_M = PROP_ERR_HARDSNAP_M;
+
+/**
+ * Half-life (ms) of the local Character's own render-time correction offset
+ * (ADR 0026) — the same decaying-offset mechanism {@link PROP_ERR_HALFLIFE_NEAR_MS}
+ * ships for pushed Props, but with a single fixed half-life tuned for a capsule
+ * you are steering rather than a shoved crate. Valve `cl_smoothtime` and Unreal
+ * `NetworkSimulatedSmoothLocationTime` both default to 0.1 s; the harness sweep
+ * (`predictionRegression.harness.test.ts`) found 75–200 ms all clean and 50 ms
+ * leaking a visible ~2.7 cm.
+ */
+export const CAPSULE_ERR_HALFLIFE_MS = 100;
+
+/**
+ * Below this magnitude (units) the local Character's render-time correction
+ * offset (ADR 0026) is floored to exactly zero instead of left to fade forever
+ * at diminishing, invisible fractions — a few millimetres.
+ */
+export const CAPSULE_ERR_FLAT_EPSILON_M = 0.0005;
+
+/**
+ * Fraction of a tick the client's LEAD feedback drains per frame while the
+ * server's command queue sits over the target band (ADR 0026, ADR 0021's
+ * gentle-drain amendment) — continuous and small, never a full tick at once,
+ * which would yank the render-interpolation alpha in a single frame (a second,
+ * connection-quality-scaled backward pop, distinct from the position
+ * correction {@link RECONCILE_POSITION_EPSILON} governs).
+ */
+export const LEAD_DRAIN_FRACTION = 0.15;
 
 /**
  * Cap on how many recent prediction ticks the client keeps buffered inputs /

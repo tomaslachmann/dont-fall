@@ -1,21 +1,30 @@
 import {
+  CAPSULE_ERR_FLAT_EPSILON_M,
+  CAPSULE_ERR_HALFLIFE_MS,
   DASH_COOLDOWN_MS,
   DEFAULT_KILL_PLANE_Y,
   DEFAULT_SERVER_PORT,
   INPUT_REDUNDANCY,
+  LEAD_DRAIN_FRACTION,
   MAX_BUFFERED_INPUT_TICKS,
   MAX_STEPS_PER_FRAME,
   PLAYGROUND_CHECKPOINTS,
   PLAYGROUND_PROPS,
   PLAYGROUND_SPINNERS,
   PLAYGROUND_STATICS,
-  RECONCILE_POSITION_ERROR,
+  RECONCILE_HARDSNAP_M,
+  RECONCILE_POSITION_EPSILON,
   RapierSimulation,
   TICK_MS,
   TICK_RATE_HZ,
+  addVec3,
+  decayPositionOffset,
   initPhysics,
   interpolateState,
+  lengthVec3,
   movementDirection,
+  subVec3,
+  type CharacterMotionState,
   type CharacterSnapshot,
   type ClientMessage,
   type PropSnapshot,
@@ -80,6 +89,16 @@ const main = async () => {
   // the two up tick-for-tick and replay everything since.
   const inputBuffer: { tick: number; input: SimInputs }[] = [];
   const positionHistory = new Map<number, Vec3>();
+
+  // ADR 0026: the local Character's own reconciliation correction is a
+  // decaying render-time offset (the same mechanism ADR 0022 ships for pushed
+  // Props) instead of an instant snap — the sim always reconciles exactly;
+  // only the drawn mesh carries the residual, easing it out over
+  // CAPSULE_ERR_HALFLIFE_MS. Never applied while down (ADR 0015 addendum
+  // already draws that state straight from the server) and zeroed on every
+  // motionState change.
+  let capsuleErrorOffset: Vec3 = { x: 0, y: 0, z: 0 };
+  let offsetMotionState: CharacterMotionState = "Controlled";
 
   // World content this client does not predict — Spinner rotation, Props, other
   // players, this player's own ragdoll while down — comes straight from the
@@ -157,16 +176,26 @@ const main = async () => {
 
     const predictedAtAck = positionHistory.get(acked);
     const positionError = predictedAtAck ? distance(predictedAtAck, server.position) : Infinity;
+    const motionChanged = server.motionState !== localChar.motionState;
 
+    // ADR 0026: the *simulation* reconciles on any real disagreement — a
+    // float-noise epsilon, not the old one-walk-step "correct or ignore" gate
+    // that let an ordinary phase slip park exactly on the threshold. The
+    // render-time offset below is what keeps that invisible.
     const needsCorrection =
       serverDown || // authority says down — always sync (fresh knock, phase change, or pelvis tracking)
       localDown || // we think we're down but the authority doesn't — only the server ends a knockdown
-      server.motionState !== localChar.motionState || // e.g. a Stagger we missed / are holding too long
-      positionError > RECONCILE_POSITION_ERROR;
+      motionChanged || // e.g. a Stagger we missed / are holding too long
+      positionError > RECONCILE_POSITION_EPSILON;
     if (!needsCorrection) return;
 
     if (Number.isFinite(positionError)) netMetrics.recordCorrection(positionError);
+    const simBefore = localChar.position;
     sim.reconcileCharacter(id, server);
+    // The state right after this correction — captured once and reused below
+    // (for the Prop offset reseed, the capsule offset, and the render-interp
+    // baseline) instead of re-reading the whole sim from Rapier each time.
+    let afterCorrection: SimState;
     if (!serverDown) {
       // Realign the tick counter so replayed ticks see the right Spinner phase,
       // pin every Prop to the fresh authoritative pose so replayed ticks slide
@@ -183,17 +212,42 @@ const main = async () => {
         if (sp) sim.applyAuthoritativePropState(i, sp);
       }
       const replayed = sim.replayLocalCharacter(id, unacked.map((entry) => entry.input));
-      propPrediction.reseedAfterReconcile(renderedBefore, sim.snapshot().props);
+      afterCorrection = sim.snapshot();
+      propPrediction.reseedAfterReconcile(renderedBefore, afterCorrection.props);
       positionHistory.clear();
+      // Keep the acked tick itself in history: a snapshot that repeats the
+      // same ack (a starved server tick, a duplicate, a reorder) then finds a
+      // baseline and computes error 0 instead of Infinity — not a spurious
+      // full replay.
+      positionHistory.set(acked, { ...server.position });
       unacked.forEach((entry, i) => {
         const p = replayed[i];
         if (p) positionHistory.set(entry.tick, p);
       });
+
+      // ADR 0026: re-seed the local Character's own render-time error offset
+      // exactly like `PropPredictionController.reseedAfterReconcile` — capture
+      // how far the replay moved the sim pose, then let the offset (not the
+      // sim) carry that delta and decay it out. A genuine desync (past the
+      // hard-snap distance) or a motionState change drops the offset instead.
+      if (!localDown) {
+        if (motionChanged || positionError > RECONCILE_HARDSNAP_M) {
+          capsuleErrorOffset = { x: 0, y: 0, z: 0 };
+        } else {
+          const after = afterCorrection.characters[id]!.position;
+          capsuleErrorOffset = addVec3(capsuleErrorOffset, subVec3(simBefore, after));
+          if (lengthVec3(capsuleErrorOffset) > RECONCILE_HARDSNAP_M) {
+            capsuleErrorOffset = { x: 0, y: 0, z: 0 };
+          }
+        }
+      }
     } else {
       positionHistory.clear();
+      afterCorrection = sim.snapshot();
     }
-    // Don't let render interpolation blend a frame through the correction.
-    renderPreviousSnapshot = sim.snapshot();
+    // Don't let render interpolation blend a frame through the correction —
+    // the error offset above carries the local Character's own visual delta.
+    renderPreviousSnapshot = afterCorrection;
   };
 
   const socket = new WebSocket(`ws://${location.hostname}:${DEFAULT_SERVER_PORT}`);
@@ -337,17 +391,22 @@ const main = async () => {
       // spiralling; EPSILON absorbs float drift so an exact multiple still runs
       // its last tick (same guard as `advanceFixed`).
       const EPSILON_MS = 1e-6;
-      // LEAD feedback (ADR 0021): inject or drop at most one prediction tick per
-      // window, driven only by the observed server queue depth (see above).
+      // LEAD feedback (ADR 0021, gentle drain per ADR 0026): inject at most one
+      // prediction tick per window when the queue is starving — responsive,
+      // since an empty queue means the server is about to repeat a stale
+      // input. Draining a fat queue never jumps a whole tick at once (that
+      // yanks the render-interpolation alpha in a single frame — a second,
+      // connection-quality-scaled backward pop, distinct from the position
+      // correction above) — instead it bleeds off a small fraction of a tick
+      // every frame for as long as the queue stays over the band.
       framesSinceLeadAdjust += 1;
       let leadStepMs = 0;
-      if (timeSync.ready && framesSinceLeadAdjust >= LEAD_ADJUST_FRAMES) {
-        if (smoothedQueueDepth < 1) {
+      if (timeSync.ready) {
+        if (framesSinceLeadAdjust >= LEAD_ADJUST_FRAMES && smoothedQueueDepth < 1) {
           leadStepMs = TICK_MS;
           framesSinceLeadAdjust = 0;
         } else if (smoothedQueueDepth > 2.5) {
-          leadStepMs = -TICK_MS;
-          framesSinceLeadAdjust = 0;
+          leadStepMs = -TICK_MS * LEAD_DRAIN_FRACTION;
         }
       }
       predictionAccumulatorMs = Math.min(
@@ -427,6 +486,29 @@ const main = async () => {
         localDown && serverOwnCharacter && serverOwnCharacter.bones.length > 0
           ? serverOwnCharacter
           : render.characters[myId]!;
+
+      // ADR 0026: decay the local Character's own render-time correction
+      // offset one frame, same as a pushed Prop's (ADR 0022). Never carried
+      // across a motionState change or while down — the offset only smooths
+      // corrections against the interpolated Controlled/Stagger pose.
+      if (c.motionState !== offsetMotionState || localDown) {
+        capsuleErrorOffset = { x: 0, y: 0, z: 0 };
+        offsetMotionState = c.motionState;
+      } else {
+        capsuleErrorOffset = decayPositionOffset(
+          capsuleErrorOffset,
+          Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS),
+          CAPSULE_ERR_HALFLIFE_MS,
+          RECONCILE_HARDSNAP_M,
+          CAPSULE_ERR_FLAT_EPSILON_M,
+        );
+      }
+      // Only the drawn mesh carries the offset — the camera, obstacle/mirror
+      // sync, and every gameplay read use the raw pose (Fiedler: smoothing
+      // must never feed back into the sim or anything derived from it).
+      const visualCharacter: RenderCharacter = localDown
+        ? renderCharacter
+        : { ...renderCharacter, position: addVec3(renderCharacter.position, capsuleErrorOffset) };
       // Props are drawn from the interpolated server snapshot (ADR 0017),
       // except the one the local Character is pushing, which is drawn from the
       // sub-tick-interpolated local sim pose (`render.props`) plus a decaying
@@ -442,7 +524,7 @@ const main = async () => {
         }
       }
 
-      stage.applyRenderState({ character: renderCharacter, props });
+      stage.applyRenderState({ character: visualCharacter, props });
       stage.applyRemoteCharacters(remoteCharacters);
       stage.updateCharacterAnimation(
         Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000,
@@ -474,6 +556,7 @@ const main = async () => {
       netMetrics.interpBufferDepth = serverInterp.bufferDepth;
       netMetrics.extrapolating = serverInterp.holdingLatest;
       netMetrics.predictedPropCount = propPrediction.predictedCount;
+      netMetrics.capsuleOffsetM = lengthVec3(capsuleErrorOffset);
 
       hud.textContent =
         `DON'T FALL — M2 · predicted + reconciled\n` +

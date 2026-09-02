@@ -38,6 +38,7 @@ import {
   TICK_MS,
   addVec3,
   conjugateQuat,
+  decayPositionOffset,
   lengthVec3,
   mulQuat,
   slerpQuat,
@@ -97,19 +98,12 @@ const applyError = (base: PropSnapshot, error: PropError): PropSnapshot => ({
  * independent.
  */
 export const decayPropError = (error: PropError, dtMs: number): PropError => {
-  const posMag = lengthVec3(error.position);
-  let position: Vec3;
-  if (posMag > PROP_ERR_HARDSNAP_M) {
-    position = { ...ZERO_VEC };
-  } else {
-    const halfLifeMs = lerp(
-      PROP_ERR_HALFLIFE_NEAR_MS,
-      PROP_ERR_HALFLIFE_FAR_MS,
-      clamp01(invLerp(PROP_ERR_NEAR_M, PROP_ERR_FAR_M, posMag)),
-    );
-    const retain = Math.pow(0.5, dtMs / halfLifeMs);
-    position = { x: error.position.x * retain, y: error.position.y * retain, z: error.position.z * retain };
-  }
+  const halfLifeMs = lerp(
+    PROP_ERR_HALFLIFE_NEAR_MS,
+    PROP_ERR_HALFLIFE_FAR_MS,
+    clamp01(invLerp(PROP_ERR_NEAR_M, PROP_ERR_FAR_M, lengthVec3(error.position))),
+  );
+  const position = decayPositionOffset(error.position, dtMs, halfLifeMs, PROP_ERR_HARDSNAP_M);
 
   // |dot(offset, identity)| = |w|: 1 when there is no rotation error, → 0 as it grows.
   const rotDot = Math.abs(error.rotation.w);
@@ -117,7 +111,16 @@ export const decayPropError = (error: PropError, dtMs: number): PropError => {
   if (rotDot < PROP_ERR_ROT_HARDSNAP_DOT) {
     rotation = { ...IDENTITY_QUAT }; // genuine desync — snap the orientation
   } else {
-    const rotErr01 = clamp01(invLerp(PROP_ERR_ROT_DOT_HI, PROP_ERR_ROT_DOT_LO, rotDot));
+    // The blend's low end is whichever of the Fiedler-cited PROP_ERR_ROT_DOT_LO
+    // or the hard-snap threshold is more restrictive: PROP_ERR_ROT_HARDSNAP_DOT
+    // (0.26) sits above PROP_ERR_ROT_DOT_LO (0.1), so a plain invLerp against
+    // LO would never actually reach it — the hard-snap branch above claims
+    // every rotDot below 0.26 first, and the far half-life (fast decay for a
+    // big error) was never reached. Clamping the low end up to the hard-snap
+    // boundary makes it the worst *reachable* error instead.
+    const rotErr01 = clamp01(
+      invLerp(PROP_ERR_ROT_DOT_HI, Math.max(PROP_ERR_ROT_DOT_LO, PROP_ERR_ROT_HARDSNAP_DOT), rotDot),
+    );
     const rotHalfLifeMs = lerp(PROP_ERR_HALFLIFE_NEAR_MS, PROP_ERR_HALFLIFE_FAR_MS, rotErr01);
     rotation = slerpQuat(IDENTITY_QUAT, error.rotation, Math.pow(0.5, dtMs / rotHalfLifeMs));
   }

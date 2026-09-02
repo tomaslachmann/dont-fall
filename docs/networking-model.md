@@ -18,11 +18,16 @@ prediction (§5, the 3-state machine + Fiedler decaying error offset,
 A 2026-09 playtest then surfaced a reconciliation pop of the *local* Character (§4.4);
 research (`docs/research/m2-prediction-reconciliation-loop.md`) → ADR 0026 (local-player
 correction = the same decaying render offset; retire the `0.2` threshold; gentle LEAD
-drain) — **ticket 12**, and ADR 0021's forward note → **ticket 13** (server simulates
-`input[serverTick]`, deferred pending an integration test).
+drain) — **ticket 12, done.** `RECONCILE_POSITION_ERROR` is gone from the codebase;
+`RECONCILE_POSITION_EPSILON` / `RECONCILE_HARDSNAP_M` / `CAPSULE_ERR_HALFLIFE_MS`
+replace it (`packages/shared/src/tuning.ts`), the shared decay helper lives at
+`packages/shared/src/state/errorOffset.ts`, and `main.ts` wires the capsule offset +
+gentle LEAD drain. ADR 0021's forward note → **ticket 13** (server simulates
+`input[serverTick]`, deferred pending an integration test — still open; the systematic
+~0.2 u bias is hidden, not removed).
 
 Remaining deferred bits: sparse bones list, full local-ragdoll-body removal, a profiling
-pass on N simultaneously-predicted Props, and tickets 12–13.
+pass on N simultaneously-predicted Props, and ticket 13.
 See `.scratch/m2-netcode/issues/11-protocol-v2-index.md`.
 
 ---
@@ -233,11 +238,13 @@ Reconciliation resets the sim to the server's state for the acked tick and repla
 ≈ 0.02` — the old `RECONCILE_POSITION_ERROR = 0.2` correct-or-ignore threshold is retired,
 it equalled one walk-step). What is *rendered* is `simPose + capsuleErrorOffset`, where the
 offset accumulates `renderedBefore − poseAfterReplay` on each reconcile and decays
-`0.5^(dtMs / CAPSULE_ERR_HALFLIFE_MS)` per frame (position half-life ≈ 100 ms, facing
-≈ 50 ms) — the same mechanism as §5, reused. Drop the offset and snap past
-`RECONCILE_HARDSNAP_M` (2.0). The offset applies only while `Controlled`/`Stagger`; a
-`motionState` change snaps and zeroes it (ADR 0006/0013/0023). Collision, camera-follow and
-gameplay read the raw `simPose`.
+`0.5^(dtMs / CAPSULE_ERR_HALFLIFE_MS)` per frame (half-life ≈ 100 ms) — the same mechanism
+as §5, reused (`packages/shared/src/state/errorOffset.ts`'s `decayPositionOffset`, which §5's
+`decayPropError` now also calls). Position only — `CharacterSnapshot` carries no facing/
+rotation to reconcile; the model's facing is driven client-side from movement input, not the
+network. Drop the offset and snap past `RECONCILE_HARDSNAP_M` (2.0). The offset applies only
+while `Controlled`/`Stagger`; a `motionState` change snaps and zeroes it (ADR 0006/0013/0023).
+Collision, camera-follow and gameplay read the raw `simPose`.
 
 ---
 

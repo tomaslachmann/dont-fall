@@ -22,7 +22,11 @@ Character (~1 walk-step backward, ~1×/s while walking). Diagnosed with
   same decaying render offset ADR 0022 ships for Props; sim reconciles unconditionally;
   `RECONCILE_POSITION_ERROR = 0.2` retired; gentle LEAD drain. Harness-validated at a
   60 fps cap across network/machine conditions (worst backward step ~22 cm → < 1.5 cm).
-  **Do now.**
+  **Done (2026-09-02).** `packages/shared/src/state/errorOffset.ts` (`decayPositionOffset`,
+  shared by the Character and by `propPrediction.ts`'s `decayPropError`); tuning replaces
+  `RECONCILE_POSITION_ERROR` with `RECONCILE_POSITION_EPSILON` / `RECONCILE_HARDSNAP_M` /
+  `CAPSULE_ERR_HALFLIFE_MS`; `main.ts` wires the capsule offset + gentle LEAD drain; net-graph
+  shows `capOff`. All tests green (147 shared + 75 client + 10 server), typecheck clean.
 - **`13-tick-addressed-server-input.md`** — ADR 0021 forward note: server simulates
   `input[serverTick]` instead of FIFO, removing the systematic ~0.2 u bias at the source.
   **Deferred** — needs a server integration test the headless harness can't run.

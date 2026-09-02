@@ -836,6 +836,30 @@ describe("RapierSimulation — client Props are pinned obstacles, never predicte
     expect(settled.velocity).toBeUndefined();
     expect(settled.angularVelocity).toBeUndefined();
   });
+
+  it("an authoritative pose reporting atRest (no velocity field) does not zero a predicted Prop's fresh push (ADR 0022)", () => {
+    const groundProp = {
+      shape: { kind: "box" as const, halfExtents: { x: 0.4, y: 0.4, z: 0.4 } },
+      center: { x: 0, y: 0.4, z: -1.2 },
+    };
+    const client = new RapierSimulation({
+      spawn: RESTING_SPAWN,
+      statics: [GROUND],
+      props: [groundProp],
+      authoritative: false,
+    });
+    client.setPredictedProps([0]);
+    for (let i = 0; i < 10; i += 1) client.tick({ [DEFAULT_CHARACTER_ID]: NORTH }); // push it moving
+    const pushed = client.snapshot().props[0]!;
+    expect(pushed.atRest).toBe(false);
+    expect(Math.abs(pushed.velocity!.z)).toBeGreaterThan(0);
+
+    // A stale server snapshot still says the box hasn't moved yet (no `velocity`
+    // field at all, not a reported zero) — reconciling to it must not stomp the
+    // fresh local push back to a standstill.
+    client.applyAuthoritativePropState(0, { position: groundProp.center, rotation: { x: 0, y: 0, z: 0, w: 1 }, atRest: true });
+    expect(Math.abs(client.snapshot().props[0]!.velocity!.z)).toBeGreaterThan(0);
+  });
 });
 
 describe("RapierSimulation — dash into a wall", () => {
