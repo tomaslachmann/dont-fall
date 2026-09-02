@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { RapierSimulation, type ClientMessage, type ServerMessage, type SimInputs } from "@dont-fall/shared";
 import { startTrackService, type TrackService } from "@dont-fall/track-service";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -55,6 +56,10 @@ describe("startServer", () => {
     expect(welcome.sessionToken).not.toBe(welcome.playerId);
     expect(welcome.config.snapshotHz).toBeGreaterThan(0);
     expect(welcome.config.graceWindowMs).toBeGreaterThan(0);
+    // ticket 11: every client learns the exact Track (id + Revision) the
+    // server fetched, so it can fetch that same one instead of "latest".
+    expect(typeof welcome.trackId).toBe("string");
+    expect(welcome.trackRevision).toBeGreaterThanOrEqual(1);
     // The client seeds its local prediction from the spawn, so it must be where
     // the server actually placed the Character (before it settles under gravity).
     const snapshot = await nextMessage(socket);
@@ -361,5 +366,63 @@ describe("startServer — disconnects (ticket 07)", () => {
     }
     expect(z).toBeLessThan(startZ - 1);
     b.close();
+  });
+});
+
+describe("startServer — track-service startup retry (ticket 12)", () => {
+  it("retries the startup fetch and succeeds once track-service comes up", async () => {
+    const port = 34567 + Math.floor(Math.random() * 1000);
+    const trackServiceUrl = `http://localhost:${port}`;
+
+    const serverPromise = startServer({
+      port: 0,
+      trackServiceUrl,
+      trackFetchMaxWaitMs: 10_000,
+      trackFetchRetryDelayMs: 50,
+    });
+
+    // track-service isn't listening on `port` yet — give the first couple of
+    // retry attempts a chance to fail before it comes up.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const lateTrackService = await startTrackService({ port, dbPath: ":memory:" });
+
+    try {
+      server = await serverPromise;
+      expect(server.port).toBeGreaterThan(0);
+    } finally {
+      await lateTrackService.close();
+    }
+  });
+
+  it("gives up with a clear, ADR-0028-naming error once the wait budget is exhausted", async () => {
+    const unreachableUrl = "http://localhost:1"; // nothing listens on port 1
+    await expect(
+      startServer({ port: 0, trackServiceUrl: unreachableUrl, trackFetchMaxWaitMs: 200, trackFetchRetryDelayMs: 50 }),
+    ).rejects.toThrow(/ADR 0028/);
+  });
+
+  it("bounds a single hung request instead of letting it block past the wait budget", async () => {
+    // Accepts the connection but never responds — track-service stalling
+    // (a DB lock, a GC pause), not track-service being down. Without a
+    // per-attempt timeout, a single `fetch` here would hang for the whole
+    // test; with one, it fails fast and retries within the budget instead.
+    const hangingServer = createServer(() => {});
+    await new Promise<void>((resolve) => hangingServer.listen(0, resolve));
+    const address = hangingServer.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+
+    const start = Date.now();
+    await expect(
+      startServer({
+        port: 0,
+        trackServiceUrl: `http://localhost:${port}`,
+        trackFetchMaxWaitMs: 300,
+        trackFetchRetryDelayMs: 20,
+        trackFetchAttemptTimeoutMs: 50,
+      }),
+    ).rejects.toThrow(/ADR 0028/);
+    expect(Date.now() - start).toBeLessThan(2000);
+
+    await new Promise<void>((resolve) => hangingServer.close(() => resolve()));
   });
 });

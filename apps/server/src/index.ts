@@ -11,6 +11,9 @@ import {
   SNAPSHOT_HZ,
   TICK_MS,
   TICK_RATE_HZ,
+  TRACK_FETCH_ATTEMPT_TIMEOUT_MS,
+  TRACK_FETCH_MAX_WAIT_MS,
+  TRACK_FETCH_RETRY_DELAY_MS,
   initPhysics,
   playgroundSpawn,
   resolveTrack,
@@ -21,22 +24,59 @@ import {
 } from "@dont-fall/shared";
 import { WebSocketServer, type WebSocket } from "ws";
 
+export interface FetchedTrack {
+  id: string;
+  revision: number;
+  track: Track;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
  * Fetches a fully-resolved Track from track-service (ADR 0028) — the Match
  * server never holds Module data or generates a Track itself, whether it's
- * hand-built or randomly assembled makes no difference here. Failure is
- * fatal and unmasked: this is a real runtime dependency the server accepted
- * on purpose (ADR 0028's trade-off), not a fallback-to-hardcoded-content path.
+ * hand-built or randomly assembled makes no difference here. `id`/`revision`
+ * are carried into every client's `welcome` (ticket 11) so a client fetches
+ * this *exact* Revision, never "latest" independently — a publish landing
+ * mid-Match could otherwise desync a client from what the server is running.
+ *
+ * Retries with backoff (ticket 12) — track-service may still be starting up
+ * (e.g. Docker container ordering isn't instant); a single-shot fetch failing
+ * on that transient race isn't the same problem as track-service being
+ * genuinely gone. Still fails loudly (and unmasked) once the budget runs out.
+ * Each attempt itself is bounded ({@link TRACK_FETCH_ATTEMPT_TIMEOUT_MS}) —
+ * without that, a single hung request (track-service accepts the connection
+ * but never responds) could block past the whole retry budget instead of
+ * being abandoned and retried.
  */
-const fetchTrack = async (trackServiceUrl: string): Promise<Track> => {
-  const res = await fetch(`${trackServiceUrl}/tracks/any`);
-  if (!res.ok) {
-    throw new Error(
-      `track-service unreachable or has no Track at ${trackServiceUrl} (ADR 0028): HTTP ${res.status}`,
-    );
+const fetchTrack = async (
+  trackServiceUrl: string,
+  {
+    maxWaitMs = TRACK_FETCH_MAX_WAIT_MS,
+    retryDelayMs = TRACK_FETCH_RETRY_DELAY_MS,
+    attemptTimeoutMs = TRACK_FETCH_ATTEMPT_TIMEOUT_MS,
+  }: { maxWaitMs?: number; retryDelayMs?: number; attemptTimeoutMs?: number } = {},
+): Promise<FetchedTrack> => {
+  const deadline = Date.now() + maxWaitMs;
+  let attempt = 0;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    attempt += 1;
+    try {
+      const res = await fetch(`${trackServiceUrl}/tracks/any`, { signal: AbortSignal.timeout(attemptTimeoutMs) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as { id: string; revision: number; track: Track };
+      if (attempt > 1) console.log(`DON'T FALL: track-service reachable after ${attempt} attempts`);
+      return { id: body.id, revision: body.revision, track: body.track };
+    } catch (err) {
+      lastError = err;
+      console.warn(`DON'T FALL: track-service fetch attempt ${attempt} failed, retrying: ${(err as Error).message}`);
+      await sleep(retryDelayMs);
+    }
   }
-  const body = (await res.json()) as { track: Track };
-  return body.track;
+  throw new Error(
+    `track-service unreachable or has no Track at ${trackServiceUrl} after ${attempt} attempts (ADR 0028): ${(lastError as Error)?.message}`,
+  );
 };
 
 /**
@@ -57,6 +97,10 @@ export interface StartServerConfig {
   port?: number;
   /** track-service base URL (ADR 0028). Defaults to `TRACK_SERVICE_URL` env, then localhost:{@link DEFAULT_TRACK_SERVICE_PORT}. */
   trackServiceUrl?: string;
+  /** Ticket 12: how long/often to retry the startup Track fetch. Test-only knobs; production uses `fetchTrack`'s defaults. */
+  trackFetchMaxWaitMs?: number;
+  trackFetchRetryDelayMs?: number;
+  trackFetchAttemptTimeoutMs?: number;
 }
 
 /**
@@ -86,8 +130,12 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   // shared package currently knows (`MODULE_LIBRARY`).
   const trackServiceUrl =
     config.trackServiceUrl ?? process.env.TRACK_SERVICE_URL ?? `http://localhost:${DEFAULT_TRACK_SERVICE_PORT}`;
-  const track = await fetchTrack(trackServiceUrl);
-  const { statics, checkpoints, spinners, props } = resolveTrack(MODULE_LIBRARY, track);
+  const fetched = await fetchTrack(trackServiceUrl, {
+    ...(config.trackFetchMaxWaitMs !== undefined ? { maxWaitMs: config.trackFetchMaxWaitMs } : {}),
+    ...(config.trackFetchRetryDelayMs !== undefined ? { retryDelayMs: config.trackFetchRetryDelayMs } : {}),
+    ...(config.trackFetchAttemptTimeoutMs !== undefined ? { attemptTimeoutMs: config.trackFetchAttemptTimeoutMs } : {}),
+  });
+  const { statics, checkpoints, spinners, props } = resolveTrack(MODULE_LIBRARY, fetched.track);
 
   // The Match starts with no players; ticket 01's single-player default
   // Character is opted out here rather than added and immediately disposed.
@@ -145,6 +193,8 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       // issues it; no reconnect logic acts on it yet.
       sessionToken: randomBytes(32).toString("base64url"),
       spawn,
+      trackId: fetched.id,
+      trackRevision: fetched.revision,
       config: { snapshotHz: SNAPSHOT_HZ, graceWindowMs: GRACE_WINDOW_MS },
     });
 

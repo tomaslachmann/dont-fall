@@ -28,6 +28,14 @@ export interface WelcomeMessage {
   playerId: string;
   sessionToken: string;
   spawn: Vec3;
+  /**
+   * The exact Track (ADR 0028) this Match server fetched at startup —
+   * `trackId`/`revision` from track-service's Revision model (ADR 0032).
+   * Every client fetches this exact Revision (ticket 11), not "latest",
+   * so a publish landing mid-Match can never desync client from server.
+   */
+  trackId: string;
+  trackRevision: number;
   config: {
     /** How often the server sends snapshots (Hz). May be ≤ the sim tick rate (ADR 0020). */
     snapshotHz: number;

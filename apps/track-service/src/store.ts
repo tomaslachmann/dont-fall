@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { Track, TrackListing } from "@dont-fall/shared";
 import type { TrackDb } from "./db.js";
 import { tracks } from "./schema.js";
@@ -87,15 +87,21 @@ export const saveTrack = (db: TrackDb, input: { id?: string; name?: string; trac
   return { id: trackId };
 };
 
-/** Fetches the latest published Revision of `id` (a `trackId`), if any exist. */
-export const getTrackById = (db: TrackDb, id: string): StoredTrack | undefined => {
-  const row = db
-    .select()
-    .from(tracks)
-    .where(eq(tracks.trackId, id))
-    .orderBy(desc(tracks.revision))
-    .limit(1)
-    .get();
+/**
+ * Fetches a Revision of `id` (a `trackId`) — the latest published one, or (ticket
+ * 11) an exact `revision` when the caller needs to pin against one that could
+ * otherwise race a newer publish (a live Match's client fetching what its
+ * `WelcomeMessage` named, not whatever happens to be latest by the time it asks).
+ */
+export const getTrackById = (db: TrackDb, id: string, revision?: number): StoredTrack | undefined => {
+  const row =
+    revision === undefined
+      ? db.select().from(tracks).where(eq(tracks.trackId, id)).orderBy(desc(tracks.revision)).limit(1).get()
+      : db
+          .select()
+          .from(tracks)
+          .where(and(eq(tracks.trackId, id), eq(tracks.revision, revision)))
+          .get();
   return row ? toStored(row) : undefined;
 };
 

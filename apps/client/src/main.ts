@@ -4,16 +4,14 @@ import {
   DASH_COOLDOWN_MS,
   DEFAULT_KILL_PLANE_Y,
   DEFAULT_SERVER_PORT,
+  DEFAULT_TRACK_SERVICE_PORT,
   INITIAL_LEAD_TICKS_MAX,
   INITIAL_LEAD_TICKS_MIN,
   INPUT_REDUNDANCY,
   LEAD_DRAIN_FRACTION,
   MAX_BUFFERED_INPUT_TICKS,
   MAX_STEPS_PER_FRAME,
-  PLAYGROUND_CHECKPOINTS,
-  PLAYGROUND_PROPS,
-  PLAYGROUND_SPINNERS,
-  PLAYGROUND_STATICS,
+  MODULE_LIBRARY,
   RECONCILE_HARDSNAP_M,
   RECONCILE_POSITION_EPSILON,
   RapierSimulation,
@@ -25,6 +23,7 @@ import {
   interpolateState,
   lengthVec3,
   movementDirection,
+  resolveTrack,
   subVec3,
   type CharacterMotionState,
   type CharacterSnapshot,
@@ -34,7 +33,9 @@ import {
   type ServerMessage,
   type SimInputs,
   type SimState,
+  type Track,
   type Vec3,
+  type WelcomeMessage,
 } from "@dont-fall/shared";
 import { loadCharacterModel } from "./characterModel.js";
 import { FreeLookCamera, KeyboardInput } from "./input.js";
@@ -56,22 +57,76 @@ const main = async () => {
   const hud = document.getElementById("hud")!;
   const lockPrompt = document.getElementById("lock-prompt")!;
   const [, characterModel] = await Promise.all([initPhysics(), loadCharacterModel()]);
+  hud.textContent = "DON'T FALL — M2 · connecting to server…";
+
+  const socket = new WebSocket(`ws://${location.hostname}:${DEFAULT_SERVER_PORT}`);
+
+  // Bootstrap (ticket 11): wait for the Match server's welcome — it names the
+  // exact trackId + Revision it fetched from track-service (ADR 0028/0032) —
+  // then fetch that *same* Revision here before building anything Track-shaped
+  // (the scene, the local prediction sim). Fetching "latest" independently on
+  // each side could otherwise race a publish landing mid-connect and desync
+  // this client from what the server is actually running.
+  //
+  // `error`/`close` are watched here too (and cleaned up together on
+  // settlement) — without them, a connection that fails before ever sending a
+  // `welcome` (wrong port, server down, a WS handshake failure) would leave
+  // this promise permanently unresolved and the whole page stuck on
+  // "connecting…" instead of surfacing a real error (code review, ticket 11).
+  const welcome = await new Promise<WelcomeMessage>((resolve, reject) => {
+    const cleanup = (): void => {
+      socket.removeEventListener("message", onMessage);
+      socket.removeEventListener("error", onError);
+      socket.removeEventListener("close", onClose);
+    };
+    const onMessage = (event: MessageEvent<string>): void => {
+      const message = JSON.parse(event.data) as ServerMessage;
+      if (message.type !== "welcome") return;
+      cleanup();
+      resolve(message);
+    };
+    const onError = (): void => {
+      cleanup();
+      reject(new Error("WebSocket connection failed before the server's welcome arrived"));
+    };
+    const onClose = (): void => {
+      cleanup();
+      reject(new Error("WebSocket closed before the server's welcome arrived"));
+    };
+    socket.addEventListener("message", onMessage);
+    socket.addEventListener("error", onError);
+    socket.addEventListener("close", onClose);
+  });
+
+  const serverInterp = new SnapshotInterpolator();
+  serverInterp.setSnapshotHz(welcome.config.snapshotHz);
+
+  const trackServiceUrl = `http://${location.hostname}:${DEFAULT_TRACK_SERVICE_PORT}`;
+  const trackRes = await fetch(`${trackServiceUrl}/tracks/${welcome.trackId}?revision=${welcome.trackRevision}`);
+  if (!trackRes.ok) {
+    throw new Error(
+      `could not fetch Track ${welcome.trackId}@${welcome.trackRevision} from track-service: HTTP ${trackRes.status}`,
+    );
+  }
+  const { track } = (await trackRes.json()) as { track: Track };
+  const { statics, checkpoints, spinners, props } = resolveTrack(MODULE_LIBRARY, track);
 
   const stage = createStage({
-    statics: PLAYGROUND_STATICS,
-    checkpoints: PLAYGROUND_CHECKPOINTS,
+    statics,
+    checkpoints,
     killPlaneY: DEFAULT_KILL_PLANE_Y,
-    spinners: PLAYGROUND_SPINNERS,
-    props: PLAYGROUND_PROPS,
+    spinners,
+    props,
     characterModel,
   });
   const keyboard = new KeyboardInput();
   const look = new FreeLookCamera(stage.domElement);
 
-  let myId: string | null = null;
+  const myId: string = welcome.playerId;
   // Issued in the welcome (ADR 0024). Stored for a future reclaim on reconnect;
   // M2 does not reconnect.
-  let sessionToken: string | null = null;
+  const sessionToken: string = welcome.sessionToken;
+  void sessionToken; // stored for a future reconnect; unused in M2
   // Set once the socket drops (tab still open, network/server gone). The game
   // loop freezes on the last frame and the HUD says so — there is no reconnect
   // in M2 (ADR 0011), a reload rejoins as a fresh player.
@@ -79,8 +134,23 @@ const main = async () => {
 
   // The local Character is predicted by re-running the exact same shared
   // simulation step the server uses (ticket 03) — its own RapierSimulation,
-  // stepped once per fixed sim tick from local input.
-  let localSim: RapierSimulation | null = null;
+  // stepped once per fixed sim tick from local input, seeded from the same
+  // resolved Track (ticket 11) the stage above was built from.
+  const localSim: RapierSimulation = new RapierSimulation({
+    statics,
+    checkpoints,
+    spinners,
+    props,
+    withDefaultCharacter: false,
+    // Never trust this Character's own settle-check to end a knockdown —
+    // only a server snapshot can (ADR 0015). Makes `reconcile`'s
+    // down-state sync safe to apply unconditionally.
+    authoritative: false,
+  });
+  // Seed the local prediction at the exact spawn the server used (the
+  // per-player spawn grid, ticket 04) — ticket 03's reconcile deliberately
+  // never corrects position, so prediction must start already aligned.
+  localSim.addCharacter(myId, welcome.spawn);
   let predictionTick = 0; // this client's own monotonic sim-tick counter
   // ADR 0027: `predictionTick`'s numbering is seeded, once, into the server's
   // own tick space (`estimatedServerTick + an initial LEAD`) as soon as both
@@ -113,7 +183,7 @@ const main = async () => {
   // players, this player's own ragdoll while down — comes straight from the
   // server's own broadcast (ADR 0003), smoothed through a render-delay
   // interpolation buffer so it isn't jittered by uneven snapshot arrival.
-  const serverInterp = new SnapshotInterpolator();
+  // (Constructed in the bootstrap above, before this point.)
   // Pushed-Prop prediction (ADR 0022, ticket 11.8): the one Prop the local
   // Character is contacting is simulated locally for a short grace after last
   // contact and rendered through a decaying error offset; every other Prop is
@@ -259,30 +329,12 @@ const main = async () => {
     renderPreviousSnapshot = afterCorrection;
   };
 
-  const socket = new WebSocket(`ws://${location.hostname}:${DEFAULT_SERVER_PORT}`);
+  // The bootstrap listener above already consumed the one-time `welcome` — a
+  // Match server sends exactly one per connection (ADR 0024) — so this handler
+  // only ever sees `pong`/`snapshot` from here on.
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data as string) as ServerMessage;
-    if (message.type === "welcome") {
-      myId = message.playerId;
-      sessionToken = message.sessionToken;
-      void sessionToken; // stored for a future reconnect; unused in M2
-      serverInterp.setSnapshotHz(message.config.snapshotHz);
-      localSim = new RapierSimulation({
-        statics: PLAYGROUND_STATICS,
-        checkpoints: PLAYGROUND_CHECKPOINTS,
-        spinners: PLAYGROUND_SPINNERS,
-        props: PLAYGROUND_PROPS,
-        withDefaultCharacter: false,
-        // Never trust this Character's own settle-check to end a knockdown —
-        // only a server snapshot can (ADR 0015). Makes `reconcile`'s
-        // down-state sync safe to apply unconditionally.
-        authoritative: false,
-      });
-      // Seed the local prediction at the exact spawn the server used (the
-      // per-player spawn grid, ticket 04) — ticket 03's reconcile deliberately
-      // never corrects position, so prediction must start already aligned.
-      localSim.addCharacter(myId, message.spawn);
-    } else if (message.type === "pong") {
+    if (message.type === "pong") {
       timeSync.receivePong(message, performance.now());
     } else if (message.type === "snapshot") {
       latestServerSnapshot = message.state;
@@ -611,4 +663,13 @@ const main = async () => {
   requestAnimationFrame(frame);
 };
 
-void main();
+// Bootstrap failures (server unreachable, track-service unreachable, a
+// missing/invalid Revision) must surface somewhere visible instead of
+// silently rejecting behind `void` — the only feedback otherwise being an
+// unhandled-rejection console entry while the HUD sits on "connecting…"
+// forever (code review, ticket 11).
+main().catch((err: unknown) => {
+  console.error("DON'T FALL: failed to start", err);
+  const hud = document.getElementById("hud");
+  if (hud) hud.textContent = `DON'T FALL — failed to connect\n${(err as Error).message}\nreload to retry`;
+});

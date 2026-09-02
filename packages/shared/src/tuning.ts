@@ -421,3 +421,24 @@ export const INTERP_RATIO = 2;
  * The packet always carries the current tick's input plus this many older ones.
  */
 export const INPUT_REDUNDANCY = 2;
+
+// --- track-service fetch (ADR 0028; ticket 12) ------------------------------
+
+/**
+ * Total bounded time the Match server keeps retrying its startup Track fetch
+ * before giving up loudly (ticket 12) — covers track-service still coming up
+ * (e.g. Docker container start order isn't instant), not track-service being
+ * genuinely gone.
+ */
+export const TRACK_FETCH_MAX_WAIT_MS = 30_000;
+
+/** Delay between retry attempts while the startup Track fetch keeps failing. */
+export const TRACK_FETCH_RETRY_DELAY_MS = 1_000;
+
+/**
+ * Per-attempt timeout on the startup Track fetch itself — bounds a single
+ * request that hangs (track-service accepts the connection but never
+ * responds) so it can't silently eat the whole {@link TRACK_FETCH_MAX_WAIT_MS}
+ * budget on one stuck attempt instead of retrying.
+ */
+export const TRACK_FETCH_ATTEMPT_TIMEOUT_MS = 5_000;

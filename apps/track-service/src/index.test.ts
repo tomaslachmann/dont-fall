@@ -119,6 +119,54 @@ describe("track-service", () => {
     expect(list.find((t) => t.id === id)?.name).toBe("v2");
   });
 
+  it("`?revision=` pins an exact Revision instead of always returning latest (ticket 11)", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    const first = await fetch(`http://localhost:${service.port}/tracks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "v1", track: SAMPLE_TRACK }),
+    });
+    const { id } = (await first.json()) as { id: string };
+
+    const ANOTHER_TRACK: Track = [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+    await fetch(`http://localhost:${service.port}/tracks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, name: "v2", track: ANOTHER_TRACK }),
+    });
+
+    // A client that was told "revision 1" (e.g. by a Match server's WelcomeMessage)
+    // must still get Revision 1's exact content, even though v2 is now latest.
+    const pinnedRes = await fetch(`http://localhost:${service.port}/tracks/${id}?revision=1`);
+    expect(pinnedRes.status).toBe(200);
+    const pinned = (await pinnedRes.json()) as { name: string | null; track: Track; revision: number };
+    expect(pinned.revision).toBe(1);
+    expect(pinned.name).toBe("v1");
+    expect(pinned.track).toEqual(SAMPLE_TRACK);
+
+    const latestRes = await fetch(`http://localhost:${service.port}/tracks/${id}?revision=2`);
+    const latest = (await latestRes.json()) as { revision: number; track: Track };
+    expect(latest.revision).toBe(2);
+    expect(latest.track).toEqual(ANOTHER_TRACK);
+  });
+
+  it("404s a Revision that was never published, and 400s a malformed `revision`", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const saveRes = await fetch(`http://localhost:${service.port}/tracks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "v1", track: SAMPLE_TRACK }),
+    });
+    const { id } = (await saveRes.json()) as { id: string };
+
+    const missingRevision = await fetch(`http://localhost:${service.port}/tracks/${id}?revision=7`);
+    expect(missingRevision.status).toBe(404);
+
+    const malformed = await fetch(`http://localhost:${service.port}/tracks/${id}?revision=not-a-number`);
+    expect(malformed.status).toBe(400);
+  });
+
   it("generates a random Track and persists it exactly like a hand-built one (ADR 0028)", async () => {
     service = await startTrackService({ port: 0, dbPath });
 

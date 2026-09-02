@@ -154,9 +154,27 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
 
   const idMatch = /^\/tracks\/([^/]+)$/.exec(url.pathname);
   if (req.method === "GET" && idMatch) {
-    const stored = getTrackById(db, idMatch[1]!);
+    // ticket 11: `?revision=` pins an exact Revision (ADR 0032) instead of
+    // "latest" — a Match server's WelcomeMessage names one exact Revision, and
+    // the client must fetch that same one, not whatever a publish landing
+    // mid-Match happened to make latest by the time it asks.
+    const revisionParam = url.searchParams.get("revision");
+    let revision: number | undefined;
+    if (revisionParam !== null) {
+      revision = Number(revisionParam);
+      if (!Number.isInteger(revision) || revision < 1) {
+        json(res, 400, { error: `revision must be a positive integer, got "${revisionParam}"` });
+        return;
+      }
+    }
+    const stored = getTrackById(db, idMatch[1]!, revision);
     if (!stored) {
-      json(res, 404, { error: `no Track with id "${idMatch[1]}"` });
+      json(res, 404, {
+        error:
+          revision === undefined
+            ? `no Track with id "${idMatch[1]}"`
+            : `no Track with id "${idMatch[1]}" at revision ${revision}`,
+      });
       return;
     }
     json(res, 200, stored);
