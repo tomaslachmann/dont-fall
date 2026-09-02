@@ -1,4 +1,4 @@
-import type { Box, Checkpoint, Module, PropConfig, SpinnerConfig } from "@dont-fall/shared";
+import { segmentOrientation, type Box, type Checkpoint, type Module, type PropConfig, type Segment, type SpinnerConfig } from "@dont-fall/shared";
 import * as THREE from "three";
 
 const STATIC_COLOR = 0x3a4a5c;
@@ -53,6 +53,20 @@ export const buildModuleGroup = (module: Module): THREE.Group => {
   for (const prop of module.props ?? []) addProp(group, prop);
   if (module.checkpoint) addCheckpoint(group, module.checkpoint);
   return group;
+};
+
+/**
+ * Applies a Segment's full placement (position + 3D orientation, ADR 0034)
+ * to its Module group — the one place `viewport.ts` (the Track overview) and
+ * `playtest.ts` (the local playtest scene) both do this, instead of each
+ * duplicating `group.quaternion.set(...)` from `segmentOrientation` inline
+ * (code review, ticket 01: the two copies would otherwise need to be kept in
+ * sync by hand).
+ */
+export const applySegmentTransform = (group: THREE.Object3D, segment: Segment): void => {
+  group.position.set(segment.position.x, segment.position.y, segment.position.z);
+  const q = segmentOrientation(segment);
+  group.quaternion.set(q.x, q.y, q.z, q.w);
 };
 
 /**

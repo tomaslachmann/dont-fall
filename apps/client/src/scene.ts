@@ -5,11 +5,12 @@ import {
   DASH_SPEED,
   GETUP_MS,
   RAGDOLL_BONES,
+  IDENTITY_QUAT,
   spinnerAngleAt,
   yawQuat,
-  type Box,
   type CharacterMotionState,
   type Checkpoint,
+  type OrientedBox,
   type PropConfig,
   type PropSnapshot,
   type RenderCharacter,
@@ -60,7 +61,7 @@ const WOBBLE_ENABLED = false;
 const RAGDOLL_PELVIS_TO_FEET = CAPSULE_BOTTOM_OFFSET + RAGDOLL_BONES.find((b) => b.name === "pelvis")!.restCenter.y;
 
 export interface StageConfig {
-  statics: Box[];
+  statics: OrientedBox[];
   checkpoints: Checkpoint[];
   killPlaneY: number;
   spinners: SpinnerConfig[];
@@ -118,12 +119,17 @@ export interface Stage {
   ) => void;
 }
 
-const boxMesh = (box: Box, material: THREE.Material): THREE.Mesh => {
+const boxMesh = (box: OrientedBox, material: THREE.Material): THREE.Mesh => {
   const mesh = new THREE.Mesh(
     new THREE.BoxGeometry(box.halfExtents.x * 2, box.halfExtents.y * 2, box.halfExtents.z * 2),
     material,
   );
   mesh.position.set(box.center.x, box.center.y, box.center.z);
+  // ADR 0034: a static's OrientedBox may carry a real rotation now — Props/
+  // Checkpoint volumes/Spinner arms passed in here are still plain (rotation-
+  // less) Boxes, which default to identity, unchanged from before.
+  const q = box.rotation ?? IDENTITY_QUAT;
+  mesh.quaternion.set(q.x, q.y, q.z, q.w);
   return mesh;
 };
 

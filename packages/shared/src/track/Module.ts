@@ -14,10 +14,13 @@ import type { SpinnerConfig } from "../simulation/Spinner.js";
 export type SocketType = "floor";
 
 /**
- * A Module's named local connection point (CONTEXT.md) — a position and yaw
- * (radians) another Module's matching Socket aligns against. `"entry"`/
+ * A Module's named local connection point (CONTEXT.md) — a position and
+ * orientation another Module's matching Socket aligns against. `"entry"`/
  * `"exit"` are the two every current Module has; nothing requires exactly
  * two or those exact names, but `chainTrack`/the builder default to them.
+ *
+ * `pitch`/`roll` (ADR 0034) are additive, optional, and default to 0 — every
+ * Socket authored before this had only `yaw`, and still works unchanged.
  */
 export interface Socket {
   id: string;
@@ -25,6 +28,10 @@ export interface Socket {
   position: Vec3;
   /** Which way this Socket faces, in the Module's own local frame (radians). */
   yaw: number;
+  /** Tilt-forward/back component of this Socket's local orientation (radians). Defaults to 0. */
+  pitch?: number;
+  /** Bank/tilt-sideways component of this Socket's local orientation (radians). Defaults to 0. */
+  roll?: number;
 }
 
 /**

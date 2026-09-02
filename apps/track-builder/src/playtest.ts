@@ -14,7 +14,7 @@ import {
 } from "@dont-fall/shared";
 import * as THREE from "three";
 import { KeyboardInput } from "./keyboard.js";
-import { buildModuleGroup } from "./render.js";
+import { applySegmentTransform, buildModuleGroup } from "./render.js";
 
 export interface Playtest {
   /** Call once per `requestAnimationFrame`, passing its timestamp. */
@@ -59,8 +59,7 @@ export const startPlaytest = async (
     const module = modules[segment.moduleId];
     if (!module) continue;
     const group = buildModuleGroup(module);
-    group.position.set(segment.position.x, segment.position.y, segment.position.z);
-    group.rotation.y = segment.rotation;
+    applySegmentTransform(group, segment);
     scene.add(group);
   }
 

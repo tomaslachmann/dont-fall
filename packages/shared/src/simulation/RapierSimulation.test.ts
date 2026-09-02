@@ -1,5 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import type { Box } from "../math/box.js";
+import type { Box, OrientedBox } from "../math/box.js";
+import { pitchQuat, yawQuat } from "../math/quat.js";
+import { rotateVec3ByQuat } from "../math/vec3.js";
 import {
   CAPSULE_BOTTOM_OFFSET,
   DASH_COOLDOWN_MS,
@@ -99,8 +101,54 @@ describe("RapierSimulation — walk", () => {
       volume: { center: { x: 1, y: 2, z: 3 }, halfExtents: { x: 1, y: 1, z: 1 } },
     };
     const sim = new RapierSimulation({ statics: [GROUND], checkpoints: [cp] });
-    expect(sim.getStatics()).toEqual([GROUND]);
-    expect(sim.getCheckpoints()).toEqual([cp]);
+    // getStatics() always fills in a concrete rotation (ADR 0034) — identity
+    // when the input Box didn't specify one, as GROUND here doesn't.
+    expect(sim.getStatics()).toEqual([{ ...GROUND, rotation: { x: 0, y: 0, z: 0, w: 1 } }]);
+    // getCheckpoints() also fills in a concrete rotation on the volume now
+    // (ADR 0034 code review) — identity when the input didn't specify one.
+    expect(sim.getCheckpoints()).toEqual([{ ...cp, volume: { ...cp.volume, rotation: { x: 0, y: 0, z: 0, w: 1 } } }]);
+  });
+});
+
+describe("RapierSimulation — tilted static floor (ADR 0034, ticket 01)", () => {
+  // ~14.9°, comfortably under Rapier's default ~45° max slope-climb angle —
+  // real, but not so steep a Character can't stand on it at all.
+  const PITCH = 0.26;
+  const plank = (): OrientedBox => ({
+    center: { x: 0, y: 0, z: 0 },
+    halfExtents: { x: 5, y: 0.1, z: 5 },
+    rotation: pitchQuat(PITCH),
+  });
+  /** World Y of the plank's own local top surface at local Z `z` — ground truth, independent of RapierSimulation. */
+  const surfaceYAt = (z: number): number => rotateVec3ByQuat({ x: 0, y: 0.1, z }, pitchQuat(PITCH)).y;
+
+  const settleOn = (z: number): number => {
+    const sim = new RapierSimulation({ statics: [plank()], spawn: { x: 0, y: surfaceYAt(z) + 3, z } });
+    tick(sim, 3);
+    return sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
+  };
+
+  it("is a real rotated collider, not a cosmetic label — a Character resting at one end of a pitched plank settles noticeably higher than at the other end", () => {
+    // The old rotateBoxYaw90 trick could only ever produce a flat, axis-
+    // aligned collider; this proves resting height actually tracks the
+    // plank's true tilted surface, the way a real setRotation() collider
+    // would (and a flat one couldn't).
+    const restingNear = settleOn(3);
+    const restingFar = settleOn(-3);
+    const expectedGap = surfaceYAt(-3) - surfaceYAt(3); // ~1.54 units
+    expect(expectedGap).toBeGreaterThan(1);
+    expect(restingFar - restingNear).toBeGreaterThan(expectedGap - 0.4);
+  });
+
+  it("a Character can stand on a moderately tilted floor at all — Rapier's own (default, unconfigured) slope handling, not new movement code", () => {
+    const sim = new RapierSimulation({ statics: [plank()], spawn: { x: 0, y: surfaceYAt(0) + 3, z: 0 } });
+    tick(sim, 3);
+    const character = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(character.grounded).toBe(true);
+    expect(character.fallCount).toBe(0);
+    // Settles near the plank's true local surface height, not falling through it.
+    expect(character.position.y).toBeGreaterThan(surfaceYAt(0));
+    expect(character.position.y).toBeLessThan(surfaceYAt(0) + 1);
   });
 });
 
@@ -194,6 +242,25 @@ describe("RapierSimulation — Fall & Respawn", () => {
     tickUntilControlled(sim);
 
     expect(Math.abs(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x - 8)).toBeLessThan(3); // respawned at the pad
+  });
+
+  it("detects containment in a rotated Checkpoint volume — not just an axis-aligned approximation (ADR 0034 code review)", () => {
+    // An oblong volume, long on local X (halfExtents.x=4, halfExtents.z=1),
+    // rotated 90° around Y so its long axis now points along world Z. A
+    // Character standing at (0, _, 3) is outside the *un-rotated* box
+    // (z=3 > halfExtents.z=1) but inside the rotated one.
+    const rotatedCheckpoint: Checkpoint = {
+      respawn: { x: 8, y: 1.5, z: 0 },
+      volume: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 4, y: 2, z: 1 }, rotation: yawQuat(Math.PI / 2) },
+    };
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: 1.5, z: 3 },
+      statics: [PLATFORM],
+      checkpoints: [rotatedCheckpoint],
+      killPlaneY: -8,
+    });
+    tick(sim, 0.5);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.checkpointIndex).toBe(0);
   });
 
   it("routes a Fall through a Ragdoll at the Checkpoint before returning control", () => {

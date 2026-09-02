@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { dotQuat, eulerQuat, IDENTITY_QUAT } from "../math/quat.js";
 import type { Module } from "./Module.js";
-import { chainTrack, placeAfter, resolveTrack } from "./Track.js";
+import { chainTrack, placeAfter, resolveTrack, segmentOrientation } from "./Track.js";
 import { M1_MODULES, M1_TRACK } from "./modules.js";
 
 const STRAIGHT_SOCKETS: Module["sockets"] = [
@@ -55,13 +56,25 @@ describe("placeAfter", () => {
     expect(next.rotation).toBeCloseTo(-Math.PI / 2, 10);
   });
 
-  it("throws if the resulting world rotation isn't a multiple of 90° (ADR 0031)", () => {
+  it("accepts a world rotation that isn't a multiple of 90° — the whole point of ADR 0034", () => {
     const crooked: Module = {
       ...TURN_RIGHT,
       sockets: [TURN_RIGHT.sockets[0]!, { ...TURN_RIGHT.sockets[1]!, yaw: -Math.PI / 4 }],
     };
     const prev = { moduleId: "crooked", position: { x: 0, y: 0, z: 10 }, rotation: 0 };
-    expect(() => placeAfter(prev, crooked, "straight", STRAIGHT)).toThrow(/multiple of 90/);
+    const next = placeAfter(prev, crooked, "straight", STRAIGHT);
+    expect(next.rotation).toBeCloseTo(-Math.PI / 4, 10);
+  });
+
+  it("carries a tilted predecessor's pitch/roll through so the next Segment still faces the exit Socket correctly", () => {
+    const tiltedPrev = { moduleId: "straight", position: { x: 0, y: 0, z: 10 }, rotation: 0, pitch: 0.2, roll: 0.1 };
+    const next = placeAfter(tiltedPrev, STRAIGHT, "straight", STRAIGHT);
+    // The exit Socket's world orientation (tiltedPrev's tilt, since the exit
+    // Socket itself has no local tilt) composed with a 180° flip is what the
+    // next Segment's own orientation must equal.
+    const expectedOrientation = eulerQuat(0, 0.2, 0.1);
+    const actualOrientation = segmentOrientation(next);
+    expect(Math.abs(dotQuat(expectedOrientation, actualOrientation))).toBeCloseTo(1, 6);
   });
 });
 
@@ -92,7 +105,9 @@ describe("resolveTrack", () => {
     const track = chainTrack(["spinner-module"], { "spinner-module": SPINNER_MODULE }, { x: 5, y: -1, z: 20 });
     const resolved = resolveTrack({ "spinner-module": SPINNER_MODULE }, track);
 
-    expect(resolved.statics).toEqual([{ center: { x: 5, y: -1.5, z: 20 }, halfExtents: { x: 3, y: 0.5, z: 3 } }]);
+    expect(resolved.statics).toEqual([
+      { center: { x: 5, y: -1.5, z: 20 }, halfExtents: { x: 3, y: 0.5, z: 3 }, rotation: IDENTITY_QUAT },
+    ]);
     expect(resolved.spinners[0]!.center).toEqual({ x: 5, y: -1, z: 20 });
     expect(resolved.spinners[0]!.armLength).toBe(2); // tuning passes through untouched
     expect(resolved.spinners[0]!.initialAngle).toBe(0); // no rotation added at 0 rad
@@ -101,12 +116,20 @@ describe("resolveTrack", () => {
     expect(resolved.checkpoints[0]!.volume.halfExtents).toEqual({ x: 2, y: 2, z: 2 });
   });
 
-  it("swaps a static Box's X/Z half-extents when its Segment is rotated 90°", () => {
+  it("never swaps a static Box's half-extents (ADR 0034) — carries its rotation instead, for a real rotated collider", () => {
     const track = [{ moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: Math.PI / 2 }];
     const resolved = resolveTrack({ straight: STRAIGHT }, track);
-    // STRAIGHT's box is halfExtents (3, 0.5, 3) — square, so the swap is a no-op on shape,
-    // but this proves resolveTrack goes through rotateBoxYaw90 rather than a plain translate.
+    // halfExtents are exactly as authored — no more axis-swap trick.
     expect(resolved.statics[0]!.halfExtents).toEqual({ x: 3, y: 0.5, z: 3 });
+    const dot = dotQuat(resolved.statics[0]!.rotation!, eulerQuat(Math.PI / 2, 0, 0));
+    expect(Math.abs(dot)).toBeCloseTo(1, 6);
+  });
+
+  it("carries a tilted Segment's rotation into a static Box's OrientedBox, not just its centre", () => {
+    const track = [{ moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0, pitch: 0.3, roll: 0.2 }];
+    const resolved = resolveTrack({ straight: STRAIGHT }, track);
+    const dot = dotQuat(resolved.statics[0]!.rotation!, eulerQuat(0, 0.3, 0.2));
+    expect(Math.abs(dot)).toBeCloseTo(1, 6);
   });
 
   it("adds the Segment's rotation into a Spinner's initialAngle instead of swapping its shape", () => {
@@ -115,6 +138,25 @@ describe("resolveTrack", () => {
     expect(resolved.spinners[0]!.initialAngle).toBeCloseTo(Math.PI / 2, 10);
     expect(resolved.spinners[0]!.armLength).toBe(2);
     expect(resolved.spinners[0]!.armRadius).toBe(0.3);
+  });
+
+  it("a Spinner's spin axis doesn't tilt with a pitched/rolled Segment — only its position and initialAngle do (known limitation, ADR 0034)", () => {
+    const track = [{ moduleId: "spinner-module", position: { x: 0, y: 0, z: 0 }, rotation: 0, pitch: 0.4, roll: 0.3 }];
+    const resolved = resolveTrack({ "spinner-module": SPINNER_MODULE }, track);
+    expect(resolved.spinners[0]!.initialAngle).toBeCloseTo(0, 10);
+  });
+
+  it("positions a Prop correctly under a tilted Segment but doesn't tilt its own shape (known limitation, ADR 0034 — Props have no spawn orientation yet)", () => {
+    const oblongProp: Module = {
+      ...SPINNER_MODULE,
+      props: [{ shape: { kind: "box", halfExtents: { x: 0.4, y: 0.1, z: 0.9 } }, center: { x: 1, y: 0, z: 0 } }],
+    };
+    const track = [{ moduleId: "oblong-prop", position: { x: 0, y: 0, z: 0 }, rotation: Math.PI / 2, pitch: 0.3 }];
+    const resolved = resolveTrack({ "oblong-prop": oblongProp }, track);
+    // Position follows the full 3D rotation...
+    expect(resolved.props[0]!.center).not.toEqual({ x: 1, y: 0, z: 0 });
+    // ...but the shape is untouched, exactly as authored.
+    expect(resolved.props[0]!.shape).toEqual({ kind: "box", halfExtents: { x: 0.4, y: 0.1, z: 0.9 } });
   });
 
   it("resolves an empty Track to empty arrays", () => {

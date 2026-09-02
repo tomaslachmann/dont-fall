@@ -1,7 +1,6 @@
 import {
   addVec3,
   findSocket,
-  isMultipleOf90,
   placeAfter,
   rotateYaw,
   subVec3,
@@ -86,11 +85,19 @@ const TWO_PI = Math.PI * 2;
 const normalizeYaw = (yaw: number): number => ((yaw % TWO_PI) + TWO_PI) % TWO_PI;
 
 /**
- * Rotates the Segment at `index` by `deltaRadians` (a multiple of 90°) around
- * its own entry Socket — the world point where it connects to whatever's
- * before it stays fixed, only its facing (and, since it pivots around an
- * off-centre Socket, its own position) changes. Everything after `index` is
- * then re-chained naturally from the newly-rotated Segment.
+ * Rotates the Segment at `index` by `deltaRadians` (yaw only — ticket 01/02
+ * generalize the Track/Segment data model to full 3D orientation, but this
+ * editor function stays yaw-only until ticket 02/03 build real free-rotation
+ * UI) around its own entry Socket — the world point where it connects to
+ * whatever's before it stays fixed, only its facing (and, since it pivots
+ * around an off-centre Socket, its own position) changes. Everything after
+ * `index` is then re-chained naturally from the newly-rotated Segment.
+ *
+ * No longer restricted to a multiple of 90° (ADR 0034 lifted ADR 0031's
+ * restriction at the data-model/physics level) — today's two toolbar buttons
+ * still only ever call this with exactly ±90°, so this is a forward-
+ * compatibility unblock for ticket 02/03's free-rotation UI, not a behavior
+ * change for the current UI.
  *
  * Simplification: rotating Segment `index` does not try to preserve any
  * rotation a later Segment already had independently — re-chaining always
@@ -106,9 +113,6 @@ export const rotateSegment = (
   deltaRadians: number,
 ): Track => {
   assertIndexInRange("rotateSegment", track, index);
-  if (!isMultipleOf90(deltaRadians)) {
-    throw new Error(`rotateSegment: deltaRadians ${deltaRadians} is not a multiple of 90° (ADR 0031)`);
-  }
   // Defensive, not redundant: `track` isn't guaranteed already-settled — it
   // may have come from `history.reset` (a Track loaded from track-service,
   // possibly saved by a different, less careful caller than this module's
@@ -126,7 +130,12 @@ export const rotateSegment = (
     const entry = findSocket(module, "entry");
     const anchor = addVec3(segment.position, rotateYaw(entry.position, segment.rotation));
     const newPosition = subVec3(anchor, rotateYaw(entry.position, newRotation));
-    rotated = { moduleId: segment.moduleId, position: newPosition, rotation: newRotation };
+    // Code review: this used to build a fresh `{ moduleId, position,
+    // rotation }` literal instead of spreading `segment`, silently dropping
+    // any `pitch`/`roll` a Segment already had — this yaw-only rotate never
+    // touches those fields, so they must survive exactly like the index-0
+    // branch above already preserves them.
+    rotated = { ...segment, position: newPosition, rotation: newRotation };
   }
 
   const withRotated = [...settled.slice(0, index), rotated, ...settled.slice(index + 1)];

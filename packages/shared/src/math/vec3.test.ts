@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { yawQuat } from "./quat.js";
-import { rotateYaw } from "./vec3.js";
+import { pitchQuat, rollQuat, yawQuat } from "./quat.js";
+import { rotateVec3ByQuat, rotateYaw } from "./vec3.js";
 
 const closeVec = (v: { x: number; y: number; z: number }, expected: { x: number; y: number; z: number }): void => {
   expect(v.x).toBeCloseTo(expected.x, 10);
@@ -47,6 +47,32 @@ describe("rotateYaw", () => {
       ]) {
         closeVec(rotateYaw(v, yaw), rotateByQuat(v, yawQuat(yaw)));
       }
+    }
+  });
+});
+
+describe("rotateVec3ByQuat (ADR 0034 — generalizes rotateYaw to any orientation)", () => {
+  it("is the identity for the identity quaternion", () => {
+    closeVec(rotateVec3ByQuat({ x: 1, y: 2, z: 3 }, { x: 0, y: 0, z: 0, w: 1 }), { x: 1, y: 2, z: 3 });
+  });
+
+  it("agrees with rotateYaw for a pure-yaw quaternion — every existing yaw-only call site keeps its exact behavior", () => {
+    for (const yaw of [0.3, 1.2, Math.PI / 2, -Math.PI / 2, 2.1, -1.7]) {
+      for (const v of [
+        { x: 1, y: 0, z: 0 },
+        { x: 0, y: 0, z: 1 },
+        { x: 2.5, y: 7, z: -3.1 },
+      ]) {
+        closeVec(rotateVec3ByQuat(v, yawQuat(yaw)), rotateYaw(v, yaw));
+      }
+    }
+  });
+
+  it("agrees with the independent reference implementation for pitch and roll too", () => {
+    for (const angle of [0.3, 1.2, Math.PI / 2, -1.7]) {
+      const v = { x: 2.5, y: 7, z: -3.1 };
+      closeVec(rotateVec3ByQuat(v, pitchQuat(angle)), rotateByQuat(v, pitchQuat(angle)));
+      closeVec(rotateVec3ByQuat(v, rollQuat(angle)), rotateByQuat(v, rollQuat(angle)));
     }
   });
 });

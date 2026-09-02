@@ -126,6 +126,22 @@ describe("rotateSegment", () => {
     // "gap" (index 2) must now continue from "bridge"'s new (rotated) placement.
     expect(rotated[2]!.rotation).toBeCloseTo(Math.PI / 2, 10);
   });
+
+  it("preserves a non-first Segment's pitch/roll inherited from a tilted predecessor — this rotate is yaw-only and must not drop them (code review)", () => {
+    // Segment 1's own pitch/roll come from `rechainFrom`/`placeAfter`
+    // propagating Segment 0's tilt through the socket chain (ADR 0034) — not
+    // independently authored (there's no free-standing tilt UI yet). The bug
+    // was building a fresh `{ moduleId, position, rotation }` literal instead
+    // of spreading `segment`, silently dropping that propagated tilt.
+    const track = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);
+    track[0] = { ...track[0]!, pitch: 0.3, roll: 0.2 };
+    const settled = rechainFrom(track, MODULES, 1);
+    expect(settled[1]!.pitch).not.toBe(0); // sanity: the predecessor's tilt really does propagate
+
+    const rotated = rotateSegment(track, MODULES, 1, Math.PI / 2);
+    expect(rotated[1]!.pitch).toBeCloseTo(settled[1]!.pitch!, 10);
+    expect(rotated[1]!.roll).toBeCloseTo(settled[1]!.roll!, 10);
+  });
 });
 
 describe("index bounds validation (code review, ticket 08)", () => {
@@ -149,8 +165,8 @@ describe("index bounds validation (code review, ticket 08)", () => {
     expect(() => insertSegment(track, MODULES, track.length, "start")).not.toThrow();
   });
 
-  it("rotateSegment rejects a delta that isn't a multiple of 90°", () => {
-    expect(() => rotateSegment(track, MODULES, 0, Math.PI / 4)).toThrow(/multiple of 90/);
+  it("rotateSegment accepts a delta that isn't a multiple of 90° (ADR 0034 lifted that restriction)", () => {
+    expect(() => rotateSegment(track, MODULES, 0, Math.PI / 4)).not.toThrow();
   });
 });
 

@@ -1,10 +1,6 @@
-/** A unit quaternion (x, y, z, w). Plain data so it serialises into snapshots. */
-export interface Quat {
-  x: number;
-  y: number;
-  z: number;
-  w: number;
-}
+import { rotateVec3ByQuat, type Quat } from "./vec3.js";
+
+export type { Quat };
 
 export const quat = (x = 0, y = 0, z = 0, w = 1): Quat => ({ x, y, z, w });
 
@@ -31,6 +27,62 @@ export const yawQuat = (radians: number): Quat => ({
   z: 0,
   w: Math.cos(radians / 2),
 });
+
+/** A rotation of `radians` around the local X axis (ADR 0034 — a Segment's tilt-forward/back component). */
+export const pitchQuat = (radians: number): Quat => ({
+  x: Math.sin(radians / 2),
+  y: 0,
+  z: 0,
+  w: Math.cos(radians / 2),
+});
+
+/** A rotation of `radians` around the local Z axis (ADR 0034 — a Segment's bank/tilt-sideways component). */
+export const rollQuat = (radians: number): Quat => ({
+  x: 0,
+  y: 0,
+  z: Math.sin(radians / 2),
+  w: Math.cos(radians / 2),
+});
+
+/**
+ * Composes a yaw/pitch/roll triple (radians) into one quaternion — yaw
+ * (world Y) applied last/outermost, then pitch (local X), then roll (local
+ * Z) applied first/innermost (ADR 0034: a Segment's full 3D orientation,
+ * generalizing the old yaw-only `rotation`). Order matters — rotations don't
+ * commute — and must match {@link quatToEuler}'s extraction exactly.
+ */
+export const eulerQuat = (yaw: number, pitch: number, roll: number): Quat =>
+  mulQuat(mulQuat(yawQuat(yaw), pitchQuat(pitch)), rollQuat(roll));
+
+/**
+ * The inverse of {@link eulerQuat}: extracts a (yaw, pitch, roll) triple
+ * (radians) whose composition reproduces `q` — used to store the result of a
+ * quaternion computation (e.g. `placeAfter`'s Socket alignment) back into a
+ * `Segment`'s three scalar fields (ADR 0034). Works by reading how `q`
+ * rotates the local Z axis (gives yaw/pitch directly, since roll — applied
+ * innermost, around Z — leaves the Z axis's own image alone) and then
+ * un-rotating the local X axis by the recovered yaw+pitch to isolate roll.
+ *
+ * Degenerates at exactly ±90° pitch (gimbal lock: yaw and roll become the
+ * same rotation split infinitely many ways) — a known, accepted limitation
+ * of storing an orientation as three independent scalars, not a bug. Every
+ * other orientation round-trips to an equivalent rotation (pinned by
+ * `quat.test.ts`'s property test), though not necessarily the exact same
+ * three numbers if the input wasn't itself produced by `eulerQuat`.
+ */
+export const quatToEuler = (q: Quat): { yaw: number; pitch: number; roll: number } => {
+  const zAxis = rotateVec3ByQuat({ x: 0, y: 0, z: 1 }, q);
+  const pitch = -Math.asin(Math.max(-1, Math.min(1, zAxis.y)));
+  const yaw = Math.atan2(zAxis.x, zAxis.z);
+
+  // Undo the recovered yaw+pitch to isolate the innermost roll component.
+  const yawPitch = mulQuat(yawQuat(yaw), pitchQuat(pitch));
+  const rollOnly = mulQuat(conjugateQuat(yawPitch), q);
+  const xAxis = rotateVec3ByQuat({ x: 1, y: 0, z: 0 }, rollOnly);
+  const roll = Math.atan2(xAxis.y, xAxis.x);
+
+  return { yaw, pitch, roll };
+};
 
 /**
  * Spherical linear interpolation between two unit quaternions. Falls back to a

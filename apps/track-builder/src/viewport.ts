@@ -1,7 +1,7 @@
 import type { Module, Track } from "@dont-fall/shared";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { boundingRadius, buildModuleGroup, disposeGroup } from "./render.js";
+import { applySegmentTransform, boundingRadius, buildModuleGroup, disposeGroup } from "./render.js";
 
 /**
  * A small, self-contained preview of one Module — the palette's "visual
@@ -97,8 +97,7 @@ export const createTrackViewport = (container: HTMLElement): TrackViewport => {
         const module = modules[segment.moduleId];
         if (!module) return;
         const group = buildModuleGroup(module);
-        group.position.set(segment.position.x, segment.position.y, segment.position.z);
-        group.rotation.y = segment.rotation;
+        applySegmentTransform(group, segment);
         group.userData.segmentIndex = index;
         trackGroup.add(group);
       });

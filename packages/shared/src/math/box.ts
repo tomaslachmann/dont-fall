@@ -1,6 +1,7 @@
-import { rotateYaw, type Vec3 } from "./vec3.js";
+import { conjugateQuat, IDENTITY_QUAT, type Quat } from "./quat.js";
+import { addVec3, rotateVec3ByQuat, subVec3, type Vec3 } from "./vec3.js";
 
-/** An axis-aligned box: a centre and half-extents on each axis. */
+/** An axis-aligned box, in whatever local frame it's authored in: a centre and half-extents on each axis. */
 export interface Box {
   center: Vec3;
   halfExtents: Vec3;
@@ -12,38 +13,48 @@ export const pointInBox = (point: Vec3, box: Box): boolean =>
   Math.abs(point.y - box.center.y) <= box.halfExtents.y &&
   Math.abs(point.z - box.center.z) <= box.halfExtents.z;
 
-/** Tolerance (radians) for "close enough to a multiple of 90°" — shared by every ADR 0031 rotation check (`rotateBoxYaw90` here, `placeAfter` in `../track/Track.ts`) so retuning one can't silently disagree with the other. */
-export const YAW_MULTIPLE_OF_90_EPSILON = 1e-6;
+/**
+ * A `Box` placed into world space with a full 3D rotation (ADR 0034) —
+ * `RapierSimulation`'s static colliders consume this directly via a real
+ * `setRotation()`, so `halfExtents` never needs adjusting for the rotation
+ * the way the old AABB-swap trick did. `rotation` is carried through
+ * unchanged from whatever placed it (a Segment's orientation, ultimately).
+ * Optional, defaulting to identity (unrotated) — so a plain `Box` literal
+ * (every static geometry test written before ADR 0034) is still a valid
+ * `OrientedBox` as-is, with no rotation to speak of.
+ */
+export interface OrientedBox {
+  center: Vec3;
+  halfExtents: Vec3;
+  rotation?: Quat;
+}
 
-/** Whether `yaw` (radians) is close enough to a multiple of 90° to keep a Box axis-aligned after rotation. */
-export const isMultipleOf90 = (yaw: number): boolean => {
-  const quarterTurns = yaw / (Math.PI / 2);
-  return Math.abs(quarterTurns - Math.round(quarterTurns)) < YAW_MULTIPLE_OF_90_EPSILON;
+/**
+ * Whether `point` lies inside `box`, honoring its rotation (ADR 0034 code
+ * review) — un-rotates `point` into the box's own local frame (subtract the
+ * centre, then apply the inverse rotation) and reuses {@link pointInBox}'s
+ * plain axis-aligned check there. Used for Checkpoint containment: the old
+ * `rotateBoxYaw90`-based placement kept an axis-aligned trigger volume
+ * correctly sized at 90°/270° by swapping its halfExtents; a genuinely
+ * rotated volume needs this instead, and it works at any angle, not just a
+ * multiple of 90°.
+ */
+export const pointInOrientedBox = (point: Vec3, box: OrientedBox): boolean => {
+  const local = rotateVec3ByQuat(subVec3(point, box.center), conjugateQuat(box.rotation ?? IDENTITY_QUAT));
+  return pointInBox(local, { center: { x: 0, y: 0, z: 0 }, halfExtents: box.halfExtents });
 };
 
 /**
- * Rotates an axis-aligned `box` by `yaw` radians around Y, staying
- * axis-aligned — required by ADR 0031: `RapierSimulation`'s static colliders
- * (`ColliderDesc.cuboid`) are translation-only, with no rotation on the
- * fixed rigid body, so a Segment's placement rotation is restricted to
- * multiples of 90° specifically so every Box stays a valid AABB after
- * rotation (at 90°/270° the local X/Z half-extents swap; the box's own
- * dimensions never change at 0°/180°). Throws if `yaw` isn't close to a
- * multiple of 90° — silently rotating a Box by an arbitrary angle would
- * desync the visual/logical placement from what actually collides.
+ * Places a local `box` into world space by `translation` + `rotation`
+ * (ADR 0034) — replaces `rotateBoxYaw90`'s axis-aligned-only placement.
+ * `halfExtents` pass through untouched: the box's own local shape never
+ * changes, only where and how it's oriented in the world. Accepts any
+ * rotation, not just a multiple of 90° — the previous restriction existed
+ * only because the old placement scheme pre-rotated an AABB by hand instead
+ * of giving the physics engine a real rotated collider.
  */
-export const rotateBoxYaw90 = (box: Box, yaw: number): Box => {
-  if (!isMultipleOf90(yaw)) {
-    throw new Error(
-      `rotateBoxYaw90: yaw ${yaw} rad is not a multiple of 90° — a Box must stay axis-aligned ` +
-        `(ADR 0031, static colliders don't rotate)`,
-    );
-  }
-  const center = rotateYaw(box.center, yaw);
-  // At 0°/180° cos ≈ ±1 (no swap); at 90°/270° cos ≈ 0 (swap X/Z).
-  const swapped = Math.abs(Math.cos(yaw)) < YAW_MULTIPLE_OF_90_EPSILON;
-  const halfExtents = swapped
-    ? { x: box.halfExtents.z, y: box.halfExtents.y, z: box.halfExtents.x }
-    : { x: box.halfExtents.x, y: box.halfExtents.y, z: box.halfExtents.z };
-  return { center, halfExtents };
-};
+export const orientBox = (box: Box, translation: Vec3, rotation: Quat): OrientedBox => ({
+  center: addVec3(rotateVec3ByQuat(box.center, rotation), translation),
+  halfExtents: box.halfExtents,
+  rotation,
+});

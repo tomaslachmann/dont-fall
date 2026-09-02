@@ -5,6 +5,21 @@ export interface Vec3 {
   z: number;
 }
 
+/**
+ * A unit quaternion (x, y, z, w). Plain data so it serialises into snapshots.
+ * Defined here rather than in `quat.ts` (which re-exports it) so this file
+ * can freely use quaternion-taking functions like {@link rotateVec3ByQuat}
+ * without an import cycle — `quat.ts` needs `Vec3` for exactly the same
+ * reason (`quatToEuler` calls `rotateVec3ByQuat` directly instead of keeping
+ * its own private duplicate of the rotation formula).
+ */
+export interface Quat {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+}
+
 export const vec3 = (x = 0, y = 0, z = 0): Vec3 => ({ x, y, z });
 
 export const addVec3 = (a: Vec3, b: Vec3): Vec3 => ({
@@ -55,4 +70,30 @@ export const rotateYaw = (v: Vec3, yaw: number): Vec3 => {
   const sin = Math.sin(yaw);
   const cos = Math.cos(yaw);
   return { x: v.x * cos + v.z * sin, y: v.y, z: -v.x * sin + v.z * cos };
+};
+
+/**
+ * Rotates `v` by quaternion `q` — the standard `v + 2w(u×v) + 2(u×(u×v))`
+ * sandwich-product formula (`u` = `q`'s vector part, `w` = its scalar part).
+ * Generalizes {@link rotateYaw} to any orientation (ADR 0034: a Segment's
+ * rotation is no longer yaw-only). `rotateYaw(v, yaw)` and
+ * `rotateVec3ByQuat(v, yawQuat(yaw))` agree exactly — pinned by
+ * `vec3.test.ts` — so every yaw-only call site keeps its existing behavior
+ * unchanged when ported to this.
+ */
+export const rotateVec3ByQuat = (v: Vec3, q: Quat): Vec3 => {
+  const ux = q.x;
+  const uy = q.y;
+  const uz = q.z;
+  const uvx = uy * v.z - uz * v.y;
+  const uvy = uz * v.x - ux * v.z;
+  const uvz = ux * v.y - uy * v.x;
+  const uuvx = uy * uvz - uz * uvy;
+  const uuvy = uz * uvx - ux * uvz;
+  const uuvz = ux * uvy - uy * uvx;
+  return {
+    x: v.x + 2 * q.w * uvx + 2 * uuvx,
+    y: v.y + 2 * q.w * uvy + 2 * uuvy,
+    z: v.z + 2 * q.w * uvz + 2 * uuvz,
+  };
 };

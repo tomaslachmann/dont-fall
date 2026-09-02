@@ -1,5 +1,6 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { pointInBox, type Box } from "../math/box.js";
+import { pointInOrientedBox, type OrientedBox } from "../math/box.js";
+import { IDENTITY_QUAT } from "../math/quat.js";
 import { normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
 import { characterSnapshot, type CharacterSnapshot, type SimState } from "../state/SimState.js";
 import type { FixedSimulation } from "../timing/FixedSimulation.js";
@@ -41,7 +42,7 @@ export interface SimulationConfig {
   /** Where the Character starts (capsule centre). Also its first respawn point. */
   spawn?: Vec3;
   /** Static collision geometry. Defaults to a single large ground box. */
-  statics?: Box[];
+  statics?: OrientedBox[];
   /** Checkpoints the Character can walk through to move its respawn point. */
   checkpoints?: Checkpoint[];
   /** Height below which the Character has Fallen out of the playground. */
@@ -72,14 +73,16 @@ export interface SimulationConfig {
 }
 
 const DEFAULT_SPAWN = vec3(0, 2, 0);
-const DEFAULT_GROUND: Box = {
+const DEFAULT_GROUND: OrientedBox = {
   center: vec3(0, -0.5, 0),
   halfExtents: vec3(30, 0.5, 30),
+  rotation: IDENTITY_QUAT,
 };
 
-const cloneBox = (box: Box): Box => ({
+const cloneOrientedBox = (box: OrientedBox): OrientedBox => ({
   center: { ...box.center },
   halfExtents: { ...box.halfExtents },
+  rotation: { ...(box.rotation ?? IDENTITY_QUAT) },
 });
 
 const cloneSpinnerConfig = (config: SpinnerConfig): SpinnerConfig => ({
@@ -120,7 +123,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   private readonly world: RAPIER.World;
   private readonly characters = new Map<string, CharacterController>();
   private readonly progress = new Map<string, CharacterProgress>();
-  private readonly statics: Box[];
+  private readonly statics: OrientedBox[];
   private readonly checkpoints: Checkpoint[];
   private readonly killPlaneY: number;
   /** See `SimulationConfig.authoritative`. */
@@ -175,11 +178,16 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     this.world = new RAPIER.World({ x: 0, y: GRAVITY_Y, z: 0 });
 
     for (const box of this.statics) {
+      // ADR 0034: a real rotated rigid body, not the old pre-rotated-AABB
+      // trick — Rapier itself has always supported this; nothing here needed
+      // the previous multiple-of-90°-only restriction.
       this.world.createCollider(
         RAPIER.ColliderDesc.cuboid(box.halfExtents.x, box.halfExtents.y, box.halfExtents.z)
           .setCollisionGroups(STATIC_GROUPS),
         this.world.createRigidBody(
-          RAPIER.RigidBodyDesc.fixed().setTranslation(box.center.x, box.center.y, box.center.z),
+          RAPIER.RigidBodyDesc.fixed()
+            .setTranslation(box.center.x, box.center.y, box.center.z)
+            .setRotation(box.rotation ?? IDENTITY_QUAT),
         ),
       );
     }
@@ -484,7 +492,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     const reached = progress.checkpointIndex ?? -1;
     const p = character.position;
     for (let i = reached + 1; i < this.checkpoints.length; i += 1) {
-      if (pointInBox(p, this.checkpoints[i]!.volume)) {
+      if (pointInOrientedBox(p, this.checkpoints[i]!.volume)) {
         progress.checkpointIndex = i;
         progress.respawnPoint = { ...this.checkpoints[i]!.respawn };
       }
@@ -519,15 +527,15 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   }
 
   /** The resolved static geometry (including the default ground), for the renderer. */
-  getStatics(): Box[] {
-    return this.statics.map(cloneBox);
+  getStatics(): OrientedBox[] {
+    return this.statics.map(cloneOrientedBox);
   }
 
   /** The configured checkpoints, for the renderer. */
   getCheckpoints(): Checkpoint[] {
     return this.checkpoints.map((cp) => ({
       respawn: { ...cp.respawn },
-      volume: cloneBox(cp.volume),
+      volume: cloneOrientedBox(cp.volume),
     }));
   }
 
