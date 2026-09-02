@@ -4,7 +4,39 @@ The grilling session (2026-09) settled the M2 network protocol. Spec: `docs/netw
 ADRs: 0018–0025, plus amendment notes on 0015/0016/0017. This is the implementation surface,
 in dependency order. Each item becomes its own ticket file (`12-…`, `13-…`, …) when picked up.
 
-**Status:** planned. Nothing here is implemented yet — the code still runs protocol v1.
+**Status (2026-09-02):** 11.1–11.9 landed on branch `m2-protocol-v2`.
+11.6 landed except its deferred parts (sparse bones list, full local-ragdoll-body
+removal, one-shot-effect gating helper — nothing to gate yet). 11.8 (pushed-Prop
+prediction) landed — `apps/client/src/propPrediction.ts` (3-state machine + Fiedler
+decaying error offset), `RapierSimulation.setPredictedProps` / `consumeContactedProps` /
+`applyAuthoritativePropState`. **Still owed:** a playtest to validate the feel, and a
+profiling pass on N simultaneously-predicted Props at 30 Hz / 12 players (ADR 0022).
+All tests green (141 shared + 50 client + 10 server), typecheck clean.
+
+**Post-v2 defect (2026-09):** implementing v2 surfaced a reconciliation pop of the local
+Character (~1 walk-step backward, ~1×/s while walking). Diagnosed with
+`apps/client/src/predictionRegression.harness.test.ts`; researched in
+`docs/research/m2-prediction-reconciliation-loop.md`. Two follow-on tickets:
+
+- **`12-local-player-correction-smoothing.md`** — ADR 0026: the local correction is the
+  same decaying render offset ADR 0022 ships for Props; sim reconciles unconditionally;
+  `RECONCILE_POSITION_ERROR = 0.2` retired; gentle LEAD drain. Harness-validated at a
+  60 fps cap across network/machine conditions (worst backward step ~22 cm → < 1.5 cm).
+  **Done (2026-09-02).** `packages/shared/src/state/errorOffset.ts` (`decayPositionOffset`,
+  shared by the Character and by `propPrediction.ts`'s `decayPropError`); tuning replaces
+  `RECONCILE_POSITION_ERROR` with `RECONCILE_POSITION_EPSILON` / `RECONCILE_HARDSNAP_M` /
+  `CAPSULE_ERR_HALFLIFE_MS`; `main.ts` wires the capsule offset + gentle LEAD drain; net-graph
+  shows `capOff`. All tests green (147 shared + 75 client + 10 server), typecheck clean.
+- **`13-tick-addressed-server-input.md`** — ADR 0021 forward note, shipped as **ADR 0027**:
+  server simulates `input[serverTick]` instead of FIFO, removing the systematic ~0.2 u bias
+  at the source. **Done (2026-09-02).** `apps/server/src/index.ts` (server-owned
+  `serverTick`, tick-matched queue lookup, honest `lastInputTick` ack); `main.ts` seeds
+  `predictionTick` into the server's tick space once, sized from measured RTT
+  (`INITIAL_LEAD_TICKS_MIN`/`_MAX`, `packages/shared/src/tuning.ts`); validated by the new
+  `apps/server/src/tickAddressedInput.integration.test.ts` (a real `startServer` + a real,
+  timer-driven client over a real loopback WebSocket with modelled latency/jitter — the
+  integration test this ticket was blocked on). All tests green (148 shared + 77 client +
+  12 server), typecheck clean.
 
 ---
 
@@ -132,6 +164,17 @@ sim-authority thing.
 
 **Blocked by:** 11.1, 11.5 (needs `velocity`/`atRest` on the wire), 11.3 (grace uses RTT).
 **Reopens:** ADR 0016.
+
+**Done (2026-09-02):**
+- `apps/client/src/propPrediction.ts` — `decayPropError` (pure Fiedler smoothing),
+  `graceTicksForRtt`, `PropPredictionController` (per-Prop state machine, error offsets,
+  `frame` / `renderPoses` / `captureBeforeReconcile` / `reseedAfterReconcile`).
+- `packages/shared` — `PROP_ERR_*` / `PROP_PREDICT_GRACE_*` tuning constants;
+  `mulQuat` / `conjugateQuat` / `dotQuat`; `Prop.applyAuthoritativeState` (aligned-gated
+  velocity); `RapierSimulation.setPredictedProps` / `consumeContactedProps` /
+  `applyAuthoritativePropState` (predicted Props skip the every-tick pin).
+- `main.ts` wires it into the frame loop and `reconcile`; net-graph shows `predProps`.
+- **Not done:** playtest validation; N-predicted-Props profiling.
 
 ---
 

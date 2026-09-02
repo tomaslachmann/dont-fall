@@ -4,6 +4,7 @@ export * from "./math/box.js";
 export * from "./tuning.js";
 export * from "./state/SimState.js";
 export * from "./state/interpolate.js";
+export * from "./state/errorOffset.js";
 export * from "./input/movementDirection.js";
 export * from "./timing/FixedSimulation.js";
 export * from "./timing/advanceFixed.js";

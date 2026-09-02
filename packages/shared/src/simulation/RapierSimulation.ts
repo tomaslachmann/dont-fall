@@ -8,9 +8,9 @@ import {
   BUMP_LIFT_RATIO,
   DEFAULT_KILL_PLANE_Y,
   GRAVITY_Y,
-  IMPACT_STAGGER_MIN,
 } from "../tuning.js";
 import { CharacterController, type CollisionListener } from "./CharacterController.js";
+import type { CharacterMotionState } from "./CharacterStateMachine.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
 import { MirrorCharacter } from "./MirrorCharacter.js";
@@ -26,13 +26,15 @@ import { Spinner, type SpinnerConfig } from "./Spinner.js";
  */
 export const DEFAULT_CHARACTER_ID = "local";
 
-/** Per-Character progress that belongs to the world, not the Character itself: where it Checkpointed, how many times it has Fallen, and its unpredictable-knockdown counter. */
+/** Per-Character progress that belongs to the world, not the Character itself. */
 interface CharacterProgress {
   respawnPoint: Vec3;
   checkpointIndex: number | null;
   fallCount: number;
-  /** Count of knockdowns the client couldn't reliably predict — a Bump or a ledge-edge Fall (ticket 08). See `CharacterSnapshot.bumpSeq`. */
-  bumpSeq: number;
+  /** Sim tick the current `motionState` phase began — the client derives the GettingUp blend from it (ADR 0023). Epoch and cause come from `CharacterController.snapshot()`. */
+  phaseStartTick: number;
+  /** The `motionState` seen in the previous snapshot, for transition detection. */
+  lastMotionState: CharacterMotionState;
 }
 
 export interface SimulationConfig {
@@ -146,6 +148,22 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    */
   private followPoses: (PropSnapshot | undefined)[] = [];
 
+  /**
+   * Client-only (ADR 0022, ticket 11.8): Prop indices the local Character is
+   * predicting right now. A predicted Prop is a live dynamic body — skipped by
+   * the every-tick pin to {@link followPoses} — until the render layer's grace
+   * lapses and clears it. Empty on the server and for a plain interpolation-only
+   * client.
+   */
+  private predictedProps = new Set<number>();
+
+  /**
+   * Client-only (ADR 0022): Prop indices the local Character's capsule contacted
+   * since {@link consumeContactedProps} was last called. Only tracked on a
+   * non-`authoritative` (client-prediction) simulation.
+   */
+  private readonly contactedProps = new Set<number>();
+
   private tickCount = 0;
 
   constructor(config: SimulationConfig = {}) {
@@ -193,7 +211,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     const onCollision: CollisionListener = (colliderHandle, hitPoint, velocity, normal) => {
       const spinner = this.spinnerByHandle.get(colliderHandle);
       if (spinner) {
-        this.characters.get(id)?.applyImpact(spinner.knockbackAt(hitPoint));
+        this.characters.get(id)?.applyImpact(spinner.knockbackAt(hitPoint), "Spinner");
         return;
       }
       const bumpedId = this.characterIdByHandle.get(colliderHandle);
@@ -203,17 +221,27 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       }
       const propIndex = this.propIndexByHandle.get(colliderHandle);
       if (propIndex !== undefined) {
-        // The shove takes effect on the server (Props are dynamic there); on a
-        // client the Prop is re-pinned to the server pose after the step, so
-        // this is a harmless no-op there (ADR 0016).
+        // The shove takes effect on the server (Props are dynamic there) and on
+        // a client for a Prop currently being predicted (ADR 0022); for a pinned
+        // Prop it is overwritten by the post-step re-pin, a harmless no-op
+        // (ADR 0016).
         this.props[propIndex]!.shove(velocity);
+        // Client-only: note the contact so the render layer can start / extend
+        // predicting this Prop (ADR 0022). Server sims are `authoritative`.
+        if (!this.authoritative) this.contactedProps.add(propIndex);
       }
     };
 
     const character = new CharacterController(this.world, point, onCollision, this.authoritative);
     this.characters.set(id, character);
     this.characterIdByHandle.set(character.colliderHandle, id);
-    this.progress.set(id, { respawnPoint: { ...point }, checkpointIndex: null, fallCount: 0, bumpSeq: 0 });
+    this.progress.set(id, {
+      respawnPoint: { ...point },
+      checkpointIndex: null,
+      fallCount: 0,
+      phaseStartTick: 0,
+      lastMotionState: "Controlled",
+    });
   }
 
   /**
@@ -229,8 +257,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    */
   private resolveBump(moverId: string, bumpedId: string, moverVelocity: Vec3, normal: Vec3): void {
     const bumped = this.characters.get(bumpedId);
-    const bumpedProgress = this.progress.get(bumpedId);
-    if (!bumped || !bumpedProgress) return;
+    if (!bumped) return;
 
     // `normal` points from the bumped Character back toward the mover, so
     // `-normal` is "from the mover toward the target" — the push direction.
@@ -244,12 +271,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
 
     const direction = normalizeVec3(vec3(-normal.x, BUMP_LIFT_RATIO, -normal.z));
     const magnitude = closingSpeed * BUMP_IMPULSE_SCALE;
-    bumped.applyImpact(scaleVec3(direction, magnitude));
-    // A Bump strong enough to change state is the one knockdown the client
-    // cannot predict — flag it so reconciliation force-applies it exactly once.
-    if (magnitude >= IMPACT_STAGGER_MIN) {
-      bumpedProgress.bumpSeq += 1;
-    }
+    bumped.applyImpact(scaleVec3(direction, magnitude), "Bump");
   }
 
   /** Remove a Character from the Match and free its Rapier bodies (ticket 01). */
@@ -305,7 +327,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    */
   reconcileCharacter(
     id: string,
-    base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs">,
+    base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs" | "dashing">,
   ): void {
     this.character(id).reconcileTo(base);
   }
@@ -370,17 +392,73 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       character.endTick();
       this.updateCheckpoint(id);
       this.detectFall(id);
+      // Stamp the tick a `motionState` phase begins, in sim-tick space, exactly
+      // once (ADR 0023). Must be here, not in `snapshot()` — that is called
+      // several times per client frame and before `syncTick` in reconcile.
+      const progress = this.progress.get(id)!;
+      if (character.motionState !== progress.lastMotionState) {
+        progress.phaseStartTick = this.tickCount;
+        progress.lastMotionState = character.motionState;
+      }
     }
 
     // Client-only (ADR 0012 / 0016, ticket 06): every Prop is pinned to the
     // authoritative snapshot pose for this tick — a solid obstacle for the
     // local Character's prediction, never simulated locally. On the server
     // `followPoses` is empty, so every Prop stays fully dynamic and
-    // authoritative.
+    // authoritative. A Prop the render layer is predicting (ADR 0022) is left
+    // to simulate freely — it is seeded from the server on every reconcile.
+    //
+    // Also skipped: a Prop contacted THIS tick (`contactedProps`, set above by
+    // `onCollision`, which runs during `beginTick` — before `world.step()`).
+    // `predictedProps` is only updated once per FRAME, from the render layer,
+    // AFTER this tick's `consumeContactedProps()` has even been read — so on
+    // the very tick a contact first registers, the Prop is *never* in
+    // `predictedProps` yet. Without this exemption the shove (applied moments
+    // ago, in this same tick's `beginTick`) gets pinned straight back to the
+    // stale pre-shove pose before anyone outside this method ever sees it
+    // moved — a regression from ticket 06's original same-tick exemption
+    // (`!contactedProps.has(i)`), dropped when ADR 0016 removed Prop
+    // prediction entirely and never restored when ADR 0022 (ticket 11.8)
+    // reintroduced it. Restored here, unconditionally (not gated on
+    // `authoritative`) — `contactedProps` is already only ever populated on a
+    // non-authoritative sim, so it's empty (a no-op) on the server.
     for (let i = 0; i < this.props.length; i += 1) {
+      if (this.predictedProps.has(i) || this.contactedProps.has(i)) continue;
       const pose = this.followPoses[i];
       if (pose) this.props[i]!.follow(pose);
     }
+  }
+
+  /**
+   * Client-only (ADR 0022, ticket 11.8): the set of Prop indices to leave
+   * unpinned and simulate locally this frame. The client's render layer
+   * (`apps/client/src/propPrediction.ts`) decides membership from local contact
+   * plus a grace window and calls this once per frame before the predict loop.
+   */
+  setPredictedProps(indices: Iterable<number>): void {
+    this.predictedProps = new Set(indices);
+  }
+
+  /**
+   * Client-only (ADR 0022): Prop indices the local Character's capsule has
+   * contacted since the last call. Clears on read — call once per frame after
+   * the predict loop.
+   */
+  consumeContactedProps(): number[] {
+    const out = [...this.contactedProps];
+    this.contactedProps.clear();
+    return out;
+  }
+
+  /**
+   * Client-only (ADR 0022): overwrite one predicted Prop's dynamic state with
+   * the server's authoritative pose + velocity, so a replay converges instead
+   * of drifting. Called from `reconcile` before the local-input replay, for
+   * every currently-predicted Prop. See {@link Prop.applyAuthoritativeState}.
+   */
+  applyAuthoritativePropState(index: number, pose: PropSnapshot): void {
+    this.props[index]?.applyAuthoritativeState(pose);
   }
 
   /**
@@ -393,7 +471,11 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * `reconcile` calls it with the raw acked-snapshot poses before a replay.
    */
   syncPropsToSnapshot(poses: readonly PropSnapshot[]): void {
-    this.followPoses = poses.map((p) => ({ position: { ...p.position }, rotation: { ...p.rotation } }));
+    this.followPoses = poses.map((p) => ({
+      position: { ...p.position },
+      rotation: { ...p.rotation },
+      atRest: p.atRest,
+    }));
   }
 
   private updateCheckpoint(id: string): void {
@@ -415,10 +497,6 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     if (character.hasPendingRespawn || character.position.y >= this.killPlaneY) return;
 
     progress.fallCount += 1;
-    // A Fall is a knockdown the client can mispredict at a ledge edge (sub-tick
-    // position divergence) — flag it like a Bump so reconciliation force-applies
-    // it once if the client missed it (ticket 08).
-    progress.bumpSeq += 1;
     character.fall(progress.respawnPoint, progress.fallCount);
   }
 
@@ -430,7 +508,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
         ...character.snapshot(),
         checkpointIndex: progress.checkpointIndex,
         fallCount: progress.fallCount,
-        bumpSeq: progress.bumpSeq,
+        phaseStartTick: progress.phaseStartTick,
       });
     }
     return {

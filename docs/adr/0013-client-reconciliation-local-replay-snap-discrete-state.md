@@ -34,3 +34,37 @@ snap discrete/logical state outright.
   transform (position/rotation) — it must never be applied across a state-machine
   transition, matching the precedent ADR 0006 already set on the remote-interpolation
   side.
+
+## Superseded in part by ADR 0026 (2026-09)
+
+The deferred "positional error-smoothing … as feel-tuning" is now decided: it is a
+**decaying render-time error offset** (the ADR 0022 mechanism, `0.5^(dt/halfLife)`,
+half-life ≈ 100 ms), and the *simulation* reconciles **unconditionally** on any real
+disagreement — the `RECONCILE_POSITION_ERROR = 0.2` correct-or-ignore threshold is retired
+(it happened to equal one 30 Hz walk-step, so a one-tick phase slip parked on it and
+popped). Local replay and "discrete state always snaps" — the core of this ADR — stand
+unchanged. See `docs/research/m2-prediction-reconciliation-loop.md`.
+
+## Forward note: `reconcileTo`'s teleport has an inherent ~1-tick residual (2026-09)
+
+While stress-testing the ADR 0026 dash fix (reconciling literally every tick, an
+unrealistically extreme case no real jitter/LEAD schedule produces), a small but genuine
+position residual showed up on **every** reconcile-then-replay, proportional to the
+Character's current speed at roughly one tick's worth of travel (~0.2 u walking, up to
+~0.7 u mid-dash) — **even with zero actual divergence**: a client and an independent
+"truth" simulation fed the byte-identical input stream, no jitter, no network at all. Traced
+to `reconcileTo`'s `this.body.setTranslation({...base.position}, false)` — a teleport — not
+perfectly reproducing, one tick later, what a continuously-simulated kinematic capsule's
+`computeColliderMovement` sweep would have produced from the same position (Rapier's own
+docs warn a direct `setTranslation` "may result in odd behaviors" — this is presumably that,
+at a small scale, on flat open ground with nothing else nearby to interact with).
+
+Not a regression, not dash-specific (confirmed identical at the same relative scale for
+plain walking), and not actionable at the `CharacterController`/`DashController` level — it's
+exactly the kind of residual ADR 0026's render-time offset exists to hide (ticket 12) and
+ADR 0027's tick-addressed consumption exists to make rare (ticket 13), both already shipped.
+Recorded here so a future investigator hitting this same "before/after reconcile position
+differs slightly, even with no real divergence" signal doesn't re-diagnose it as a new bug —
+see `RapierSimulation.test.ts` › "reconciles EVERY tick, across two back-to-back dashes..."
+for how this was isolated (its own assertions deliberately check `dashSpeed`/`dashCooldownMs`
+instead of position, for exactly this reason).

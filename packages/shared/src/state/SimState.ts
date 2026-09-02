@@ -5,6 +5,14 @@ import type { BoneSnapshot } from "../simulation/ragdollSkeleton.js";
 
 export type { CharacterMotionState, BoneSnapshot, PropSnapshot };
 
+/**
+ * Why a Character was knocked down (ADR 0023). Carried so the client can play
+ * cause-specific one-shot effects (camera kick, hit-react, impact SFX). 2 bits
+ * on the wire once binary encoding lands — a fifth cause is a protocol-version
+ * change (known limitation).
+ */
+export type RagdollCause = "Bump" | "Fall" | "DashWall" | "Spinner";
+
 export interface CharacterSnapshot {
   /** The point the camera follows: capsule centre while upright, pelvis while ragdolling. */
   position: Vec3;
@@ -18,10 +26,12 @@ export interface CharacterSnapshot {
   /** How many times this Character has Fallen and Respawned. */
   fallCount: number;
   /**
-   * True only on the tick a Respawn teleported the Character. The renderer must
-   * snap rather than interpolate through this frame.
+   * Monotonic count of Respawn teleports (ADR 0023, Q9). The renderer holds the
+   * last value it saw per Character and snaps — no interpolation — when it
+   * changes. A one-tick boolean was lost whenever the interpolation buffer
+   * skipped or coalesced the exact respawn tick.
    */
-  teleported: boolean;
+  respawnCount: number;
   /** Milliseconds left on the Dash cooldown; 0 means Dash is ready. */
   dashCooldownMs: number;
   /** Whether a Dash burst is currently playing out (as opposed to merely on cooldown). */
@@ -36,15 +46,20 @@ export interface CharacterSnapshot {
    */
   lastInputTick: number;
   /**
-   * Monotonic counter, advanced each time this Character took a knockdown the
-   * client could mispredict — a Bump from another player, or a Fall at a ledge
-   * edge (ticket 08); a dash-into-wall / Spinner knockdown carries no new
-   * `bumpSeq`. No longer consulted by reconciliation (ADR 0015 made every
-   * server-reported down state unconditional, superseding ADR 0014's
-   * `bumpSeq`-gated force) — retained as a plausible carrier for a future
-   * one-shot networked-event id (research §2.2: SFX/camera-kick gating).
+   * Rises on every entry to `Ragdoll` (ADR 0023). "This is a new down episode"
+   * — the client applies a snapshot-delivered one-shot effect iff
+   * `ragdollEpoch > lastAppliedEpoch`, and the prediction-tick guard uses it to
+   * tell a fresh server knockdown from a stale echo.
    */
-  bumpSeq: number;
+  ragdollEpoch: number;
+  /** Why the current / most recent knockdown happened (ADR 0023). */
+  ragdollCause: RagdollCause;
+  /**
+   * The sim tick the current `motionState` phase began. The client derives the
+   * GettingUp blend from it locally (anchor-tick + local derivation, the
+   * `spinnerAngleAt` pattern) rather than the server sending a progress float.
+   */
+  phaseStartTick: number;
   /**
    * Per-bone transforms while `motionState` is `Ragdoll` or `GettingUp`, in
    * `RAGDOLL_BONES` order; empty otherwise (the renderer draws the capsule).
@@ -76,12 +91,14 @@ export interface CharacterSnapshotFields {
   motionState?: CharacterMotionState;
   checkpointIndex?: number | null;
   fallCount?: number;
-  teleported?: boolean;
+  respawnCount?: number;
   dashCooldownMs?: number;
   dashing?: boolean;
   dashSpeed?: number;
   lastInputTick?: number;
-  bumpSeq?: number;
+  ragdollEpoch?: number;
+  ragdollCause?: RagdollCause;
+  phaseStartTick?: number;
   bones?: BoneSnapshot[];
 }
 
@@ -92,11 +109,13 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   motionState: fields.motionState ?? "Controlled",
   checkpointIndex: fields.checkpointIndex ?? null,
   fallCount: fields.fallCount ?? 0,
-  teleported: fields.teleported ?? false,
+  respawnCount: fields.respawnCount ?? 0,
   dashCooldownMs: fields.dashCooldownMs ?? 0,
   dashing: fields.dashing ?? false,
   dashSpeed: fields.dashSpeed ?? 0,
   lastInputTick: fields.lastInputTick ?? 0,
-  bumpSeq: fields.bumpSeq ?? 0,
+  ragdollEpoch: fields.ragdollEpoch ?? 0,
+  ragdollCause: fields.ragdollCause ?? "Fall",
+  phaseStartTick: fields.phaseStartTick ?? 0,
   bones: fields.bones ?? [],
 });

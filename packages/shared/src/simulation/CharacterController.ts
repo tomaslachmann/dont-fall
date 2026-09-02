@@ -12,6 +12,7 @@ import {
   GETUP_TICKS,
   GRAVITY_Y,
   GROUND_STICK_SPEED,
+  IMPACT_STAGGER_MIN,
   RAGDOLL_IMPACT_VELOCITY_SCALE,
   RAGDOLL_SETTLE_SPEED,
   RESPAWN_FLOP_IMPULSE,
@@ -19,7 +20,7 @@ import {
   WALK_SPEED,
   WALL_NORMAL_MAX_Y,
 } from "../tuning.js";
-import type { CharacterSnapshot } from "../state/SimState.js";
+import type { CharacterSnapshot, RagdollCause } from "../state/SimState.js";
 import { CharacterStateMachine, type CharacterMotionState } from "./CharacterStateMachine.js";
 import { CHARACTER_GROUPS, GROUP_CHARACTER } from "./collisionGroups.js";
 import { DashController, JumpController } from "./movementVerbs.js";
@@ -73,7 +74,12 @@ export interface CharacterState {
   velocity: Vec3;
   grounded: boolean;
   motionState: CharacterMotionState;
-  teleported: boolean;
+  /** Monotonic count of Respawn teleports — the renderer snaps on a change (ADR 0023). */
+  respawnCount: number;
+  /** Rises on every entry to `Ragdoll` (ADR 0023). */
+  ragdollEpoch: number;
+  /** Why the current / most recent knockdown happened (ADR 0023). */
+  ragdollCause: RagdollCause;
   dashCooldownMs: number;
   /** Whether a Dash burst is currently playing out (for the renderer to speed up the movement animation). */
   dashing: boolean;
@@ -110,7 +116,18 @@ export class CharacterController {
   /** Capsule velocity (units/s): `x`/`z` set fresh each Controlled tick, `y` integrated. */
   private velocity: Vec3 = vec3();
   private grounded = false;
-  private teleportedThisTick = false;
+  /**
+   * Monotonic count of Respawn teleports (ADR 0023 / Q9). The renderer holds the
+   * last value it saw and snaps (no interpolation) when it changes — robust
+   * against the interpolation buffer skipping the exact respawn tick, which a
+   * one-tick boolean was not.
+   */
+  private respawnCount = 0;
+  /** Rises on every entry to `Ragdoll` (ADR 0023). */
+  private ragdollEpoch = 0;
+  /** Cause latched on the last Ragdoll entry; `pendingCause` is what the next entry will latch. */
+  private ragdollCause: RagdollCause = "Fall";
+  private pendingCause: RagdollCause = "Fall";
   /** Set by {@link beginTick}, read by {@link endTick} once the shared `world.step()` has run. */
   private tickingRagdoll = false;
 
@@ -177,6 +194,11 @@ export class CharacterController {
     return this.collider.handle;
   }
 
+  /** The current motion state — a cheap read (no bone/pose computation), for transition detection. */
+  get motionState(): CharacterMotionState {
+    return this.machine.state;
+  }
+
   /** Whether a Fall-triggered respawn is queued for the top of the next tick. */
   get hasPendingRespawn(): boolean {
     return this.pendingRespawn !== null;
@@ -188,8 +210,12 @@ export class CharacterController {
    * vector is the shove applied to the ragdoll. If the Character is already down,
    * the shove flails it right away.
    */
-  applyImpact(impulse: Vec3): void {
+  applyImpact(impulse: Vec3, cause: RagdollCause = "Bump"): void {
     const magnitude = lengthVec3(impulse);
+    // Only an impact big enough to change state names the cause of the knockdown
+    // it will trigger — a sub-threshold nudge from lingering contact must not
+    // overwrite a real cause latched earlier (ADR 0023).
+    if (magnitude >= IMPACT_STAGGER_MIN) this.pendingCause = cause;
     this.machine.impact(magnitude);
     if (!this.pendingImpact || magnitude > this.pendingImpact.magnitude) {
       this.pendingImpact = { magnitude, impulse: { ...impulse } };
@@ -200,6 +226,7 @@ export class CharacterController {
   /** Queue a Fall respawn at `point`, applied at the top of the next {@link tick}. */
   fall(point: Vec3, fallCount: number): void {
     this.resetMovementControllers();
+    this.pendingCause = "Fall";
     this.machine.forceRagdoll();
     this.pendingRespawn = { point: { ...point }, fallCount };
   }
@@ -213,7 +240,6 @@ export class CharacterController {
    * with a `world.step()` between them, exactly like this used to be one method.
    */
   beginTick(input: SimInputs): void {
-    this.teleportedThisTick = false;
 
     const jumpPressed = input.jumpHeld && !this.jumpHeldLastTick;
     const dashPressed = input.dashHeld && !this.dashHeldLastTick;
@@ -231,6 +257,13 @@ export class CharacterController {
     const settled =
       this.authoritative && this.ragdoll.isActive && this.ragdoll.maxSpeed() < RAGDOLL_SETTLE_SPEED;
     const state = this.machine.tick(settled);
+
+    // Every entry to Ragdoll is a new down episode (ADR 0023) — whether it came
+    // from an Impact, a forced Fall, or the Respawn flop.
+    if (state === "Ragdoll" && prevState !== "Ragdoll") {
+      this.ragdollEpoch += 1;
+      this.ragdollCause = this.pendingCause;
+    }
 
     if (this.pendingRespawn) {
       this.respawnAtCheckpoint(this.pendingRespawn);
@@ -335,7 +368,7 @@ export class CharacterController {
       const normal = vec3(collision.normal1.x, collision.normal1.y, collision.normal1.z);
 
       if (dashingFastEnough && !hitCharacter && Math.abs(normal.y) < WALL_NORMAL_MAX_Y) {
-        this.applyImpact(dashWallKnockback(normal));
+        this.applyImpact(dashWallKnockback(normal), "DashWall");
       }
 
       if (this.onCollision) {
@@ -375,7 +408,7 @@ export class CharacterController {
 
   private respawnAtCheckpoint(respawn: PendingRespawn): void {
     this.pendingRespawn = null;
-    this.teleportedThisTick = true;
+    this.respawnCount += 1;
     this.getupBones = [];
     this.pendingImpact = null;
     this.collider.setEnabled(false);
@@ -439,7 +472,9 @@ export class CharacterController {
       velocity: { ...velocity },
       grounded: this.grounded,
       motionState: state,
-      teleported: this.teleportedThisTick,
+      respawnCount: this.respawnCount,
+      ragdollEpoch: this.ragdollEpoch,
+      ragdollCause: this.ragdollCause,
       dashCooldownMs: this.dash.cooldownMs,
       dashing: this.dash.isActive,
       dashSpeed: this.dashSpeed,
@@ -467,10 +502,14 @@ export class CharacterController {
    *   rule; ADR 0014's `bumpSeq`/`forceRagdoll` gate is superseded.
    * - **Server reports `Controlled`/`Stagger`:** restore the capsule transform,
    *   velocity, ground flag, motion state and dash cooldown from the snapshot;
-   *   the caller then replays buffered inputs from here.
+   *   the caller then replays buffered inputs from here. `dashing` tells the
+   *   dash controller whether an in-progress local burst should keep playing
+   *   out (see {@link DashController.restoreCooldownMs}) —
+   *   reconciliation must not silently truncate a burst the server agrees is
+   *   still happening.
    */
   reconcileTo(
-    base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs">,
+    base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs" | "dashing">,
   ): void {
     const serverDown = isDown(base.motionState);
 
@@ -500,7 +539,7 @@ export class CharacterController {
     this.velocity = { ...base.velocity };
     this.grounded = base.grounded;
     this.machine.snapTo(base.motionState);
-    this.dash.restoreCooldownMs(base.dashCooldownMs);
+    this.dash.restoreCooldownMs(base.dashCooldownMs, base.dashing);
     this.jump.reset(); // stale coyote/hold bookkeeping would let replay grant a jump the server won't
     this.pendingRespawn = null; // a Fall the client predicted but the server (this base) hasn't seen
   }

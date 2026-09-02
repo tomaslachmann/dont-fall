@@ -26,7 +26,7 @@ const BOX_STEP = 0.2; // units the box moves per server tick (a steady push)
 const snapshotAtTick = (tick: number): SimState => ({
   tick,
   characters: {},
-  props: [{ position: { x: tick * BOX_STEP, y: 0.4, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 } }],
+  props: [{ position: { x: tick * BOX_STEP, y: 0.4, z: 0 }, rotation: { x: 0, y: 0, z: 0, w: 1 }, atRest: false }],
 });
 
 interface Arrival {
@@ -117,13 +117,53 @@ describe("client snapshot interpolation — smoothness under realistic arrival j
   });
 
   it("holds the latest pose without jumping backward when a snapshot is late (buffer underrun)", () => {
-    // One snapshot arrives very late — 40 ms past nominal, past the interp delay.
+    // One snapshot arrives very late — well past the interp delay (~66.7 ms at 30 Hz).
     const late = jitteredArrivals(20);
-    late[12]!.atMs = 12 * TICK_MS + 55;
+    late[12]!.atMs = 12 * TICK_MS + 90;
     const rendered = renderBuffered(late, renderTimes.slice(0, 40));
     const deltas = frameDeltas(rendered);
     // The box may briefly hold (delta ≈ 0) but must never move backward.
     expect(Math.min(...deltas)).toBeGreaterThanOrEqual(-1e-9);
+  });
+
+  it("setSnapshotHz widens the playout delay — a 20 Hz stream underruns a 30 Hz-configured buffer, holds after adopting 20", () => {
+    const at20 = Array.from({ length: 40 }, (_, k) => ({ state: snapshotAtTick(k * 1.5), atMs: k * (TICK_MS * 1.5) + 3 }));
+    // (tick spacing 1.5 stands in for a 20 Hz snapshot rate on a 30 Hz sim.)
+    const rt = Array.from({ length: 200 }, (_, i) => i * RENDER_MS);
+
+    const def = new SnapshotInterpolator(); // 30 Hz default → 66.7 ms delay
+    const adopted = new SnapshotInterpolator();
+    adopted.setSnapshotHz(20); // → 100 ms delay
+
+    let nextD = 0;
+    let nextA = 0;
+    let defUnderruns = 0;
+    let adoptedUnderruns = 0;
+    for (const now of rt) {
+      while (nextD < at20.length && at20[nextD]!.atMs <= now) def.receive(at20[nextD++]!.state, now);
+      while (nextA < at20.length && at20[nextA]!.atMs <= now) adopted.receive(at20[nextA++]!.state, now);
+      if (def.ready) {
+        def.sample(now);
+        if (def.holdingLatest) defUnderruns += 1;
+      }
+      if (adopted.ready) {
+        adopted.sample(now);
+        if (adopted.holdingLatest) adoptedUnderruns += 1;
+      }
+    }
+    expect(adoptedUnderruns).toBeLessThan(defUnderruns);
+  });
+
+  it("estimatedServerTick tracks the live server tick, undelayed (unlike renderTick)", () => {
+    const interp = new SnapshotInterpolator();
+    interp.setServerClockOffsetMs(0); // client and server clocks share an epoch, for this test
+    const serverTimeMs = 10 * TICK_MS; // the server built the tick-10 snapshot at this server-clock reading
+    const arrivedAtMs = serverTimeMs + 5; // 5 ms transit
+    interp.receive(snapshotAtTick(10), arrivedAtMs, serverTimeMs);
+    const now = arrivedAtMs + 20; // 20 ms later, no new snapshot yet
+    // renderTick is interpDelayMs behind; estimatedServerTick is not.
+    expect(interp.estimatedServerTick(now)).toBeGreaterThan(interp.renderTick(now));
+    expect(interp.estimatedServerTick(now)).toBeCloseTo(10 + 25 / TICK_MS, 3);
   });
 
   it("stays smooth over a long stream despite local↔server clock drift", () => {
