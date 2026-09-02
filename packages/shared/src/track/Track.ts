@@ -21,6 +21,20 @@ export interface Segment {
 export type Track = Segment[];
 
 /**
+ * One row of track-service's `GET /tracks` listing (ticket 09/ADR 0032) — a
+ * Track's id/name/author/createdAt without its full Segment data. Shared
+ * between track-service (the producer) and the Track builder (the consumer)
+ * so the two never silently drift apart (code review, ticket 09 — this used
+ * to be declared separately in each).
+ */
+export interface TrackListing {
+  id: string;
+  name: string | null;
+  authorId: string;
+  createdAt: number;
+}
+
+/**
  * Places `moduleId` right after `prev` by aligning `nextModule`'s `entrySocketId`
  * Socket against `prevModule`'s `exitSocketId` Socket (ADR 0031) — the two
  * Sockets end up at the same world position, facing each other (180° apart).

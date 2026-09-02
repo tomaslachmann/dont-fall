@@ -1,4 +1,6 @@
-import type { Track } from "@dont-fall/shared";
+import type { Track, TrackListing } from "@dont-fall/shared";
+
+export type { TrackListing };
 
 export interface StoredTrackResponse {
   id: string;
@@ -23,12 +25,6 @@ export const loadTrack = async (baseUrl: string, id: string): Promise<StoredTrac
   if (!res.ok) throw new Error(`load failed: HTTP ${res.status}`);
   return (await res.json()) as StoredTrackResponse;
 };
-
-export interface TrackListing {
-  id: string;
-  name: string | null;
-  createdAt: number;
-}
 
 /** Lists every stored Track (`GET /tracks`, ticket 09) — the Browse panel's data source. */
 export const listTracks = async (baseUrl: string): Promise<TrackListing[]> => {

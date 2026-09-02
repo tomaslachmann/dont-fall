@@ -36,4 +36,15 @@ describe("unknownModuleIds", () => {
   it("is empty for an empty Track", () => {
     expect(unknownModuleIds([], MODULES)).toEqual([]);
   });
+
+  it("rejects a moduleId that only matches an inherited Object.prototype property (code review)", () => {
+    const track: Track = [
+      { moduleId: "toString", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { moduleId: "constructor", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { moduleId: "hasOwnProperty", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+    ];
+    expect(unknownModuleIds(track, MODULES)).toEqual(
+      expect.arrayContaining(["toString", "constructor", "hasOwnProperty"]),
+    );
+  });
 });

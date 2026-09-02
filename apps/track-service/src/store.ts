@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
-import type { Track } from "@dont-fall/shared";
+import { desc, eq, sql } from "drizzle-orm";
+import type { Track, TrackListing } from "@dont-fall/shared";
 import type { TrackDb } from "./db.js";
 import { tracks } from "./schema.js";
+
+export type { TrackListing };
 
 /**
  * Single hardcoded author for every published Revision (ADR 0032) —
@@ -21,13 +23,6 @@ export interface StoredTrack {
   contentHash: string;
 }
 
-export interface TrackListing {
-  id: string;
-  name: string | null;
-  authorId: string;
-  createdAt: number;
-}
-
 const toStored = (row: typeof tracks.$inferSelect): StoredTrack => ({
   id: row.trackId,
   name: row.name,
@@ -37,8 +32,26 @@ const toStored = (row: typeof tracks.$inferSelect): StoredTrack => ({
   contentHash: row.contentHash,
 });
 
+/**
+ * Deterministic JSON serialization — object keys sorted recursively, array
+ * element order preserved (a Track's Segment order is semantically
+ * significant; only key order inside each Segment object is incidental).
+ * Code review (ticket 10): plain `JSON.stringify` is key-order-sensitive, so
+ * two requests encoding the identical Track with differently-ordered object
+ * keys used to hash differently — breaking the "same content always hashes
+ * the same" guarantee this exists for.
+ */
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+};
+
 /** Canonical content hash — same Track content always hashes the same, independent of `trackId`/`revision`/`name`. */
-const hashTrack = (track: Track): string => createHash("sha256").update(JSON.stringify(track)).digest("hex");
+const hashTrack = (track: Track): string => createHash("sha256").update(canonicalJson(track)).digest("hex");
 
 /**
  * Publishes a Track — a hand-built one from the builder (ticket 04) or a
@@ -47,7 +60,10 @@ const hashTrack = (track: Track): string => createHash("sha256").update(JSON.str
  * (ADR 0032): publishing the same `trackId` again inserts Revision N+1.
  */
 export const saveTrack = (db: TrackDb, input: { id?: string; name?: string; track: Track }): { id: string } => {
-  const trackId = input.id ?? randomUUID();
+  // An empty string is treated the same as absent (code review, ticket 10) —
+  // otherwise it becomes a real, permanently unfetchable trackId (the
+  // `GET /tracks/:id` route requires at least one non-slash character).
+  const trackId = input.id && input.id.length > 0 ? input.id : randomUUID();
   const latest = db
     .select({ revision: tracks.revision })
     .from(tracks)
@@ -98,19 +114,24 @@ export const getAnyTrack = (db: TrackDb): StoredTrack | undefined => {
  * Tracks, so the builder needs something to Browse).
  */
 export const listTracks = (db: TrackDb): TrackListing[] => {
-  const rows = db
-    .select({ trackId: tracks.trackId, name: tracks.name, authorId: tracks.authorId, createdAt: tracks.createdAt })
-    .from(tracks)
-    .orderBy(desc(tracks.createdAt))
-    .all();
-  const seen = new Set<string>();
-  const latestPerTrack: TrackListing[] = [];
-  for (const row of rows) {
-    if (seen.has(row.trackId)) continue;
-    seen.add(row.trackId);
-    latestPerTrack.push({ id: row.trackId, name: row.name, authorId: row.authorId, createdAt: row.createdAt });
-  }
-  return latestPerTrack;
+  // Code review (ticket 10): the previous version sorted by `createdAt` and
+  // deduped in JS, which (a) ties can misorder on millisecond collisions —
+  // "latest" must mean highest `revision`, not latest `createdAt` — and
+  // (b) pulled every Revision of every Track out of SQLite just to throw
+  // most of them away. This correlated subquery does the "latest per
+  // trackId" selection in SQL directly.
+  // No real pagination yet (code review, ticket 09/10) — premature for an
+  // internal tool at today's scale (this project's own established
+  // pattern: don't build for speculative scale). `LIMIT` is just a cheap
+  // safety net against an unbounded payload/scan, not a paging UI.
+  const rows = db.all<{ trackId: string; name: string | null; authorId: string; createdAt: number }>(sql`
+    SELECT track_id as trackId, name, author_id as authorId, created_at as createdAt
+    FROM tracks t1
+    WHERE revision = (SELECT MAX(revision) FROM tracks t2 WHERE t2.track_id = t1.track_id)
+    ORDER BY created_at DESC
+    LIMIT 500
+  `);
+  return rows.map((row) => ({ id: row.trackId, name: row.name, authorId: row.authorId, createdAt: row.createdAt }));
 };
 
 /** Seeds `track` under `id` only if no Track has ever been published (idempotent startup seeding). */

@@ -10,7 +10,12 @@ import type { Module, Track } from "@dont-fall/shared";
 export const unknownModuleIds = (track: Track, modules: Record<string, Module>): string[] => {
   const unknown = new Set<string>();
   for (const segment of track) {
-    if (!(segment.moduleId in modules)) unknown.add(segment.moduleId);
+    // `Object.hasOwn`, not `in` (code review): `in` walks the prototype
+    // chain, so a moduleId like "toString"/"constructor"/"hasOwnProperty"
+    // would wrongly read as "known" against any plain object literal,
+    // passing validation and then crashing `resolveTrack` downstream with a
+    // TypeError instead of a clear rejection here.
+    if (!Object.hasOwn(modules, segment.moduleId)) unknown.add(segment.moduleId);
   }
   return [...unknown];
 };

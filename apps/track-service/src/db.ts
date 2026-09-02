@@ -17,6 +17,23 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
   sqlite.pragma("journal_mode = WAL");
 
   const db = drizzle(sqlite, { schema });
+
+  // Code review (ticket 10): `CREATE TABLE IF NOT EXISTS` is a no-op against
+  // a pre-ticket-10 database (the old single-`id`-primary-key schema), which
+  // would otherwise crash every query with "no such column: track_id". This
+  // project has never actually deployed track-service anywhere persistent
+  // (ticket 13, verifying Docker for real, hasn't landed yet) — there is no
+  // real published content anywhere to preserve — so on detecting the old
+  // schema this drops and recreates the table rather than migrating data
+  // that doesn't exist. Revisit with a real migration if that stops being
+  // true (an actual deployment with content worth keeping).
+  const existingColumns = sqlite.pragma("table_info(tracks)") as { name: string }[];
+  const hasOldSchema = existingColumns.length > 0 && !existingColumns.some((c) => c.name === "track_id");
+  if (hasOldSchema) {
+    console.warn("track-service: dropping tracks table with the pre-Revision schema (no data to migrate yet)");
+    sqlite.exec("DROP TABLE tracks");
+  }
+
   // ADR 0032: a (track_id, revision) row per publish — never mutated, never
   // upserted. `author_id` is deliberately mocked (`DEFAULT_AUTHOR_ID` in
   // `store.ts`) until a real Account system exists.

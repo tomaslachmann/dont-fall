@@ -196,6 +196,10 @@ $("browse-toggle").addEventListener("click", () => {
   void (async () => {
     try {
       const tracks = await listTracks(serviceUrlInput.value);
+      // A pending fetch can resolve after Playtest started (and force-closed
+      // this panel) — don't let a stale response reopen it over a running
+      // playtest (code review, ticket 09).
+      if (mode !== "edit") return;
       browseList.replaceChildren();
       for (const t of tracks) {
         const row = document.createElement("div");
