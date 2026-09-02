@@ -20,13 +20,14 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
 
   // Code review (ticket 10): `CREATE TABLE IF NOT EXISTS` is a no-op against
   // a pre-ticket-10 database (the old single-`id`-primary-key schema), which
-  // would otherwise crash every query with "no such column: track_id". This
-  // project has never actually deployed track-service anywhere persistent
-  // (ticket 13, verifying Docker for real, hasn't landed yet) — there is no
-  // real published content anywhere to preserve — so on detecting the old
-  // schema this drops and recreates the table rather than migrating data
-  // that doesn't exist. Revisit with a real migration if that stops being
-  // true (an actual deployment with content worth keeping).
+  // would otherwise crash every query with "no such column: track_id". Ticket
+  // 13 verified Docker + the named `/data` volume for real, but that's still
+  // solo local dev, not a real deployment with content worth keeping — so on
+  // detecting the old schema this still drops and recreates the table rather
+  // than migrating data that doesn't exist. Revisit with a real migration
+  // once that stops being true (an actual deployment with content worth
+  // keeping — code review, ticket 13: don't let this drift further without
+  // re-checking, now that the volume genuinely persists across restarts).
   const existingColumns = sqlite.pragma("table_info(tracks)") as { name: string }[];
   const hasOldSchema = existingColumns.length > 0 && !existingColumns.some((c) => c.name === "track_id");
   if (hasOldSchema) {

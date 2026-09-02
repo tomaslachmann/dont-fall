@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Starts everything needed to play locally: track-service, the Match server,
-# and the client dev server. track-service must be reachable before the Match
-# server will start (ADR 0028's accepted runtime dependency — it fetches a
-# Track at startup and fails loudly, on purpose, if it can't) — so this waits
-# for its health check before starting the other two, rather than papering
-# over the dependency with retry logic in the server itself.
+# Starts everything needed to play locally: track-service (via Docker, ticket
+# 13 — matching how it actually runs in practice, ADR 0028/0029), the Match
+# server, and the client dev server. track-service must be reachable before
+# the Match server will start, so this waits for its health check before
+# starting the other two, giving a clean local-dev failure point rather than
+# relying on the Match server's own bounded startup retry (ticket 12, a
+# safety net for real container-start-order races, not the primary signal
+# here).
 #
 # The Track builder (apps/track-builder) is a dev tool, not part of playing
 # the game, so it's off by default — pass --builder (or -b) to also start it.
@@ -30,6 +32,13 @@ cleanup() {
   [ "$CLEANED_UP" = 1 ] && return
   CLEANED_UP=1
   echo "Stopping dev processes..."
+  # `docker compose down` is the normal way track-service stops now, but
+  # 8081 stays in the force-kill list too (code review, ticket 13) — if
+  # `docker compose up --build` never actually got track-service listening,
+  # or a stray non-Docker process is already squatting on 8081 from earlier
+  # manual debugging, `docker compose down` won't touch it and this port
+  # would otherwise go uncleaned, unlike every other dev port.
+  docker compose down
   # `pnpm --filter ... dev &` backgrounds a pnpm wrapper, not tsx/vite
   # themselves — pnpm doesn't forward the signal to what it spawned, so
   # killing the job's own PID leaves the real process listening. Kill by
@@ -38,7 +47,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-pnpm --filter @dont-fall/track-service dev &
+docker compose up --build &
 
 echo "Waiting for track-service..."
 until curl -sf http://localhost:8081/health >/dev/null 2>&1; do
