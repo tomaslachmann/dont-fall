@@ -85,6 +85,14 @@ A dynamic physics body that reacts to being bumped (a box, a ball) but never
 threatens the Character on its own. Contrast with Obstacle.
 _Avoid_: crate (see Item Box), object, decoration
 
+**Projectile**:
+A dynamic physics body spawned at runtime by an Obstacle (e.g. a cannon), with
+an initial velocity, that threatens the Character on contact and despawns
+after its lifetime. Contrast with Prop (permanent, never threatens) and
+Obstacle (stationary, pre-placed). Full spawn/replication design deferred
+(post-M3).
+_Avoid_: bullet, shot
+
 **Checkpoint**:
 A point on the Track that a Character respawns at after a Fall.
 

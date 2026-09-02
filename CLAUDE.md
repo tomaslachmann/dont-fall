@@ -30,7 +30,12 @@ FIFO (ADR 0027); Character-to-Character Bump reuses the M1 Impact pipeline one-s
 remain explicitly deferred as non-blocking polish (predicted-ragdoll jitter, Wobble
 disabled for M2) — see M2.md's checklist.
 
-**Next:** M3 — Procedural Segments (build a Track from Modules).
+**Now implementing M3** — Procedural Segments (`docs/milestones/M3.md`). Design settled via a
+grilling session cross-checked against `docs/research/m3-track-storage.md`; recorded as ADR
+0028 / 0029 / 0030. Tickets 01–06 in `.scratch/m3-procedural-segments/issues/`: Module library
+extracted from M1 (01); track-service scaffold, SQLite-seeded (02); Match server fetches its
+Track from track-service (03); Track builder — place/save with Module + Track visual previews
+(04); Track builder local playtest (05); track-service random Track generation (06).
 
 ## Tech stack
 
