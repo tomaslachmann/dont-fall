@@ -15,10 +15,21 @@
       .module-entry span { font-size: 11px; color: #a8b8c8; }
       #viewport { position: relative; }
       #viewport canvas { display: block; }
+      #inspector {
+        position: absolute; top: 12px; right: 12px; width: 200px;
+        background: rgba(16, 20, 28, 0.9); border: 1px solid #232a36; border-radius: 4px; padding: 10px;
+      }
+      #inspector[hidden] { display: none; }
+      #inspector h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #8ba0b8; }
+      #inspector .row { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+      #inspector button { background: #1c2430; color: #cdd9e5; border: 1px solid #2f3b4c; border-radius: 3px; padding: 4px 8px; font: inherit; cursor: pointer; flex: 1; }
+      #inspector button:hover { border-color: #4a90d9; }
+      #hint { position: absolute; bottom: 12px; left: 12px; font-size: 11px; color: #5a6b80; }
       #toolbar { grid-column: 2; display: flex; gap: 8px; align-items: center; padding: 8px; background: #10141c; border-top: 1px solid #232a36; flex-wrap: wrap; }
       #toolbar input { background: #05070b; color: #cdd9e5; border: 1px solid #232a36; border-radius: 3px; padding: 4px 6px; font: inherit; }
       #toolbar button { background: #1c2430; color: #cdd9e5; border: 1px solid #2f3b4c; border-radius: 3px; padding: 4px 10px; font: inherit; cursor: pointer; }
       #toolbar button:hover { border-color: #4a90d9; }
+      #toolbar button:disabled { opacity: 0.4; cursor: default; }
       #status { font-size: 11px; color: #8ba0b8; margin-left: auto; white-space: pre; }
     </style>
   </head>
@@ -28,10 +39,25 @@
         <h2>Modules</h2>
         <div id="palette-list"></div>
       </div>
-      <div id="viewport"></div>
+      <div id="viewport">
+        <div id="inspector" hidden>
+          <h3>Selected</h3>
+          <div id="inspector-label"></div>
+          <div class="row">
+            <button id="rotate-left">⟲ 90°</button>
+            <button id="rotate-right">⟲ 90°</button>
+          </div>
+          <div class="row">
+            <button id="duplicate">Duplicate</button>
+            <button id="delete">Delete</button>
+          </div>
+        </div>
+        <div id="hint">click a Module to select it · click empty space to deselect</div>
+      </div>
       <div id="toolbar">
         <label>track-service <input id="service-url" value="http://localhost:8081" size="24" /></label>
-        <button id="remove-last">Remove last</button>
+        <button id="undo">Undo</button>
+        <button id="redo">Redo</button>
         <button id="playtest">Playtest</button>
         <label>name <input id="track-name" placeholder="my track" size="16" /></label>
         <button id="save">Save</button>

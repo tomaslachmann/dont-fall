@@ -37,8 +37,14 @@ export const createModulePreview = (canvas: HTMLCanvasElement, module: Module): 
   };
 };
 
+const SELECTION_COLOR = 0xfacc15;
+
 export interface TrackViewport {
   setTrack: (modules: Record<string, Module>, track: Track) => void;
+  /** Highlights Segment `index` (or clears the highlight if `undefined`). */
+  setSelected: (index: number | undefined) => void;
+  /** Raycasts from a mouse event's client coordinates; returns the Segment index hit, if any. */
+  pick: (clientX: number, clientY: number) => number | undefined;
   render: () => void;
   dispose: () => void;
 }
@@ -66,6 +72,12 @@ export const createTrackViewport = (container: HTMLElement): TrackViewport => {
   let trackGroup = new THREE.Group();
   scene.add(trackGroup);
 
+  const selectionBox = new THREE.BoxHelper(new THREE.Object3D(), SELECTION_COLOR);
+  selectionBox.visible = false;
+  scene.add(selectionBox);
+
+  const raycaster = new THREE.Raycaster();
+
   const resize = (): void => {
     const w = container.clientWidth || 1;
     const h = container.clientHeight || 1;
@@ -80,19 +92,51 @@ export const createTrackViewport = (container: HTMLElement): TrackViewport => {
     setTrack(modules, track) {
       scene.remove(trackGroup);
       trackGroup = new THREE.Group();
-      for (const segment of track) {
+      track.forEach((segment, index) => {
         const module = modules[segment.moduleId];
-        if (!module) continue;
+        if (!module) return;
         const group = buildModuleGroup(module);
         group.position.set(segment.position.x, segment.position.y, segment.position.z);
-    group.rotation.y = segment.rotation;
+        group.rotation.y = segment.rotation;
+        group.userData.segmentIndex = index;
         trackGroup.add(group);
-      }
+      });
       scene.add(trackGroup);
       if (track.length > 0) {
         const mid = track[Math.floor(track.length / 2)]!.position;
         controls.target.set(mid.x, mid.y, mid.z);
       }
+      selectionBox.visible = false;
+    },
+    setSelected(index) {
+      if (index === undefined) {
+        selectionBox.visible = false;
+        return;
+      }
+      const group = trackGroup.children.find((c) => c.userData.segmentIndex === index);
+      if (!group) {
+        selectionBox.visible = false;
+        return;
+      }
+      selectionBox.setFromObject(group);
+      selectionBox.visible = true;
+    },
+    pick(clientX, clientY) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      raycaster.setFromCamera(ndc, camera);
+      const hits = raycaster.intersectObjects(trackGroup.children, true);
+      for (const hit of hits) {
+        let node: THREE.Object3D | null = hit.object;
+        while (node) {
+          if (typeof node.userData.segmentIndex === "number") return node.userData.segmentIndex;
+          node = node.parent;
+        }
+      }
+      return undefined;
     },
     render() {
       controls.update();

@@ -1,7 +1,8 @@
 import { MODULE_LIBRARY, type Track } from "@dont-fall/shared";
 import { loadTrack, saveTrack } from "./api.js";
 import { startPlaytest, type Playtest } from "./playtest.js";
-import { appendModule, removeLast } from "./trackState.js";
+import { deleteSegment, duplicateSegment, insertSegment, rotateSegment } from "./trackEdit.js";
+import { TrackHistory } from "./trackHistory.js";
 import { createModulePreview, createTrackViewport } from "./viewport.js";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -13,13 +14,16 @@ const trackIdInput = $<HTMLInputElement>("track-id");
 const statusEl = $("status");
 const playtestButton = $("playtest");
 const viewportContainer = $("viewport");
+const undoButton = $<HTMLButtonElement>("undo");
+const redoButton = $<HTMLButtonElement>("redo");
+const inspector = $("inspector");
+const inspectorLabel = $("inspector-label");
 
-let currentTrack: Track = [];
+const history = new TrackHistory([]);
+let selectedIndex: number | undefined;
 const previewRenders: (() => void)[] = [];
 
 const viewport = createTrackViewport(viewportContainer);
-// The edit viewport's own canvas is the only child right now — hidden/shown
-// when toggling playtest mode (ticket 05), never recreated.
 const editCanvas = viewportContainer.querySelector("canvas")!;
 
 let mode: "edit" | "playtest" = "edit";
@@ -29,13 +33,33 @@ const setStatus = (text: string): void => {
   statusEl.textContent = text;
 };
 
+const select = (index: number | undefined): void => {
+  selectedIndex = index !== undefined && index >= 0 && index < history.track.length ? index : undefined;
+  viewport.setSelected(selectedIndex);
+  if (selectedIndex === undefined) {
+    inspector.hidden = true;
+  } else {
+    inspector.hidden = false;
+    inspectorLabel.textContent = `#${selectedIndex} ${history.track[selectedIndex]!.moduleId}`;
+  }
+};
+
 const rerender = (): void => {
-  viewport.setTrack(MODULE_LIBRARY, currentTrack);
-  setStatus(`${currentTrack.length} Segment(s)`);
+  viewport.setTrack(MODULE_LIBRARY, history.track);
+  viewport.setSelected(selectedIndex);
+  undoButton.disabled = !history.canUndo;
+  redoButton.disabled = !history.canRedo;
+  setStatus(`${history.track.length} Segment(s)`);
+};
+
+const applyEdit = (next: Track): void => {
+  history.apply(next);
+  rerender();
 };
 
 // Module palette — one entry per Module in the library, each with its own
-// live visual preview (ticket 04). Clicking appends it to the Track.
+// live visual preview (ticket 04). Clicking inserts it right after the
+// selected Segment, or appends at the end if nothing is selected.
 for (const [moduleId, module] of Object.entries(MODULE_LIBRARY)) {
   const entry = document.createElement("div");
   entry.className = "module-entry";
@@ -51,24 +75,67 @@ for (const [moduleId, module] of Object.entries(MODULE_LIBRARY)) {
 
   entry.addEventListener("click", () => {
     if (mode !== "edit") return;
-    currentTrack = appendModule(currentTrack, moduleId, MODULE_LIBRARY);
-    rerender();
+    const insertAt = selectedIndex !== undefined ? selectedIndex + 1 : history.track.length;
+    applyEdit(insertSegment(history.track, MODULE_LIBRARY, insertAt, moduleId));
+    select(insertAt);
   });
 
   paletteList.appendChild(entry);
   previewRenders.push(createModulePreview(canvas, module));
 }
 
-$("remove-last").addEventListener("click", () => {
+// Click a placed Segment in the overview to select it; click empty space to
+// deselect. The inspector panel is a DOM child of #viewport (positioned over
+// the canvas) — its own button clicks bubble up here too, so ignore anything
+// that didn't land on the canvas itself.
+viewportContainer.addEventListener("click", (e) => {
   if (mode !== "edit") return;
-  currentTrack = removeLast(currentTrack);
+  if (e.target !== editCanvas) return;
+  const index = viewport.pick(e.clientX, e.clientY);
+  select(index);
+});
+
+$("rotate-left").addEventListener("click", () => {
+  if (selectedIndex === undefined) return;
+  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, Math.PI / 2));
+  select(selectedIndex);
+});
+
+$("rotate-right").addEventListener("click", () => {
+  if (selectedIndex === undefined) return;
+  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, -Math.PI / 2));
+  select(selectedIndex);
+});
+
+$("duplicate").addEventListener("click", () => {
+  if (selectedIndex === undefined) return;
+  const duplicatedAt = selectedIndex + 1;
+  applyEdit(duplicateSegment(history.track, MODULE_LIBRARY, selectedIndex));
+  select(duplicatedAt);
+});
+
+$("delete").addEventListener("click", () => {
+  if (selectedIndex === undefined) return;
+  applyEdit(deleteSegment(history.track, MODULE_LIBRARY, selectedIndex));
+  select(undefined);
+});
+
+undoButton.addEventListener("click", () => {
+  history.undo();
+  select(undefined);
+  rerender();
+});
+
+redoButton.addEventListener("click", () => {
+  history.redo();
+  select(undefined);
   rerender();
 });
 
 $("save").addEventListener("click", () => {
   void (async () => {
     try {
-      const { id } = await saveTrack(serviceUrlInput.value, trackNameInput.value.trim(), currentTrack);
+      const { id } = await saveTrack(serviceUrlInput.value, trackNameInput.value.trim(), history.track);
       trackIdInput.value = id;
       setStatus(`saved as "${id}"`);
     } catch (err) {
@@ -81,10 +148,11 @@ $("load").addEventListener("click", () => {
   void (async () => {
     try {
       const stored = await loadTrack(serviceUrlInput.value, trackIdInput.value.trim() || "m1-playground");
-      currentTrack = stored.track;
+      history.reset(stored.track);
       trackNameInput.value = stored.name ?? "";
+      select(undefined);
       rerender();
-      setStatus(`loaded "${stored.id}" (${currentTrack.length} Segment(s))`);
+      setStatus(`loaded "${stored.id}" (${history.track.length} Segment(s))`);
     } catch (err) {
       setStatus(`load failed: ${(err as Error).message}`);
     }
@@ -96,16 +164,17 @@ $("load").addEventListener("click", () => {
 // edit overview and a walkable version of the in-progress Track.
 playtestButton.addEventListener("click", () => {
   if (mode === "edit") {
-    if (currentTrack.length === 0) {
+    if (history.track.length === 0) {
       setStatus("cannot playtest an empty Track — place a Module first");
       return;
     }
     void (async () => {
       editCanvas.style.display = "none";
+      inspector.hidden = true;
       mode = "playtest";
       playtestButton.textContent = "Stop playtest";
       setStatus("playtest — WASD move · Space jump · Shift dash");
-      playtest = await startPlaytest(viewportContainer, MODULE_LIBRARY, currentTrack);
+      playtest = await startPlaytest(viewportContainer, MODULE_LIBRARY, history.track);
     })();
   } else {
     playtest?.dispose();
