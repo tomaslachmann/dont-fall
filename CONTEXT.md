@@ -62,18 +62,42 @@ _Avoid_: finish line, goal
 ### Track
 
 **Track**:
-The full obstacle course a Round runs on, assembled from Segments.
+The full obstacle course a Round runs on, assembled from Segments. What a Round
+actually runs is always one immutable Revision of a Track — see Draft, Revision.
 _Avoid_: map, course, level
+
+**Draft**:
+A Track being composed in the Track builder — mutable, not yet published.
+Publishing a Draft creates a new Revision; the Draft itself is never what a
+Round runs on.
+_Avoid_: track (when you specifically mean the mutable, in-progress one)
+
+**Revision**:
+One immutable, numbered publish of a Track — the only form a Round ever runs
+on. Publishing a Draft again creates a new Revision; an existing Revision is
+never mutated.
+_Avoid_: version, save
 
 **Module**:
 A reusable template for a piece of Track (e.g. "Spinner", "Ice", "Moving
 Platforms", "Straight", "Gap"). Authored once.
 _Avoid_: prefab, block, piece
 
+**Socket**:
+A Module's named local connection point (a position and rotation) that another
+Module can be placed against, so a Track builder can snap pieces together
+instead of only chaining a single uniform step.
+_Avoid_: connector, port, anchor
+
+**Footprint**:
+A Module's declared occupied space and clearance, used to validate placement
+and overlap — independent of its visual geometry or collider.
+_Avoid_: bounding box
+
 **Segment**:
 One concrete instance of a Module placed at a position in a Track. A Track is a
 sequence of Segments.
-_Avoid_: section, tile, chunk
+_Avoid_: section, tile, chunk, piece
 
 **Obstacle**:
 A Module (or part of one) that actively threatens the Character — a Spinner,
