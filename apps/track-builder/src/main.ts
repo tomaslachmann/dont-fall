@@ -1,5 +1,6 @@
 import { MODULE_LIBRARY, type Track } from "@dont-fall/shared";
 import { loadTrack, saveTrack } from "./api.js";
+import { startPlaytest, type Playtest } from "./playtest.js";
 import { appendModule, removeLast } from "./trackState.js";
 import { createModulePreview, createTrackViewport } from "./viewport.js";
 
@@ -10,11 +11,19 @@ const serviceUrlInput = $<HTMLInputElement>("service-url");
 const trackNameInput = $<HTMLInputElement>("track-name");
 const trackIdInput = $<HTMLInputElement>("track-id");
 const statusEl = $("status");
+const playtestButton = $("playtest");
+const viewportContainer = $("viewport");
 
 let currentTrack: Track = [];
 const previewRenders: (() => void)[] = [];
 
-const viewport = createTrackViewport(document.getElementById("viewport")!);
+const viewport = createTrackViewport(viewportContainer);
+// The edit viewport's own canvas is the only child right now — hidden/shown
+// when toggling playtest mode (ticket 05), never recreated.
+const editCanvas = viewportContainer.querySelector("canvas")!;
+
+let mode: "edit" | "playtest" = "edit";
+let playtest: Playtest | undefined;
 
 const setStatus = (text: string): void => {
   statusEl.textContent = text;
@@ -41,6 +50,7 @@ for (const [moduleId, module] of Object.entries(MODULE_LIBRARY)) {
   entry.appendChild(label);
 
   entry.addEventListener("click", () => {
+    if (mode !== "edit") return;
     currentTrack = appendModule(currentTrack, moduleId);
     rerender();
   });
@@ -50,6 +60,7 @@ for (const [moduleId, module] of Object.entries(MODULE_LIBRARY)) {
 }
 
 $("remove-last").addEventListener("click", () => {
+  if (mode !== "edit") return;
   currentTrack = removeLast(currentTrack);
   rerender();
 });
@@ -80,11 +91,41 @@ $("load").addEventListener("click", () => {
   })();
 });
 
+// Local single-player playtest (ticket 05) — the same shared Rapier sim the
+// live game runs, no networking, no auth. Toggles the viewport between the
+// edit overview and a walkable version of the in-progress Track.
+playtestButton.addEventListener("click", () => {
+  if (mode === "edit") {
+    if (currentTrack.length === 0) {
+      setStatus("cannot playtest an empty Track — place a Module first");
+      return;
+    }
+    void (async () => {
+      editCanvas.style.display = "none";
+      mode = "playtest";
+      playtestButton.textContent = "Stop playtest";
+      setStatus("playtest — WASD move · Space jump · Shift dash");
+      playtest = await startPlaytest(viewportContainer, MODULE_LIBRARY, currentTrack);
+    })();
+  } else {
+    playtest?.dispose();
+    playtest = undefined;
+    editCanvas.style.display = "";
+    mode = "edit";
+    playtestButton.textContent = "Playtest";
+    rerender();
+  }
+});
+
 rerender();
 
-const frame = (): void => {
-  for (const render of previewRenders) render();
-  viewport.render();
+const frame = (nowMs: number): void => {
+  if (mode === "edit") {
+    for (const render of previewRenders) render();
+    viewport.render();
+  } else {
+    playtest?.frame(nowMs);
+  }
   requestAnimationFrame(frame);
 };
 requestAnimationFrame(frame);
