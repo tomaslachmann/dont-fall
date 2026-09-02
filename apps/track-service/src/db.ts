@@ -17,12 +17,19 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
   sqlite.pragma("journal_mode = WAL");
 
   const db = drizzle(sqlite, { schema });
+  // ADR 0032: a (track_id, revision) row per publish — never mutated, never
+  // upserted. `author_id` is deliberately mocked (`DEFAULT_AUTHOR_ID` in
+  // `store.ts`) until a real Account system exists.
   db.run(sql`
     CREATE TABLE IF NOT EXISTS tracks (
-      id TEXT PRIMARY KEY,
+      track_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
       name TEXT,
+      author_id TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
       data TEXT NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (track_id, revision)
     )
   `);
   return db;

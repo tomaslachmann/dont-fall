@@ -87,7 +87,7 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
       json(res, 400, { error: "invalid JSON body" });
       return;
     }
-    const body = parsed as { name?: unknown; track?: unknown };
+    const body = parsed as { id?: unknown; name?: unknown; track?: unknown };
     if (!isTrack(body.track)) {
       json(res, 400, { error: "body.track must be a Segment[] (moduleId, position, rotation)" });
       return;
@@ -97,8 +97,11 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
       json(res, 400, { error: `unknown Module id(s): ${unknown.join(", ")}` });
       return;
     }
+    // An explicit body.id republishes that same trackId as a new Revision
+    // (ADR 0032) instead of creating a fresh one — never mutates Revision 1.
     const saved = saveTrack(db, {
       track: body.track,
+      ...(typeof body.id === "string" ? { id: body.id } : {}),
       ...(typeof body.name === "string" ? { name: body.name } : {}),
     });
     json(res, 201, saved);

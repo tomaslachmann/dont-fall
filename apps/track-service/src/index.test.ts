@@ -70,8 +70,53 @@ describe("track-service", () => {
 
     const getRes = await fetch(`http://localhost:${service.port}/tracks/${id}`);
     expect(getRes.status).toBe(200);
-    const body = (await getRes.json()) as { id: string; name: string | null; track: Track };
-    expect(body).toEqual({ id, name: "hand-built test track", track: SAMPLE_TRACK });
+    const body = (await getRes.json()) as {
+      id: string;
+      name: string | null;
+      track: Track;
+      revision: number;
+      authorId: string;
+      contentHash: string;
+    };
+    expect(body.id).toBe(id);
+    expect(body.name).toBe("hand-built test track");
+    expect(body.track).toEqual(SAMPLE_TRACK);
+    // ADR 0032: a first publish is Revision 1, mocked authorId, a real content hash.
+    expect(body.revision).toBe(1);
+    expect(body.authorId).toBe("local-author");
+    expect(body.contentHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("publishing the same trackId again creates Revision 2, never mutating Revision 1 (ADR 0032)", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    const first = await fetch(`http://localhost:${service.port}/tracks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "v1", track: SAMPLE_TRACK }),
+    });
+    const { id } = (await first.json()) as { id: string };
+
+    const ANOTHER_TRACK: Track = [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+    const second = await fetch(`http://localhost:${service.port}/tracks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, name: "v2", track: ANOTHER_TRACK }),
+    });
+    expect(second.status).toBe(201);
+    expect(((await second.json()) as { id: string }).id).toBe(id);
+
+    const getRes = await fetch(`http://localhost:${service.port}/tracks/${id}`);
+    const latest = (await getRes.json()) as { name: string | null; track: Track; revision: number };
+    expect(latest.revision).toBe(2);
+    expect(latest.name).toBe("v2");
+    expect(latest.track).toEqual(ANOTHER_TRACK);
+
+    // GET /tracks (the list) shows only the latest Revision per trackId, not one row per Revision.
+    const listRes = await fetch(`http://localhost:${service.port}/tracks`);
+    const list = (await listRes.json()) as { id: string; name: string | null }[];
+    expect(list.filter((t) => t.id === id)).toHaveLength(1);
+    expect(list.find((t) => t.id === id)?.name).toBe("v2");
   });
 
   it("generates a random Track and persists it exactly like a hand-built one (ADR 0028)", async () => {
@@ -90,8 +135,11 @@ describe("track-service", () => {
     // Fetched back exactly like any other Track — no "is this random?" flag.
     const getRes = await fetch(`http://localhost:${service.port}/tracks/${generated.id}`);
     expect(getRes.status).toBe(200);
-    const body = (await getRes.json()) as { id: string; name: string | null; track: Track };
-    expect(body).toEqual({ id: generated.id, name: "generated track", track: generated.track });
+    const body = (await getRes.json()) as { id: string; name: string | null; track: Track; revision: number };
+    expect(body.id).toBe(generated.id);
+    expect(body.name).toBe("generated track");
+    expect(body.track).toEqual(generated.track);
+    expect(body.revision).toBe(1);
   });
 
   it("generate produces a different Track on repeated calls (not a fixed fixture)", async () => {
