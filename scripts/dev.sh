@@ -6,13 +6,24 @@
 # for its health check before starting the other two, rather than papering
 # over the dependency with retry logic in the server itself.
 #
-# The Track builder (apps/track-builder) is a separate dev tool, not part of
-# playing the game, so it's intentionally not started here — run it with
-# `pnpm --filter @dont-fall/track-builder dev` when you need it.
+# The Track builder (apps/track-builder) is a dev tool, not part of playing
+# the game, so it's off by default — pass --builder (or -b) to also start it.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+WITH_BUILDER=0
+for arg in "$@"; do
+  case "$arg" in
+    --builder|-b) WITH_BUILDER=1 ;;
+    *)
+      echo "Usage: pnpm dev [--builder|-b]" >&2
+      exit 1
+      ;;
+  esac
+done
+
 DEV_PORTS="8081,8080,5173"
+if [ "$WITH_BUILDER" = 1 ]; then DEV_PORTS="$DEV_PORTS,5174"; fi
 CLEANED_UP=0
 
 cleanup() {
@@ -37,6 +48,9 @@ echo "track-service ready."
 
 pnpm --filter @dont-fall/server dev &
 pnpm --filter @dont-fall/client dev &
+if [ "$WITH_BUILDER" = 1 ]; then
+  pnpm --filter @dont-fall/track-builder dev &
+fi
 
 # Everything above runs in the background and this waits on it — bash defers
 # a pending trap until a *foreground* command finishes, which for a long-lived
