@@ -41,13 +41,18 @@ export const normalizeVec3 = (v: Vec3): Vec3 => {
 };
 
 /**
- * Rotates `v` by `yaw` radians around the world Y axis, matching this
- * project's existing yaw convention (`movementDirection`: `forward(yaw) =
- * (sin, 0, -cos)`, `right(yaw) = (cos, 0, sin)`) — the same convention
- * `Segment.rotation` (ADR 0031) and Socket alignment use.
+ * Rotates `v` by `yaw` radians around the world Y axis, matching Rapier's own
+ * `yawQuat` (`../math/quat.ts`) and Three.js's `Object3D.rotation.y` — NOT
+ * `movementDirection`'s convention (`forward(yaw) = (sin, 0, -cos)`), which is
+ * its mirror image (verified by direct quaternion-rotation computation; a
+ * pre-existing, already-worked-around mismatch — see `apps/client/src/scene.ts`'s
+ * `π − yaw` reconciliation for the Character's own facing). `Segment.rotation`
+ * (ADR 0031) and Socket alignment must agree with the convention that actually
+ * rotates physics bodies (Spinners) and rendered meshes, not with input-facing
+ * math, so this matches `yawQuat`/Three.js on purpose.
  */
 export const rotateYaw = (v: Vec3, yaw: number): Vec3 => {
   const sin = Math.sin(yaw);
   const cos = Math.cos(yaw);
-  return { x: v.x * cos - v.z * sin, y: v.y, z: v.x * sin + v.z * cos };
+  return { x: v.x * cos + v.z * sin, y: v.y, z: -v.x * sin + v.z * cos };
 };

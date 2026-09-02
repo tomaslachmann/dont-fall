@@ -12,7 +12,14 @@ export const pointInBox = (point: Vec3, box: Box): boolean =>
   Math.abs(point.y - box.center.y) <= box.halfExtents.y &&
   Math.abs(point.z - box.center.z) <= box.halfExtents.z;
 
-const HALF_PI_EPSILON = 1e-6;
+/** Tolerance (radians) for "close enough to a multiple of 90°" — shared by every ADR 0031 rotation check (`rotateBoxYaw90` here, `placeAfter` in `../track/Track.ts`) so retuning one can't silently disagree with the other. */
+export const YAW_MULTIPLE_OF_90_EPSILON = 1e-6;
+
+/** Whether `yaw` (radians) is close enough to a multiple of 90° to keep a Box axis-aligned after rotation. */
+export const isMultipleOf90 = (yaw: number): boolean => {
+  const quarterTurns = yaw / (Math.PI / 2);
+  return Math.abs(quarterTurns - Math.round(quarterTurns)) < YAW_MULTIPLE_OF_90_EPSILON;
+};
 
 /**
  * Rotates an axis-aligned `box` by `yaw` radians around Y, staying
@@ -26,18 +33,15 @@ const HALF_PI_EPSILON = 1e-6;
  * desync the visual/logical placement from what actually collides.
  */
 export const rotateBoxYaw90 = (box: Box, yaw: number): Box => {
-  const center = rotateYaw(box.center, yaw);
-  const cos = Math.cos(yaw);
-  const sin = Math.sin(yaw);
-  const isAxisAligned = Math.abs(cos) < HALF_PI_EPSILON || Math.abs(sin) < HALF_PI_EPSILON;
-  if (!isAxisAligned) {
+  if (!isMultipleOf90(yaw)) {
     throw new Error(
       `rotateBoxYaw90: yaw ${yaw} rad is not a multiple of 90° — a Box must stay axis-aligned ` +
         `(ADR 0031, static colliders don't rotate)`,
     );
   }
+  const center = rotateYaw(box.center, yaw);
   // At 0°/180° cos ≈ ±1 (no swap); at 90°/270° cos ≈ 0 (swap X/Z).
-  const swapped = Math.abs(cos) < HALF_PI_EPSILON;
+  const swapped = Math.abs(Math.cos(yaw)) < YAW_MULTIPLE_OF_90_EPSILON;
   const halfExtents = swapped
     ? { x: box.halfExtents.z, y: box.halfExtents.y, z: box.halfExtents.x }
     : { x: box.halfExtents.x, y: box.halfExtents.y, z: box.halfExtents.z };

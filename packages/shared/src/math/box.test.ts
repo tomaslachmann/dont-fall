@@ -35,8 +35,8 @@ describe("rotateBoxYaw90", () => {
   it("swaps X/Z half-extents at 90°, and rotates the centre", () => {
     const rotated = rotateBoxYaw90(oblong, Math.PI / 2);
     expect(rotated.halfExtents).toEqual({ x: 1, y: 0.5, z: 4 });
-    expect(rotated.center.x).toBeCloseTo(-3, 10);
-    expect(rotated.center.z).toBeCloseTo(2, 10);
+    expect(rotated.center.x).toBeCloseTo(3, 10);
+    expect(rotated.center.z).toBeCloseTo(-2, 10);
   });
 
   it("swaps X/Z half-extents at 270° too", () => {

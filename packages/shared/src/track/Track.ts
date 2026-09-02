@@ -1,4 +1,4 @@
-import { rotateBoxYaw90, type Box } from "../math/box.js";
+import { isMultipleOf90, rotateBoxYaw90, type Box } from "../math/box.js";
 import { addVec3, rotateYaw, subVec3, type Vec3 } from "../math/vec3.js";
 import type { Checkpoint } from "../simulation/Checkpoint.js";
 import type { PropConfig } from "../simulation/Prop.js";
@@ -19,12 +19,6 @@ export interface Segment {
 
 /** A Track: an ordered sequence of Segments (CONTEXT.md). */
 export type Track = Segment[];
-
-const HALF_PI_EPSILON = 1e-6;
-const isMultipleOf90 = (yaw: number): boolean => {
-  const quarterTurns = yaw / (Math.PI / 2);
-  return Math.abs(quarterTurns - Math.round(quarterTurns)) < HALF_PI_EPSILON;
-};
 
 /**
  * Places `moduleId` right after `prev` by aligning `nextModule`'s `entrySocketId`
