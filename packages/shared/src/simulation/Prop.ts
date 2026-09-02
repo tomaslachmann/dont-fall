@@ -96,6 +96,35 @@ export class Prop {
     this.body.setAngvel(ZERO, true);
   }
 
+  /**
+   * Client prediction only (ADR 0022): overwrite the body's dynamic state with
+   * the server's authoritative one, so the locally simulated Prop converges on
+   * the server instead of replaying from a standstill every snapshot. The body
+   * always holds a *valid physical* state — the visual smoothing (a decaying
+   * error offset) is applied by the renderer, never here (Fiedler: smoothing
+   * between the state set and the sim step ruins the extrapolation).
+   *
+   * Linear velocity is **aligned-gated**: skipped when it opposes the body's
+   * current motion (`dot < 0`), so a box that has just hit a wall locally — a
+   * collision the server's older snapshot has not resolved yet — is not yanked
+   * back toward its stale pre-collision velocity. Position is still snapped, so
+   * the replay cannot drift far; the velocity re-converges on the first
+   * snapshot in which the server has seen the same collision. This gate is
+   * deliberately on the reconcile path (research `m2-shared-prop-prediction.md`
+   * §6.3, matching Unity Ultimate Glove Ball's `BallStateSync` ll. 326–339) —
+   * it is our extension, not a Fiedler citation. Angular velocity is snapped
+   * unconditionally — Fiedler's rule for derivative quantities.
+   */
+  applyAuthoritativeState(pose: PropSnapshot): void {
+    this.body.setTranslation(pose.position, true);
+    this.body.setRotation(pose.rotation, true);
+    const target = pose.velocity ?? ZERO;
+    const current = this.body.linvel();
+    const aligned = current.x * target.x + current.y * target.y + current.z * target.z;
+    if (aligned >= 0) this.body.setLinvel(target, true);
+    this.body.setAngvel(pose.angularVelocity ?? ZERO, true);
+  }
+
   snapshot(): PropSnapshot {
     const t = this.body.translation();
     const r = this.body.rotation();

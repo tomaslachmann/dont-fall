@@ -229,9 +229,64 @@ export const SPINNER_KNOCKBACK_LIFT = 2;
 /** Push impulse applied to a Prop per unit of the Character's horizontal speed. */
 export const PROP_PUSH_SCALE = 0.5;
 
-// Props are never locally predicted (ADR 0016) — no grace / hard-correct
-// constants any more; a Prop is drawn from the interpolated server snapshot and
-// exists in the local prediction world only as a pinned obstacle.
+// --- Pushed-Prop prediction (ADR 0022 — supersedes ADR 0016) ----------------
+//
+// The one Prop the local Character is contacting is simulated locally for a
+// short grace after last contact; every *other* Prop is interpolation-only. The
+// predicted Prop's Rapier body always holds the authoritative state — what is
+// *rendered* is the sim pose plus a render-time error offset that decays
+// exponentially toward zero (Glenn Fiedler, "State Synchronization"). All four
+// smoothing numbers below are verbatim from Fiedler.
+
+/**
+ * Ticks a Prop stays locally predicted after the local Character last contacted
+ * it. A **derived heuristic**, not a documented formula:
+ * `clamp(ceil(RTT / TICK_MS), 2, 8)` at the call site once RTT is known — long
+ * enough that the server's acknowledgement of the push is already in the
+ * interpolation buffer by the time prediction hands back. This constant is the
+ * fallback used until {@link TimeSync} has an RTT estimate.
+ */
+export const PROP_PREDICT_GRACE_TICKS = 4;
+
+/** Lower / upper caps on the RTT-derived grace (ticks). */
+export const PROP_PREDICT_GRACE_MIN_TICKS = 2;
+export const PROP_PREDICT_GRACE_MAX_TICKS = 8;
+
+/** Position error at/below which the offset decays slowly ({@link PROP_ERR_HALFLIFE_NEAR_MS}). Fiedler: "25cms or less". */
+export const PROP_ERR_NEAR_M = 0.25;
+
+/** Position error at/above which the offset decays fast ({@link PROP_ERR_HALFLIFE_FAR_MS}). Fiedler: "1m error or above". */
+export const PROP_ERR_FAR_M = 1.0;
+
+/** Half-life (ms) of the render-time error offset for a small error — Fiedler's ≈0.95/frame\@60. */
+export const PROP_ERR_HALFLIFE_NEAR_MS = 200;
+
+/** Half-life (ms) of the render-time error offset for a large error — Fiedler's ≈0.85/frame\@60. */
+export const PROP_ERR_HALFLIFE_FAR_MS = 70;
+
+/** Position error (units) past which the offset is dropped and the Prop visually teleports — a genuine desync, not rubber-banded. Fiedler (2004). */
+export const PROP_ERR_HARDSNAP_M = 2.0;
+
+/**
+ * Quaternion-dot band the rotation error offset blends its decay rate across:
+ * at/above `_HI` (small angular error) it uses the near half-life, at/below
+ * `_LO` (large error) the far one. Fiedler, verbatim.
+ */
+export const PROP_ERR_ROT_DOT_LO = 0.1;
+export const PROP_ERR_ROT_DOT_HI = 0.5;
+
+/**
+ * `|error.rotation.w|` below which the rotation offset is dropped and the Prop's
+ * orientation visually snaps — the rotation analogue of {@link PROP_ERR_HARDSNAP_M}.
+ * `0.26` ≈ a 150° error; only a genuine desync reaches it.
+ */
+export const PROP_ERR_ROT_HARDSNAP_DOT = 0.26;
+
+/** Residual position offset (units) below which a handed-back Prop is treated as settled and re-pinned. */
+export const PROP_ERR_SETTLED_M = 0.02;
+
+/** `|error.rotation.w|` above which the residual rotation offset counts as settled (≈3.6°). */
+export const PROP_ERR_ROT_SETTLED_DOT = 0.9995;
 
 // --- Character-to-Character Bump (M2 ticket 04) -----------------------------
 

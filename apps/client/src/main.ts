@@ -29,6 +29,7 @@ import { loadCharacterModel } from "./characterModel.js";
 import { FreeLookCamera, KeyboardInput } from "./input.js";
 import { createStage } from "./scene.js";
 import { NetMetrics } from "./netMetrics.js";
+import { PropPredictionController, graceTicksForRtt } from "./propPrediction.js";
 import { SnapshotInterpolator } from "./snapshotInterpolation.js";
 import { TimeSync } from "./timeSync.js";
 
@@ -85,6 +86,11 @@ const main = async () => {
   // server's own broadcast (ADR 0003), smoothed through a render-delay
   // interpolation buffer so it isn't jittered by uneven snapshot arrival.
   const serverInterp = new SnapshotInterpolator();
+  // Pushed-Prop prediction (ADR 0022, ticket 11.8): the one Prop the local
+  // Character is contacting is simulated locally for a short grace after last
+  // contact and rendered through a decaying error offset; every other Prop is
+  // interpolation-only.
+  const propPrediction = new PropPredictionController();
   // The raw latest snapshot, kept only for `reconcile` (tick-aligned replay).
   let latestServerSnapshot: SimState | null = null;
   let lastSnapshotArrivedAt = 0;
@@ -168,7 +174,16 @@ const main = async () => {
       // unacknowledged input forward from the corrected base.
       sim.syncTick(serverTick);
       sim.syncPropsToSnapshot(serverProps);
+      // Predicted Props (ADR 0022): snap each one's body to the server's tick-T
+      // state, remember where it was *rendered*, replay, then re-seed the error
+      // offset so the correction eases in rather than popping.
+      const renderedBefore = propPrediction.captureBeforeReconcile(sim.snapshot().props);
+      for (const i of propPrediction.predictedIndices) {
+        const sp = serverProps[i];
+        if (sp) sim.applyAuthoritativePropState(i, sp);
+      }
       const replayed = sim.replayLocalCharacter(id, unacked.map((entry) => entry.input));
+      propPrediction.reseedAfterReconcile(renderedBefore, sim.snapshot().props);
       positionHistory.clear();
       unacked.forEach((entry, i) => {
         const p = replayed[i];
@@ -307,6 +322,13 @@ const main = async () => {
         localSim.syncMirrorCharacters(others);
         localSim.syncPropsToSnapshot(serverRender.props);
       }
+      // A Prop the local Character is currently predicting (ADR 0022) is left
+      // to simulate freely this frame instead of being pinned above; every
+      // other Prop stays a pinned obstacle. Membership is decided from last
+      // frame's contact + grace (updated below, after the predict loop). With no
+      // interpolated world yet (buffer underrun) nothing is predicted — the
+      // state machine can't advance without server poses, so it stays frozen.
+      localSim.setPredictedProps(serverRender ? propPrediction.predictedIndices : []);
 
       // Fixed-timestep prediction: one shared sim step per tick, each fed —
       // and sent to the server — with the input sampled for that tick, and
@@ -359,6 +381,27 @@ const main = async () => {
       }
 
       const snapshot = localSim.snapshot();
+
+      // Advance the pushed-Prop state machine (ADR 0022) for this frame: which
+      // Props the local capsule just touched, grace expiry, and one render
+      // frame of error-offset decay. Must be after the predict loop so
+      // `contacted` and the sim poses are current. Always drain the contact set
+      // so it can't accumulate a stale burst while the interpolated world is
+      // briefly unavailable — in that window the machine is reset to all-pinned.
+      const contactedProps = localSim.consumeContactedProps();
+      if (serverRender) {
+        propPrediction.frame({
+          contacted: contactedProps,
+          predictionTick,
+          graceTicks: graceTicksForRtt(timeSync.rttMs),
+          dtMs: Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS),
+          simProps: snapshot.props,
+          serverProps: serverRender.props,
+        });
+      } else {
+        propPrediction.reset();
+      }
+
       const previous = renderPreviousSnapshot ?? snapshot;
       const localAlpha = predictionAccumulatorMs / TICK_MS;
       const render = interpolateState(previous, snapshot, localAlpha);
@@ -384,10 +427,14 @@ const main = async () => {
         localDown && serverOwnCharacter && serverOwnCharacter.bones.length > 0
           ? serverOwnCharacter
           : render.characters[myId]!;
-      // Every Prop is drawn from the interpolated server snapshot — never
-      // locally predicted (ADR 0016). Nothing is drawn until the first
-      // snapshot arrives.
-      const props: PropSnapshot[] = serverRender ? serverRender.props : [];
+      // Props are drawn from the interpolated server snapshot (ADR 0017),
+      // except the one the local Character is pushing, which is drawn from the
+      // sub-tick-interpolated local sim pose (`render.props`) plus a decaying
+      // error offset (ADR 0022). Nothing is drawn until the first snapshot
+      // arrives.
+      const props: PropSnapshot[] = serverRender
+        ? propPrediction.renderPoses(render.props, serverRender.props)
+        : [];
       const remoteCharacters: Record<string, RenderCharacter> = {};
       if (serverRender) {
         for (const [id, character] of Object.entries(serverRender.characters)) {
@@ -426,6 +473,7 @@ const main = async () => {
       netMetrics.inputBufferDepth = inputBuffer.length;
       netMetrics.interpBufferDepth = serverInterp.bufferDepth;
       netMetrics.extrapolating = serverInterp.holdingLatest;
+      netMetrics.predictedPropCount = propPrediction.predictedCount;
 
       hud.textContent =
         `DON'T FALL — M2 · predicted + reconciled\n` +

@@ -239,3 +239,16 @@ A monotonic counter identifying a discrete episode (a knockdown —
 `ragdollEpoch`; a Respawn — `respawnCount`) so a one-shot effect fires exactly
 once even if the Snapshot carrying it is seen across many frames. Never a
 one-Tick boolean.
+
+**Contacted Prop**:
+The one Prop the local Character is currently touching (plus a short grace after
+last contact). It is the *only* Prop the client predicts — simulated locally,
+its rendered pose eased toward the Snapshot by a decaying error offset. Every
+other Prop is Interpolation-only (ADR 0022).
+
+**Error Offset**:
+The gap between where the client *renders* a predicted body and where its
+physics body actually is. The body always holds the authoritative state; the
+offset is what decays to zero over several frames so a Reconciliation eases in
+instead of popping (Fiedler; ADR 0022, and the deferred capsule smoothing in
+ADR 0013).

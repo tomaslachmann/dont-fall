@@ -54,3 +54,45 @@ extrapolation).
   quantifies it).
 - The error-offset mechanism is reusable: it is the same family as the capsule's positional
   error smoothing that ADR 0013 deferred.
+
+---
+
+## Implementation note (2026-09-02, ticket 11.8)
+
+Landed on branch `m2-protocol-v2`.
+
+- **`apps/client/src/propPrediction.ts`** — `decayPropError` (the pure Fiedler smoothing,
+  time-based half-lives so it is frame-rate independent), `graceTicksForRtt`, and
+  `PropPredictionController` (the per-Prop `pinned → predicted → server-moving` machine,
+  the accumulated `PropError` offsets, and the reconcile hooks
+  `captureBeforeReconcile` / `reseedAfterReconcile`).
+- **`packages/shared`** — `PROP_ERR_*` and `PROP_PREDICT_GRACE_*` tuning constants;
+  `mulQuat` / `conjugateQuat` / `dotQuat` in `math/quat.ts`; `Prop.applyAuthoritativeState`
+  (the aligned-gate on linear velocity lives here); `RapierSimulation.setPredictedProps`
+  (a predicted Prop is skipped by the every-tick pin to `followPoses` and simulates
+  freely), `consumeContactedProps`, `applyAuthoritativePropState`.
+- **`main.ts`** — `setPredictedProps` before the predict loop, `frame(...)` after it,
+  `renderPoses(...)` into the Stage, and the predicted-Prop seed + re-seed around the
+  replay in `reconcile`. The net-graph's `predProps` counter is wired.
+
+Deviations from the decision above, all minor:
+
+- The rotation error is carried as a single error quaternion `qErr`
+  (`rendered = qErr ∘ target`), decayed by `slerp(identity, qErr, retain)`; the
+  "quaternion dot 0.1 → 0.5" band is read off `|qErr.w|`.
+- A **rotation hard-snap** was added for symmetry with the position one
+  (`PROP_ERR_ROT_HARDSNAP_DOT ≈ 150°`) — the decision table only specified a position
+  hard-snap. Same rationale: past that angle it is a genuine desync, not something to
+  rubber-band.
+- The `server-moving → pinned` settle check gates on the **rotation** residual as well as
+  position, so a lingering angular offset is decayed out rather than snapped to identity
+  on re-pin.
+- Entering `predicted` from `server-moving` keeps the decaying residual offset rather than
+  reseeding, so a re-touched Prop never pops.
+- When the interpolation buffer underruns (no `serverRender`), the whole machine resets to
+  all-pinned rather than freezing mid-prediction with stale offsets.
+
+Still owed (unchanged): a playtest to tune `PROP_PREDICT_GRACE_TICKS` and the rotation
+decay band (the `0.5 / 0.1` dot values map to 120°–168°, so almost all real angular error
+currently decays at the slow 200 ms half-life — may want it more aggressive), and the
+N-simultaneously-predicted-Props profiling pass.

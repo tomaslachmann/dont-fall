@@ -4,12 +4,14 @@ The grilling session (2026-09) settled the M2 network protocol. Spec: `docs/netw
 ADRs: 0018–0025, plus amendment notes on 0015/0016/0017. This is the implementation surface,
 in dependency order. Each item becomes its own ticket file (`12-…`, `13-…`, …) when picked up.
 
-**Status (2026-09-02):** 11.1–11.5, 11.7, 11.9 landed on branch `m2-protocol-v2`.
+**Status (2026-09-02):** 11.1–11.9 landed on branch `m2-protocol-v2`.
 11.6 landed except its deferred parts (sparse bones list, full local-ragdoll-body
-removal, one-shot-effect gating helper — nothing to gate yet). **11.8 (pushed-Prop
-prediction) is the remaining substantial piece** — feel-sensitive, needs a playtest to
-validate, kept for a focused pass. All tests green (134 shared + 36 client + 10 server),
-typecheck clean.
+removal, one-shot-effect gating helper — nothing to gate yet). 11.8 (pushed-Prop
+prediction) landed — `apps/client/src/propPrediction.ts` (3-state machine + Fiedler
+decaying error offset), `RapierSimulation.setPredictedProps` / `consumeContactedProps` /
+`applyAuthoritativePropState`. **Still owed:** a playtest to validate the feel, and a
+profiling pass on N simultaneously-predicted Props at 30 Hz / 12 players (ADR 0022).
+All tests green (141 shared + 50 client + 10 server), typecheck clean.
 
 ---
 
@@ -137,6 +139,17 @@ sim-authority thing.
 
 **Blocked by:** 11.1, 11.5 (needs `velocity`/`atRest` on the wire), 11.3 (grace uses RTT).
 **Reopens:** ADR 0016.
+
+**Done (2026-09-02):**
+- `apps/client/src/propPrediction.ts` — `decayPropError` (pure Fiedler smoothing),
+  `graceTicksForRtt`, `PropPredictionController` (per-Prop state machine, error offsets,
+  `frame` / `renderPoses` / `captureBeforeReconcile` / `reseedAfterReconcile`).
+- `packages/shared` — `PROP_ERR_*` / `PROP_PREDICT_GRACE_*` tuning constants;
+  `mulQuat` / `conjugateQuat` / `dotQuat`; `Prop.applyAuthoritativeState` (aligned-gated
+  velocity); `RapierSimulation.setPredictedProps` / `consumeContactedProps` /
+  `applyAuthoritativePropState` (predicted Props skip the every-tick pin).
+- `main.ts` wires it into the frame loop and `reconcile`; net-graph shows `predProps`.
+- **Not done:** playtest validation; N-predicted-Props profiling.
 
 ---
 

@@ -148,6 +148,22 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    */
   private followPoses: (PropSnapshot | undefined)[] = [];
 
+  /**
+   * Client-only (ADR 0022, ticket 11.8): Prop indices the local Character is
+   * predicting right now. A predicted Prop is a live dynamic body — skipped by
+   * the every-tick pin to {@link followPoses} — until the render layer's grace
+   * lapses and clears it. Empty on the server and for a plain interpolation-only
+   * client.
+   */
+  private predictedProps = new Set<number>();
+
+  /**
+   * Client-only (ADR 0022): Prop indices the local Character's capsule contacted
+   * since {@link consumeContactedProps} was last called. Only tracked on a
+   * non-`authoritative` (client-prediction) simulation.
+   */
+  private readonly contactedProps = new Set<number>();
+
   private tickCount = 0;
 
   constructor(config: SimulationConfig = {}) {
@@ -205,10 +221,14 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       }
       const propIndex = this.propIndexByHandle.get(colliderHandle);
       if (propIndex !== undefined) {
-        // The shove takes effect on the server (Props are dynamic there); on a
-        // client the Prop is re-pinned to the server pose after the step, so
-        // this is a harmless no-op there (ADR 0016).
+        // The shove takes effect on the server (Props are dynamic there) and on
+        // a client for a Prop currently being predicted (ADR 0022); for a pinned
+        // Prop it is overwritten by the post-step re-pin, a harmless no-op
+        // (ADR 0016).
         this.props[propIndex]!.shove(velocity);
+        // Client-only: note the contact so the render layer can start / extend
+        // predicting this Prop (ADR 0022). Server sims are `authoritative`.
+        if (!this.authoritative) this.contactedProps.add(propIndex);
       }
     };
 
@@ -386,11 +406,44 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     // authoritative snapshot pose for this tick — a solid obstacle for the
     // local Character's prediction, never simulated locally. On the server
     // `followPoses` is empty, so every Prop stays fully dynamic and
-    // authoritative.
+    // authoritative. A Prop the render layer is predicting (ADR 0022) is left
+    // to simulate freely — it is seeded from the server on every reconcile.
     for (let i = 0; i < this.props.length; i += 1) {
+      if (this.predictedProps.has(i)) continue;
       const pose = this.followPoses[i];
       if (pose) this.props[i]!.follow(pose);
     }
+  }
+
+  /**
+   * Client-only (ADR 0022, ticket 11.8): the set of Prop indices to leave
+   * unpinned and simulate locally this frame. The client's render layer
+   * (`apps/client/src/propPrediction.ts`) decides membership from local contact
+   * plus a grace window and calls this once per frame before the predict loop.
+   */
+  setPredictedProps(indices: Iterable<number>): void {
+    this.predictedProps = new Set(indices);
+  }
+
+  /**
+   * Client-only (ADR 0022): Prop indices the local Character's capsule has
+   * contacted since the last call. Clears on read — call once per frame after
+   * the predict loop.
+   */
+  consumeContactedProps(): number[] {
+    const out = [...this.contactedProps];
+    this.contactedProps.clear();
+    return out;
+  }
+
+  /**
+   * Client-only (ADR 0022): overwrite one predicted Prop's dynamic state with
+   * the server's authoritative pose + velocity, so a replay converges instead
+   * of drifting. Called from `reconcile` before the local-input replay, for
+   * every currently-predicted Prop. See {@link Prop.applyAuthoritativeState}.
+   */
+  applyAuthoritativePropState(index: number, pose: PropSnapshot): void {
+    this.props[index]?.applyAuthoritativeState(pose);
   }
 
   /**

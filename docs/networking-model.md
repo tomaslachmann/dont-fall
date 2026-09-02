@@ -11,9 +11,11 @@ Read this first. Change it whenever the model changes; never let it drift from t
 **Implementation status (2026-09-02):** protocol v2 is on branch `m2-protocol-v2` —
 wire shapes, `respawnCount`, time sync, redundant input + LEAD, `PropSnapshot`
 velocity + interp-delay formula, ragdoll epoch/cause/`phaseStartTick` + prediction-tick
-guard, Spinner at the prediction tick, and the net-graph overlay are done. **Pushed-Prop
-prediction (§5) is not yet implemented** — Props are still interpolated-only (ADR 0016
-behaviour) until that pass. See `.scratch/m2-netcode/issues/11-protocol-v2-index.md`.
+guard, Spinner at the prediction tick, the net-graph overlay, and **pushed-Prop
+prediction (§5, the 3-state machine + Fiedler decaying error offset,
+`apps/client/src/propPrediction.ts`)** are done. Remaining deferred bits: sparse bones
+list, full local-ragdoll-body removal, and a profiling pass on N simultaneously-predicted
+Props. See `.scratch/m2-netcode/issues/11-protocol-v2-index.md`.
 
 ---
 
@@ -45,7 +47,7 @@ prediction, wire data, and handoff. Adding an entity means placing it in a row.
 | **Character — remote** | Built | Server | No | same shape; `lastInputTick` ignored | Render-delay interpolation buffer (§4); snap on `respawnCount` / `motionState` change | 0003, 0012, 0017 |
 | **Ragdoll (a downed Character)** | Built | Server (full 11-body sim) | Transition only (`motionState` snaps for feel); **not** the physics | `bones` (all 11, from the server), `ragdollEpoch`, `ragdollCause`, `phaseStartTick` | No local ragdoll body. Bones interpolated like a remote entity. Prediction-tick guard on revert (§6) | 0006, 0015, 0023 |
 | **Prop — passive** (crate/ball at rest or moved by another player) | Built | Server | No | `position, rotation, velocity, angularVelocity, atRest` (velocities omitted when `atRest`) | Render-delay interpolation buffer; a pinned obstacle in the local prediction world | 0012, 0016→0022, 0017 |
-| **Prop — contacted** (the one Prop the local Character is touching) | Planned (ticket) | Server | **Yes**, narrowly — for `PROP_PREDICT_GRACE` ticks after last contact | same shape | Client 3-state machine PINNED→PREDICTED→SERVER-MOVING; every transition seeds a **render-time error offset** that decays exponentially. Physics body always snaps to the server state (§5) | 0022 |
+| **Prop — contacted** (the one Prop the local Character is touching) | Built | Server | **Yes**, narrowly — for `PROP_PREDICT_GRACE_TICKS` ticks after last contact | same shape | Client 3-state machine PINNED→PREDICTED→SERVER-MOVING; every transition seeds a **render-time error offset** that decays exponentially. Physics body always snaps to the server state (§5) | 0022 |
 | **Spinner** (rotating-bar Obstacle) | Built | Server (pure function of tick) | Recomputes from tick (no divergence possible) | **none** — not in `SimState`; `spinnerAngleAt(tick)` | Rendered at the **prediction tick** (matches the local Character's own collision), not the render tick | 0006, 0025 |
 | **Checkpoint / Fall / Finish Zone** (trigger volumes) | Built (Checkpoint/Fall); Finish Zone planned | Server decides | Yes — crossing/fall predicted for instant feedback | `checkpointIndex`, `fallCount`, `respawnCount` on the Character | Server-authoritative; `checkpointIndex` corrects a mispredicted crossing, `respawnCount` a mispredicted/missed Fall | 0015, 0019(scratch) |
 | **Static geometry** (Track collision, walls) | Built | None | N/A | config once at join (`PLAYGROUND_STATICS`) | — | 0005 |

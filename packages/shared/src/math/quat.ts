@@ -10,6 +10,20 @@ export const quat = (x = 0, y = 0, z = 0, w = 1): Quat => ({ x, y, z, w });
 
 export const IDENTITY_QUAT: Quat = { x: 0, y: 0, z: 0, w: 1 };
 
+/** Dot product of two quaternions — `|dot|` is 1 when the rotations are equal, 0 when 90° apart. */
+export const dotQuat = (a: Quat, b: Quat): number => a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+
+/** Conjugate (= inverse, for a unit quaternion). */
+export const conjugateQuat = (q: Quat): Quat => ({ x: -q.x, y: -q.y, z: -q.z, w: q.w });
+
+/** Hamilton product `a ∘ b` — apply `b`, then `a`. */
+export const mulQuat = (a: Quat, b: Quat): Quat => ({
+  x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+  y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+  z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+  w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+});
+
 /** A rotation of `radians` around the world Y (up) axis. */
 export const yawQuat = (radians: number): Quat => ({
   x: 0,

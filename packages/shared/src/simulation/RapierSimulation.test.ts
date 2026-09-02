@@ -781,6 +781,47 @@ describe("RapierSimulation — client Props are pinned obstacles, never predicte
     expect(sim.snapshot().props[0]!.position.y).toBeLessThan(4); // fell under gravity
   });
 
+  it("a Prop marked predicted simulates freely — it is not re-pinned to the snapshot (ADR 0022)", () => {
+    const client = new RapierSimulation({
+      spawn: RESTING_SPAWN,
+      statics: [GROUND],
+      props: [airborneProp],
+      authoritative: false,
+    });
+    // Server keeps saying "the box hasn't moved" — a pinned Prop would obey.
+    client.setPredictedProps([0]);
+    for (let i = 0; i < 30; i += 1) {
+      client.syncPropsToSnapshot([serverPose({ x: 6, y: 5, z: 0 })]);
+      client.tick({});
+    }
+    expect(client.snapshot().props[0]!.position.y).toBeLessThan(4); // fell under local gravity
+
+    // Un-predict it and it snaps back under the server's pin.
+    client.setPredictedProps([]);
+    client.syncPropsToSnapshot([serverPose({ x: 6, y: 5, z: 0 })]);
+    client.tick({});
+    expect(client.snapshot().props[0]!.position.y).toBeCloseTo(5, 3);
+  });
+
+  it("reports the Prop the local capsule contacted, once, and clears on read (ADR 0022)", () => {
+    const groundProp = {
+      shape: { kind: "box" as const, halfExtents: { x: 0.4, y: 0.4, z: 0.4 } },
+      center: { x: 0, y: 0.4, z: -1.2 },
+    };
+    const client = new RapierSimulation({
+      spawn: RESTING_SPAWN,
+      statics: [GROUND],
+      props: [groundProp],
+      authoritative: false,
+    });
+    client.setPredictedProps([0]);
+    expect(client.consumeContactedProps()).toEqual([]); // nothing yet
+
+    for (let i = 0; i < 30; i += 1) client.tick({ [DEFAULT_CHARACTER_ID]: NORTH }); // walk into it
+    expect(client.consumeContactedProps()).toEqual([0]);
+    expect(client.consumeContactedProps()).toEqual([]); // consumed
+  });
+
   it("a moving Prop's snapshot carries velocity; a settled one is atRest with no velocity (ADR 0022)", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND], props: [airborneProp] });
     sim.tick({}); // one step — the box is now falling
