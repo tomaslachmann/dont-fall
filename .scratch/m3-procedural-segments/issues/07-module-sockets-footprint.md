@@ -29,3 +29,11 @@ X/Z half-extents at 90°/270° via a new `rotateBoxYaw90`) and folds it into a S
       directly, including a 90°-turn Module regression test proving rotation actually accumulates
 - [x] `apps/track-service/src/generate.ts`, `apps/track-builder/src/trackState.ts` updated for the
       new `chainTrack`/`placeAfter` signatures
+
+**Code review (post-merge):** found `rotateYaw` used the wrong sign convention — matched
+`movementDirection`'s mirrored yaw instead of Rapier's `yawQuat`/Three.js's `rotation.y`, which is
+what actually rotates Spinners and rendered meshes. Latent (M1_TRACK's rotation is always 0, so it
+never triggered) but would have silently misplaced geometry the moment any Module got a 90°/270°
+turn. Fixed; `vec3.test.ts` now verifies `rotateYaw` against an independently-implemented
+quaternion rotation instead. Also consolidated a duplicated "is yaw a multiple of 90°" check into
+one exported `isMultipleOf90`.
