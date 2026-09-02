@@ -19,10 +19,18 @@ wall Ragdoll (06); procedural Wobble + feel-tuning pass (07). Plus a pre-M2 poli
 on Dash (nitro-style build-up, speed-gated wall Ragdoll, speed-lines effect) and a
 MushroomKing character model swap. See ADRs 0006 / 0009 / 0010.
 
-**Now designing M2** — netcode (`docs/milestones/M2.md`). Design settled via a grilling
-session cross-checked against `docs/research/m2-netcode-transport.md` and
-`docs/research/m2-client-reconciliation.md`; recorded as ADR 0011 / 0012 / 0013.
-**Next:** break M2.md's checklist into tickets and start implementing.
+**M2 done** — netcode (`docs/milestones/M2.md`, "Done when" met and live-verified with 2
+browsers). Authoritative Node server at a fixed 30 Hz (ADR 0002/0011); client-side
+prediction + local replay for the local Character, discrete state always snaps (ADR
+0013); a decaying render-time offset smooths both the local Character's correction and a
+pushed Prop's (ADR 0022 / 0026), with the server consuming `input[serverTick]` rather than
+FIFO (ADR 0027); Character-to-Character Bump reuses the M1 Impact pipeline one-sidedly
+(ticket 04); ragdoll replication + entity-category/time-sync/snapshot-rate protocol-v2
+(ADR 0018–0025). Full implementation surface: `.scratch/m2-netcode/issues/`. Two items
+remain explicitly deferred as non-blocking polish (predicted-ragdoll jitter, Wobble
+disabled for M2) — see M2.md's checklist.
+
+**Next:** M3 — Procedural Segments (build a Track from Modules).
 
 ## Tech stack
 

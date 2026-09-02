@@ -1649,6 +1649,71 @@ describe("RapierSimulation — Character-to-Character Bump (ticket 04)", () => {
     expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Controlled");
   });
 
+  it(
+    "the BUMPED player's own client can move again once Controlled resumes — not stuck in place " +
+      "after recovering from a Bump-into-Ragdoll (2026-09 live 2-tab playtest report: dash into another " +
+      "player knocks them down, but switching to their tab afterward shows them standing yet unable to move)",
+    () => {
+      // `server` has both players and actually resolves the Bump. `targetClient`
+      // is the BUMPED player's OWN client — only their Character, never
+      // predicting the knockdown itself (ADR 0012/0015: a Bump is server-only,
+      // the client only ever learns of it via a reconcile) — reconciled every
+      // tick from the server's report for their Character, exactly like
+      // `main.ts`'s real reconcile() loop, just with zero latency (irrelevant
+      // to this bug: if it reproduces with the freshest possible server info,
+      // it isn't a staleness/latency artifact).
+      const WALL_GAP = 3.5; // matches "a fast Dash into another player knocks THAT player down"
+      const server = twoCharacters(WALL_GAP);
+      const targetClient = new RapierSimulation({ statics: [GROUND], withDefaultCharacter: false, authoritative: false });
+      targetClient.addCharacter(TARGET, onGround(-WALL_GAP));
+      for (let n = 0; n < 10; n += 1) targetClient.tick({}); // settle, matching twoCharacters
+
+      const reconcileTarget = (): void => {
+        const s = server.snapshot().characters[TARGET]!;
+        targetClient.reconcileCharacter(TARGET, s);
+      };
+
+      // Mover dashes into the target (server-authoritative Bump), target's own
+      // input is idle throughout — they aren't trying to move yet.
+      let ticksSinceRagdoll = -1;
+      for (let i = 0; i < 400; i += 1) {
+        const moverInput = i < 27 ? input({ ...NORTH, dashHeld: i === 0 }) : IDLE_INPUTS;
+        server.tick({ [MOVER]: moverInput, [TARGET]: IDLE_INPUTS });
+        targetClient.tick({ [TARGET]: IDLE_INPUTS });
+        reconcileTarget();
+
+        const targetState = server.snapshot().characters[TARGET]!.motionState;
+        if (targetState === "Ragdoll" && ticksSinceRagdoll < 0) ticksSinceRagdoll = 0;
+        if (ticksSinceRagdoll >= 0) ticksSinceRagdoll += 1;
+        // Give it a generous but bounded window to fully recover (Ragdoll max
+        // 4 s + GettingUp 0.45 s ≈ 4.5 s ≈ 135 ticks) before giving up early.
+        if (targetState === "Controlled" && ticksSinceRagdoll > 5) break;
+      }
+
+      expect(ticksSinceRagdoll).toBeGreaterThan(0); // the Bump actually knocked them down at some point
+      expect(server.snapshot().characters[TARGET]!.motionState).toBe("Controlled");
+      expect(targetClient.snapshot().characters[TARGET]!.motionState).toBe("Controlled");
+
+      // Now the human at this keyboard tries to walk. Feed the SAME input to
+      // both the client's own prediction and the server (as `main.ts` and a
+      // real connected server would each independently receive it), reconcile
+      // every tick, and check the client's own (locally predicted, i.e. what
+      // the player actually SEES) position actually advances.
+      const startZ = targetClient.snapshot().characters[TARGET]!.position.z;
+      const MOVE_SOUTH = input({ moveDirection: { x: 0, y: 0, z: 1 } }); // away from where the mover came from
+      for (let i = 0; i < 60; i += 1) {
+        // The mover just stands there from here on — only the target's own
+        // recovery-then-movement is under test.
+        server.tick({ [MOVER]: IDLE_INPUTS, [TARGET]: MOVE_SOUTH });
+        targetClient.tick({ [TARGET]: MOVE_SOUTH });
+        reconcileTarget();
+      }
+      const endZ = targetClient.snapshot().characters[TARGET]!.position.z;
+
+      expect(endZ - startZ).toBeGreaterThan(1); // walked ~1s at WALK_SPEED — not stuck
+    },
+  );
+
   it("is one-sided: a stationary player standing in the way is not knocked down by the mover walking into them, and never bumps the mover", () => {
     const sim = twoCharacters(0.9);
     step(sim, 1.5, NORTH);
