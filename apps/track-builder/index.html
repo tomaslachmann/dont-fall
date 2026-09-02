@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DON'T FALL — Track builder</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e14; font: 13px/1.4 ui-monospace, monospace; color: #cdd9e5; }
+      #app { display: grid; grid-template-columns: 220px 1fr; grid-template-rows: 1fr auto; height: 100%; }
+      #palette { grid-row: 1 / 3; overflow-y: auto; background: #10141c; border-right: 1px solid #232a36; padding: 8px; }
+      #palette h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #8ba0b8; margin: 4px 4px 8px; }
+      .module-entry { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 10px; cursor: pointer; border: 1px solid #232a36; border-radius: 4px; padding: 6px; }
+      .module-entry:hover { border-color: #4a90d9; }
+      .module-entry canvas { display: block; background: #05070b; border-radius: 3px; }
+      .module-entry span { font-size: 11px; color: #a8b8c8; }
+      #viewport { position: relative; }
+      #viewport canvas { display: block; }
+      #toolbar { grid-column: 2; display: flex; gap: 8px; align-items: center; padding: 8px; background: #10141c; border-top: 1px solid #232a36; flex-wrap: wrap; }
+      #toolbar input { background: #05070b; color: #cdd9e5; border: 1px solid #232a36; border-radius: 3px; padding: 4px 6px; font: inherit; }
+      #toolbar button { background: #1c2430; color: #cdd9e5; border: 1px solid #2f3b4c; border-radius: 3px; padding: 4px 10px; font: inherit; cursor: pointer; }
+      #toolbar button:hover { border-color: #4a90d9; }
+      #status { font-size: 11px; color: #8ba0b8; margin-left: auto; white-space: pre; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="palette">
+        <h2>Modules</h2>
+        <div id="palette-list"></div>
+      </div>
+      <div id="viewport"></div>
+      <div id="toolbar">
+        <label>track-service <input id="service-url" value="http://localhost:8081" size="24" /></label>
+        <button id="remove-last">Remove last</button>
+        <label>name <input id="track-name" placeholder="my track" size="16" /></label>
+        <button id="save">Save</button>
+        <label>id <input id="track-id" placeholder="m1-playground" size="16" /></label>
+        <button id="load">Load</button>
+        <span id="status"></span>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

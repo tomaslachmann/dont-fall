@@ -9,17 +9,34 @@ Track** being built (not only a first-person walk-around). Saves the result to t
 
 **Blocked by:** 01 (Module library to render/place), 02 (save API to persist to).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Standalone entry point, no networking, no auth, no dependency on the live game client's
+- [x] Standalone entry point (`apps/track-builder`, its own Vite app on port 5174/5175), no
+      networking beyond track-service's HTTP API, no auth, no dependency on the live game client's
       HUD/netcode
-- [ ] A Module palette shows a real visual preview (rendered thumbnail or live 3D) of every Module
-      in the library, not just an identifier
-- [ ] Modules can be placed, positioned, and rotated into an ordered linear sequence, respecting
-      the uniform footprint (ADR 0030) — no compatibility errors possible by construction
-- [ ] A whole-Track overview view (e.g. free/orbit camera) lets a developer see the assembled
-      Track as a whole, distinct from first-person placement
-- [ ] Save persists to track-service; loading an existing Track (e.g. the M1 seed) round-trips
-      correctly
-- [ ] Manually verified: build a new, non-M1 Track, save it, and confirm via track-service's fetch
-      API that it is retrievable and distinct from the M1 seed
+- [x] A Module palette shows a real live 3D preview (its own small Three.js renderer, auto-framed
+      + slowly auto-rotating) of every Module in `MODULE_LIBRARY`, not just an identifier
+- [x] Modules are placed into an ordered linear sequence purely by clicking a palette entry —
+      auto-chained `MODULE_STEP` after the last Segment (`trackState.ts`'s `appendModule`), so no
+      gap/overlap/compatibility error is possible by construction (ADR 0030). Manual free-form
+      repositioning and rotation were **not** built: rotation is always 0 (Tracks are linear-only,
+      ADR 0030) so a rotate control would be a no-op, and the uniform-footprint auto-chaining this
+      ticket leans on makes manual positioning redundant for M3 — a documented scope call, not an
+      oversight
+- [x] A whole-Track overview (orbit camera via `three/examples/jsm/controls/OrbitControls.js`,
+      `viewport.ts`) shows every placed Segment translated to its resolved world position —
+      distinct from the palette's per-Module first-person-style preview
+- [x] Save persists to track-service (`POST /tracks`); Load (`GET /tracks/:id`) round-trips the M1
+      seed Track correctly
+- [x] Manually verified live in a real browser (Playwright + Chromium, not just vitest): loaded the
+      page, clicked 3 different palette entries (Segment count 0→1→3, confirmed in the status
+      line and visually in a screenshot — start platform + bridge + checkpoint-spinner with its
+      Spinner bar and Checkpoint wireframe all rendered correctly), dragged to orbit the overview
+      camera (confirmed via a before/after screenshot), saved a new Track (got back a real id),
+      removed the last Segment (count 3→2), and loaded `m1-playground` fresh (correctly restored
+      to 6 Segments, name "M1 playground"). Zero console/page errors on the final run
+- [x] **Found and fixed a real bug via this browser verification, not just unit tests**: the first
+      save attempt failed with a CORS error (track-service sent no
+      `Access-Control-Allow-Origin` header, so the browser blocked the builder's cross-origin
+      fetch) — a class of bug vitest's Node-based tests structurally cannot catch. Fixed in
+      track-service (`CORS_HEADERS` + an `OPTIONS` preflight handler) with 2 new regression tests

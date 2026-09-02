@@ -33,6 +33,20 @@ describe("track-service", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  it("sends CORS headers so a browser-based caller (the builder tool, a different origin) isn't blocked", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const res = await fetch(`http://localhost:${service.port}/health`);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
+  it("answers an OPTIONS preflight with 204 + CORS headers", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const res = await fetch(`http://localhost:${service.port}/tracks`, { method: "OPTIONS" });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    expect(res.headers.get("access-control-allow-methods")).toContain("POST");
+  });
+
   it("seeds the M1 Track at startup — fetchable by its known id", async () => {
     service = await startTrackService({ port: 0, dbPath });
     const res = await fetch(`http://localhost:${service.port}/tracks/${M1_SEED_TRACK_ID}`);

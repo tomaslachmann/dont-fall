@@ -35,9 +35,21 @@ const readBody = (req: IncomingMessage): Promise<string> =>
     req.on("error", reject);
   });
 
+/**
+ * A browser-based caller (the Track builder tool, ticket 04) is always a
+ * different origin from track-service — wide-open CORS is fine for a
+ * dev-only, no-auth internal service (Q11/Q15 in the M3 grilling session);
+ * there's no credential here for a permissive origin to steal.
+ */
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
 const json = (res: ServerResponse, status: number, payload: unknown): void => {
   const body = JSON.stringify(payload);
-  res.writeHead(status, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) });
+  res.writeHead(status, { ...CORS_HEADERS, "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) });
   res.end(body);
 };
 
@@ -52,6 +64,12 @@ const isTrack = (value: unknown): value is Track =>
   );
 
 const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): Promise<void> => {
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, CORS_HEADERS);
+    res.end();
+    return;
+  }
+
   const url = new URL(req.url ?? "/", "http://track-service");
 
   if (req.method === "GET" && url.pathname === "/health") {
