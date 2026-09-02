@@ -51,7 +51,7 @@ for (const [moduleId, module] of Object.entries(MODULE_LIBRARY)) {
 
   entry.addEventListener("click", () => {
     if (mode !== "edit") return;
-    currentTrack = appendModule(currentTrack, moduleId);
+    currentTrack = appendModule(currentTrack, moduleId, MODULE_LIBRARY);
     rerender();
   });
 

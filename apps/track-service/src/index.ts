@@ -113,7 +113,7 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
     const count = typeof body.count === "number" && body.count > 0 ? Math.floor(body.count) : undefined;
     let track: Track;
     try {
-      track = generateRandomTrack(Object.keys(MODULE_LIBRARY), count);
+      track = generateRandomTrack(MODULE_LIBRARY, count);
     } catch (err) {
       json(res, 500, { error: (err as Error).message });
       return;

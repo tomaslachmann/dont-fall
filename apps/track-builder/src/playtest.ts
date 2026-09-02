@@ -60,6 +60,7 @@ export const startPlaytest = async (
     if (!module) continue;
     const group = buildModuleGroup(module);
     group.position.set(segment.position.x, segment.position.y, segment.position.z);
+    group.rotation.y = segment.rotation;
     scene.add(group);
   }
 

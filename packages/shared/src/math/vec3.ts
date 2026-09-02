@@ -39,3 +39,15 @@ export const normalizeVec3 = (v: Vec3): Vec3 => {
   const len = lengthVec3(v);
   return len === 0 ? vec3() : { x: v.x / len, y: v.y / len, z: v.z / len };
 };
+
+/**
+ * Rotates `v` by `yaw` radians around the world Y axis, matching this
+ * project's existing yaw convention (`movementDirection`: `forward(yaw) =
+ * (sin, 0, -cos)`, `right(yaw) = (cos, 0, sin)`) — the same convention
+ * `Segment.rotation` (ADR 0031) and Socket alignment use.
+ */
+export const rotateYaw = (v: Vec3, yaw: number): Vec3 => {
+  const sin = Math.sin(yaw);
+  const cos = Math.cos(yaw);
+  return { x: v.x * cos - v.z * sin, y: v.y, z: v.x * sin + v.z * cos };
+};

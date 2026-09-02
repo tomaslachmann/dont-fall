@@ -1,14 +1,22 @@
-import { MODULE_STEP, addVec3, type Segment, type Track } from "@dont-fall/shared";
+import { placeAfter, type Module, type Segment, type Track } from "@dont-fall/shared";
 
 /**
- * Appends `moduleId` right after the last placed Segment, `MODULE_STEP` away —
- * the same uniform-footprint chaining `chainTrack` (`@dont-fall/shared`) uses,
- * so a hand-built Track can never produce a gap/overlap (ADR 0030).
+ * Appends `moduleId` right after the last placed Segment, aligning its entry
+ * Socket against the previous Module's exit Socket (ADR 0031) — a hand-built
+ * Track can never produce a gap/overlap this way, since every current Socket
+ * is the same type.
  */
-export const appendModule = (track: Track, moduleId: string): Track => {
+export const appendModule = (track: Track, moduleId: string, modules: Record<string, Module>): Track => {
+  const module = modules[moduleId];
+  if (!module) throw new Error(`appendModule: unknown Module "${moduleId}"`);
+
   const last = track[track.length - 1];
-  const position = last ? addVec3(last.position, MODULE_STEP) : { x: 0, y: 0, z: 0 };
-  const segment: Segment = { moduleId, position, rotation: 0 };
+  if (!last) return [{ moduleId, position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+
+  const prevModule = modules[last.moduleId];
+  if (!prevModule) throw new Error(`appendModule: unknown Module "${last.moduleId}" already in the Track`);
+
+  const segment: Segment = placeAfter(last, prevModule, moduleId, module);
   return [...track, segment];
 };
 

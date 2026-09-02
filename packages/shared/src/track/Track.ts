@@ -1,14 +1,15 @@
-import type { Box } from "../math/box.js";
-import { addVec3, type Vec3 } from "../math/vec3.js";
+import { rotateBoxYaw90, type Box } from "../math/box.js";
+import { addVec3, rotateYaw, subVec3, type Vec3 } from "../math/vec3.js";
 import type { Checkpoint } from "../simulation/Checkpoint.js";
 import type { PropConfig } from "../simulation/Prop.js";
 import type { SpinnerConfig } from "../simulation/Spinner.js";
-import { MODULE_STEP, type Module } from "./Module.js";
+import { findSocket, type Module } from "./Module.js";
 
 /**
  * One placed instance of a Module in a Track (CONTEXT.md: Segment). `rotation`
- * is reserved for a future branching/turning Track — M3 Tracks are strictly
- * linear (ADR 0030), so every Segment's `rotation` is `0`.
+ * (radians, world yaw) must be a multiple of 90° (ADR 0031's amendment) —
+ * `RapierSimulation`'s static colliders don't rotate, so anything else would
+ * desync the visual/logical placement from what actually collides.
  */
 export interface Segment {
   moduleId: string;
@@ -19,19 +20,71 @@ export interface Segment {
 /** A Track: an ordered sequence of Segments (CONTEXT.md). */
 export type Track = Segment[];
 
+const HALF_PI_EPSILON = 1e-6;
+const isMultipleOf90 = (yaw: number): boolean => {
+  const quarterTurns = yaw / (Math.PI / 2);
+  return Math.abs(quarterTurns - Math.round(quarterTurns)) < HALF_PI_EPSILON;
+};
+
 /**
- * Places `moduleIds` end-to-end from `start`, each one `MODULE_STEP` after the
- * last. This is the "no compatibility metadata" chaining ADR 0030's uniform
- * footprint exists to enable — a hand-built Track from a builder can still
- * override individual Segment positions afterward; a randomly-assembled one
- * can use this as-is.
+ * Places `moduleId` right after `prev` by aligning `nextModule`'s `entrySocketId`
+ * Socket against `prevModule`'s `exitSocketId` Socket (ADR 0031) — the two
+ * Sockets end up at the same world position, facing each other (180° apart).
  */
-export const chainTrack = (moduleIds: string[], start: Vec3 = { x: 0, y: 0, z: 0 }): Track => {
-  let position = start;
+export const placeAfter = (
+  prev: Segment,
+  prevModule: Module,
+  moduleId: string,
+  nextModule: Module,
+  exitSocketId = "exit",
+  entrySocketId = "entry",
+): Segment => {
+  const exit = findSocket(prevModule, exitSocketId);
+  const entry = findSocket(nextModule, entrySocketId);
+
+  const exitWorldPos = addVec3(prev.position, rotateYaw(exit.position, prev.rotation));
+  const exitWorldYaw = prev.rotation + exit.yaw;
+
+  const nextYaw = exitWorldYaw + Math.PI - entry.yaw;
+  const nextPos = subVec3(exitWorldPos, rotateYaw(entry.position, nextYaw));
+
+  if (!isMultipleOf90(nextYaw)) {
+    throw new Error(
+      `placeAfter: chaining "${prevModule.id}" -> "${moduleId}" would land at a ${nextYaw} rad ` +
+        `world rotation, not a multiple of 90° (ADR 0031) — check the Modules' Socket yaws`,
+    );
+  }
+  return { moduleId, position: nextPos, rotation: nextYaw };
+};
+
+/**
+ * Places `moduleIds` end-to-end from `start`/`startRotation`, each one
+ * aligned via `placeAfter`. This is the "no compatibility metadata" chaining
+ * ADR 0031's Sockets exist to enable (every current Socket is type
+ * `"floor"`, so any Module can follow any other) — used by both a random
+ * assembler and as a starting layout a builder can then edit further.
+ */
+export const chainTrack = (
+  moduleIds: string[],
+  modules: Record<string, Module>,
+  start: Vec3 = { x: 0, y: 0, z: 0 },
+  startRotation = 0,
+): Track => {
   const track: Track = [];
+  let prevModuleId: string | undefined;
+
   for (const moduleId of moduleIds) {
-    track.push({ moduleId, position, rotation: 0 });
-    position = addVec3(position, MODULE_STEP);
+    const module = modules[moduleId];
+    if (!module) throw new Error(`chainTrack: unknown Module "${moduleId}"`);
+
+    if (prevModuleId === undefined) {
+      track.push({ moduleId, position: start, rotation: startRotation });
+    } else {
+      const prevModule = modules[prevModuleId]!;
+      const prevSegment = track[track.length - 1]!;
+      track.push(placeAfter(prevSegment, prevModule, moduleId, module));
+    }
+    prevModuleId = moduleId;
   }
   return track;
 };
@@ -50,22 +103,34 @@ export const resolveTrack = (
     const module = modules[segment.moduleId];
     if (!module) throw new Error(`Track references unknown Module "${segment.moduleId}"`);
 
-    for (const box of module.statics) {
-      statics.push({ center: addVec3(box.center, segment.position), halfExtents: box.halfExtents });
-    }
+    const placeBox = (box: Box): Box => {
+      const rotated = rotateBoxYaw90(box, segment.rotation);
+      return { center: addVec3(rotated.center, segment.position), halfExtents: rotated.halfExtents };
+    };
+    const placePoint = (point: Vec3): Vec3 => addVec3(rotateYaw(point, segment.rotation), segment.position);
+
+    for (const box of module.statics) statics.push(placeBox(box));
+
     for (const prop of module.props ?? []) {
-      props.push({ ...prop, center: addVec3(prop.center, segment.position) });
+      props.push({
+        ...prop,
+        center: placePoint(prop.center),
+        shape: prop.shape.kind === "box" ? { kind: "box", halfExtents: placeBox({ center: { x: 0, y: 0, z: 0 }, halfExtents: prop.shape.halfExtents }).halfExtents } : prop.shape,
+      });
     }
+
     for (const spinner of module.spinners ?? []) {
-      spinners.push({ ...spinner, center: addVec3(spinner.center, segment.position) });
+      // The collider's own local dimensions (armLength/armRadius) never
+      // change — a Spinner's live rotation each tick already carries any
+      // base placement offset via `initialAngle` (`spinnerAngleAt`), so the
+      // Module's placement rotation folds in there, not into the shape.
+      spinners.push({ ...spinner, center: placePoint(spinner.center), initialAngle: (spinner.initialAngle ?? 0) + segment.rotation });
     }
+
     if (module.checkpoint) {
       checkpoints.push({
-        respawn: addVec3(module.checkpoint.respawn, segment.position),
-        volume: {
-          center: addVec3(module.checkpoint.volume.center, segment.position),
-          halfExtents: module.checkpoint.volume.halfExtents,
-        },
+        respawn: placePoint(module.checkpoint.respawn),
+        volume: placeBox(module.checkpoint.volume),
       });
     }
   }

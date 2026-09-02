@@ -85,6 +85,7 @@ export const createTrackViewport = (container: HTMLElement): TrackViewport => {
         if (!module) continue;
         const group = buildModuleGroup(module);
         group.position.set(segment.position.x, segment.position.y, segment.position.z);
+    group.rotation.y = segment.rotation;
         trackGroup.add(group);
       }
       scene.add(trackGroup);
