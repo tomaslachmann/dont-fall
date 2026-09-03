@@ -417,6 +417,62 @@ describe("RapierSimulation — Sliding (ticket 03, M3.6, ADR 0037): the band bet
   });
 });
 
+describe("RapierSimulation — downhill faster, uphill slower (ticket 04, M3.6, ADR 0037)", () => {
+  // A walkable-band pitch (under WALKABLE_SLOPE_MAX_ANGLE ~35°) — this ticket
+  // is strictly about the walking model; Sliding's own gravity-projected
+  // model is ticket 03's concern, already covered above.
+  const PITCH = 0.262; // ~15°
+  const ramp = (): OrientedBox => ({
+    center: { x: 0, y: 0, z: 0 },
+    halfExtents: { x: 5, y: 0.1, z: 20 },
+    rotation: pitchQuat(PITCH),
+  });
+  // Positive PITCH: +Z is downhill, -Z is uphill (same convention
+  // `movementVerbs.test.ts`'s own `slopeSpeedMultiplier` tests establish and
+  // verify against this exact `pitchQuat` formula).
+  const spawnAboveCentre = (localClearance: number): { x: number; y: number; z: number } =>
+    rotateVec3ByQuat({ x: 0, y: 0.1 + localClearance, z: 0 }, pitchQuat(PITCH));
+  const DOWNHILL = input({ moveDirection: { x: 0, y: 0, z: 1 } });
+  const UPHILL = input({ moveDirection: { x: 0, y: 0, z: -1 } });
+
+  const distanceTraveledIn = (heldInput: SimInputs, seconds: number): number => {
+    const sim = new RapierSimulation({ statics: [ramp()], spawn: spawnAboveCentre(2) });
+    tick(sim, 1); // settle at the ramp's centre
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    tick(sim, seconds, heldInput);
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    return Math.hypot(after.z - before.z, after.y - before.y);
+  };
+
+  it("covers more ground per second downhill than uphill, on the same ramp", () => {
+    const downhillDistance = distanceTraveledIn(DOWNHILL, 1);
+    const uphillDistance = distanceTraveledIn(UPHILL, 1);
+    // Not just "greater," but by a clearly non-trivial margin — not float
+    // noise, not the small residual effect Rapier's own slide-along-surface
+    // geometry already contributes on any slope regardless of this ticket's
+    // multiplier (an *additional* compounding factor on top of it, not a
+    // substitute — no exact ratio is asserted against `slopeSpeedMultiplier`
+    // alone for that reason).
+    expect(downhillDistance / uphillDistance).toBeGreaterThan(1.15);
+  });
+
+  it("stays Controlled throughout — this is the walking model, not Sliding", () => {
+    const sim = new RapierSimulation({ statics: [ramp()], spawn: spawnAboveCentre(2) });
+    tick(sim, 1);
+    tick(sim, 1, DOWNHILL);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
+  });
+
+  it("moving straight downhill/uphill on FLAT ground is unaffected — the slope multiplier is exactly 1 with no tilt", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
+    tick(sim, 0.5);
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    tick(sim, 1, NORTH);
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    expect(before.z - after.z).toBeCloseTo(WALK_SPEED, 0); // exactly the pre-ticket-04 baseline, unchanged
+  });
+});
+
 describe("RapierSimulation — Fall & Respawn", () => {
   /** A floating platform with a big void underneath and a kill-plane at y = -8. */
   const PLATFORM: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 4, y: 0.5, z: 4 } };

@@ -8,10 +8,46 @@ import {
   JUMP_HOLD_GRAVITY_SCALE,
   JUMP_HOLD_MAX_TICKS,
   JUMP_VELOCITY,
+  SLOPE_SPEED_ANGLE_FACTOR,
+  SLOPE_SPEED_MULTIPLIER_MIN,
   TICK_MS,
 } from "../tuning.js";
 
 const smoothstep = (x: number): number => x * x * (3 - 2 * x);
+
+/**
+ * Walking (not `Sliding`) speed multiplier from the **signed slope angle
+ * toward the movement direction** (ticket 04, M3.6) — the model Unity's
+ * Character Controller package documentation recommends
+ * (`GetSlopeAngleTowardsDirection`): "positive if the slope goes up, and
+ * negative if the slope goes down… apply a multiplier to your desired
+ * character velocity based on that signed slope angle." A pure function of
+ * `(moveDirection, groundNormal)` — sidestepping across a slope
+ * (perpendicular to its fall line) computes ~0 rad and multiplies by ~1,
+ * exactly as it should; standing still (`moveDirection` zero) has no
+ * direction to be uphill/downhill *toward*, so this returns 1 rather than
+ * an arbitrary angle.
+ *
+ * Quake 3 deliberately does the opposite: `PM_WalkMove` re-normalises ground
+ * velocity onto the floor plane after the move, which keeps speed
+ * slope-independent *by design*, not by oversight — a documented alternative
+ * tradition this project chose not to follow, since ticket 04's own
+ * "downhill is faster, uphill is slower" requirement rules it out.
+ *
+ * Deliberately never used for `Sliding`: that state projects gravity onto
+ * the slope plane and integrates it — the rigid-body formulation ADR 0035
+ * reserves for ground too steep to walk. This is strictly the walking
+ * (Controlled/Stagger) model, and only ever called below the walkable limit.
+ */
+export const slopeSpeedMultiplier = (moveDirection: Vec3, groundNormal: Vec3): number => {
+  const dir = normalizeVec3(moveDirection);
+  if (dir.x === 0 && dir.z === 0) return 1;
+  // Rise of the ground plane per unit horizontal distance travelled along
+  // `dir`, from the plane equation normal·(p - p0) = 0 solved for dy/dd.
+  const rise = -(groundNormal.x * dir.x + groundNormal.z * dir.z) / groundNormal.y;
+  const signedSlopeAngle = Math.atan(rise); // positive = uphill, negative = downhill (Unity's convention)
+  return Math.max(SLOPE_SPEED_MULTIPLIER_MIN, 1 - SLOPE_SPEED_ANGLE_FACTOR * signedSlopeAngle);
+};
 
 /**
  * The dash speed envelope: a "nitro" build — {@link smoothstep}-eased up to

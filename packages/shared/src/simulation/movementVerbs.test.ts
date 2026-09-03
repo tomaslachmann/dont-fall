@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { dashEnvelope } from "./movementVerbs.js";
+import { pitchQuat } from "../math/quat.js";
+import { rotateVec3ByQuat } from "../math/vec3.js";
+import { SLOPE_SPEED_ANGLE_FACTOR, WALKABLE_SLOPE_MAX_ANGLE } from "../tuning.js";
+import { dashEnvelope, slopeSpeedMultiplier } from "./movementVerbs.js";
 
 describe("dashEnvelope", () => {
   const duration = 10;
@@ -46,5 +49,66 @@ describe("dashEnvelope", () => {
     const long = dashEnvelope(1, 6, 10);
     const short = dashEnvelope(1, 6, 6);
     expect(long).toBeCloseTo(short, 10);
+  });
+});
+
+describe("slopeSpeedMultiplier (ticket 04, M3.6 — Unity's signed-slope-angle model, not Quake 3's re-normalise-to-flat one)", () => {
+  const FLAT = { x: 0, y: 1, z: 0 };
+  // A ground normal tilted toward +Z (PITCH > 0): the plane is higher at
+  // negative Z, so travelling toward +Z is downhill, toward -Z is uphill —
+  // matches how `RapierSimulation.test.ts`'s own tilted-floor fixtures read
+  // the same `pitchQuat` convention.
+  const tiltedNormal = (pitch: number) => rotateVec3ByQuat({ x: 0, y: 1, z: 0 }, pitchQuat(pitch));
+
+  it("is exactly 1 on flat ground, in every direction — no slope, no effect", () => {
+    expect(slopeSpeedMultiplier({ x: 0, y: 0, z: 1 }, FLAT)).toBe(1);
+    expect(slopeSpeedMultiplier({ x: 1, y: 0, z: 0 }, FLAT)).toBe(1);
+    expect(slopeSpeedMultiplier({ x: 1, y: 0, z: 1 }, FLAT)).toBe(1);
+  });
+
+  it("is exactly 1 when no horizontal direction is held — a stationary Character has no direction to be uphill/downhill relative to", () => {
+    expect(slopeSpeedMultiplier({ x: 0, y: 0, z: 0 }, tiltedNormal(WALKABLE_SLOPE_MAX_ANGLE))).toBe(1);
+  });
+
+  it("is greater than 1 moving downhill, less than 1 moving uphill, on the same slope", () => {
+    const normal = tiltedNormal(0.3);
+    const downhill = slopeSpeedMultiplier({ x: 0, y: 0, z: 1 }, normal);
+    const uphill = slopeSpeedMultiplier({ x: 0, y: 0, z: -1 }, normal);
+    expect(downhill).toBeGreaterThan(1);
+    expect(uphill).toBeLessThan(1);
+  });
+
+  it("is close to 1 moving perpendicular to the fall line (sidestepping across the slope, not up or down it)", () => {
+    const normal = tiltedNormal(0.3);
+    const sideways = slopeSpeedMultiplier({ x: 1, y: 0, z: 0 }, normal);
+    expect(sideways).toBeCloseTo(1, 6);
+  });
+
+  it("is symmetric: the uphill penalty and downhill bonus are equal and opposite around 1, at the same angle", () => {
+    const normal = tiltedNormal(0.3);
+    const downhill = slopeSpeedMultiplier({ x: 0, y: 0, z: 1 }, normal);
+    const uphill = slopeSpeedMultiplier({ x: 0, y: 0, z: -1 }, normal);
+    expect(downhill - 1).toBeCloseTo(1 - uphill, 10);
+  });
+
+  it("matches the documented formula exactly at the walkable limit — the steepest angle this ever operates at", () => {
+    const normal = tiltedNormal(WALKABLE_SLOPE_MAX_ANGLE);
+    const downhill = slopeSpeedMultiplier({ x: 0, y: 0, z: 1 }, normal);
+    const uphill = slopeSpeedMultiplier({ x: 0, y: 0, z: -1 }, normal);
+    expect(downhill).toBeCloseTo(1 + SLOPE_SPEED_ANGLE_FACTOR * WALKABLE_SLOPE_MAX_ANGLE, 6);
+    expect(uphill).toBeCloseTo(1 - SLOPE_SPEED_ANGLE_FACTOR * WALKABLE_SLOPE_MAX_ANGLE, 6);
+  });
+
+  it("a steeper slope produces a stronger effect than a shallower one, same direction", () => {
+    const shallow = slopeSpeedMultiplier({ x: 0, y: 0, z: 1 }, tiltedNormal(0.1));
+    const steep = slopeSpeedMultiplier({ x: 0, y: 0, z: 1 }, tiltedNormal(0.3));
+    expect(steep).toBeGreaterThan(shallow);
+  });
+
+  it("normalises the move direction — magnitude never changes the multiplier, only which way it points", () => {
+    const normal = tiltedNormal(0.3);
+    const unit = slopeSpeedMultiplier({ x: 0, y: 0, z: 1 }, normal);
+    const scaled = slopeSpeedMultiplier({ x: 0, y: 0, z: 5 }, normal);
+    expect(scaled).toBeCloseTo(unit, 10);
   });
 });

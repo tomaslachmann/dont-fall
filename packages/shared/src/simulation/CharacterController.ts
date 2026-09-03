@@ -27,7 +27,7 @@ import {
 import type { CharacterSnapshot, RagdollCause } from "../state/SimState.js";
 import { CharacterStateMachine, type CharacterMotionState } from "./CharacterStateMachine.js";
 import { CHARACTER_GROUPS, GROUP_CHARACTER } from "./collisionGroups.js";
-import { DashController, JumpController } from "./movementVerbs.js";
+import { DashController, JumpController, slopeSpeedMultiplier } from "./movementVerbs.js";
 import { Ragdoll } from "./Ragdoll.js";
 import { blendGettingUpBones, type BoneSnapshot } from "./ragdollSkeleton.js";
 import type { SimInputs } from "./SimInputs.js";
@@ -394,6 +394,10 @@ export class CharacterController {
     // unify how a burst's momentum carries across a state change).
     const dashBurst = this.dash.beginTick(move, fullControl && dashPressed && this.grounded);
     this.dashSpeed = sliding ? 0 : lengthVec3(dashBurst);
+    // Surface-scaled, but not yet slope-scaled (below) — the Sliding branch
+    // uses this as-is for its steering blend, deliberately never applying
+    // the slope-angle multiplier (ticket 04): that model is for walking
+    // only, per ADR 0037/CONTEXT.md's split between the two.
     const walk = scaleVec3(move, WALK_SPEED * this.surfaceTopSpeedMultiplier);
 
     if (sliding && this.currentGroundNormal) {
@@ -422,8 +426,19 @@ export class CharacterController {
       const gravityScale = this.jump.gravityScale(fullControl && input.jumpHeld, this.velocity.y);
       this.velocity.y += GRAVITY_Y * gravityScale * TICK_DT;
 
-      this.velocity.x = walk.x + dashBurst.x;
-      this.velocity.z = walk.z + dashBurst.z;
+      // Ticket 04: downhill faster, uphill slower — an explicit multiplier
+      // keyed off the signed slope angle toward `move` (Unity's Character
+      // Controller model, not Quake 3's flatten-to-slope-independent one;
+      // see `slopeSpeedMultiplier`'s own doc comment for both). Only applies
+      // to the walk contribution, not Dash — same "Surface caps WALK_SPEED,
+      // never Dash" precedent ticket 01 already established — and only
+      // while genuinely grounded on a real surface (mid-air/no ground
+      // contact reads as flat, i.e. no effect, exactly like Surface itself).
+      const slope =
+        this.grounded && this.currentGroundNormal ? slopeSpeedMultiplier(move, this.currentGroundNormal) : 1;
+      const slopedWalk = scaleVec3(walk, slope);
+      this.velocity.x = slopedWalk.x + dashBurst.x;
+      this.velocity.z = slopedWalk.z + dashBurst.z;
     }
 
     // `filterGroups: CHARACTER_GROUPS` so the sweep honours collision groups

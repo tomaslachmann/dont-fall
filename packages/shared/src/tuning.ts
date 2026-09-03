@@ -282,6 +282,27 @@ export const SURFACE_GROUND_NORMAL_MIN_Y = 0.5;
  */
 export const WALKABLE_SLOPE_MAX_ANGLE = (35 * Math.PI) / 180;
 
+/**
+ * How strongly walking speed scales with the signed slope angle (ticket 04,
+ * M3.6) — `slopeSpeedMultiplier` (`movementVerbs.ts`) computes
+ * `1 - SLOPE_SPEED_ANGLE_FACTOR * angle`, where `angle` is the slope's tilt
+ * toward the direction of travel (positive uphill, negative downhill —
+ * Unity's Character Controller package's own documented convention). Bounded
+ * automatically by {@link WALKABLE_SLOPE_MAX_ANGLE}: since this multiplier
+ * only ever applies while walking (never `Sliding`), the steepest angle it
+ * ever sees is that limit, giving roughly 0.76x uphill / 1.24x downhill at
+ * the walkable ceiling with this value — a provisional number, like every
+ * other one this milestone defers to real-ramp tuning.
+ */
+export const SLOPE_SPEED_ANGLE_FACTOR = 0.4;
+
+/**
+ * Defensive floor on {@link import("../simulation/movementVerbs.js").slopeSpeedMultiplier}'s
+ * output — never lets an (unexpectedly, given the bound above) steep uphill
+ * angle multiply speed down to zero or negative.
+ */
+export const SLOPE_SPEED_MULTIPLIER_MIN = 0.1;
+
 /** Upward bias mixed into the wall-bounce direction, before normalising, for a visible pop. */
 export const DASH_WALL_LIFT_RATIO = 0.3;
 
