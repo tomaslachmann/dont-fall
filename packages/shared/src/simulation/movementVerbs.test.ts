@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { pitchQuat } from "../math/quat.js";
-import { rotateVec3ByQuat } from "../math/vec3.js";
-import { SLOPE_SPEED_ANGLE_FACTOR, WALKABLE_SLOPE_MAX_ANGLE } from "../tuning.js";
-import { dashEnvelope, slopeSpeedMultiplier } from "./movementVerbs.js";
+import { lengthVec3, rotateVec3ByQuat, type Vec3 } from "../math/vec3.js";
+import {
+  MOVE_ACCEL_FACTOR,
+  MOVE_FRICTION_FACTOR,
+  MOVE_VELOCITY_CAP,
+  SLOPE_SPEED_ANGLE_FACTOR,
+  WALKABLE_SLOPE_MAX_ANGLE,
+} from "../tuning.js";
+import { accelerateVelocity, dashEnvelope, slopeSpeedMultiplier } from "./movementVerbs.js";
 
 describe("dashEnvelope", () => {
   const duration = 10;
@@ -110,5 +116,85 @@ describe("slopeSpeedMultiplier (ticket 04, M3.6 — Unity's signed-slope-angle m
     const unit = slopeSpeedMultiplier({ x: 0, y: 0, z: 1 }, normal);
     const scaled = slopeSpeedMultiplier({ x: 0, y: 0, z: 5 }, normal);
     expect(scaled).toBeCloseTo(unit, 10);
+  });
+});
+
+describe("accelerateVelocity (ticket 05, M3.6, ADR 0035 — Source's Friction()/Accelerate() shape, replacing a direct velocity.xz = wish assignment)", () => {
+  const closeVec = (v: Vec3, expected: Vec3, precision = 6): void => {
+    expect(v.x).toBeCloseTo(expected.x, precision);
+    expect(v.z).toBeCloseTo(expected.z, precision);
+  };
+  // A deliberately small, illustrative pair of factors standing in for a
+  // future low-grip Surface (ticket 06) — not derived from the production
+  // MOVE_ACCEL_FACTOR/MOVE_FRICTION_FACTOR, which are chosen to saturate.
+  const SLOW_FACTOR = 2;
+
+  it("at the default (full-grip, saturating) factors, reaches the wish velocity exactly within a single tick — numerically identical to the old direct assignment, from any starting velocity", () => {
+    const wish: Vec3 = { x: 6, y: 0, z: 0 };
+    for (const current of [{ x: 0, y: 0, z: 0 }, { x: -6, y: 0, z: 0 }, { x: 0, y: 0, z: 6 }, { x: -21, y: 0, z: 15 }]) {
+      const result = accelerateVelocity(current, wish, MOVE_ACCEL_FACTOR, MOVE_FRICTION_FACTOR);
+      closeVec(result, wish);
+    }
+  });
+
+  it("at the default factors, a sharp reversal lands exactly on the new wish — no perpendicular or opposite residual carries over (unlike Quake-style strafe-jumping, deliberately)", () => {
+    const current: Vec3 = { x: 0, y: 0, z: -21 }; // full speed one way
+    const wish: Vec3 = { x: 21, y: 0, z: 0 }; // a hard 90° turn, same tick
+    closeVec(accelerateVelocity(current, wish, MOVE_ACCEL_FACTOR, MOVE_FRICTION_FACTOR), wish);
+  });
+
+  it("at the default factors, releasing input (wish = 0) stops dead within a single tick, from any speed", () => {
+    for (const current of [{ x: 6, y: 0, z: 0 }, { x: -21, y: 0, z: 15 }]) {
+      const result = accelerateVelocity(current, { x: 0, y: 0, z: 0 }, MOVE_ACCEL_FACTOR, MOVE_FRICTION_FACTOR);
+      closeVec(result, { x: 0, y: 0, z: 0 });
+    }
+  });
+
+  it("at a slow (Surface-scaled) factor, does NOT reach the wish velocity in one tick — it moves only partway, in the wish direction", () => {
+    const current: Vec3 = { x: 0, y: 0, z: 0 };
+    const wish: Vec3 = { x: 6, y: 0, z: 0 };
+    const result = accelerateVelocity(current, wish, SLOW_FACTOR, SLOW_FACTOR);
+    expect(result.x).toBeGreaterThan(0);
+    expect(result.x).toBeLessThan(wish.x);
+    expect(result.z).toBeCloseTo(0, 8);
+  });
+
+  it("at a slow factor, repeated ticks monotonically approach the wish velocity — a genuine ramp, not a snap (the exact failure mode a flat equal-magnitude accel/drag step had, and this Source-shaped one doesn't)", () => {
+    const wish: Vec3 = { x: 6, y: 0, z: 0 };
+    let current: Vec3 = { x: 0, y: 0, z: 0 };
+    let prevDistance = lengthVec3({ x: wish.x - current.x, y: 0, z: wish.z - current.z });
+    for (let i = 0; i < 15; i += 1) {
+      current = accelerateVelocity(current, wish, SLOW_FACTOR, SLOW_FACTOR);
+      const distance = lengthVec3({ x: wish.x - current.x, y: 0, z: wish.z - current.z });
+      expect(distance).toBeLessThan(prevDistance);
+      prevDistance = distance;
+    }
+    // Not just "closer," but meaningfully far along toward the target —
+    // confirms it isn't just barely inching forward before stalling.
+    expect(current.x).toBeGreaterThan(wish.x * 0.5);
+  });
+
+  it("accelerate never pushes speed-along-wish past wishSpeed in a single tick, approaching from below", () => {
+    const wish: Vec3 = { x: 6, y: 0, z: 0 };
+    const result = accelerateVelocity({ x: 0, y: 0, z: 0 }, wish, SLOW_FACTOR, SLOW_FACTOR);
+    expect(result.x).toBeLessThanOrEqual(wish.x);
+  });
+
+  it("coasting down from above wishSpeed relies on friction alone (accelerate never fires against its own target) and never drops below it in one tick", () => {
+    const wish: Vec3 = { x: 6, y: 0, z: 0 };
+    const result = accelerateVelocity({ x: 10, y: 0, z: 0 }, wish, SLOW_FACTOR, SLOW_FACTOR);
+    expect(result.x).toBeGreaterThanOrEqual(wish.x);
+    expect(result.x).toBeLessThan(10); // friction still did *something*
+  });
+
+  it("caps the result at MOVE_VELOCITY_CAP even when the wish velocity itself exceeds it", () => {
+    const oversizedWish: Vec3 = { x: MOVE_VELOCITY_CAP * 3, y: 0, z: 0 };
+    const result = accelerateVelocity({ x: 0, y: 0, z: 0 }, oversizedWish, MOVE_ACCEL_FACTOR, MOVE_FRICTION_FACTOR);
+    expect(lengthVec3(result)).toBeCloseTo(MOVE_VELOCITY_CAP, 6);
+  });
+
+  it("always zeroes the result's Y component, regardless of current/wish's own Y — this is a horizontal-only pipeline (code review: not \"passed through untouched\" — vertical velocity is the caller's own responsibility entirely)", () => {
+    const result = accelerateVelocity({ x: 0, y: 999, z: 0 }, { x: 6, y: -5, z: 0 }, MOVE_ACCEL_FACTOR, MOVE_FRICTION_FACTOR);
+    expect(result.y).toBe(0);
   });
 });

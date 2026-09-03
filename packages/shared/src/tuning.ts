@@ -29,7 +29,17 @@ export const MAX_STEPS_PER_FRAME = 5;
 /** Downward acceleration (units/s²). Stronger than real gravity for snappier falls. */
 export const GRAVITY_Y = -22;
 
-/** Ground movement speed (units/s) while Controlled. */
+/**
+ * Ground movement **target** (units/s) while Controlled (ticket 05, M3.6,
+ * ADR 0035) — not, since this ticket, an instantaneous value assigned
+ * straight into velocity every tick. It is what `beginCapsuleTick`'s
+ * accelerate → drag → cap pipeline (`movementVerbs.ts`'s `accelerateVelocity`)
+ * chases; at today's (full-grip) `MOVE_ACCEL_FACTOR`/`MOVE_FRICTION_FACTOR`
+ * it still reaches this target within a single tick, so the change is
+ * structural, not felt — a Surface with its own, slower factors (ticket 06,
+ * ice/mud) is what turns "target reached over time" into something a player
+ * can actually feel.
+ */
 export const WALK_SPEED = 6;
 
 /**
@@ -65,6 +75,71 @@ export const GROUND_STICK_SPEED = 2;
  * kill-plane drop is 7.5 units).
  */
 export const GROUND_SNAP_DISTANCE = 0.5;
+
+// --- Movement model: accelerate -> drag -> cap (ticket 05, M3.6, ADR 0035) --
+//
+// `movementVerbs.ts`'s `accelerateVelocity` replaces the old direct
+// `velocity.xz = wish` assignment with Source's own `Friction()`/
+// `Accelerate()` shape (the reference implementation ADR 0035 names
+// alongside Quake 3's `PM_Friction`/`PM_Accelerate`) — chosen deliberately
+// over a naive "step by a flat units/s² amount every tick" design: a flat
+// step's magnitude doesn't scale with anything, so a drag step and an
+// accelerate step of comparable size can fully cancel each other at low
+// speed, permanently stalling far short of the real target — verified
+// during this ticket's own development, not a hypothetical. Source's shapes
+// avoid this because `Accelerate()`'s magnitude scales with the *target*
+// speed (`wishSpeed`, a roughly-constant, comparatively large quantity) while
+// `Friction()`'s scales with the *current* speed (small until real motion
+// has built up) — different quantities, not the same one racing itself.
+
+/**
+ * Defensive backstop on the Character's own horizontal move velocity — the
+ * final "cap" stage of the pipeline. Comfortably above any speed the walk
+ * model can currently produce (`WALK_SPEED` × the highest Surface/slope
+ * multiplier, plus `DASH_SPEED`, ≈ 22.5 units/s), so it never actually fires
+ * today — it exists so a future stacked combination of Surface/slope/Dash
+ * effects fails safe instead of accumulating without bound.
+ */
+export const MOVE_VELOCITY_CAP = 30;
+
+/**
+ * Source's `sv_accelerate` — a dimensionless multiplier on `wishSpeed` (not
+ * an absolute units/s² rate): `accelerateVelocity`'s Accelerate() stage adds
+ * `min(MOVE_ACCEL_FACTOR * wishSpeed * TICK_DT, addSpeed)` toward the wish
+ * velocity every tick. `* TICK_DT >= 1` (true here, with generous margin —
+ * the exact threshold is `TICK_RATE_HZ`) guarantees the addable amount
+ * always reaches (never merely approaches) `wishSpeed`, saturating every
+ * tick — deliberate, not an oversight: this ticket's whole job is
+ * introducing the accelerate → drag → cap *shape*, numerically **identical**
+ * today to the direct assignment it replaces. A separately-tuned, genuinely
+ * gradual value only appears once a Surface (ticket 06, ice/mud) supplies
+ * its own, per the "one scalar per Surface multiplies both" rule (ADR 0035)
+ * — that scalar multiplies this constant (and `MOVE_FRICTION_FACTOR` below)
+ * directly, exactly like Source's own `surfaceFriction`.
+ */
+export const MOVE_ACCEL_FACTOR = 1000;
+
+/**
+ * Source's `sv_friction` — the Friction() stage's own dimensionless rate,
+ * kept as an independent constant from {@link MOVE_ACCEL_FACTOR} (Source's
+ * own reference values, 10 and 4, aren't equal either) even though both
+ * happen to need the same "saturates every tick" property today. Drop this
+ * tick is `max(speed, MOVE_STOP_SPEED) * MOVE_FRICTION_FACTOR * TICK_DT`;
+ * saturating (same `* TICK_DT >= 1` reasoning as above) fully zeroes any
+ * residual velocity every tick, matching the old model's implicit "no input
+ * held, no memory of the last direction" behaviour exactly.
+ */
+export const MOVE_FRICTION_FACTOR = 1000;
+
+/**
+ * Source's `sv_stopspeed` — a floor under Friction()'s `control` term, so a
+ * small residual speed gets a real, fast stop instead of an exponential tail
+ * that never quite reaches zero. Inert today: at {@link MOVE_FRICTION_FACTOR}'s
+ * current saturating value, drop already exceeds any realistic speed on its
+ * own, so this floor is never what decides the outcome. It starts mattering
+ * only once a Surface (ticket 06) supplies a much smaller friction scalar.
+ */
+export const MOVE_STOP_SPEED = 1;
 
 // --- Jump ------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-import { lengthVec3, normalizeVec3, scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
+import { addVec3, lengthVec3, normalizeVec3, scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
 import {
   COYOTE_TICKS,
   DASH_COOLDOWN_TICKS,
@@ -8,8 +8,11 @@ import {
   JUMP_HOLD_GRAVITY_SCALE,
   JUMP_HOLD_MAX_TICKS,
   JUMP_VELOCITY,
+  MOVE_STOP_SPEED,
+  MOVE_VELOCITY_CAP,
   SLOPE_SPEED_ANGLE_FACTOR,
   SLOPE_SPEED_MULTIPLIER_MIN,
+  TICK_DT,
   TICK_MS,
 } from "../tuning.js";
 
@@ -47,6 +50,70 @@ export const slopeSpeedMultiplier = (moveDirection: Vec3, groundNormal: Vec3): n
   const rise = -(groundNormal.x * dir.x + groundNormal.z * dir.z) / groundNormal.y;
   const signedSlopeAngle = Math.atan(rise); // positive = uphill, negative = downhill (Unity's convention)
   return Math.max(SLOPE_SPEED_MULTIPLIER_MIN, 1 - SLOPE_SPEED_ANGLE_FACTOR * signedSlopeAngle);
+};
+
+/**
+ * The Character's horizontal (X/Z) move velocity for one tick: Friction()
+ * then Accelerate() then a cap (ticket 05, M3.6, ADR 0035) — replacing the
+ * old direct `velocity.xz = wish` assignment. Source's own shape exactly
+ * (`gamemovement.cpp`'s `Friction()`/`Accelerate()`, and Quake 3's
+ * `PM_Friction`/`PM_Accelerate` do the same thing), not a simpler
+ * from-scratch design: an earlier draft of this function stepped both drag
+ * and acceleration by a flat, equal-magnitude units/s² amount each tick, and
+ * at low speed the two fully cancelled each other every tick, permanently
+ * stalling at a small fraction of the target no matter how long input was
+ * held. Source's shapes don't have this failure mode because they scale
+ * from *different* quantities — Accelerate()'s step scales with the
+ * comparatively large, roughly-constant *target* speed (`wishSpeed`), while
+ * Friction()'s scales with the (initially small) *current* speed — so the
+ * two forces don't race each other to the same fixed point.
+ *
+ * `MOVE_STOP_SPEED` floors Friction()'s "control" term so a small residual
+ * speed still gets a clean, fast stop instead of an exponential tail that
+ * never quite reaches zero — Source's own documented reason for the same
+ * floor. At today's `MOVE_ACCEL_FACTOR`/`MOVE_FRICTION_FACTOR` (chosen to
+ * saturate every tick) both stages fully complete in one tick regardless of
+ * `MOVE_STOP_SPEED`'s value, making the new pipeline numerically
+ * **identical** to the direct assignment it replaces — this ticket's whole
+ * job is introducing the shape, not changing feel. A separately-tuned,
+ * genuinely gradual pair of factors (a future Surface, ticket 06 — ice's
+ * near-zero grip) is what turns this into a real ramp.
+ *
+ * `y` is always 0 on the result regardless of `current`/`wish`'s own `y` —
+ * this is strictly the horizontal pipeline; vertical velocity (gravity,
+ * jump, ground-stick) is integrated separately by the caller.
+ */
+export const accelerateVelocity = (current: Vec3, wish: Vec3, accelFactor: number, frictionFactor: number): Vec3 => {
+  let velocity: Vec3 = { x: current.x, y: 0, z: current.z };
+
+  // Friction() — reduces whatever speed `velocity` already has, independent
+  // of `wish`, toward zero.
+  const speed = lengthVec3(velocity);
+  if (speed > 0) {
+    const control = Math.max(speed, MOVE_STOP_SPEED);
+    const drop = control * frictionFactor * TICK_DT;
+    const newSpeed = Math.max(speed - drop, 0);
+    velocity = scaleVec3(velocity, newSpeed / speed);
+  }
+
+  // Accelerate() — adds speed along `wish`'s own direction, capped at the
+  // remaining gap to `wishSpeed` (never overshoots it in a single tick).
+  const wishFlat: Vec3 = { x: wish.x, y: 0, z: wish.z };
+  const wishSpeed = lengthVec3(wishFlat);
+  if (wishSpeed > 0) {
+    const wishDir = scaleVec3(wishFlat, 1 / wishSpeed);
+    const currentSpeedAlongWish = velocity.x * wishDir.x + velocity.z * wishDir.z;
+    const addSpeed = wishSpeed - currentSpeedAlongWish;
+    if (addSpeed > 0) {
+      const accelSpeed = Math.min(accelFactor * wishSpeed * TICK_DT, addSpeed);
+      velocity = addVec3(velocity, scaleVec3(wishDir, accelSpeed));
+    }
+  }
+
+  const finalSpeed = lengthVec3(velocity);
+  if (finalSpeed > MOVE_VELOCITY_CAP) velocity = scaleVec3(velocity, MOVE_VELOCITY_CAP / finalSpeed);
+
+  return velocity;
 };
 
 /**

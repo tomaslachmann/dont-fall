@@ -1,5 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { dotVec3, lengthVec3, lerpVec3, normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
+import { addVec3, dotVec3, lengthVec3, lerpVec3, normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
 import {
   CAPSULE_HALF_HEIGHT,
   CAPSULE_RADIUS,
@@ -14,6 +14,8 @@ import {
   GROUND_SNAP_DISTANCE,
   GROUND_STICK_SPEED,
   IMPACT_STAGGER_MIN,
+  MOVE_ACCEL_FACTOR,
+  MOVE_FRICTION_FACTOR,
   RAGDOLL_IMPACT_VELOCITY_SCALE,
   RAGDOLL_SETTLE_SPEED,
   RESPAWN_FLOP_IMPULSE,
@@ -27,7 +29,7 @@ import {
 import type { CharacterSnapshot, RagdollCause } from "../state/SimState.js";
 import { CharacterStateMachine, type CharacterMotionState } from "./CharacterStateMachine.js";
 import { CHARACTER_GROUPS, GROUP_CHARACTER } from "./collisionGroups.js";
-import { DashController, JumpController, slopeSpeedMultiplier } from "./movementVerbs.js";
+import { accelerateVelocity, DashController, JumpController, slopeSpeedMultiplier } from "./movementVerbs.js";
 import { Ragdoll } from "./Ragdoll.js";
 import { blendGettingUpBones, type BoneSnapshot } from "./ragdollSkeleton.js";
 import type { SimInputs } from "./SimInputs.js";
@@ -437,8 +439,19 @@ export class CharacterController {
       const slope =
         this.grounded && this.currentGroundNormal ? slopeSpeedMultiplier(move, this.currentGroundNormal) : 1;
       const slopedWalk = scaleVec3(walk, slope);
-      this.velocity.x = slopedWalk.x + dashBurst.x;
-      this.velocity.z = slopedWalk.z + dashBurst.z;
+      // Ticket 05, ADR 0035: Dash is now a contributor to the same wish
+      // velocity the persistent-velocity pipeline chases, rather than an
+      // addition tacked directly onto the final velocity outside any model
+      // — the structural change that later lets a wall-Impact rule (ADR
+      // 0037) read "how fast is this Character going" without asking "was
+      // this a Dash?" At today's saturating MOVE_ACCEL_FACTOR/
+      // MOVE_FRICTION_FACTOR, `accelerateVelocity` reaches `wish` exactly
+      // within this same tick — numerically identical to the direct
+      // `velocity.xz = wish` assignment it replaces.
+      const wish = addVec3(slopedWalk, dashBurst);
+      const newVelocity = accelerateVelocity(this.velocity, wish, MOVE_ACCEL_FACTOR, MOVE_FRICTION_FACTOR);
+      this.velocity.x = newVelocity.x;
+      this.velocity.z = newVelocity.z;
     }
 
     // `filterGroups: CHARACTER_GROUPS` so the sweep honours collision groups
