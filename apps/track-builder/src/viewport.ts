@@ -1,7 +1,9 @@
-import type { Module, Track } from "@dont-fall/shared";
+import { quatToEuler, type Module, type Track } from "@dont-fall/shared";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { applySegmentTransform, boundingRadius, buildModuleGroup, disposeGroup } from "./render.js";
+import { MOVE_STEP_FINE, ROTATE_STEP, ROTATE_STEP_FINE, snapPositionToNeighborSocket } from "./trackEdit.js";
 
 /**
  * A small, self-contained preview of one Module — the palette's "visual
@@ -39,6 +41,14 @@ export const createModulePreview = (canvas: HTMLCanvasElement, module: Module): 
 
 const SELECTION_COLOR = 0xfacc15;
 
+/** The absolute transform an on-canvas gizmo drag commits (ticket 03) — see `trackEdit.ts`'s `setSegmentTransform`. */
+export interface SegmentTransform {
+  position: { x: number; y: number; z: number };
+  rotation: number;
+  pitch: number;
+  roll: number;
+}
+
 export interface TrackViewport {
   setTrack: (modules: Record<string, Module>, track: Track) => void;
   /**
@@ -51,8 +61,17 @@ export interface TrackViewport {
    * count or order must use `setTrack` instead.
    */
   retransformSegments: (track: Track) => void;
-  /** Highlights Segment `index` (or clears the highlight if `undefined`). */
+  /** Highlights Segment `index` (or clears the highlight if `undefined`) — also attaches/detaches the drag gizmo (ticket 03). */
   setSelected: (index: number | undefined) => void;
+  /** Switches the gizmo between moving and rotating the selected Segment (ticket 03). No-op if nothing is selected. */
+  setGizmoMode: (mode: "translate" | "rotate") => void;
+  /**
+   * Whether the pointer is currently over, or dragging, a gizmo handle
+   * (ticket 03) — callers doing their own click-to-pick/deselect on the
+   * canvas must skip it while this is true, or a click that starts/ends on
+   * a gizmo handle would also be misread as "clicked empty space."
+   */
+  isGizmoActive: () => boolean;
   /** Raycasts from a mouse event's client coordinates; returns the Segment index hit, if any. */
   pick: (clientX: number, clientY: number) => number | undefined;
   render: () => void;
@@ -60,7 +79,10 @@ export interface TrackViewport {
 }
 
 /** The whole-assembled-Track overview (ticket 04's second visual-preview requirement) — an orbit camera over every placed Segment, distinct from first-person placement. */
-export const createTrackViewport = (container: HTMLElement): TrackViewport => {
+export const createTrackViewport = (
+  container: HTMLElement,
+  onSegmentTransformCommit: (index: number, transform: SegmentTransform) => void,
+): TrackViewport => {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   container.appendChild(renderer.domElement);
@@ -76,8 +98,8 @@ export const createTrackViewport = (container: HTMLElement): TrackViewport => {
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 2000);
   camera.position.set(10, 12, 20);
 
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
+  const orbitControls = new OrbitControls(camera, renderer.domElement);
+  orbitControls.enableDamping = true;
 
   let trackGroup = new THREE.Group();
   scene.add(trackGroup);
@@ -85,6 +107,78 @@ export const createTrackViewport = (container: HTMLElement): TrackViewport => {
   const selectionBox = new THREE.BoxHelper(new THREE.Object3D(), SELECTION_COLOR);
   selectionBox.visible = false;
   scene.add(selectionBox);
+
+  // On-canvas drag gizmo (ticket 03). `modules`/`track`/`attachedIndex` are
+  // kept up to date by `setTrack`/`setSelected` so the live-drag Socket-snap
+  // and the drag-end commit both have what they need without the caller
+  // threading them through every call.
+  const transformControls = new TransformControls(camera, renderer.domElement);
+  scene.add(transformControls.getHelper());
+  let modules: Record<string, Module> = {};
+  let track: Track = [];
+  let attachedIndex: number | undefined;
+  let shiftHeld = false;
+
+  const applySnapTiers = (): void => {
+    // Position: the default tier is Socket-snap (custom logic below, on
+    // every `objectChange`), not a uniform grid — so `translationSnap` stays
+    // `null` unless Shift is held, when it becomes the native fine grid.
+    transformControls.setTranslationSnap(shiftHeld ? MOVE_STEP_FINE : null);
+    // Rotation: both tiers are plain grids — TransformControls' own snap
+    // handles this natively either way.
+    transformControls.setRotationSnap(shiftHeld ? ROTATE_STEP_FINE : ROTATE_STEP);
+  };
+  applySnapTiers();
+
+  const onShiftDown = (e: KeyboardEvent): void => {
+    if (e.key !== "Shift" || shiftHeld) return;
+    shiftHeld = true;
+    applySnapTiers();
+  };
+  const onShiftUp = (e: KeyboardEvent): void => {
+    if (e.key !== "Shift") return;
+    shiftHeld = false;
+    applySnapTiers();
+  };
+  window.addEventListener("keydown", onShiftDown);
+  window.addEventListener("keyup", onShiftUp);
+
+  // A drag must not also orbit the camera (standard TransformControls/
+  // OrbitControls integration).
+  transformControls.addEventListener("dragging-changed", (event) => {
+    orbitControls.enabled = !event.value;
+    if (event.value) return; // drag started, nothing to commit yet
+
+    // Drag ended — commit once (a single undo step), reading back whatever
+    // the gizmo left the object at (already Socket-/grid-snapped live).
+    const object = transformControls.object;
+    if (!object || attachedIndex === undefined) return;
+    const q = object.quaternion;
+    const { yaw, pitch, roll } = quatToEuler({ x: q.x, y: q.y, z: q.z, w: q.w });
+    onSegmentTransformCommit(attachedIndex, {
+      position: { x: object.position.x, y: object.position.y, z: object.position.z },
+      rotation: yaw,
+      pitch,
+      roll,
+    });
+  });
+
+  // Live Socket-snap while translating (ticket 03) — TransformControls has
+  // no concept of "snap to another object's socket," only uniform grids, so
+  // this overrides the object's position on every drag update whenever the
+  // fine grid tier (Shift) isn't active. Never touches rotation — Socket-
+  // snap and rotate-snap are independent concerns.
+  transformControls.addEventListener("objectChange", () => {
+    if (transformControls.mode !== "translate" || shiftHeld || attachedIndex === undefined) return;
+    const object = transformControls.object;
+    if (!object) return;
+    const snapped = snapPositionToNeighborSocket(track, modules, attachedIndex, {
+      x: object.position.x,
+      y: object.position.y,
+      z: object.position.z,
+    });
+    object.position.set(snapped.x, snapped.y, snapped.z);
+  });
 
   const raycaster = new THREE.Raycaster();
 
@@ -99,12 +193,14 @@ export const createTrackViewport = (container: HTMLElement): TrackViewport => {
   resize();
 
   return {
-    setTrack(modules, track) {
+    setTrack(nextModules, nextTrack) {
+      modules = nextModules;
+      track = nextTrack;
       scene.remove(trackGroup);
       disposeGroup(trackGroup);
       trackGroup = new THREE.Group();
-      track.forEach((segment, index) => {
-        const module = modules[segment.moduleId];
+      nextTrack.forEach((segment, index) => {
+        const module = nextModules[segment.moduleId];
         if (!module) return;
         const group = buildModuleGroup(module);
         applySegmentTransform(group, segment);
@@ -112,31 +208,42 @@ export const createTrackViewport = (container: HTMLElement): TrackViewport => {
         trackGroup.add(group);
       });
       scene.add(trackGroup);
-      if (track.length > 0) {
-        const mid = track[Math.floor(track.length / 2)]!.position;
-        controls.target.set(mid.x, mid.y, mid.z);
+      if (nextTrack.length > 0) {
+        const mid = nextTrack[Math.floor(nextTrack.length / 2)]!.position;
+        orbitControls.target.set(mid.x, mid.y, mid.z);
       }
       selectionBox.visible = false;
     },
-    retransformSegments(track) {
+    retransformSegments(nextTrack) {
+      track = nextTrack;
       for (const group of trackGroup.children) {
         const index = group.userData.segmentIndex as number | undefined;
-        const segment = index !== undefined ? track[index] : undefined;
+        const segment = index !== undefined ? nextTrack[index] : undefined;
         if (segment) applySegmentTransform(group, segment);
       }
     },
     setSelected(index) {
+      attachedIndex = index;
       if (index === undefined) {
         selectionBox.visible = false;
+        transformControls.detach();
         return;
       }
       const group = trackGroup.children.find((c) => c.userData.segmentIndex === index);
       if (!group) {
         selectionBox.visible = false;
+        transformControls.detach();
         return;
       }
       selectionBox.setFromObject(group);
       selectionBox.visible = true;
+      transformControls.attach(group);
+    },
+    setGizmoMode(mode) {
+      transformControls.setMode(mode);
+    },
+    isGizmoActive() {
+      return transformControls.dragging || transformControls.axis !== null;
     },
     pick(clientX, clientY) {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -156,13 +263,16 @@ export const createTrackViewport = (container: HTMLElement): TrackViewport => {
       return undefined;
     },
     render() {
-      controls.update();
+      orbitControls.update();
       renderer.render(scene, camera);
     },
     dispose() {
       window.removeEventListener("resize", resize);
+      window.removeEventListener("keydown", onShiftDown);
+      window.removeEventListener("keyup", onShiftUp);
       disposeGroup(trackGroup);
-      controls.dispose();
+      transformControls.dispose();
+      orbitControls.dispose();
       renderer.dispose();
     },
   };

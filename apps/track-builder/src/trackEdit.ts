@@ -1,6 +1,7 @@
 import {
   addVec3,
   findSocket,
+  lengthVec3,
   placeAfter,
   rotateVec3ByQuat,
   segmentOrientation,
@@ -53,6 +54,31 @@ export const rechainFrom = (track: Track, modules: Record<string, Module>, fromI
   return result;
 };
 
+/**
+ * Settles just Segment `index` — the one entry `rechainFrom(track, modules,
+ * index)` computes that `moveSegment`/`rotateSegment`/`setSegmentTransform`
+ * actually need before overwriting it, without also computing (and
+ * immediately discarding) every entry after it, which `rechainFrom` would
+ * otherwise do in the same pass (code review, ticket 03: those three
+ * functions were calling `rechainFrom` twice per edit — once here, then
+ * again after the mutation — recomputing the same downstream tail both
+ * times for no reason, since the first pass's tail is invalidated by the
+ * mutation before it's ever used). Same "trust the prefix" assumption
+ * `rechainFrom` itself already makes: `track[index - 1]` is taken as
+ * correct as-is, not re-settled recursively.
+ */
+const settleOne = (fn: string, track: Track, modules: Record<string, Module>, index: number): Segment => {
+  const segment = track[index]!;
+  const module = modules[segment.moduleId];
+  if (!module) throw new Error(`${fn}: unknown Module "${segment.moduleId}"`);
+  if (index === 0 || segment.manuallyPlaced) return { ...segment };
+
+  const prevSegment = track[index - 1]!;
+  const prevModule = modules[prevSegment.moduleId];
+  if (!prevModule) throw new Error(`${fn}: unknown Module "${prevSegment.moduleId}"`);
+  return placeAfter(prevSegment, prevModule, segment.moduleId, module);
+};
+
 /** Inserts `moduleId` at `index` (pushing anything already there later) and re-chains from it onward. */
 export const insertSegment = (
   track: Track,
@@ -85,6 +111,19 @@ export const duplicateSegment = (track: Track, modules: Record<string, Module>, 
   assertIndexInRange("duplicateSegment", track, index);
   return insertSegment(track, modules, index + 1, track[index]!.moduleId);
 };
+
+// Two-tier snap steps (ADR 0034). `MOVE_STEP_FINE`/`ROTATE_STEP`/
+// `ROTATE_STEP_FINE` are shared by the keyboard nudge (ticket 02) and the
+// on-canvas gizmo (ticket 03), so the two interaction paths can never
+// silently drift apart on what "coarse"/"fine" mean. `MOVE_STEP` (the
+// keyboard's *coarse* position step) has no gizmo equivalent — the gizmo's
+// default position tier is Socket-snap, not a fixed grid — but lives here
+// too (code review, ticket 03) rather than as a local magic number in
+// main.ts, alongside the three constants it's a sibling of.
+export const MOVE_STEP = 0.5;
+export const MOVE_STEP_FINE = 0.1;
+export const ROTATE_STEP = (15 * Math.PI) / 180;
+export const ROTATE_STEP_FINE = (5 * Math.PI) / 180;
 
 const TWO_PI = Math.PI * 2;
 const normalizeAngle = (radians: number): number => ((radians % TWO_PI) + TWO_PI) % TWO_PI;
@@ -132,10 +171,8 @@ export const rotateSegment = (
   // may have come from `history.reset` (a Track loaded from track-service,
   // possibly saved by a different, less careful caller than this module's
   // own edit functions).
-  const settled = rechainFrom(track, modules, index);
-  const segment = settled[index]!;
-  const module = modules[segment.moduleId];
-  if (!module) throw new Error(`rotateSegment: unknown Module "${segment.moduleId}"`);
+  const segment = settleOne("rotateSegment", track, modules, index);
+  const module = modules[segment.moduleId]!; // settleOne already validated this exists
 
   const field = FIELD_BY_AXIS[axis];
   const newValue = normalizeAngle((segment[field] ?? 0) + deltaRadians);
@@ -151,7 +188,9 @@ export const rotateSegment = (
     rotated = { ...withNewAngle, position: newPosition };
   }
 
-  const withRotated = [...settled.slice(0, index), rotated, ...settled.slice(index + 1)];
+  // `track.slice(index + 1)` is a placeholder only — `rechainFrom` below
+  // recomputes every one of those entries from `rotated` onward regardless.
+  const withRotated = [...track.slice(0, index), rotated, ...track.slice(index + 1)];
   return rechainFrom(withRotated, modules, index + 1);
 };
 
@@ -164,10 +203,89 @@ export const rotateSegment = (
  */
 export const moveSegment = (track: Track, modules: Record<string, Module>, index: number, delta: Vec3): Track => {
   assertIndexInRange("moveSegment", track, index);
-  const settled = rechainFrom(track, modules, index);
-  const segment = settled[index]!;
+  const segment = settleOne("moveSegment", track, modules, index);
   const moved: Segment = { ...segment, position: addVec3(segment.position, delta), manuallyPlaced: true };
 
-  const withMoved = [...settled.slice(0, index), moved, ...settled.slice(index + 1)];
+  // `track.slice(index + 1)` is a placeholder only — see `rotateSegment`.
+  const withMoved = [...track.slice(0, index), moved, ...track.slice(index + 1)];
   return rechainFrom(withMoved, modules, index + 1);
+};
+
+/**
+ * Sets the Segment at `index`'s position/orientation to an absolute value —
+ * the on-canvas gizmo's drag-end commit (ticket 03), unlike `moveSegment`/
+ * `rotateSegment`'s deltas. Marks it `manuallyPlaced`, then re-chains
+ * everything after it, exactly like every other edit in this module.
+ */
+export const setSegmentTransform = (
+  track: Track,
+  modules: Record<string, Module>,
+  index: number,
+  transform: { position: Vec3; rotation: number; pitch: number; roll: number },
+): Track => {
+  assertIndexInRange("setSegmentTransform", track, index);
+  const segment = settleOne("setSegmentTransform", track, modules, index);
+  const updated: Segment = { ...segment, ...transform, manuallyPlaced: true };
+
+  // `track.slice(index + 1)` is a placeholder only — see `rotateSegment`.
+  const withUpdated = [...track.slice(0, index), updated, ...track.slice(index + 1)];
+  return rechainFrom(withUpdated, modules, index + 1);
+};
+
+/** Snap radius (world units) for Socket-snapping a translate drag (ticket 03). */
+export const SOCKET_SNAP_RADIUS = 1.5;
+
+/**
+ * If the Segment at `index`, placed at `candidatePosition` (its rotation
+ * unchanged — Socket-snap and rotate-snap are independent concerns, per the
+ * ticket), would land its own entry or exit Socket within
+ * {@link SOCKET_SNAP_RADIUS} of the matching Socket on its immediate
+ * neighbor in the sequence — the predecessor's exit, or the successor's
+ * entry — returns `candidatePosition` adjusted so that Socket lands exactly
+ * on the neighbor's. Otherwise returns `candidatePosition` unchanged.
+ *
+ * Deliberately scoped to the Track's own two natural connection points
+ * (immediate predecessor/successor), not a track-wide nearest-Socket search
+ * across every Segment — Track topology is still a single linear,
+ * non-branching sequence (ADR 0030, unchanged by ADR 0034), so "the nearest
+ * compatible Socket" for a Segment in that sequence means reconnecting to
+ * whichever neighbor it already has, not grabbing onto an arbitrary distant
+ * Segment's Socket.
+ */
+export const snapPositionToNeighborSocket = (
+  track: Track,
+  modules: Record<string, Module>,
+  index: number,
+  candidatePosition: Vec3,
+): Vec3 => {
+  const segment = track[index];
+  const module = segment && modules[segment.moduleId];
+  if (!segment || !module) return candidatePosition;
+  const orientation = segmentOrientation(segment);
+
+  const neighbors: { localSocketId: string; targetWorld: Vec3 }[] = [];
+  const prev = track[index - 1];
+  const prevModule = prev && modules[prev.moduleId];
+  if (prev && prevModule) {
+    const exit = findSocket(prevModule, "exit");
+    neighbors.push({ localSocketId: "entry", targetWorld: addVec3(prev.position, rotateVec3ByQuat(exit.position, segmentOrientation(prev))) });
+  }
+  const next = track[index + 1];
+  const nextModule = next && modules[next.moduleId];
+  if (next && nextModule) {
+    const entry = findSocket(nextModule, "entry");
+    neighbors.push({ localSocketId: "exit", targetWorld: addVec3(next.position, rotateVec3ByQuat(entry.position, segmentOrientation(next))) });
+  }
+
+  let best: { position: Vec3; distance: number } | undefined;
+  for (const neighbor of neighbors) {
+    const localSocket = findSocket(module, neighbor.localSocketId);
+    const socketWorld = addVec3(candidatePosition, rotateVec3ByQuat(localSocket.position, orientation));
+    const offset = subVec3(neighbor.targetWorld, socketWorld);
+    const distance = lengthVec3(offset);
+    if (distance <= SOCKET_SNAP_RADIUS && (!best || distance < best.distance)) {
+      best = { position: addVec3(candidatePosition, offset), distance };
+    }
+  }
+  return best?.position ?? candidatePosition;
 };

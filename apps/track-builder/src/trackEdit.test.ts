@@ -9,6 +9,9 @@ import {
   rechainFrom,
   removeLast,
   rotateSegment,
+  setSegmentTransform,
+  snapPositionToNeighborSocket,
+  SOCKET_SNAP_RADIUS,
 } from "./trackEdit.js";
 
 const straightModule = (id: string): Module => ({
@@ -271,5 +274,91 @@ describe("rechainFrom", () => {
   it("throws for an unknown Module id anywhere in the Track", () => {
     const track: Track = [{ moduleId: "ghost", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
     expect(() => rechainFrom(track, MODULES, 0)).toThrow(/unknown Module/);
+  });
+});
+
+describe("setSegmentTransform (ticket 03 — the on-canvas gizmo commits an absolute transform, not a delta)", () => {
+  it("sets the Segment's position/rotation/pitch/roll wholesale", () => {
+    const track = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);
+    const result = setSegmentTransform(track, MODULES, 1, {
+      position: { x: 10, y: 2, z: -3 },
+      rotation: 0.5,
+      pitch: 0.1,
+      roll: 0.2,
+    });
+    expect(result[1]).toMatchObject({
+      position: { x: 10, y: 2, z: -3 },
+      rotation: 0.5,
+      pitch: 0.1,
+      roll: 0.2,
+      manuallyPlaced: true,
+    });
+  });
+
+  it("re-chains everything after the Segment from its new transform", () => {
+    const track = insertSegment(appendModule(appendModule([], "start", MODULES), "bridge", MODULES), MODULES, 2, "gap");
+    const result = setSegmentTransform(track, MODULES, 1, { position: { x: 20, y: 0, z: 0 }, rotation: 0, pitch: 0, roll: 0 });
+    // "gap" (index 2) must now continue from "bridge"'s new placement.
+    expect(result[2]!.position.x).toBeCloseTo(20, 10);
+  });
+
+  it("rejects an out-of-range index", () => {
+    const track = appendModule([], "start", MODULES);
+    expect(() =>
+      setSegmentTransform(track, MODULES, 5, { position: { x: 0, y: 0, z: 0 }, rotation: 0, pitch: 0, roll: 0 }),
+    ).toThrow(/out of range/);
+  });
+});
+
+describe("snapPositionToNeighborSocket (ticket 03 — translate-drag Socket snap, scoped to the linear chain's own two neighbors per ADR 0034/0030)", () => {
+  it("leaves an already-aligned position unchanged (distance 0 is within radius)", () => {
+    const track = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);
+    const aligned = track[1]!.position;
+    const snapped = snapPositionToNeighborSocket(track, MODULES, 1, aligned);
+    expect(snapped.x).toBeCloseTo(aligned.x, 10);
+    expect(snapped.y).toBeCloseTo(aligned.y, 10);
+    expect(snapped.z).toBeCloseTo(aligned.z, 10);
+  });
+
+  it("snaps a nearby candidate position back into exact alignment with the predecessor's exit Socket", () => {
+    const track = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);
+    const aligned = track[1]!.position;
+    const nudged = { x: aligned.x + 0.3, y: aligned.y, z: aligned.z - 0.2 };
+    const snapped = snapPositionToNeighborSocket(track, MODULES, 1, nudged);
+    expect(snapped.x).toBeCloseTo(aligned.x, 10);
+    expect(snapped.z).toBeCloseTo(aligned.z, 10);
+  });
+
+  it("does not snap a candidate position beyond the snap radius", () => {
+    const track = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);
+    const aligned = track[1]!.position;
+    const farAway = { x: aligned.x + SOCKET_SNAP_RADIUS * 3, y: aligned.y, z: aligned.z };
+    const snapped = snapPositionToNeighborSocket(track, MODULES, 1, farAway);
+    expect(snapped).toEqual(farAway);
+  });
+
+  it("snaps toward the successor's entry Socket when dragging a Segment with no predecessor", () => {
+    const track = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);
+    const aligned = track[0]!.position; // "start" has no predecessor, only a successor ("bridge")
+    const nudged = { x: aligned.x + 0.2, y: aligned.y, z: aligned.z + 0.1 };
+    const snapped = snapPositionToNeighborSocket(track, MODULES, 0, nudged);
+    expect(snapped.x).toBeCloseTo(aligned.x, 10);
+    expect(snapped.z).toBeCloseTo(aligned.z, 10);
+  });
+
+  it("returns the candidate position unchanged when there is no neighbor at all", () => {
+    const track = appendModule([], "start", MODULES);
+    const candidate = { x: 5, y: 1, z: 5 };
+    expect(snapPositionToNeighborSocket(track, MODULES, 0, candidate)).toEqual(candidate);
+  });
+
+  it("never touches rotation — Socket-snap and rotate-snap are independent concerns (ticket 03)", () => {
+    const track = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);
+    const aligned = track[1]!.position;
+    const nudged = { x: aligned.x + 0.3, y: aligned.y, z: aligned.z };
+    const snapped = snapPositionToNeighborSocket(track, MODULES, 1, nudged);
+    // Returns a Vec3, not a Segment — nothing to assert about rotation here,
+    // but confirms the function's contract stays position-only.
+    expect(Object.keys(snapped).sort()).toEqual(["x", "y", "z"]);
   });
 });

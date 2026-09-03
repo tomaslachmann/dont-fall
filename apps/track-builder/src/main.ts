@@ -6,12 +6,17 @@ import {
   duplicateSegment,
   insertSegment,
   moveSegment,
+  MOVE_STEP,
+  MOVE_STEP_FINE,
   removeLast,
+  ROTATE_STEP,
+  ROTATE_STEP_FINE,
   rotateSegment,
+  setSegmentTransform,
   type RotateAxis,
 } from "./trackEdit.js";
 import { TrackHistory } from "./trackHistory.js";
-import { createModulePreview, createTrackViewport } from "./viewport.js";
+import { createModulePreview, createTrackViewport, type SegmentTransform, type TrackViewport } from "./viewport.js";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -38,8 +43,14 @@ const history = new TrackHistory([]);
 let selectedIndex: number | undefined;
 const previewRenders: (() => void)[] = [];
 
-const viewport = createTrackViewport(viewportContainer);
-const editCanvas = viewportContainer.querySelector("canvas")!;
+// Assigned below, once `commitSegmentTransform` (which needs `applyEdit`) is
+// ready to hand to `createTrackViewport` — declared here, ahead of
+// `select`/`rerender`/`applyEdit`, so those only ever forward-reference a
+// plain local variable we fully control the timing of, not a callback handed
+// to an external API that could (in some future refactor) invoke it
+// synchronously during setup, before `applyEdit` existed (code review,
+// ticket 03).
+let viewport: TrackViewport;
 
 let mode: "edit" | "playtest" = "edit";
 let playtest: Playtest | undefined;
@@ -90,6 +101,16 @@ const applyEdit = (next: Track, nextSelected: number | undefined, transformOnly 
   select(nextSelected);
 };
 
+// `applyEdit` is defined above, so this closure has no forward reference to
+// resolve. `transformOnly: true` (ticket 02's fast path) since a gizmo drag
+// never adds/removes/reassigns a Segment's `moduleId`.
+const commitSegmentTransform = (index: number, transform: SegmentTransform): void => {
+  applyEdit(setSegmentTransform(history.track, MODULE_LIBRARY, index, transform), index, true);
+};
+
+viewport = createTrackViewport(viewportContainer, commitSegmentTransform);
+const editCanvas = viewportContainer.querySelector("canvas")!;
+
 // Module palette — one entry per Module in the library, each with its own
 // live visual preview (ticket 04). Clicking inserts it right after the
 // selected Segment, or appends at the end if nothing is selected.
@@ -136,6 +157,11 @@ viewportContainer.addEventListener("pointerdown", (e) => {
 });
 viewportContainer.addEventListener("click", (e) => {
   if (mode !== "edit") return;
+  // A click that starts/ends on a gizmo handle (ticket 03) must never also
+  // be read as "clicked empty space" — the gizmo's own meshes live outside
+  // `trackGroup`, so `pick()` (which only raycasts `trackGroup`) would
+  // always miss them and deselect right as the user tries to drag.
+  if (viewport.isGizmoActive()) return;
   const moved = pointerDownAt ? Math.hypot(e.clientX - pointerDownAt.x, e.clientY - pointerDownAt.y) : 0;
   if (moved > DRAG_THRESHOLD_PX) return;
   const index = viewport.pick(e.clientX, e.clientY);
@@ -151,6 +177,19 @@ $("rotate-right").addEventListener("click", () => {
   if (selectedIndex === undefined) return;
   applyEdit(rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, -Math.PI / 2), selectedIndex, true);
 });
+
+// On-canvas drag gizmo mode (ticket 03) — Move shows translate handles,
+// Rotate shows all three rotation rings (not gated by the keyboard rotate
+// axis selector above: grabbing a specific ring is itself the axis choice).
+const gizmoModeButtons = { move: $<HTMLButtonElement>("gizmo-move"), rotate: $<HTMLButtonElement>("gizmo-rotate") };
+const setGizmoMode = (mode: "translate" | "rotate"): void => {
+  viewport.setGizmoMode(mode);
+  gizmoModeButtons.move.classList.toggle("active", mode === "translate");
+  gizmoModeButtons.rotate.classList.toggle("active", mode === "rotate");
+};
+gizmoModeButtons.move.addEventListener("click", () => setGizmoMode("translate"));
+gizmoModeButtons.rotate.addEventListener("click", () => setGizmoMode("rotate"));
+setGizmoMode("translate");
 
 // Which axis the keyboard rotate step (below) turns — the toolbar's ±90°
 // buttons above stay yaw-only regardless, matching their established meaning.
@@ -168,10 +207,6 @@ axisButtons.roll.addEventListener("click", () => setActiveAxis("roll"));
 // two-tier step (ADR 0034) — Shift switches to the finer tier, never to a
 // fully unconstrained value. Ignored while a toolbar text field has focus,
 // so typing an id/name/URL doesn't hijack arrow keys.
-const MOVE_STEP = 0.5;
-const MOVE_STEP_FINE = 0.1;
-const ROTATE_STEP = (15 * Math.PI) / 180;
-const ROTATE_STEP_FINE = (5 * Math.PI) / 180;
 
 const MOVE_DIRECTIONS: Record<string, Vec3> = {
   ArrowUp: { x: 0, y: 0, z: -1 },
