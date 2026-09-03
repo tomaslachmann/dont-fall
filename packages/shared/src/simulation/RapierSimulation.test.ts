@@ -12,6 +12,9 @@ import {
   IMPACT_STAGGER_MIN,
   RAGDOLL_MAX_MS,
   SLIDE_INPUT_SCALE,
+  SPEED_PAD_FADE_MS,
+  SPEED_PAD_HOLD_MS,
+  TICK_MS,
   TICK_RATE_HZ,
   WALK_SPEED,
 } from "../tuning.js";
@@ -968,6 +971,8 @@ describe("RapierSimulation — dash", () => {
       motionState: midBurst.motionState,
       dashCooldownMs: midBurst.dashCooldownMs,
       dashing: midBurst.dashing,
+      speedPadMsLeft: midBurst.speedPadMsLeft,
+      speedPadCapMultiplier: midBurst.speedPadCapMultiplier,
     });
 
     const afterReconcile = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -1018,6 +1023,8 @@ describe("RapierSimulation — dash", () => {
       motionState: ackedSnapshot.motionState,
       dashCooldownMs: ackedSnapshot.dashCooldownMs,
       dashing: ackedSnapshot.dashing,
+      speedPadMsLeft: ackedSnapshot.speedPadMsLeft,
+      speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
     });
     client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unackedInputs);
 
@@ -1093,6 +1100,8 @@ describe("RapierSimulation — dash", () => {
           motionState: acked.motionState,
           dashCooldownMs: acked.dashCooldownMs,
           dashing: acked.dashing,
+          speedPadMsLeft: acked.speedPadMsLeft,
+          speedPadCapMultiplier: acked.speedPadCapMultiplier,
         });
         client.replayLocalCharacter(DEFAULT_CHARACTER_ID, inputHistory.slice(ackedIdx + 1));
         const afterSnap = client.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -1814,6 +1823,8 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
         motionState: "GettingUp" as const,
         dashCooldownMs: 0,
         dashing: false,
+        speedPadMsLeft: 0,
+        speedPadCapMultiplier: 1,
       });
       sim.reconcileCharacter(DEFAULT_CHARACTER_ID, gettingUp({ x: 5, y: RESTING_SPAWN.y, z: 5 }));
       const afterEntry = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
@@ -1886,6 +1897,8 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     motionState: "Controlled" as const,
     dashCooldownMs: 0,
     dashing: false,
+    speedPadMsLeft: 0,
+    speedPadCapMultiplier: 1,
   });
 
   it("snaps a locally-Controlled Character into Ragdoll the client never predicted (ADR 0015)", () => {
@@ -1900,6 +1913,8 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       motionState: "Ragdoll",
       dashCooldownMs: 0,
       dashing: false,
+      speedPadMsLeft: 0,
+      speedPadCapMultiplier: 1,
     });
 
     // Immediate — the discrete state is never delayed or smoothed (ADR 0013).
@@ -1926,6 +1941,8 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       motionState: "Ragdoll",
       dashCooldownMs: 0,
       dashing: false,
+      speedPadMsLeft: 0,
+      speedPadCapMultiplier: 1,
     });
 
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
@@ -2010,6 +2027,8 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
         motionState: "Ragdoll",
         dashCooldownMs: 0,
         dashing: false,
+        speedPadMsLeft: 0,
+        speedPadCapMultiplier: 1,
       });
       tick(sim, 0.1); // a few local ticks between snapshots
 
@@ -2068,6 +2087,8 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       motionState: "Sliding",
       dashCooldownMs: 0,
       dashing: false,
+      speedPadMsLeft: 0,
+      speedPadCapMultiplier: 1,
     });
     sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Sliding");
@@ -2245,5 +2266,346 @@ describe("RapierSimulation — Character-to-Character Bump (ticket 04)", () => {
     const moverZ = sim.snapshot().characters[MOVER]!.position.z;
     expect(moverZ).toBeLessThan(mirrorZ - 0.4); // did not overtake
     expect(moverZ).toBeGreaterThan(mirrorZ - 1.3); // did close the distance (isn't just left behind)
+  });
+});
+
+describe("RapierSimulation — speed/slow pads (M3.7 ticket 01, ADR 0035): one-shot Epoch-latched write plus a fading speed cap", () => {
+  const LONG_GROUND: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 10, y: 0.5, z: 100 } };
+  // 6 units wide (z -13..-7) — a full second's worth of WALK_SPEED travel, comfortably "a wide pad touched across several ticks."
+  const SPEED_PAD: OrientedBox = { center: { x: 0, y: 0, z: -10 }, halfExtents: { x: 5, y: 1, z: 3 } };
+  const SPEED_MULTIPLIER = 2;
+  const SLOW_MULTIPLIER = 0.3;
+
+  const withPad = (capMultiplier: number) => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 },
+      statics: [LONG_GROUND],
+      speedPads: [{ trigger: SPEED_PAD, capMultiplier }],
+    });
+    tick(sim, 0.5); // settle
+    return sim;
+  };
+
+  it("fires exactly once for a wide pad crossed over several ticks — the Epoch idiom, not a new mechanism", () => {
+    const sim = withPad(SPEED_MULTIPLIER);
+    tick(sim, 3, NORTH); // comfortably crosses the whole 6-unit pad and continues past it
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch).toBe(1);
+  });
+
+  it("does not fire before reaching the pad", () => {
+    const sim = withPad(SPEED_MULTIPLIER);
+    tick(sim, 0.5, NORTH); // still well short of z=-7 (the pad's near edge)
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch).toBe(0);
+  });
+
+  it("the one-shot write is a SET, landing exactly on the boosted target the tick after it fires — already moving at WALK_SPEED along the same heading", () => {
+    const sim = withPad(SPEED_MULTIPLIER);
+    // Walk right up to (but not into) the pad first, so velocity is already
+    // WALK_SPEED before the trigger — isolates the SET from any accelerate-up.
+    while (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z > -6.9) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    }
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch).toBe(0);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }); // crosses the trigger this tick — queues the SET for the next
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch).toBe(1);
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }); // the queued SET applies this tick
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    const speed = (before.z - after.z) * TICK_RATE_HZ;
+    expect(speed).toBeCloseTo(WALK_SPEED * SPEED_MULTIPLIER, 0);
+  });
+
+  it("the raised cap survives leaving the pad and only fades after the full hold window", () => {
+    const sim = withPad(SPEED_MULTIPLIER);
+    tick(sim, 2, NORTH); // crosses the pad and continues well past its far edge
+    const holdTicksLeft = Math.floor((SPEED_PAD_HOLD_MS - 2000) / TICK_MS);
+    expect(holdTicksLeft).toBeGreaterThan(0); // sanity: still inside the hold window at this point
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    const speed = (before.z - after.z) * TICK_RATE_HZ;
+    expect(speed).toBeCloseTo(WALK_SPEED * SPEED_MULTIPLIER, 0); // still fully boosted, long after leaving
+  });
+
+  it("eventually fades all the way back to plain WALK_SPEED once hold+fade fully elapses", () => {
+    const sim = withPad(SPEED_MULTIPLIER);
+    // +2s of travel margin before the pad even fires, on top of the full
+    // hold+fade window plus another 1s buffer once it's fired.
+    tick(sim, 2 + (SPEED_PAD_HOLD_MS + SPEED_PAD_FADE_MS) / 1000 + 1, NORTH);
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    const speed = (before.z - after.z) * TICK_RATE_HZ;
+    expect(speed).toBeCloseTo(WALK_SPEED, 0);
+  });
+
+  it("a slow pad is the same mechanism with the cap lowered — top speed drops instead of rising", () => {
+    const sim = withPad(SLOW_MULTIPLIER);
+    tick(sim, 2, NORTH);
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    const speed = (before.z - after.z) * TICK_RATE_HZ;
+    expect(speed).toBeCloseTo(WALK_SPEED * SLOW_MULTIPLIER, 0);
+  });
+
+  it("re-arms after leaving — crossing back through fires a second time", () => {
+    const sim = withPad(SPEED_MULTIPLIER);
+    tick(sim, 3, NORTH); // cross north all the way through the pad (past its far edge at z=-13) and well beyond
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch).toBe(1);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z).toBeLessThan(-13);
+
+    const SOUTH = input({ moveDirection: { x: 0, y: 0, z: 1 } });
+    tick(sim, 5, SOUTH); // walk all the way back south, re-entering the pad from its far side
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch).toBe(2);
+  });
+
+  it("a client corrected mid-effect neither double-fires the pad nor loses it", () => {
+    // Realistic single correction (this file's usual reconciliation pattern
+    // — see "replays buffered inputs forward from the reconciled base"
+    // above), not the dash suite's own "reconciles literally every tick"
+    // stress: that stress is explicitly flagged there as "an unrealistically
+    // extreme... no real jitter/LEAD ever produces" for an *input*-edge
+    // event, and is stronger still for a *position*-edge one like this pad —
+    // reconciling to an acked base that itself predates the crossing, then
+    // replaying across it, would legitimately (and correctly) fire once per
+    // such cycle; the realistic case this ticket asks for is a correction
+    // landing *after* the pad has already fired, per its own "mid-effect"
+    // wording, not one straddling the crossing instant on every single tick.
+    const sim = withPad(SPEED_MULTIPLIER);
+    tick(sim, 1.5, NORTH); // crosses the pad — one real fire, now mid-fade
+    const firedSnap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(firedSnap.speedPadEpoch).toBe(1);
+    expect(firedSnap.speedPadMsLeft).toBeGreaterThan(0);
+
+    // Buffer a few more ticks' worth of inputs the "server" (this same sim,
+    // standing in for truth) has already applied, then reconcile back to an
+    // ACKED base from mid-effect and replay them forward again — exactly
+    // this file's standard reconcile+replay shape.
+    const LAG = 3;
+    const buffered: SimInputs[] = [];
+    const snapshotsSince: ReturnType<typeof sim.snapshot>["characters"][string][] = [];
+    for (let i = 0; i < LAG; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+      buffered.push(NORTH);
+      snapshotsSince.push(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!);
+    }
+    const expected = snapshotsSince.at(-1)!;
+
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+      position: { ...firedSnap.position },
+      velocity: { ...firedSnap.velocity },
+      grounded: firedSnap.grounded,
+      motionState: firedSnap.motionState,
+      dashCooldownMs: firedSnap.dashCooldownMs,
+      dashing: firedSnap.dashing,
+      speedPadMsLeft: firedSnap.speedPadMsLeft,
+      speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
+    });
+    sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, buffered);
+
+    const afterReplay = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(afterReplay.speedPadEpoch).toBe(1); // not lost, not double-fired
+    expect(afterReplay.speedPadMsLeft).toBeCloseTo(expected.speedPadMsLeft, 0);
+    expect(afterReplay.speedPadCapMultiplier).toBe(expected.speedPadCapMultiplier);
+  });
+});
+
+describe("RapierSimulation — speed pads, code review regressions (M3.7 ticket 01)", () => {
+  const LONG_GROUND: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 10, y: 0.5, z: 100 } };
+
+  it("applies a pad's one-shot boost even while Sliding, on the very next tick — not deferred until Sliding ends", () => {
+    // Empirically traced (not hand-derived, per this project's own
+    // discipline): on this exact ramp/pitch, an idle Character settles,
+    // enters Sliding around tick 12, and drifts from world z~1.48 to ~3.65 by
+    // tick 29 — this trigger sits squarely inside that already-Sliding
+    // window, nowhere near the flat z~1.48 the Character sits at while still
+    // settling/Controlled.
+    const SLIDING_PITCH = 0.785; // ~45°, comfortably in the Sliding band
+    const ramp: OrientedBox = { center: { x: 0, y: 0, z: 0 }, halfExtents: { x: 5, y: 0.1, z: 15 }, rotation: pitchQuat(SLIDING_PITCH) };
+    const spawn = rotateVec3ByQuat({ x: 0, y: 0.1 + 2, z: 0 }, pitchQuat(SLIDING_PITCH));
+    const trigger: OrientedBox = { center: { x: 0, y: -1.5, z: 2.7 }, halfExtents: { x: 3, y: 3, z: 0.8 } };
+    const CAP_MULTIPLIER = 3;
+    const sim = new RapierSimulation({ statics: [ramp], spawn, speedPads: [{ trigger, capMultiplier: CAP_MULTIPLIER }] });
+
+    // Holding NORTH (rather than idling, like the plain Sliding suite does)
+    // gives the boost a real heading to launch along regardless of how much
+    // lateral velocity gravity alone has built up by the time the pad fires.
+    tick(sim, 1, NORTH);
+
+    // Advance one tick at a time and stop the instant `speedPadEpoch` ticks
+    // over — since the fix applies the queued write on the very next tick,
+    // running a fixed batch of ticks past that point (as an earlier draft of
+    // this test did) lets the boost apply-and-decay entirely inside the
+    // batch, silently proving nothing. Catching the exact boundary is the
+    // only way to observe "queued, not yet applied" vs. "applied this tick."
+    let firedAtTick = -1;
+    for (let i = 0; i < 30 && firedAtTick === -1; i += 1) {
+      const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch;
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch > before) firedAtTick = i;
+    }
+    expect(firedAtTick).toBeGreaterThanOrEqual(0); // sanity: actually fired within the traced window
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Sliding"); // the regression only exists while Sliding
+
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity;
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }); // the queued write must land THIS tick
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity;
+    const horizBefore = Math.hypot(before.x, before.z);
+    const horizAfter = Math.hypot(after.x, after.z);
+    // Sliding's own SLIDE_INPUT_SCALE dampens the boost too — the same
+    // `machine.inputScale` multiplier that dampens Stagger's — so the
+    // target here is WALK_SPEED * CAP_MULTIPLIER * SLIDE_INPUT_SCALE (5.4),
+    // not a flat, undamped WALK_SPEED * CAP_MULTIPLIER (18).
+    const expectedBoost = WALK_SPEED * CAP_MULTIPLIER * SLIDE_INPUT_SCALE;
+    // The bug this guards: the write used to be checked only in the
+    // non-Sliding branch, so it sat queued, inert, for the rest of the
+    // slide — `horizAfter` would show nothing beyond ordinary one-tick
+    // slope-gravity growth (a fraction of a unit/s), not this immediate jump.
+    expect(horizAfter).toBeGreaterThan(expectedBoost * 0.85);
+    expect(horizAfter).toBeGreaterThan(horizBefore + 1); // a real discontinuity, not gradual drift
+  });
+
+  it("scales the boost by the Character's own Surface top-speed multiplier, exactly like every other tick's walk target", () => {
+    const SURFACE_MULTIPLIER = 0.5; // mud's own real value
+    const CAP_MULTIPLIER = 2;
+    const trigger: OrientedBox = { center: { x: 0, y: 0, z: -10 }, halfExtents: { x: 5, y: 1, z: 3 } };
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 },
+      statics: [LONG_GROUND],
+      staticSurfaces: ["mud"],
+      speedPads: [{ trigger, capMultiplier: CAP_MULTIPLIER }],
+    });
+    tick(sim, 0.5);
+    while (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z > -6.9) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    }
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch).toBe(0);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }); // crosses the trigger — queues the SET for next tick
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch).toBe(1);
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }); // the SET applies this tick
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    const speed = (before.z - after.z) * TICK_RATE_HZ;
+    // The bug this guards: an earlier version boosted to a flat
+    // WALK_SPEED*capMultiplier (=12), ignoring mud's own 0.5x cap entirely.
+    expect(speed).toBeCloseTo(WALK_SPEED * SURFACE_MULTIPLIER * CAP_MULTIPLIER, 0); // = 6, not 12
+  });
+
+  it("dampens the boost under Stagger, exactly like every other movement contributor that same tick", () => {
+    const CAP_MULTIPLIER = 2;
+    // Stagger only lasts STAGGER_MS (350ms, ~10 ticks) and dampens walking to
+    // STAGGER_INPUT_SCALE (0.35) of WALK_SPEED — comfortably under 1 unit of
+    // real travel in that window, so the trigger sits close to spawn (but not
+    // AT it, to avoid firing during the initial settle before the Impact).
+    const trigger: OrientedBox = { center: { x: 0, y: 0, z: -0.5 }, halfExtents: { x: 5, y: 1, z: 0.4 } };
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 },
+      statics: [LONG_GROUND],
+      speedPads: [{ trigger, capMultiplier: CAP_MULTIPLIER }],
+    });
+    tick(sim, 0.5);
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: (IMPACT_STAGGER_MIN + IMPACT_RAGDOLL_MIN) / 2, y: 0, z: 0 });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Stagger");
+
+    while (
+      sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch === 0 &&
+      sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState === "Stagger"
+    ) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    }
+    // Sanity: still Staggered when the pad fires — otherwise this isn't
+    // testing what it claims to.
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Stagger");
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch).toBe(1);
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    const speed = (before.z - after.z) * TICK_RATE_HZ;
+    // The bug this guards: an earlier version gave a Staggered Character the
+    // full, undamped boost (WALK_SPEED*2=12) — every other contributor this
+    // same tick (walk, jump, dash) is damped by STAGGER_INPUT_SCALE.
+    expect(speed).toBeLessThan(WALK_SPEED * CAP_MULTIPLIER * 0.9);
+  });
+
+  it("folds an in-flight Dash on top of the boost rather than silently discarding it — dashSpeed/dashing stay honest", () => {
+    const CAP_MULTIPLIER = 2;
+    const trigger: OrientedBox = { center: { x: 0, y: 0, z: -10 }, halfExtents: { x: 5, y: 1, z: 3 } };
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 },
+      statics: [LONG_GROUND],
+      speedPads: [{ trigger, capMultiplier: CAP_MULTIPLIER }],
+    });
+    tick(sim, 0.5);
+    // Walk right up to the pad's edge, then dash into it so the burst is
+    // still fully active on the very tick the pad's trigger fires.
+    while (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z > -6.95) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    }
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch).toBe(0);
+    const DASH_NORTH = input({ ...NORTH, dashHeld: true });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: DASH_NORTH }); // starts the dash AND crosses the trigger this same tick
+    const afterTrigger = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(afterTrigger.speedPadEpoch).toBe(1);
+    expect(afterTrigger.dashing).toBe(true);
+
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    sim.tick({ [DEFAULT_CHARACTER_ID]: DASH_NORTH }); // the queued SET applies this tick, dash still active
+    const afterBoost = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    const speed = (before.z - afterBoost.position.z) * TICK_RATE_HZ;
+    // The bug this guards: an earlier version's SET discarded the dash
+    // burst entirely for this one tick (speed would land at exactly
+    // WALK_SPEED*2=12, matching the pad alone), while `dashing`/`dashSpeed`
+    // kept reporting a full-strength dash regardless. Fixed: the dash's own
+    // contribution is added on top, so the real speed is well past the
+    // pad-alone figure, consistent with what `dashing`/`dashSpeed` claim.
+    expect(afterBoost.dashing).toBe(true);
+    expect(afterBoost.dashSpeed).toBeGreaterThan(0);
+    expect(speed).toBeGreaterThan(WALK_SPEED * CAP_MULTIPLIER + afterBoost.dashSpeed * 0.5);
+  });
+
+  it("never fires (and never increments speedPadEpoch) for a Character that is Ragdolling or GettingUp", () => {
+    const CAP_MULTIPLIER = 2;
+    // Empirically traced (not hand-derived): this exact Impact settles the
+    // ragdoll root around x≈-0.38, y between ~0.2 and ~0.75, z≈0 — this
+    // trigger comfortably covers that whole path while excluding the
+    // pre-Impact spawn/settle position at x=0.
+    const trigger: OrientedBox = { center: { x: -0.5, y: 0.4, z: 0 }, halfExtents: { x: 0.4, y: 0.6, z: 1 } };
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 },
+      statics: [LONG_GROUND],
+      speedPads: [{ trigger, capMultiplier: CAP_MULTIPLIER }],
+    });
+    tick(sim, 0.5);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.speedPadEpoch).toBe(0); // sanity: not already inside it
+    // A hard Impact knocks the Character down and, per Ragdoll physics,
+    // drags its (camera-follow) position across the trigger while down.
+    // Comfortably above IMPACT_RAGDOLL_MIN (9), not just IMPACT_STAGGER_MIN.
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: -10, y: 4, z: 0 });
+    tick(sim, 0.3);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
+
+    // The bug this guards: `updateSpeedPad` read position unconditionally,
+    // so a Ragdoll/GettingUp episode dragging the Character through the
+    // trigger raised `speedPadEpoch` for an effect the Character could never
+    // feel at that moment (the boost math zeroes out under `inputScale ===
+    // 0`). Checked at every tick of the down episode itself, not just at the
+    // end — once the Character is genuinely back in `Controlled`, still
+    // standing inside the trigger, firing is correct (indistinguishable
+    // from having walked onto the pad any other way) and deliberately not
+    // asserted against here.
+    let sawDown = false;
+    for (let i = 0; i < 400; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      const snap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      if (snap.motionState === "Ragdoll" || snap.motionState === "GettingUp") {
+        sawDown = true;
+        expect(snap.speedPadEpoch).toBe(0);
+      } else if (sawDown) {
+        break; // back to Controlled — the down-episode window this test cares about is over
+      }
+    }
+    expect(sawDown).toBe(true); // sanity: the down episode actually happened during this loop
   });
 });

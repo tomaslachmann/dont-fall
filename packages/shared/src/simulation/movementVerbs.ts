@@ -12,6 +12,8 @@ import {
   MOVE_VELOCITY_CAP,
   SLOPE_SPEED_ANGLE_FACTOR,
   SLOPE_SPEED_MULTIPLIER_MIN,
+  SPEED_PAD_FADE_MS,
+  SPEED_PAD_HOLD_MS,
   TICK_DT,
   TICK_MS,
 } from "../tuning.js";
@@ -131,6 +133,86 @@ export const dashEnvelope = (elapsed: number, duration: number, rampOut: number)
   if (elapsed < releaseStart) return smoothstep(elapsed / releaseStart);
   return smoothstep((duration - elapsed) / clampedRampOut);
 };
+
+/**
+ * A speed/slow pad's `WALK_SPEED` multiplier at `elapsedMs` since it fired
+ * (M3.7 ticket 01, ADR 0035) — SuperTuxKart's zipper shape: held at `peak`
+ * for `holdMs`, then a *linear* fade back to 1 (neutral) over `fadeMs`, then
+ * 1 forever after. Deliberately not {@link dashEnvelope}'s smoothstep
+ * build/release curve: a pad's peak applies instantly (the one-shot velocity
+ * write in `CharacterController` is what makes that felt immediately, not a
+ * ramp-up here), and SuperTuxKart's own fade-out is linear, not eased.
+ */
+export const speedPadCapMultiplier = (elapsedMs: number, holdMs: number, fadeMs: number, peak: number): number => {
+  if (elapsedMs < 0 || elapsedMs >= holdMs + fadeMs) return 1;
+  if (elapsedMs < holdMs) return peak;
+  const fadeT = (elapsedMs - holdMs) / fadeMs;
+  return peak + (1 - peak) * fadeT;
+};
+
+/**
+ * A speed/slow pad's fading-cap bookkeeping (M3.7 ticket 01) — the same
+ * "start now, count down, restore from a reported remainder" idiom as
+ * {@link DashController}'s cooldown, because a pad's effect is a *latched*
+ * modifier that outlives contact with the pad itself (ADR 0035: the
+ * alternative, a stateless "only while standing on the pad" cap, was
+ * rejected — a boost that dies the moment you step off feels like a
+ * treadmill). `elapsedMs` free-runs past the total window once inactive
+ * rather than resetting to 0, so {@link msLeft} reads as a clean 0 instead of
+ * needing a separate "active" flag to disagree with a stale elapsed value.
+ */
+export class SpeedPadController {
+  private elapsedMs = SPEED_PAD_HOLD_MS + SPEED_PAD_FADE_MS;
+  private peakCapMultiplier = 1;
+
+  reset(): void {
+    this.elapsedMs = SPEED_PAD_HOLD_MS + SPEED_PAD_FADE_MS;
+    this.peakCapMultiplier = 1;
+  }
+
+  /** This tick's `WALK_SPEED` multiplier from this pad's fading effect; 1 whenever inactive. */
+  get capMultiplier(): number {
+    return speedPadCapMultiplier(this.elapsedMs, SPEED_PAD_HOLD_MS, SPEED_PAD_FADE_MS, this.peakCapMultiplier);
+  }
+
+  /** Ms remaining until this effect fully fades back to neutral; 0 whenever inactive. */
+  get msLeft(): number {
+    return Math.max(0, SPEED_PAD_HOLD_MS + SPEED_PAD_FADE_MS - this.elapsedMs);
+  }
+
+  /** The peak this effect is holding/fading from — meaningless once {@link msLeft} is 0, but always the last one latched. */
+  get peak(): number {
+    return this.peakCapMultiplier;
+  }
+
+  /** Latch a fresh pad trigger: (re)start the hold+fade window at `capMultiplier`. */
+  trigger(capMultiplier: number): void {
+    this.elapsedMs = 0;
+    this.peakCapMultiplier = capMultiplier;
+  }
+
+  /** Advance one tick — call unconditionally, whether or not a pad is currently active. */
+  beginTick(): void {
+    this.elapsedMs += TICK_MS;
+  }
+
+  /**
+   * Reconciliation base (mirrors {@link DashController.restoreCooldownMs}):
+   * re-derive `elapsedMs` from the server's reported remainder rather than
+   * trusting this Character's own (possibly-discarded-and-replayed)
+   * countdown. Never re-triggers the one-shot velocity write — only the
+   * decay state — so a client whose reconciliation lands mid-effect keeps
+   * fading from the right point instead of losing the effect or restarting it.
+   */
+  restoreFromMs(msLeft: number, capMultiplier: number): void {
+    if (msLeft <= 0) {
+      this.reset();
+      return;
+    }
+    this.peakCapMultiplier = capMultiplier;
+    this.elapsedMs = Math.max(0, SPEED_PAD_HOLD_MS + SPEED_PAD_FADE_MS - msLeft);
+  }
+}
 
 /**
  * Jump take-off, coyote time and variable-height ascent. Owns only jump state;

@@ -8,7 +8,13 @@ import {
   SLOPE_SPEED_ANGLE_FACTOR,
   WALKABLE_SLOPE_MAX_ANGLE,
 } from "../tuning.js";
-import { accelerateVelocity, dashEnvelope, slopeSpeedMultiplier } from "./movementVerbs.js";
+import {
+  accelerateVelocity,
+  dashEnvelope,
+  slopeSpeedMultiplier,
+  speedPadCapMultiplier,
+  SpeedPadController,
+} from "./movementVerbs.js";
 
 describe("dashEnvelope", () => {
   const duration = 10;
@@ -55,6 +61,109 @@ describe("dashEnvelope", () => {
     const long = dashEnvelope(1, 6, 10);
     const short = dashEnvelope(1, 6, 6);
     expect(long).toBeCloseTo(short, 10);
+  });
+});
+
+describe("speedPadCapMultiplier (M3.7 ticket 01, ADR 0035 — SuperTuxKart's zipper shape: hold at peak, then a linear fade)", () => {
+  const holdMs = 3000;
+  const fadeMs = 1000;
+  const peak = 2; // a speed pad; a slow pad is the same shape with peak < 1
+
+  it("holds at the peak for the entire hold window", () => {
+    expect(speedPadCapMultiplier(0, holdMs, fadeMs, peak)).toBe(peak);
+    expect(speedPadCapMultiplier(1, holdMs, fadeMs, peak)).toBe(peak);
+    expect(speedPadCapMultiplier(holdMs - 1, holdMs, fadeMs, peak)).toBe(peak);
+  });
+
+  it("fades linearly from the peak back to 1 across the fade window", () => {
+    const quarter = speedPadCapMultiplier(holdMs + fadeMs * 0.25, holdMs, fadeMs, peak);
+    const half = speedPadCapMultiplier(holdMs + fadeMs * 0.5, holdMs, fadeMs, peak);
+    const threeQuarters = speedPadCapMultiplier(holdMs + fadeMs * 0.75, holdMs, fadeMs, peak);
+    expect(quarter).toBeCloseTo(peak - (peak - 1) * 0.25, 10);
+    expect(half).toBeCloseTo(peak - (peak - 1) * 0.5, 10);
+    expect(threeQuarters).toBeCloseTo(peak - (peak - 1) * 0.75, 10);
+    // Linear, not eased: equal steps in time produce equal steps in value.
+    expect(quarter - half).toBeCloseTo(half - threeQuarters, 10);
+  });
+
+  it("is exactly 1 (neutral) once the hold+fade window has fully elapsed", () => {
+    expect(speedPadCapMultiplier(holdMs + fadeMs, holdMs, fadeMs, peak)).toBe(1);
+    expect(speedPadCapMultiplier(holdMs + fadeMs + 5000, holdMs, fadeMs, peak)).toBe(1);
+  });
+
+  it("is neutral before it fires too — a negative elapsed never happens in practice, but reads as inactive rather than throwing", () => {
+    expect(speedPadCapMultiplier(-1, holdMs, fadeMs, peak)).toBe(1);
+  });
+
+  it("works the same way for a slow pad (peak below 1) — the fade direction just flips", () => {
+    const slowPeak = 0.4;
+    expect(speedPadCapMultiplier(0, holdMs, fadeMs, slowPeak)).toBe(slowPeak);
+    const half = speedPadCapMultiplier(holdMs + fadeMs * 0.5, holdMs, fadeMs, slowPeak);
+    expect(half).toBeGreaterThan(slowPeak);
+    expect(half).toBeLessThan(1);
+    expect(speedPadCapMultiplier(holdMs + fadeMs, holdMs, fadeMs, slowPeak)).toBe(1);
+  });
+});
+
+describe("SpeedPadController (M3.7 ticket 01 — DashController's cooldown idiom, applied to a pad's fading cap)", () => {
+  it("is neutral (multiplier 1, no time left) before ever triggered", () => {
+    const pad = new SpeedPadController();
+    expect(pad.capMultiplier).toBe(1);
+    expect(pad.msLeft).toBe(0);
+  });
+
+  it("jumps straight to the peak the instant it's triggered, then holds and fades exactly like the pure function", () => {
+    const pad = new SpeedPadController();
+    pad.trigger(2);
+    expect(pad.capMultiplier).toBe(2);
+    expect(pad.msLeft).toBe(3000 + 1000);
+    for (let i = 0; i < 3000 / 33.333; i++) pad.beginTick(); // ~3000ms of holding, one 30Hz tick at a time
+    expect(pad.capMultiplier).toBeCloseTo(2, 1);
+  });
+
+  it("fades all the way back to neutral and stays there", () => {
+    const pad = new SpeedPadController();
+    pad.trigger(2);
+    for (let i = 0; i < 200; i++) pad.beginTick(); // way past hold+fade
+    expect(pad.capMultiplier).toBe(1);
+    expect(pad.msLeft).toBe(0);
+  });
+
+  it("re-triggering restarts the window from the new peak, even mid-fade", () => {
+    const pad = new SpeedPadController();
+    pad.trigger(2);
+    for (let i = 0; i < 130; i++) pad.beginTick(); // deep into the fade
+    expect(pad.capMultiplier).toBeLessThan(2);
+    pad.trigger(3);
+    expect(pad.capMultiplier).toBe(3);
+    expect(pad.msLeft).toBe(3000 + 1000);
+  });
+
+  it("restoreFromMs reconstructs the exact same decay curve a live trigger would have produced by now — the reconciliation path", () => {
+    const live = new SpeedPadController();
+    live.trigger(2);
+    for (let i = 0; i < 60; i++) live.beginTick(); // ~2s of ticks in, still fading or holding
+
+    const restored = new SpeedPadController();
+    restored.restoreFromMs(live.msLeft, live.peak);
+    expect(restored.capMultiplier).toBeCloseTo(live.capMultiplier, 5);
+    expect(restored.msLeft).toBeCloseTo(live.msLeft, 5);
+  });
+
+  it("restoreFromMs with 0 (or negative) ms left clears the effect rather than leaving stale state", () => {
+    const pad = new SpeedPadController();
+    pad.trigger(2);
+    pad.restoreFromMs(0, 2);
+    expect(pad.capMultiplier).toBe(1);
+    expect(pad.msLeft).toBe(0);
+  });
+
+  it("reset clears an in-progress effect back to neutral", () => {
+    const pad = new SpeedPadController();
+    pad.trigger(0.3);
+    pad.reset();
+    expect(pad.capMultiplier).toBe(1);
+    expect(pad.msLeft).toBe(0);
   });
 });
 

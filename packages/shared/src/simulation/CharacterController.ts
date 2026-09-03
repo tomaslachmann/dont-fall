@@ -26,10 +26,16 @@ import {
   WALKABLE_SLOPE_MAX_ANGLE,
   WALL_NORMAL_MAX_Y,
 } from "../tuning.js";
-import type { CharacterSnapshot, RagdollCause } from "../state/SimState.js";
+import type { ReconcileBase, RagdollCause } from "../state/SimState.js";
 import { CharacterStateMachine, type CharacterMotionState } from "./CharacterStateMachine.js";
 import { CHARACTER_GROUPS, GROUP_CHARACTER } from "./collisionGroups.js";
-import { accelerateVelocity, DashController, JumpController, slopeSpeedMultiplier } from "./movementVerbs.js";
+import {
+  accelerateVelocity,
+  DashController,
+  JumpController,
+  slopeSpeedMultiplier,
+  SpeedPadController,
+} from "./movementVerbs.js";
 import { Ragdoll } from "./Ragdoll.js";
 import { blendGettingUpBones, type BoneSnapshot } from "./ragdollSkeleton.js";
 import type { SimInputs } from "./SimInputs.js";
@@ -94,6 +100,12 @@ export interface CharacterState {
   dashing: boolean;
   /** Current horizontal speed (units/s) contributed by an active Dash burst; 0 when not dashing. Drives the speed-lines effect directly — no noisy derivation from position needed. */
   dashSpeed: number;
+  /** Rises every time a speed/slow pad fires (M3.7 ticket 01, ADR 0035). */
+  speedPadEpoch: number;
+  /** Ms remaining on the currently-active pad effect's fade; 0 when none is active. */
+  speedPadMsLeft: number;
+  /** The peak multiplier the currently-active pad effect is holding/fading from. */
+  speedPadCapMultiplier: number;
   bones: BoneSnapshot[];
 }
 
@@ -189,6 +201,18 @@ export class CharacterController {
    * (noisily) from position deltas. 0 whenever no burst is active.
    */
   private dashSpeed = 0;
+  /** A speed/slow pad's fading `WALK_SPEED` cap (M3.7 ticket 01, ADR 0035) — see {@link SpeedPadController}. */
+  private readonly speedPad = new SpeedPadController();
+  /** Rises every time a speed/slow pad fires (M3.7 ticket 01) — the Epoch idiom, same as {@link ragdollEpoch}. */
+  private speedPadEpoch = 0;
+  /**
+   * Set by {@link triggerSpeedPad}, consumed at the top of the very next
+   * {@link beginCapsuleTick} — the one-shot velocity *write* (Quake's jump-pad
+   * model: SET, not ADD) is deliberately a separate step from
+   * {@link speedPad}'s ongoing fading cap, applied exactly once per trigger
+   * regardless of how many ticks the fading effect itself goes on to last.
+   */
+  private pendingSpeedPadCapMultiplier: number | undefined;
   private jumpHeldLastTick = false;
   private dashHeldLastTick = false;
 
@@ -282,6 +306,21 @@ export class CharacterController {
   /** Whether a Fall-triggered respawn is queued for the top of the next tick. */
   get hasPendingRespawn(): boolean {
     return this.pendingRespawn !== null;
+  }
+
+  /**
+   * Fire a speed/slow pad (M3.7 ticket 01, ADR 0035) — called by
+   * `RapierSimulation` exactly once per crossing, on the tick its own
+   * position-based rising-edge check finds a *new* pad the Character wasn't
+   * already touching. Arms {@link speedPad}'s fading cap immediately and
+   * queues the one-shot velocity write for the very next
+   * {@link beginCapsuleTick} (one tick behind, like every other Surface-style
+   * effect resolved from this tick's already-computed ground contact).
+   */
+  triggerSpeedPad(capMultiplier: number): void {
+    this.speedPadEpoch += 1;
+    this.speedPad.trigger(capMultiplier);
+    this.pendingSpeedPadCapMultiplier = capMultiplier;
   }
 
   /**
@@ -391,6 +430,46 @@ export class CharacterController {
     this.endTick();
   }
 
+  /**
+   * Consumes {@link pendingSpeedPadCapMultiplier} if a pad fired last tick,
+   * returning the boosted horizontal velocity to SET this tick (M3.7 ticket
+   * 01), or `undefined` if no pad is pending. Checked from BOTH the Sliding
+   * and the ordinary walking branch of {@link beginCapsuleTick} (code
+   * review: an earlier version only checked the latter, so a pad triggered
+   * right before/during a slide stayed queued — undischarged — for the
+   * entire slide, landing long after its own fade window at a slide-driven
+   * speed/heading unrelated to the pad).
+   *
+   * Scaled by `surfaceTopSpeedMultiplier` (matching every other tick's own
+   * walk target — code review: an earlier version boosted to a flat
+   * `WALK_SPEED * capMultiplier`, ignoring a pad's own Surface entirely) and
+   * `machine.inputScale` (code review: matching Stagger's/Sliding's own
+   * damping of every other movement contributor this tick — an earlier
+   * version gave a Staggered Character the full, undamped boost). `dashBurst`
+   * is added on top rather than discarded (code review: an earlier version
+   * silently zeroed an in-flight Dash's contribution for the boost tick
+   * while `dashSpeed`/`dashing` kept reporting it at full strength — ADR
+   * 0035's "Dash is one contributor to the same velocity" model says it
+   * should still contribute here exactly like everywhere else, and the
+   * project's own research doc treats a pad feeding a live Dash into the
+   * wall-Impact check as a deliberately desirable interaction, not a bug).
+   */
+  private consumePendingSpeedPadBoost(move: Vec3, dashBurst: Vec3): Vec3 | undefined {
+    if (this.pendingSpeedPadCapMultiplier === undefined) return undefined;
+    const capMultiplier = this.pendingSpeedPadCapMultiplier;
+    this.pendingSpeedPadCapMultiplier = undefined;
+    // Boosts along the *current* heading (velocity if moving, else this
+    // tick's own input direction) — never a pad-authored direction, so a
+    // Character standing dead still with no input isn't flung anywhere; it
+    // still gets the fading cap (`speedPad.capMultiplier`, folded into `walk`
+    // above) for whenever it does move.
+    const heading = lengthVec3(vec3(this.velocity.x, 0, this.velocity.z)) > 0.01 ? this.velocity : move;
+    const boostDir = normalizeVec3(vec3(heading.x, 0, heading.z));
+    if (lengthVec3(boostDir) === 0) return undefined;
+    const speed = WALK_SPEED * this.surfaceTopSpeedMultiplier * capMultiplier * this.machine.inputScale;
+    return addVec3(scaleVec3(boostDir, speed), dashBurst);
+  }
+
   /** Controlled / Stagger / Sliding / GettingUp: queue the kinematic capsule's movement, input scaled by the state. */
   private beginCapsuleTick(input: SimInputs, jumpPressed: boolean, dashPressed: boolean): void {
     // Stagger/Sliding both dampen *all* movement input — walk, jump and dash
@@ -409,11 +488,27 @@ export class CharacterController {
     // unify how a burst's momentum carries across a state change).
     const dashBurst = this.dash.beginTick(move, fullControl && dashPressed && this.grounded);
     this.dashSpeed = sliding ? 0 : lengthVec3(dashBurst);
+    // Ticks down (and, while active, decides this tick's own {@link
+    // SpeedPadController.capMultiplier}) regardless of Sliding/Stagger —
+    // mirrors Dash's own cooldown, which likewise only advances whenever this
+    // method runs at all (which it does even during GettingUp — only true
+    // Ragdoll skips it, per {@link beginTick}'s `tickingRagdoll` gate).
+    this.speedPad.beginTick();
     // Surface-scaled, but not yet slope-scaled (below) — the Sliding branch
     // uses this as-is for its steering blend, deliberately never applying
     // the slope-angle multiplier (ticket 04): that model is for walking
-    // only, per ADR 0037/CONTEXT.md's split between the two.
-    const walk = scaleVec3(move, WALK_SPEED * this.surfaceTopSpeedMultiplier);
+    // only, per ADR 0037/CONTEXT.md's split between the two. `speedPad`'s
+    // fading cap (M3.7 ticket 01) stacks with the Surface's own multiplier —
+    // orthogonal concerns, same slot in the pipeline Surface already proved.
+    const walk = scaleVec3(move, WALK_SPEED * this.surfaceTopSpeedMultiplier * this.speedPad.capMultiplier);
+    // Consumed (at most once) by whichever branch below runs this tick — a
+    // pad can fire while Sliding just as easily as while walking (code
+    // review: an earlier version only ever checked this inside the `else`
+    // branch, so a pad triggered right as Sliding began stayed queued,
+    // undischarged, for the entire slide — landing long after its own fade
+    // window and at a slide-driven speed/heading with no relation to the
+    // pad at all).
+    const speedPadBoost = this.consumePendingSpeedPadBoost(move, dashBurst);
 
     if (sliding && this.currentGroundNormal) {
       // ADR 0037: the one place gravity is projected onto the slope plane and
@@ -424,56 +519,80 @@ export class CharacterController {
       const gravity = vec3(0, GRAVITY_Y, 0);
       const normal = this.currentGroundNormal;
       const slopeGravity = subVec3(gravity, scaleVec3(normal, dotVec3(gravity, normal)));
-      // `walk` is already reduced via SLIDE_INPUT_SCALE (folded into `move`
-      // above) — but it's still a *velocity*, not an acceleration, so it
-      // can't just be integrated (`+= walk * TICK_DT`) alongside gravity
-      // the way a first attempt at this did (code review): that grows
-      // without bound the longer a direction is held, eventually swamping
-      // the slide itself. Blending the horizontal velocity toward `walk`
-      // each tick keeps steering genuinely limited — it can pull the
-      // Character's own speed at most as far as `walk`'s magnitude, never
-      // past it, while gravity keeps accumulating independently.
-      const horizontal = lerpVec3({ x: this.velocity.x, y: 0, z: this.velocity.z }, walk, SLIDE_STEER_BLEND);
-      this.velocity.x = horizontal.x + slopeGravity.x * TICK_DT;
+      if (speedPadBoost) {
+        // The one-shot write still applies underneath the slide's own
+        // gravity accumulation — it overrides only the steered-toward-target
+        // horizontal contribution `SLIDE_STEER_BLEND` would otherwise supply,
+        // exactly mirroring the non-Sliding branch's own SET-then-fall-
+        // through semantics below.
+        this.velocity.x = speedPadBoost.x + slopeGravity.x * TICK_DT;
+        this.velocity.z = speedPadBoost.z + slopeGravity.z * TICK_DT;
+      } else {
+        // `walk` is already reduced via SLIDE_INPUT_SCALE (folded into `move`
+        // above) — but it's still a *velocity*, not an acceleration, so it
+        // can't just be integrated (`+= walk * TICK_DT`) alongside gravity
+        // the way a first attempt at this did (code review): that grows
+        // without bound the longer a direction is held, eventually swamping
+        // the slide itself. Blending the horizontal velocity toward `walk`
+        // each tick keeps steering genuinely limited — it can pull the
+        // Character's own speed at most as far as `walk`'s magnitude, never
+        // past it, while gravity keeps accumulating independently.
+        const horizontal = lerpVec3({ x: this.velocity.x, y: 0, z: this.velocity.z }, walk, SLIDE_STEER_BLEND);
+        this.velocity.x = horizontal.x + slopeGravity.x * TICK_DT;
+        this.velocity.z = horizontal.z + slopeGravity.z * TICK_DT;
+      }
       this.velocity.y += slopeGravity.y * TICK_DT;
-      this.velocity.z = horizontal.z + slopeGravity.z * TICK_DT;
     } else {
       const gravityScale = this.jump.gravityScale(fullControl && input.jumpHeld, this.velocity.y);
       this.velocity.y += GRAVITY_Y * gravityScale * TICK_DT;
 
-      // Ticket 04: downhill faster, uphill slower — an explicit multiplier
-      // keyed off the signed slope angle toward `move` (Unity's Character
-      // Controller model, not Quake 3's flatten-to-slope-independent one;
-      // see `slopeSpeedMultiplier`'s own doc comment for both). Only applies
-      // to the walk contribution, not Dash — same "Surface caps WALK_SPEED,
-      // never Dash" precedent ticket 01 already established — and only
-      // while genuinely grounded on a real surface (mid-air/no ground
-      // contact reads as flat, i.e. no effect, exactly like Surface itself).
-      const slope =
-        this.grounded && this.currentGroundNormal ? slopeSpeedMultiplier(move, this.currentGroundNormal) : 1;
-      const slopedWalk = scaleVec3(walk, slope);
-      // Ticket 05, ADR 0035: Dash is now a contributor to the same wish
-      // velocity the persistent-velocity pipeline chases, rather than an
-      // addition tacked directly onto the final velocity outside any model
-      // — the structural change that later lets a wall-Impact rule (ADR
-      // 0037) read "how fast is this Character going" without asking "was
-      // this a Dash?" At today's saturating MOVE_ACCEL_FACTOR/
-      // MOVE_FRICTION_FACTOR (full grip), `accelerateVelocity` reaches
-      // `wish` exactly within this same tick — numerically identical to the
-      // direct `velocity.xz = wish` assignment it replaces. `surfaceGrip`
-      // (ticket 06) multiplies both factors together — Source's own
-      // one-scalar-does-both model — so ice's near-zero grip alone is
-      // exactly what turns this from "identical" into "a genuine, gradual
-      // ramp," with no other code path change needed.
-      const wish = addVec3(slopedWalk, dashBurst);
-      const newVelocity = accelerateVelocity(
-        this.velocity,
-        wish,
-        MOVE_ACCEL_FACTOR * this.surfaceGrip,
-        MOVE_FRICTION_FACTOR * this.surfaceGrip,
-      );
-      this.velocity.x = newVelocity.x;
-      this.velocity.z = newVelocity.z;
+      if (speedPadBoost) {
+        // M3.7 ticket 01: the one-shot velocity *write* — Quake's jump-pad
+        // model (`BG_TouchJumpPad`: `VectorCopy`, not an add — "your incoming
+        // speed is discarded"). A direct SET, bypassing `accelerateVelocity`
+        // below entirely for this one tick: it must land exactly on the
+        // boosted target regardless of Surface grip (an icy pad must still
+        // feel instant), and a SET is trivially idempotent under prediction
+        // replay — the same pre-boost velocity/move always produces the same
+        // result, unlike an ADD which would stack on retry. See
+        // {@link consumePendingSpeedPadBoost} for what it's built from.
+        this.velocity.x = speedPadBoost.x;
+        this.velocity.z = speedPadBoost.z;
+      } else {
+        // Ticket 04: downhill faster, uphill slower — an explicit multiplier
+        // keyed off the signed slope angle toward `move` (Unity's Character
+        // Controller model, not Quake 3's flatten-to-slope-independent one;
+        // see `slopeSpeedMultiplier`'s own doc comment for both). Only applies
+        // to the walk contribution, not Dash — same "Surface caps WALK_SPEED,
+        // never Dash" precedent ticket 01 already established — and only
+        // while genuinely grounded on a real surface (mid-air/no ground
+        // contact reads as flat, i.e. no effect, exactly like Surface itself).
+        const slope =
+          this.grounded && this.currentGroundNormal ? slopeSpeedMultiplier(move, this.currentGroundNormal) : 1;
+        const slopedWalk = scaleVec3(walk, slope);
+        // Ticket 05, ADR 0035: Dash is now a contributor to the same wish
+        // velocity the persistent-velocity pipeline chases, rather than an
+        // addition tacked directly onto the final velocity outside any model
+        // — the structural change that later lets a wall-Impact rule (ADR
+        // 0037) read "how fast is this Character going" without asking "was
+        // this a Dash?" At today's saturating MOVE_ACCEL_FACTOR/
+        // MOVE_FRICTION_FACTOR (full grip), `accelerateVelocity` reaches
+        // `wish` exactly within this same tick — numerically identical to the
+        // direct `velocity.xz = wish` assignment it replaces. `surfaceGrip`
+        // (ticket 06) multiplies both factors together — Source's own
+        // one-scalar-does-both model — so ice's near-zero grip alone is
+        // exactly what turns this from "identical" into "a genuine, gradual
+        // ramp," with no other code path change needed.
+        const wish = addVec3(slopedWalk, dashBurst);
+        const newVelocity = accelerateVelocity(
+          this.velocity,
+          wish,
+          MOVE_ACCEL_FACTOR * this.surfaceGrip,
+          MOVE_FRICTION_FACTOR * this.surfaceGrip,
+        );
+        this.velocity.x = newVelocity.x;
+        this.velocity.z = newVelocity.z;
+      }
     }
 
     // `filterGroups: CHARACTER_GROUPS` so the sweep honours collision groups
@@ -642,6 +761,8 @@ export class CharacterController {
     this.jump.reset();
     this.dash.reset();
     this.dashSpeed = 0;
+    this.speedPad.reset();
+    this.pendingSpeedPadCapMultiplier = undefined;
   }
 
   /** The GettingUp blend's current position — shared by `snapshot()` and `reconcileTo`'s position-tracking correction. */
@@ -685,6 +806,9 @@ export class CharacterController {
       dashCooldownMs: this.dash.cooldownMs,
       dashing: this.dash.isActive,
       dashSpeed: this.dashSpeed,
+      speedPadEpoch: this.speedPadEpoch,
+      speedPadMsLeft: this.speedPad.msLeft,
+      speedPadCapMultiplier: this.speedPad.peak,
       bones,
     };
   }
@@ -713,11 +837,12 @@ export class CharacterController {
    *   dash controller whether an in-progress local burst should keep playing
    *   out (see {@link DashController.restoreCooldownMs}) —
    *   reconciliation must not silently truncate a burst the server agrees is
-   *   still happening.
+   *   still happening. A speed/slow pad's fading cap is restored the same
+   *   way (`speedPadMsLeft`/`speedPadCapMultiplier` →
+   *   {@link SpeedPadController.restoreFromMs}) — never re-fires the one-shot
+   *   write, only the decay curve.
    */
-  reconcileTo(
-    base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs" | "dashing">,
-  ): void {
+  reconcileTo(base: ReconcileBase): void {
     const serverDown = isDown(base.motionState);
 
     if (serverDown) {
@@ -777,6 +902,12 @@ export class CharacterController {
     this.surfaceGrip = 1;
     this.machine.snapTo(base.motionState);
     this.dash.restoreCooldownMs(base.dashCooldownMs, base.dashing);
+    this.speedPad.restoreFromMs(base.speedPadMsLeft, base.speedPadCapMultiplier);
+    // The one-shot write itself is never replayed here — only the decay
+    // curve above. Whether the replay that follows fires a *fresh* one-shot
+    // write is entirely up to `RapierSimulation`'s own rising-edge check
+    // against the replayed position, exactly like every other tick.
+    this.pendingSpeedPadCapMultiplier = undefined;
     this.jump.reset(); // stale coyote/hold bookkeeping would let replay grant a jump the server won't
     this.pendingRespawn = null; // a Fall the client predicted but the server (this base) hasn't seen
   }

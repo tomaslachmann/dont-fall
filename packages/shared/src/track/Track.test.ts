@@ -38,6 +38,7 @@ const SPINNER_MODULE: Module = {
     respawn: { x: 0, y: 1, z: 0 },
     trigger: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
   },
+  speedPads: [{ trigger: { center: { x: 0, y: 0.5, z: 2 }, halfExtents: { x: 1, y: 1, z: 1 } }, capMultiplier: 2 }],
   sockets: STRAIGHT_SOCKETS,
   footprint: FOOTPRINT,
 };
@@ -114,6 +115,8 @@ describe("resolveTrack", () => {
     expect(resolved.props[0]!.center).toEqual({ x: 6, y: -1, z: 20 });
     expect(resolved.checkpoints[0]!.respawn).toEqual({ x: 5, y: 0, z: 20 });
     expect(resolved.checkpoints[0]!.trigger.halfExtents).toEqual({ x: 2, y: 2, z: 2 });
+    expect(resolved.speedPads[0]!.capMultiplier).toBe(2);
+    expect(resolved.speedPads[0]!.trigger.center).toEqual({ x: 5, y: -0.5, z: 22 });
   });
 
   it("never swaps a static Box's half-extents (ADR 0034) — carries its rotation instead, for a real rotated collider", () => {
@@ -160,7 +163,14 @@ describe("resolveTrack", () => {
   });
 
   it("resolves an empty Track to empty arrays", () => {
-    expect(resolveTrack({}, [])).toEqual({ statics: [], staticSurfaces: [], props: [], spinners: [], checkpoints: [] });
+    expect(resolveTrack({}, [])).toEqual({
+      statics: [],
+      staticSurfaces: [],
+      props: [],
+      spinners: [],
+      checkpoints: [],
+      speedPads: [],
+    });
   });
 
   it("throws if a Segment references an unknown Module", () => {

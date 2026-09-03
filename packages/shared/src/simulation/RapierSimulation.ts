@@ -2,7 +2,7 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import { pointInOrientedBox, type OrientedBox } from "../math/box.js";
 import { IDENTITY_QUAT } from "../math/quat.js";
 import { normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
-import { characterSnapshot, type CharacterSnapshot, type SimState } from "../state/SimState.js";
+import { characterSnapshot, type CharacterSnapshot, type ReconcileBase, type SimState } from "../state/SimState.js";
 import type { FixedSimulation } from "../timing/FixedSimulation.js";
 import {
   BUMP_IMPULSE_SCALE,
@@ -18,7 +18,11 @@ import { STATIC_GROUPS } from "./collisionGroups.js";
 import { MirrorCharacter } from "./MirrorCharacter.js";
 import { Prop, type PropConfig, type PropSnapshot } from "./Prop.js";
 import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
+import type { SpeedPadConfig } from "./SpeedPad.js";
 import { Spinner, type SpinnerConfig } from "./Spinner.js";
+
+/** Whether `state` is a down state — a Character in either never receives a speed pad's one-shot boost (code review, M3.7 ticket 01). */
+const isDownState = (state: CharacterMotionState): boolean => state === "Ragdoll" || state === "GettingUp";
 
 /**
  * ID of the Character `SimulationConfig.spawn` auto-creates — the only
@@ -37,6 +41,16 @@ interface CharacterProgress {
   phaseStartTick: number;
   /** The `motionState` seen in the previous snapshot, for transition detection. */
   lastMotionState: CharacterMotionState;
+  /**
+   * Index into `speedPads` this Character was touching as of the last check,
+   * or `undefined` (M3.7 ticket 01) — the rising-edge memory `updateSpeedPad`
+   * compares against, so a wide pad touched across several ticks fires once
+   * and leaving-then-re-entering (even the same pad) re-arms it. Re-derived
+   * (never blanked) on every `reconcileCharacter` from the restored
+   * position — see that method's own comment for why a naive blank reset
+   * fails under frequent reconciliation. Local bookkeeping, never replicated.
+   */
+  touchedSpeedPadIndex: number | undefined;
 }
 
 export interface SimulationConfig {
@@ -54,6 +68,8 @@ export interface SimulationConfig {
   staticSurfaces?: SurfaceId[];
   /** Checkpoints the Character can walk through to move its respawn point. */
   checkpoints?: Checkpoint[];
+  /** Speed/slow pads the Character can cross to fire a one-shot boost (M3.7 ticket 01). */
+  speedPads?: SpeedPadConfig[];
   /** Height below which the Character has Fallen out of the playground. */
   killPlaneY?: number;
   /** Rotating-bar Obstacles (ticket 06). */
@@ -134,6 +150,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   private readonly progress = new Map<string, CharacterProgress>();
   private readonly statics: OrientedBox[];
   private readonly checkpoints: Checkpoint[];
+  private readonly speedPads: SpeedPadConfig[];
   private readonly killPlaneY: number;
   /** See `SimulationConfig.authoritative`. */
   private readonly authoritative: boolean;
@@ -189,6 +206,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   constructor(config: SimulationConfig = {}) {
     this.statics = config.statics ?? [DEFAULT_GROUND];
     this.checkpoints = config.checkpoints ?? [];
+    this.speedPads = config.speedPads ?? [];
     this.killPlaneY = config.killPlaneY ?? DEFAULT_KILL_PLANE_Y;
     this.authoritative = config.authoritative ?? true;
 
@@ -267,6 +285,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       fallCount: 0,
       phaseStartTick: 0,
       lastMotionState: "Controlled",
+      touchedSpeedPadIndex: undefined,
     });
   }
 
@@ -351,11 +370,24 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * there is no "stale vs. live" report to tell apart. See
    * {@link CharacterController.reconcileTo}.
    */
-  reconcileCharacter(
-    id: string,
-    base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs" | "dashing">,
-  ): void {
+  reconcileCharacter(id: string, base: ReconcileBase): void {
     this.character(id).reconcileTo(base);
+    // Re-derive "which pad (if any) is this Character standing in" from the
+    // RESTORED position, rather than blanking it to "touching nothing." A
+    // wide pad's trigger can easily span many ticks' worth of travel — under
+    // realistic reconciliation cadence this rarely matters (the correction
+    // and the pad's own edges rarely coincide), but a naive blank reset fails
+    // badly under a "reconciles every single tick" stress: dozens of
+    // consecutive corrections would each independently see a "fresh" rising
+    // edge into a pad the Character has been inside the whole time, firing
+    // the one-shot write over and over — precisely the double-fire the
+    // ticket's own prediction test (RapierSimulation.test.ts) exists to
+    // catch. Never re-fires here itself (that would double-apply the
+    // one-shot write this correction already carries via `speedPadMsLeft`/
+    // `speedPadCapMultiplier` above) — it only seeds the baseline the very
+    // next replayed tick's own rising-edge check compares against.
+    const progress = this.progress.get(id);
+    if (progress) progress.touchedSpeedPadIndex = this.findTriggerIndex(this.speedPads, base.position);
   }
 
   /**
@@ -417,6 +449,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     for (const [id, character] of this.characters) {
       character.endTick();
       this.updateCheckpoint(id);
+      this.updateSpeedPad(id);
       this.detectFall(id);
       // Stamp the tick a `motionState` phase begins, in sim-tick space, exactly
       // once (ADR 0023). Must be here, not in `snapshot()` — that is called
@@ -513,6 +546,21 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     }));
   }
 
+  /**
+   * Which entry of `triggers` (if any) `point` currently lies inside — one
+   * lookup shared by every rising-edge `OrientedBox` trigger this project
+   * has (M3.7 ticket 01's speed pads today; the milestone's own bounce/
+   * launch pads, ticket 02, need the identical one-shot-on-entry check
+   * next). `Checkpoint`'s own containment check doesn't route through this:
+   * it only ever moves forward (`reached + 1..`), never re-arms, and has no
+   * "which one changed" question to answer — a plain `pointInOrientedBox`
+   * scan is all it needs.
+   */
+  private findTriggerIndex(triggers: readonly { trigger: OrientedBox }[], point: Vec3): number | undefined {
+    const index = triggers.findIndex((t) => pointInOrientedBox(point, t.trigger));
+    return index === -1 ? undefined : index;
+  }
+
   private updateCheckpoint(id: string): void {
     const character = this.character(id);
     const progress = this.progress.get(id)!;
@@ -524,6 +572,34 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
         progress.respawnPoint = { ...this.checkpoints[i]!.respawn };
       }
     }
+  }
+
+  /**
+   * Rising-edge pad detection (M3.7 ticket 01, ADR 0035) — fires
+   * {@link CharacterController.triggerSpeedPad} exactly once per crossing:
+   * the tick this Character's (just-updated) position enters a pad's
+   * `trigger` it wasn't already inside. Leaving (or switching to a different
+   * pad) re-arms it. One tick behind the movement it's based on, same as
+   * every other Surface-style effect resolved from `endTick`'s fresh sweep.
+   *
+   * Skipped entirely while down (code review) — a Ragdolling/GettingUp
+   * Character's `position` tracks the ragdoll root, which can still drag
+   * across a pad's trigger, and `CharacterController`'s own boost math would
+   * silently discard the effect anyway (`machine.inputScale` is 0 for both
+   * states) — without this guard, `speedPadEpoch` would rise for an effect
+   * the Character never actually felt. `touchedSpeedPadIndex` is left
+   * untouched (not blanked) while down, so standing back up still inside the
+   * same trigger correctly reads as "already touching it," not a fresh edge.
+   */
+  private updateSpeedPad(id: string): void {
+    const character = this.character(id);
+    if (isDownState(character.motionState)) return;
+    const progress = this.progress.get(id)!;
+    const touched = this.findTriggerIndex(this.speedPads, character.position);
+    if (touched !== undefined && touched !== progress.touchedSpeedPadIndex) {
+      character.triggerSpeedPad(this.speedPads[touched]!.capMultiplier);
+    }
+    progress.touchedSpeedPadIndex = touched;
   }
 
   private detectFall(id: string): void {

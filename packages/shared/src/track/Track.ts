@@ -3,6 +3,7 @@ import { conjugateQuat, eulerQuat, mulQuat, quatToEuler, yawQuat, type Quat } fr
 import { addVec3, rotateVec3ByQuat, subVec3, type Vec3 } from "../math/vec3.js";
 import type { Checkpoint } from "../simulation/Checkpoint.js";
 import type { PropConfig } from "../simulation/Prop.js";
+import type { SpeedPadConfig } from "../simulation/SpeedPad.js";
 import type { SpinnerConfig } from "../simulation/Spinner.js";
 import { findSocket, type Module, type Socket } from "./Module.js";
 import { DEFAULT_SURFACE, type SurfaceId } from "./Surface.js";
@@ -162,12 +163,14 @@ export const resolveTrack = (
   props: PropConfig[];
   spinners: SpinnerConfig[];
   checkpoints: Checkpoint[];
+  speedPads: SpeedPadConfig[];
 } => {
   const statics: OrientedBox[] = [];
   const staticSurfaces: SurfaceId[] = [];
   const props: PropConfig[] = [];
   const spinners: SpinnerConfig[] = [];
   const checkpoints: Checkpoint[] = [];
+  const speedPads: SpeedPadConfig[] = [];
 
   for (const segment of track) {
     const module = modules[segment.moduleId];
@@ -219,7 +222,11 @@ export const resolveTrack = (
         trigger: placeBox(module.checkpoint.trigger),
       });
     }
+
+    for (const pad of module.speedPads ?? []) {
+      speedPads.push({ capMultiplier: pad.capMultiplier, trigger: placeBox(pad.trigger) });
+    }
   }
 
-  return { statics, staticSurfaces, props, spinners, checkpoints };
+  return { statics, staticSurfaces, props, spinners, checkpoints, speedPads };
 };

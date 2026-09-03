@@ -194,6 +194,24 @@ export const DASH_RELEASE_TICKS = msToTicks(DASH_RELEASE_MS);
 /** {@link DASH_COOLDOWN_MS} in whole ticks. */
 export const DASH_COOLDOWN_TICKS = msToTicks(DASH_COOLDOWN_MS);
 
+// --- Speed pads (M3.7 ticket 01, ADR 0035) ----------------------------------
+
+/**
+ * How long a speed/slow pad's raised (or lowered) speed cap holds at full
+ * magnitude after the one-shot trigger, before {@link SPEED_PAD_FADE_MS}
+ * starts fading it back to 1 — SuperTuxKart's zipper model (`max-speed-
+ * increase` held for `duration`, then a linear fade over `fade-out-time`;
+ * `docs/research/surface-and-volume-mechanics.md` §1.2). A pure continuous
+ * multiplier (no hold, no one-shot write) was rejected: on a short pad the
+ * very next tick's cap would clip it right back down, doing almost nothing.
+ * Provisional, like every other Surface/pad number in this project so far —
+ * a measurement against a real pad, not a decision, once one exists.
+ */
+export const SPEED_PAD_HOLD_MS = 3000;
+
+/** How long the cap takes to linearly fade from its peak back to 1 (ms), once {@link SPEED_PAD_HOLD_MS} elapses. */
+export const SPEED_PAD_FADE_MS = 1000;
+
 /** Capsule radius (units). */
 export const CAPSULE_RADIUS = 0.35;
 

@@ -135,7 +135,10 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     ...(config.trackFetchRetryDelayMs !== undefined ? { retryDelayMs: config.trackFetchRetryDelayMs } : {}),
     ...(config.trackFetchAttemptTimeoutMs !== undefined ? { attemptTimeoutMs: config.trackFetchAttemptTimeoutMs } : {}),
   });
-  const { statics, staticSurfaces, checkpoints, spinners, props } = resolveTrack(MODULE_LIBRARY, fetched.track);
+  const { statics, staticSurfaces, checkpoints, spinners, props, speedPads } = resolveTrack(
+    MODULE_LIBRARY,
+    fetched.track,
+  );
 
   // The Match starts with no players; ticket 01's single-player default
   // Character is opted out here rather than added and immediately disposed.
@@ -145,6 +148,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     checkpoints,
     spinners,
     props,
+    speedPads,
     withDefaultCharacter: false,
   });
 

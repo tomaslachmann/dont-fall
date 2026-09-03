@@ -112,6 +112,27 @@ export const M1_MODULES: Record<string, Module> = {
     footprint: STRAIGHT_FOOTPRINT,
     surface: "ice",
   },
+  /**
+   * Speed pad: the first Epoch-latched effect (M3.7 ticket 01) — same
+   * deliberately-identical-geometry-to-`bridge` treatment as `mud`/`ice`: the
+   * pad's `trigger` covers its floor's own footprint, invisible to a player
+   * looking at it.
+   */
+  "speed-pad": {
+    id: "speed-pad",
+    statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
+    speedPads: [{ trigger: box({ x: 0, y: 0.5, z: 0 }, { x: 1, y: 1, z: 2 }), capMultiplier: 2 }],
+    sockets: STRAIGHT_SOCKETS,
+    footprint: STRAIGHT_FOOTPRINT,
+  },
+  /** Slow pad: the same mechanism as `speed-pad`, cap lowered instead of raised (M3.7 ticket 01). */
+  "slow-pad": {
+    id: "slow-pad",
+    statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
+    speedPads: [{ trigger: box({ x: 0, y: 0.5, z: 0 }, { x: 1, y: 1, z: 2 }), capMultiplier: 0.3 }],
+    sockets: STRAIGHT_SOCKETS,
+    footprint: STRAIGHT_FOOTPRINT,
+  },
 };
 
 /** The M1 playground, reassembled through the Module/Track system (ticket 01, re-chained via Sockets in round 2). */

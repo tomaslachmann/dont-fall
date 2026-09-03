@@ -1,4 +1,13 @@
-import { segmentOrientation, type Box, type Checkpoint, type Module, type PropConfig, type Segment, type SpinnerConfig } from "@dont-fall/shared";
+import {
+  segmentOrientation,
+  type Box,
+  type Checkpoint,
+  type Module,
+  type PropConfig,
+  type Segment,
+  type SpeedPadConfig,
+  type SpinnerConfig,
+} from "@dont-fall/shared";
 import * as THREE from "three";
 
 const STATIC_COLOR = 0x3a4a5c;
@@ -6,6 +15,7 @@ const SPINNER_COLOR = 0xd9534f;
 const PROP_BOX_COLOR = 0xd9a441;
 const PROP_BALL_COLOR = 0x4aa8d9;
 const CHECKPOINT_COLOR = 0x4ade80;
+const SPEED_PAD_COLOR = 0xfacc15;
 
 const addBox = (group: THREE.Group, box: Box, color: number): void => {
   const geo = new THREE.BoxGeometry(box.halfExtents.x * 2, box.halfExtents.y * 2, box.halfExtents.z * 2);
@@ -41,6 +51,21 @@ const addCheckpoint = (group: THREE.Group, checkpoint: Checkpoint): void => {
 };
 
 /**
+ * M3.7 ticket 01 (code review): a speed/slow pad's `trigger` had no visual
+ * marker at all — a track designer placing the `speed-pad`/`slow-pad`
+ * Modules saw only floor geometry, with no way to see (or debug a custom
+ * Module whose trigger doesn't match its visible footprint) where the pad
+ * actually fires. Mirrors `addCheckpoint`'s own wireframe-box treatment.
+ */
+const addSpeedPad = (group: THREE.Group, speedPad: SpeedPadConfig): void => {
+  const { center, halfExtents } = speedPad.trigger;
+  const geo = new THREE.BoxGeometry(halfExtents.x * 2, halfExtents.y * 2, halfExtents.z * 2);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: SPEED_PAD_COLOR, wireframe: true }));
+  mesh.position.set(center.x, center.y, center.z);
+  group.add(mesh);
+};
+
+/**
  * Builds a Three.js Group from one Module's local-space geometry — the single
  * mesh-building path shared by the palette preview (ticket 04's visual-preview
  * requirement) and the whole-Track overview (one Group per placed Segment,
@@ -52,6 +77,7 @@ export const buildModuleGroup = (module: Module): THREE.Group => {
   for (const spinner of module.spinners ?? []) addSpinner(group, spinner);
   for (const prop of module.props ?? []) addProp(group, prop);
   if (module.checkpoint) addCheckpoint(group, module.checkpoint);
+  for (const speedPad of module.speedPads ?? []) addSpeedPad(group, speedPad);
   return group;
 };
 

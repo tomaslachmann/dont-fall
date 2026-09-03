@@ -107,6 +107,14 @@ wind tunnel. Contrast with Surface, which acts on a Character standing on it, an
 with a Checkpoint's trigger region, which only detects and never pushes.
 _Avoid_: zone, field, trigger, area
 
+**Speed pad** / **Slow pad**:
+A floor trigger that fires once as a Character crosses it: an instant velocity write
+plus a temporarily raised (speed pad) or lowered (slow pad) speed cap that fades back
+to normal. One mechanism, cap raised or lowered — never two separate ones. Contrast
+with Surface (a standing property of the floor itself, with no one-shot component) and
+Volume (continuous, not latched).
+_Avoid_: boost pad, zipper, jump pad (that's a bounce/launch pad, a different mechanic)
+
 **Segment**:
 One concrete instance of a Module placed at a position in a Track. A Track is a
 sequence of Segments.
@@ -288,9 +296,9 @@ game state; a client never asserts its own position, only sends Commands.
 
 **Epoch**:
 A monotonic counter identifying a discrete episode (a knockdown —
-`ragdollEpoch`; a Respawn — `respawnCount`) so a one-shot effect fires exactly
-once even if the Snapshot carrying it is seen across many frames. Never a
-one-Tick boolean.
+`ragdollEpoch`; a Respawn — `respawnCount`; a speed/slow pad firing —
+`speedPadEpoch`) so a one-shot effect fires exactly once even if the Snapshot
+carrying it is seen across many frames. Never a one-Tick boolean.
 
 **Contacted Prop**:
 The one Prop the local Character is currently touching (plus a short grace after
