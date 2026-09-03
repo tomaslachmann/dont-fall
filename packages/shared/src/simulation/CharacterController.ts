@@ -16,6 +16,7 @@ import {
   RAGDOLL_IMPACT_VELOCITY_SCALE,
   RAGDOLL_SETTLE_SPEED,
   RESPAWN_FLOP_IMPULSE,
+  SURFACE_GROUND_NORMAL_MIN_Y,
   TICK_DT,
   WALK_SPEED,
   WALL_NORMAL_MAX_Y,
@@ -117,6 +118,25 @@ export class CharacterController {
   private velocity: Vec3 = vec3();
   private grounded = false;
   /**
+   * The floor collider this tick's ground contact was against, if any
+   * (ticket 01/ADR 0036) — the "floor collider the character controller
+   * already reports" `RapierSimulation` resolves a Surface from, without a
+   * new scene query. Set in {@link resolveCollisions} from this tick's own
+   * `computeColliderMovement` collisions (the same list the dash-into-wall
+   * check already walks), never from a separate raycast. `undefined`
+   * whenever not grounded, so `RapierSimulation` reads the default Surface
+   * in the air exactly like it would with no ground contact at all.
+   */
+  private currentGroundColliderHandle: number | undefined;
+  /**
+   * Multiplies `WALK_SPEED` this tick (ticket 01) — set from outside by
+   * `RapierSimulation` once it's resolved {@link groundColliderHandle}
+   * against the Track's Surfaces, one tick behind (the same lag `grounded`
+   * itself already has relative to `RapierSimulation`'s per-tick bookkeeping).
+   * 1 (no effect) until anything ever calls {@link setSurfaceTopSpeedMultiplier}.
+   */
+  private surfaceTopSpeedMultiplier = 1;
+  /**
    * Monotonic count of Respawn teleports (ADR 0023 / Q9). The renderer holds the
    * last value it saw and snaps (no interpolation) when it changes — robust
    * against the interpolation buffer skipping the exact respawn tick, which a
@@ -192,6 +212,16 @@ export class CharacterController {
   /** Handle of this Character's capsule collider, so `RapierSimulation` can recognise it as the thing another Character bumped into (ticket 04). */
   get colliderHandle(): number {
     return this.collider.handle;
+  }
+
+  /** Handle of the floor collider this tick's ground contact was against, or `undefined` if not grounded (ticket 01) — see {@link currentGroundColliderHandle}. */
+  get groundColliderHandle(): number | undefined {
+    return this.currentGroundColliderHandle;
+  }
+
+  /** Sets this tick's Surface-driven top-speed multiplier (ticket 01) — see {@link surfaceTopSpeedMultiplier}. */
+  setSurfaceTopSpeedMultiplier(multiplier: number): void {
+    this.surfaceTopSpeedMultiplier = multiplier;
   }
 
   /** The current motion state — a cheap read (no bone/pose computation), for transition detection. */
@@ -284,6 +314,12 @@ export class CharacterController {
     if (this.tickingRagdoll) {
       this.body.setTranslation(this.ragdoll.rootPosition(), false); // camera continuity
       this.grounded = false;
+      // No ground sweep runs while ragdolling — leaving the last-known handle
+      // in place could hand RapierSimulation a stale Surface (e.g. still
+      // "mud" from before the knockdown) the instant it gets back up
+      // somewhere else entirely. The next real `beginCapsuleTick` recomputes
+      // this fresh from an actual sweep.
+      this.currentGroundColliderHandle = undefined;
     }
     this.tickCount += 1;
   }
@@ -306,7 +342,7 @@ export class CharacterController {
     const gravityScale = this.jump.gravityScale(fullControl && input.jumpHeld, this.velocity.y);
     this.velocity.y += GRAVITY_Y * gravityScale * TICK_DT;
 
-    const walk = scaleVec3(move, WALK_SPEED);
+    const walk = scaleVec3(move, WALK_SPEED * this.surfaceTopSpeedMultiplier);
     // Dash only starts while grounded (a walking burst, not an air dash); an
     // already-active burst keeps running if it carries the Character off an edge.
     const dashBurst = this.dash.beginTick(move, fullControl && dashPressed && this.grounded);
@@ -360,12 +396,29 @@ export class CharacterController {
   private resolveCollisions(dashSpeed: number): void {
     const dashingFastEnough = dashSpeed >= DASH_SPEED * DASH_WALL_MIN_SPEED_RATIO;
     const count = this.rapierController.numComputedCollisions();
+    // The most floor-like collision this tick (highest normal.y among the
+    // roughly-horizontal, non-Character ones) — the ground contact ticket
+    // 01/ADR 0036 reads a Surface from. `GROUND_STICK_SPEED` (below) is
+    // exactly what makes this reliably show up here every grounded tick:
+    // it's the reason a resting Character keeps sweeping into the floor at
+    // all. `!hitCharacter` matters here for the same reason it matters to
+    // the dash-wall check below: two overlapping Characters standing on a
+    // tilted floor (ADR 0034) can produce a contact normal steeper than the
+    // floor's own — without this exclusion that contact could outrank the
+    // real floor and report the wrong (or no) Surface (code review).
+    let groundNormalY = -Infinity;
+    let groundHandle: number | undefined;
     for (let i = 0; i < count; i += 1) {
       const collision = this.rapierController.computedCollision(i);
       if (!collision?.collider) continue;
 
       const hitCharacter = ((collision.collider.collisionGroups() >>> 16) & GROUP_CHARACTER) !== 0;
       const normal = vec3(collision.normal1.x, collision.normal1.y, collision.normal1.z);
+
+      if (!hitCharacter && normal.y > SURFACE_GROUND_NORMAL_MIN_Y && normal.y > groundNormalY) {
+        groundNormalY = normal.y;
+        groundHandle = collision.collider.handle;
+      }
 
       if (dashingFastEnough && !hitCharacter && Math.abs(normal.y) < WALL_NORMAL_MAX_Y) {
         this.applyImpact(dashWallKnockback(normal), "DashWall");
@@ -376,6 +429,7 @@ export class CharacterController {
         this.onCollision(collision.collider.handle, point, { ...this.velocity }, normal);
       }
     }
+    this.currentGroundColliderHandle = this.grounded ? groundHandle : undefined;
   }
 
   private beginRagdoll(): void {
@@ -538,6 +592,18 @@ export class CharacterController {
     this.body.setTranslation({ ...base.position }, false);
     this.velocity = { ...base.velocity };
     this.grounded = base.grounded;
+    // The correction can move the capsule across a Surface boundary (mud vs
+    // default) that a mispredicting client had no way to see coming — the
+    // snapshot carries no Surface of its own (ADR 0036: it's a pure function
+    // of position, never replicated), so the safest thing this can do is
+    // fall back to no cap and let the very next real ground sweep recompute
+    // the true Surface, exactly like the existing one-tick lag already does
+    // after a normal landing. Without this the first tick replayed from here
+    // would run with whatever multiplier happened to be set before the
+    // correction (code review, ticket 01) — a *second*, undocumented tick of
+    // wrong walk speed stacked on top of the position correction itself.
+    this.currentGroundColliderHandle = undefined;
+    this.surfaceTopSpeedMultiplier = 1;
     this.machine.snapTo(base.motionState);
     this.dash.restoreCooldownMs(base.dashCooldownMs, base.dashing);
     this.jump.reset(); // stale coyote/hold bookkeeping would let replay grant a jump the server won't

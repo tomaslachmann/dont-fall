@@ -5,6 +5,7 @@ import type { Checkpoint } from "../simulation/Checkpoint.js";
 import type { PropConfig } from "../simulation/Prop.js";
 import type { SpinnerConfig } from "../simulation/Spinner.js";
 import { findSocket, type Module, type Socket } from "./Module.js";
+import { DEFAULT_SURFACE, type SurfaceId } from "./Surface.js";
 
 /**
  * One placed instance of a Module in a Track (CONTEXT.md: Segment).
@@ -145,12 +146,25 @@ export const chainTrack = (
   return track;
 };
 
-/** Flattens a Track into the world-space geometry `RapierSimulation`/the scene consume. */
+/**
+ * Flattens a Track into the world-space geometry `RapierSimulation`/the
+ * scene consume. `staticSurfaces` is index-aligned with `statics` — entry
+ * `i` is the Surface `statics[i]`'s owning FloorBox collapses to
+ * (`FloorBox.surface ?? Module.surface ?? "default"`, ADR 0036), resolved
+ * here once rather than in the tick loop.
+ */
 export const resolveTrack = (
   modules: Record<string, Module>,
   track: Track,
-): { statics: OrientedBox[]; props: PropConfig[]; spinners: SpinnerConfig[]; checkpoints: Checkpoint[] } => {
+): {
+  statics: OrientedBox[];
+  staticSurfaces: SurfaceId[];
+  props: PropConfig[];
+  spinners: SpinnerConfig[];
+  checkpoints: Checkpoint[];
+} => {
   const statics: OrientedBox[] = [];
+  const staticSurfaces: SurfaceId[] = [];
   const props: PropConfig[] = [];
   const spinners: SpinnerConfig[] = [];
   const checkpoints: Checkpoint[] = [];
@@ -163,7 +177,10 @@ export const resolveTrack = (
     const placeBox = (box: Box): OrientedBox => orientBox(box, segment.position, orientation);
     const placePoint = (point: Vec3): Vec3 => addVec3(rotateVec3ByQuat(point, orientation), segment.position);
 
-    for (const box of module.statics) statics.push(placeBox(box));
+    for (const box of module.statics) {
+      statics.push(placeBox(box));
+      staticSurfaces.push(box.surface ?? module.surface ?? DEFAULT_SURFACE);
+    }
 
     // Props don't yet carry an initial rotation of their own (`PropConfig`
     // has no orientation field — every Prop always spawns axis-aligned and
@@ -204,5 +221,5 @@ export const resolveTrack = (
     }
   }
 
-  return { statics, props, spinners, checkpoints };
+  return { statics, staticSurfaces, props, spinners, checkpoints };
 };

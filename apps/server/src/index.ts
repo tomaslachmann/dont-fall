@@ -135,12 +135,13 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     ...(config.trackFetchRetryDelayMs !== undefined ? { retryDelayMs: config.trackFetchRetryDelayMs } : {}),
     ...(config.trackFetchAttemptTimeoutMs !== undefined ? { attemptTimeoutMs: config.trackFetchAttemptTimeoutMs } : {}),
   });
-  const { statics, checkpoints, spinners, props } = resolveTrack(MODULE_LIBRARY, fetched.track);
+  const { statics, staticSurfaces, checkpoints, spinners, props } = resolveTrack(MODULE_LIBRARY, fetched.track);
 
   // The Match starts with no players; ticket 01's single-player default
   // Character is opted out here rather than added and immediately disposed.
   const simulation = new RapierSimulation({
     statics,
+    staticSurfaces,
     checkpoints,
     spinners,
     props,

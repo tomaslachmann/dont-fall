@@ -14,6 +14,7 @@ import {
   TICK_RATE_HZ,
   WALK_SPEED,
 } from "../tuning.js";
+import { DEFAULT_SURFACE, SURFACES } from "../track/Surface.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import { DEFAULT_CHARACTER_ID, RapierSimulation, initPhysics } from "./RapierSimulation.js";
 import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
@@ -107,6 +108,53 @@ describe("RapierSimulation — walk", () => {
     // getCheckpoints() also fills in a concrete rotation on the volume now
     // (ADR 0034 code review) — identity when the input didn't specify one.
     expect(sim.getCheckpoints()).toEqual([{ ...cp, volume: { ...cp.volume, rotation: { x: 0, y: 0, z: 0, w: 1 } } }]);
+  });
+});
+
+describe("RapierSimulation — Surfaces (ticket 01, ADR 0036): the ground collider handle the character controller already reports, not a new scene query", () => {
+  const MUD_FLOOR: Box = { center: { x: 0, y: -0.5, z: 5 }, halfExtents: { x: 10, y: 0.5, z: 5 } }; // world z in [0, 10]
+  const DEFAULT_FLOOR: Box = { center: { x: 0, y: -0.5, z: -5 }, halfExtents: { x: 10, y: 0.5, z: 5 } }; // world z in [-10, 0]
+
+  it("caps top speed while standing on mud", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 8 },
+      statics: [MUD_FLOOR],
+      staticSurfaces: ["mud"],
+    });
+    tick(sim, 0.5); // settle, and let the one-tick Surface lag catch up
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    tick(sim, 1, NORTH);
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    const traveled = before.z - after.z;
+    expect(traveled).toBeCloseTo(WALK_SPEED * SURFACES.mud!.topSpeedMultiplier, 0);
+    expect(traveled).toBeLessThan(WALK_SPEED * 0.75); // clearly capped, not rounding noise
+  });
+
+  it("restores full speed once the Character walks off mud onto a default-Surface floor", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 8 },
+      statics: [MUD_FLOOR, DEFAULT_FLOOR],
+      staticSurfaces: ["mud", DEFAULT_SURFACE],
+    });
+    tick(sim, 0.5);
+    tick(sim, 4, NORTH); // cross from the mud floor (z > 0) onto the default one (z < 0)
+    const onDefault = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    expect(onDefault.z).toBeLessThan(-2); // sanity: actually crossed the seam
+
+    tick(sim, 0.5); // let the one-tick Surface lag catch up to "default" after crossing
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    tick(sim, 1, NORTH);
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    expect(before.z - after.z).toBeCloseTo(WALK_SPEED, 0);
+  });
+
+  it("a Character with no staticSurfaces config at all (every existing test/caller) walks at full WALK_SPEED — the default Surface is a true no-op", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
+    tick(sim, 0.5);
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    tick(sim, 1, NORTH);
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    expect(before.z - after.z).toBeCloseTo(WALK_SPEED, 0);
   });
 });
 

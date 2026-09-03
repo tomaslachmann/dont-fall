@@ -109,7 +109,7 @@ const main = async () => {
     );
   }
   const { track } = (await trackRes.json()) as { track: Track };
-  const { statics, checkpoints, spinners, props } = resolveTrack(MODULE_LIBRARY, track);
+  const { statics, staticSurfaces, checkpoints, spinners, props } = resolveTrack(MODULE_LIBRARY, track);
 
   const stage = createStage({
     statics,
@@ -138,6 +138,7 @@ const main = async () => {
   // resolved Track (ticket 11) the stage above was built from.
   const localSim: RapierSimulation = new RapierSimulation({
     statics,
+    staticSurfaces,
     checkpoints,
     spinners,
     props,

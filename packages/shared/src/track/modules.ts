@@ -87,6 +87,19 @@ export const M1_MODULES: Record<string, Module> = {
     sockets: STRAIGHT_SOCKETS,
     footprint: STRAIGHT_FOOTPRINT,
   },
+  /**
+   * Mud: the first Surface (M3.6 ticket 01) — deliberately identical geometry
+   * to `bridge` above. The property is the deliverable, the look is not
+   * (ticket 01's own acceptance criterion): nothing here should tip a player
+   * off by sight, only by how much slower they walk across it.
+   */
+  mud: {
+    id: "mud",
+    statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
+    sockets: STRAIGHT_SOCKETS,
+    footprint: STRAIGHT_FOOTPRINT,
+    surface: "mud",
+  },
 };
 
 /** The M1 playground, reassembled through the Module/Track system (ticket 01, re-chained via Sockets in round 2). */

@@ -4,6 +4,7 @@ import type { Checkpoint } from "./simulation/Checkpoint.js";
 import type { PropConfig } from "./simulation/Prop.js";
 import type { SpinnerConfig } from "./simulation/Spinner.js";
 import { M1_MODULES, M1_TRACK } from "./track/modules.js";
+import type { SurfaceId } from "./track/Surface.js";
 import { resolveTrack } from "./track/Track.js";
 
 /**
@@ -17,6 +18,8 @@ import { resolveTrack } from "./track/Track.js";
 const resolved = resolveTrack(M1_MODULES, M1_TRACK);
 
 export const PLAYGROUND_STATICS: Box[] = resolved.statics;
+/** Index-aligned with {@link PLAYGROUND_STATICS} (ADR 0036) — see `resolveTrack`'s `staticSurfaces`. */
+export const PLAYGROUND_STATIC_SURFACES: SurfaceId[] = resolved.staticSurfaces;
 export const PLAYGROUND_SPINNERS: SpinnerConfig[] = resolved.spinners;
 export const PLAYGROUND_PROPS: PropConfig[] = resolved.props;
 export const PLAYGROUND_CHECKPOINTS: Checkpoint[] = resolved.checkpoints;

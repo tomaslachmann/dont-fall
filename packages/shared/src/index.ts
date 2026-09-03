@@ -20,6 +20,7 @@ export { MirrorCharacter } from "./simulation/MirrorCharacter.js";
 export * from "./simulation/Spinner.js";
 export * from "./simulation/Prop.js";
 export * from "./track/Module.js";
+export * from "./track/Surface.js";
 export * from "./track/Track.js";
 export * from "./track/modules.js";
 export * from "./playground.js";

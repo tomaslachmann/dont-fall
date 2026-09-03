@@ -6,6 +6,7 @@ import {
   PLAYGROUND_CHECKPOINTS,
   PLAYGROUND_PROPS,
   PLAYGROUND_SPINNERS,
+  PLAYGROUND_STATIC_SURFACES,
   PLAYGROUND_STATICS,
   RECONCILE_POSITION_EPSILON,
   RapierSimulation,
@@ -104,6 +105,7 @@ const SOUTH: SimInputs = { moveDirection: { x: 0, y: 0, z: 1 }, jumpHeld: false,
 const OSCILLATE_TICKS = 10;
 const simConfig = {
   statics: PLAYGROUND_STATICS,
+  staticSurfaces: PLAYGROUND_STATIC_SURFACES,
   checkpoints: PLAYGROUND_CHECKPOINTS,
   spinners: PLAYGROUND_SPINNERS,
   props: PLAYGROUND_PROPS,

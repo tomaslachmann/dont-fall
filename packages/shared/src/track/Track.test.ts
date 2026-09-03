@@ -160,12 +160,55 @@ describe("resolveTrack", () => {
   });
 
   it("resolves an empty Track to empty arrays", () => {
-    expect(resolveTrack({}, [])).toEqual({ statics: [], props: [], spinners: [], checkpoints: [] });
+    expect(resolveTrack({}, [])).toEqual({ statics: [], staticSurfaces: [], props: [], spinners: [], checkpoints: [] });
   });
 
   it("throws if a Segment references an unknown Module", () => {
     const track = [{ moduleId: "ghost", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
     expect(() => resolveTrack({}, track)).toThrow(/unknown Module/);
+  });
+});
+
+describe("resolveTrack — Surface collapse (ticket 01, ADR 0036: Box.surface ?? Module.surface ?? \"default\", once, not in the tick loop)", () => {
+  it("a Module with no Surface anywhere resolves to \"default\" throughout", () => {
+    const track = [{ moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+    const resolved = resolveTrack({ straight: STRAIGHT }, track);
+    expect(resolved.staticSurfaces).toEqual(["default"]);
+  });
+
+  it("a Module's own Surface applies to every one of its floor Boxes that doesn't override it", () => {
+    const muddy: Module = { ...STRAIGHT, id: "muddy", surface: "mud" };
+    const track = [{ moduleId: "muddy", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+    const resolved = resolveTrack({ muddy }, track);
+    expect(resolved.staticSurfaces).toEqual(["mud"]);
+  });
+
+  it("a Box's own Surface wins over its Module's", () => {
+    const mixed: Module = {
+      ...STRAIGHT,
+      id: "mixed",
+      surface: "mud",
+      statics: [
+        { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 3 }, surface: "ice" },
+        { center: { x: 6, y: -0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 3 } },
+      ],
+    };
+    const track = [{ moduleId: "mixed", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+    const resolved = resolveTrack({ mixed }, track);
+    // First Box overrides the Module's mud with its own ice; the second has
+    // no Box-level override, so it falls through to the Module's mud.
+    expect(resolved.staticSurfaces).toEqual(["ice", "mud"]);
+  });
+
+  it("staticSurfaces stays index-aligned with statics across multiple Segments", () => {
+    const muddy: Module = { ...STRAIGHT, id: "muddy", surface: "mud" };
+    const track = [
+      { moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { moduleId: "muddy", position: { x: 6, y: 0, z: 0 }, rotation: 0 },
+    ];
+    const resolved = resolveTrack({ straight: STRAIGHT, muddy }, track);
+    expect(resolved.staticSurfaces).toEqual(["default", "mud"]);
+    expect(resolved.statics).toHaveLength(2);
   });
 });
 

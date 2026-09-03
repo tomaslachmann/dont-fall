@@ -10,6 +10,7 @@ import {
   DEFAULT_KILL_PLANE_Y,
   GRAVITY_Y,
 } from "../tuning.js";
+import { DEFAULT_SURFACE, surfaceConfig, type SurfaceId } from "../track/Surface.js";
 import { CharacterController, type CollisionListener } from "./CharacterController.js";
 import type { CharacterMotionState } from "./CharacterStateMachine.js";
 import type { Checkpoint } from "./Checkpoint.js";
@@ -43,6 +44,14 @@ export interface SimulationConfig {
   spawn?: Vec3;
   /** Static collision geometry. Defaults to a single large ground box. */
   statics?: OrientedBox[];
+  /**
+   * Each `statics` entry's Surface id, index-aligned with it (ticket 01,
+   * ADR 0036) — `Track.ts`'s `resolveTrack` produces both together. Missing
+   * or shorter than `statics` (e.g. the M1-era `DEFAULT_GROUND` fallback,
+   * or any hand-built `statics` array in a test) resolves the remainder to
+   * {@link DEFAULT_SURFACE}.
+   */
+  staticSurfaces?: SurfaceId[];
   /** Checkpoints the Character can walk through to move its respawn point. */
   checkpoints?: Checkpoint[];
   /** Height below which the Character has Fallen out of the playground. */
@@ -136,6 +145,14 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   /** Capsule collider handle → Character ID, so a Character-to-Character contact can find the Character it hit (ticket 04 — Bump). */
   private readonly characterIdByHandle = new Map<number, string>();
   /**
+   * Static collider handle → Surface id (ticket 01, ADR 0036) — the one
+   * piece of plumbing the whole Surface path needed: without this, reading
+   * "what Surface is this Character standing on?" from a collider handle
+   * would mean a new scene query instead, which would depend on collider
+   * insertion order and break client/server determinism quietly.
+   */
+  private readonly staticSurfaceByHandle = new Map<number, SurfaceId>();
+  /**
    * Other players mirrored into this world as positioned obstacles (ADR 0012,
    * ticket 04) — a client's local prediction world only. The server has real
    * {@link CharacterController}s for every player and never populates this.
@@ -177,11 +194,11 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
 
     this.world = new RAPIER.World({ x: 0, y: GRAVITY_Y, z: 0 });
 
-    for (const box of this.statics) {
+    this.statics.forEach((box, i) => {
       // ADR 0034: a real rotated rigid body, not the old pre-rotated-AABB
       // trick — Rapier itself has always supported this; nothing here needed
       // the previous multiple-of-90°-only restriction.
-      this.world.createCollider(
+      const collider = this.world.createCollider(
         RAPIER.ColliderDesc.cuboid(box.halfExtents.x, box.halfExtents.y, box.halfExtents.z)
           .setCollisionGroups(STATIC_GROUPS),
         this.world.createRigidBody(
@@ -190,7 +207,8 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
             .setRotation(box.rotation ?? IDENTITY_QUAT),
         ),
       );
-    }
+      this.staticSurfaceByHandle.set(collider.handle, config.staticSurfaces?.[i] ?? DEFAULT_SURFACE);
+    });
 
     this.spinners = (config.spinners ?? []).map((c) => new Spinner(this.world, c));
     for (const spinner of this.spinners) this.spinnerByHandle.set(spinner.collider.handle, spinner);
@@ -408,6 +426,13 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
         progress.phaseStartTick = this.tickCount;
         progress.lastMotionState = character.motionState;
       }
+      // Ticket 01/ADR 0036: this tick's ground contact (just computed above,
+      // in `endTick`/the sweep it followed) decides the Surface that gates
+      // *next* tick's walk speed — the same one-tick lag `grounded` itself
+      // already has relative to jump/landing.
+      const groundHandle = character.groundColliderHandle;
+      const surfaceId = groundHandle !== undefined ? this.staticSurfaceByHandle.get(groundHandle) : undefined;
+      character.setSurfaceTopSpeedMultiplier(surfaceConfig(surfaceId).topSpeedMultiplier);
     }
 
     // Client-only (ADR 0012 / 0016, ticket 06): every Prop is pinned to the

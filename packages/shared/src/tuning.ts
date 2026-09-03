@@ -205,6 +205,18 @@ export const DASH_WALL_IMPACT_MAGNITUDE = 14;
  */
 export const WALL_NORMAL_MAX_Y = 0.5;
 
+/**
+ * A collision normal counts as "ground" for Surface lookup (ticket 01, ADR
+ * 0036) when its Y component is above this — deliberately a *separate*
+ * constant from {@link WALL_NORMAL_MAX_Y} even though it starts at the same
+ * value: that one is tuned for "is this steep enough to dash-crash into,"
+ * this one for "is this floor-like enough to trust for a Surface lookup."
+ * Sharing one knob between the two would mean a future dash-feel tuning pass
+ * silently retunes which collisions report a Surface too (code review,
+ * ticket 01).
+ */
+export const SURFACE_GROUND_NORMAL_MIN_Y = 0.5;
+
 /** Upward bias mixed into the wall-bounce direction, before normalising, for a visible pop. */
 export const DASH_WALL_LIFT_RATIO = 0.3;
 

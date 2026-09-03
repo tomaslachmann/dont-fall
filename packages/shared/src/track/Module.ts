@@ -3,6 +3,7 @@ import type { Vec3 } from "../math/vec3.js";
 import type { Checkpoint } from "../simulation/Checkpoint.js";
 import type { PropConfig } from "../simulation/Prop.js";
 import type { SpinnerConfig } from "../simulation/Spinner.js";
+import type { SurfaceId } from "./Surface.js";
 
 /**
  * A single Socket type for M3-v2 (ADR 0031) — every Module is still a
@@ -45,6 +46,24 @@ export interface Footprint {
 }
 
 /**
+ * One of a Module's floor pieces — a plain {@link Box} plus its own optional
+ * Surface override (ADR 0036). A separate type from `Box` deliberately
+ * (code review, ticket 01): `Box` is a pure geometry primitive used well
+ * beyond Module floors (`Footprint.bounds`, `Checkpoint.volume`), and giving
+ * *it* a `surface` field would mean every one of those unrelated uses
+ * silently inherits a property with no meaning there.
+ */
+export interface FloorBox extends Box {
+  /**
+   * This floor piece's Surface id (CONTEXT.md), when it's more specific than
+   * the Module it belongs to — additive and optional, exactly like ADR
+   * 0034's `pitch`/`roll`. Resolved (`FloorBox.surface ?? Module.surface ??
+   * "default"`) by `track/Track.ts`'s `resolveTrack`.
+   */
+  surface?: SurfaceId;
+}
+
+/**
  * A reusable Track piece (CONTEXT.md: Module), authored once in local space —
  * geometry/Props/Spinners/Checkpoint are all relative to the Module's own
  * origin, translated (and, since ADR 0031, rotated) into world space
@@ -52,12 +71,19 @@ export interface Footprint {
  */
 export interface Module {
   id: string;
-  statics: Box[];
+  statics: FloorBox[];
   props?: PropConfig[];
   spinners?: SpinnerConfig[];
   checkpoint?: Checkpoint;
   sockets: Socket[];
   footprint: Footprint;
+  /**
+   * This whole Module's Surface id (CONTEXT.md) — "this whole piece is
+   * mud/ice" without annotating every floor `Box` in `statics` individually.
+   * A more specific `Box.surface` on one of those wins over this (ADR 0036).
+   * Additive and optional, exactly like ADR 0034's `pitch`/`roll`.
+   */
+  surface?: SurfaceId;
 }
 
 export const findSocket = (module: Module, socketId: string): Socket => {
