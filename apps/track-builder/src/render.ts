@@ -2,6 +2,7 @@ import {
   segmentOrientation,
   type Box,
   type Checkpoint,
+  type LaunchPadConfig,
   type Module,
   type PropConfig,
   type Segment,
@@ -16,6 +17,7 @@ const PROP_BOX_COLOR = 0xd9a441;
 const PROP_BALL_COLOR = 0x4aa8d9;
 const CHECKPOINT_COLOR = 0x4ade80;
 const SPEED_PAD_COLOR = 0xfacc15;
+const LAUNCH_PAD_COLOR = 0x38bdf8;
 
 const addBox = (group: THREE.Group, box: Box, color: number): void => {
   const geo = new THREE.BoxGeometry(box.halfExtents.x * 2, box.halfExtents.y * 2, box.halfExtents.z * 2);
@@ -66,6 +68,30 @@ const addSpeedPad = (group: THREE.Group, speedPad: SpeedPadConfig): void => {
 };
 
 /**
+ * Same wireframe-box treatment as `addSpeedPad` (M3.7 ticket 02), plus an
+ * arrow along the pad's own authored launch direction — unlike a speed pad
+ * (which has no direction of its own to show), a launch pad's `velocity`
+ * vector is exactly the one thing a track designer needs to see to place it
+ * correctly, and a plain box alone can't convey it.
+ */
+const addLaunchPad = (group: THREE.Group, launchPad: LaunchPadConfig): void => {
+  const { center, halfExtents } = launchPad.trigger;
+  const geo = new THREE.BoxGeometry(halfExtents.x * 2, halfExtents.y * 2, halfExtents.z * 2);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: LAUNCH_PAD_COLOR, wireframe: true }));
+  mesh.position.set(center.x, center.y, center.z);
+  group.add(mesh);
+
+  const { x, y, z } = launchPad.velocity;
+  const length = Math.hypot(x, y, z);
+  if (length > 0) {
+    const direction = new THREE.Vector3(x, y, z).normalize();
+    const origin = new THREE.Vector3(center.x, center.y, center.z);
+    const arrow = new THREE.ArrowHelper(direction, origin, Math.min(length / 4, 4), LAUNCH_PAD_COLOR, 0.5, 0.3);
+    group.add(arrow);
+  }
+};
+
+/**
  * Builds a Three.js Group from one Module's local-space geometry — the single
  * mesh-building path shared by the palette preview (ticket 04's visual-preview
  * requirement) and the whole-Track overview (one Group per placed Segment,
@@ -78,6 +104,7 @@ export const buildModuleGroup = (module: Module): THREE.Group => {
   for (const prop of module.props ?? []) addProp(group, prop);
   if (module.checkpoint) addCheckpoint(group, module.checkpoint);
   for (const speedPad of module.speedPads ?? []) addSpeedPad(group, speedPad);
+  for (const launchPad of module.launchPads ?? []) addLaunchPad(group, launchPad);
   return group;
 };
 
@@ -96,15 +123,20 @@ export const applySegmentTransform = (group: THREE.Object3D, segment: Segment): 
 };
 
 /**
- * Frees every Mesh's geometry/material under `group` (code review, ticket 08)
- * — `buildModuleGroup` allocates a fresh `BoxGeometry`/`MeshStandardMaterial`
- * per static/prop/spinner/checkpoint, so a discarded Group leaks GPU buffers
- * if `setTrack` (the whole-Track overview, called on every edit now, not
- * just append) doesn't dispose the previous one before replacing it.
+ * Frees every Mesh/Line's geometry/material under `group` (code review,
+ * ticket 08) — `buildModuleGroup` allocates a fresh `BoxGeometry`/
+ * `MeshStandardMaterial` per static/prop/spinner/checkpoint/pad, so a
+ * discarded Group leaks GPU buffers if `setTrack` (the whole-Track overview,
+ * called on every edit now, not just append) doesn't dispose the previous
+ * one before replacing it. `THREE.Line` alongside `THREE.Mesh` (M3.7 ticket
+ * 02, code review): a launch pad's `ArrowHelper` is a Group containing both
+ * a Line (its shaft) and a Mesh (its head) — checking only `Mesh` silently
+ * leaked the shaft's own geometry/material every time a launch pad's marker
+ * was rebuilt.
  */
 export const disposeGroup = (group: THREE.Object3D): void => {
   group.traverse((node) => {
-    if (!(node instanceof THREE.Mesh)) return;
+    if (!(node instanceof THREE.Mesh) && !(node instanceof THREE.Line)) return;
     node.geometry.dispose();
     const materials = Array.isArray(node.material) ? node.material : [node.material];
     for (const material of materials) material.dispose();

@@ -64,6 +64,16 @@ export interface CharacterSnapshot {
    */
   speedPadCapMultiplier: number;
   /**
+   * Rises every time a launch pad fires (M3.7 ticket 02) — the Epoch idiom,
+   * same as {@link speedPadEpoch}. Not restored during reconciliation, for
+   * the same reason `speedPadEpoch` isn't: a pure function of this
+   * Character's own local trigger detection, re-derived independently on
+   * both sides as long as they agree on position. A launch pad has no
+   * decay curve alongside it (unlike `speedPadMsLeft`/`speedPadCapMultiplier`)
+   * — its whole effect already lives in the ordinary `velocity` field.
+   */
+  launchPadEpoch: number;
+  /**
    * The highest `InputMessage.tick` the server had applied for this Character
    * as of this snapshot — the reconciliation acknowledgement (ticket 05). 0
    * before any input has arrived. Only meaningful to the client that owns this
@@ -123,6 +133,7 @@ export interface CharacterSnapshotFields {
   speedPadEpoch?: number;
   speedPadMsLeft?: number;
   speedPadCapMultiplier?: number;
+  launchPadEpoch?: number;
   lastInputTick?: number;
   ragdollEpoch?: number;
   ragdollCause?: RagdollCause;
@@ -158,6 +169,7 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   speedPadEpoch: fields.speedPadEpoch ?? 0,
   speedPadMsLeft: fields.speedPadMsLeft ?? 0,
   speedPadCapMultiplier: fields.speedPadCapMultiplier ?? 1,
+  launchPadEpoch: fields.launchPadEpoch ?? 0,
   lastInputTick: fields.lastInputTick ?? 0,
   ragdollEpoch: fields.ragdollEpoch ?? 0,
   ragdollCause: fields.ragdollCause ?? "Fall",

@@ -133,6 +133,33 @@ export const M1_MODULES: Record<string, Module> = {
     sockets: STRAIGHT_SOCKETS,
     footprint: STRAIGHT_FOOTPRINT,
   },
+  /**
+   * Bounce: a Surface, not a trigger (M3.7 ticket 02) — same deliberately-
+   * identical-geometry-to-`bridge` treatment as mud/ice/the pads: nothing
+   * here tips a player off by sight, only what happens the instant they land.
+   */
+  bounce: {
+    id: "bounce",
+    statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
+    sockets: STRAIGHT_SOCKETS,
+    footprint: STRAIGHT_FOOTPRINT,
+    surface: "bounce",
+  },
+  /**
+   * Launch pad: the second Epoch-latched trigger (M3.7 ticket 02) — a fixed,
+   * precomputed launch vector (Quake's jump-pad model), authored in the
+   * Module's own local space and rotated (never translated) into world space
+   * by `resolveTrack`. Points along this Module's own forward direction
+   * (`STRAIGHT_SOCKETS`' exit faces local -Z) with a large vertical
+   * component — comfortably clearing a multi-Module gap.
+   */
+  "launch-pad": {
+    id: "launch-pad",
+    statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
+    launchPads: [{ trigger: box({ x: 0, y: 0.5, z: 0 }, { x: 1, y: 1, z: 2 }), velocity: { x: 0, y: 16, z: -6 } }],
+    sockets: STRAIGHT_SOCKETS,
+    footprint: STRAIGHT_FOOTPRINT,
+  },
 };
 
 /** The M1 playground, reassembled through the Module/Track system (ticket 01, re-chained via Sockets in round 2). */

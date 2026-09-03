@@ -31,6 +31,26 @@ describe("SURFACES (ticket 06 — grip: one scalar multiplying both acceleration
   });
 });
 
+describe("SURFACES (M3.7 ticket 02 — bounce, a per-Surface landing property)", () => {
+  it("no Surface bounces by default", () => {
+    expect(SURFACES[DEFAULT_SURFACE]!.bounce).toBeUndefined();
+    expect(SURFACES.mud!.bounce).toBeUndefined();
+    expect(SURFACES.ice!.bounce).toBeUndefined();
+  });
+
+  it("bounce has a restitution under 1 (loses some energy each bounce, not a perpetual-motion trampoline) and a positive speed floor", () => {
+    expect(SURFACES.bounce!.bounce).toBeDefined();
+    expect(SURFACES.bounce!.bounce!.restitution).toBeGreaterThan(0);
+    expect(SURFACES.bounce!.bounce!.restitution).toBeLessThan(1);
+    expect(SURFACES.bounce!.bounce!.minSpeed).toBeGreaterThan(0);
+  });
+
+  it("bounce leaves top speed and grip alone — its whole effect is on landing, not on walking", () => {
+    expect(SURFACES.bounce!.topSpeedMultiplier).toBe(1);
+    expect(SURFACES.bounce!.grip).toBe(1);
+  });
+});
+
 describe("surfaceConfig", () => {
   it("looks up a known Surface", () => {
     expect(surfaceConfig("mud")).toBe(SURFACES.mud);

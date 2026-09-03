@@ -1,6 +1,7 @@
 import type { Box } from "../math/box.js";
 import type { Vec3 } from "../math/vec3.js";
 import type { Checkpoint } from "../simulation/Checkpoint.js";
+import type { LaunchPadConfig } from "../simulation/LaunchPad.js";
 import type { PropConfig } from "../simulation/Prop.js";
 import type { SpeedPadConfig } from "../simulation/SpeedPad.js";
 import type { SpinnerConfig } from "../simulation/Spinner.js";
@@ -78,6 +79,8 @@ export interface Module {
   checkpoint?: Checkpoint;
   /** Speed/slow pads this Module places (M3.7 ticket 01) — zero or more, unlike the singular `checkpoint`. */
   speedPads?: SpeedPadConfig[];
+  /** Launch pads this Module places (M3.7 ticket 02) — zero or more, same shape as `speedPads`. */
+  launchPads?: LaunchPadConfig[];
   sockets: Socket[];
   footprint: Footprint;
   /**

@@ -39,6 +39,7 @@ const SPINNER_MODULE: Module = {
     trigger: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
   },
   speedPads: [{ trigger: { center: { x: 0, y: 0.5, z: 2 }, halfExtents: { x: 1, y: 1, z: 1 } }, capMultiplier: 2 }],
+  launchPads: [{ trigger: { center: { x: 0, y: 0.5, z: -2 }, halfExtents: { x: 1, y: 1, z: 1 } }, velocity: { x: 0, y: 16, z: -6 } }],
   sockets: STRAIGHT_SOCKETS,
   footprint: FOOTPRINT,
 };
@@ -117,6 +118,23 @@ describe("resolveTrack", () => {
     expect(resolved.checkpoints[0]!.trigger.halfExtents).toEqual({ x: 2, y: 2, z: 2 });
     expect(resolved.speedPads[0]!.capMultiplier).toBe(2);
     expect(resolved.speedPads[0]!.trigger.center).toEqual({ x: 5, y: -0.5, z: 22 });
+    expect(resolved.launchPads[0]!.trigger.center).toEqual({ x: 5, y: -0.5, z: 18 });
+    expect(resolved.launchPads[0]!.velocity).toEqual({ x: 0, y: 16, z: -6 }); // untouched at 0 rad
+  });
+
+  it("rotates a launch pad's velocity by the Segment's own orientation — a direction, not a point, so it's never translated", () => {
+    const track = [{ moduleId: "spinner-module", position: { x: 5, y: 0, z: 5 }, rotation: Math.PI / 2 }];
+    const resolved = resolveTrack({ "spinner-module": SPINNER_MODULE }, track);
+    // A 90° yaw rotates local (0, 16, -6) to world (-6, 16, 0) — Y (a
+    // vertical launch component) is untouched by a pure yaw; X and Z swap
+    // and flip sign the same way `placeAfter`'s own yaw rotation does.
+    expect(resolved.launchPads[0]!.velocity.x).toBeCloseTo(-6, 6);
+    expect(resolved.launchPads[0]!.velocity.y).toBeCloseTo(16, 6);
+    expect(resolved.launchPads[0]!.velocity.z).toBeCloseTo(0, 6);
+    // The trigger's own centre, by contrast, IS translated by the Segment's
+    // position (5,0,5) — confirming velocity and trigger get different
+    // treatment from the same `orientation`/`segment.position` inputs.
+    expect(resolved.launchPads[0]!.trigger.center.x).not.toBeCloseTo(-6, 1);
   });
 
   it("never swaps a static Box's half-extents (ADR 0034) — carries its rotation instead, for a real rotated collider", () => {
@@ -170,6 +188,7 @@ describe("resolveTrack", () => {
       spinners: [],
       checkpoints: [],
       speedPads: [],
+      launchPads: [],
     });
   });
 

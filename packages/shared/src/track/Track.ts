@@ -2,6 +2,7 @@ import { orientBox, type Box, type OrientedBox } from "../math/box.js";
 import { conjugateQuat, eulerQuat, mulQuat, quatToEuler, yawQuat, type Quat } from "../math/quat.js";
 import { addVec3, rotateVec3ByQuat, subVec3, type Vec3 } from "../math/vec3.js";
 import type { Checkpoint } from "../simulation/Checkpoint.js";
+import type { LaunchPadConfig } from "../simulation/LaunchPad.js";
 import type { PropConfig } from "../simulation/Prop.js";
 import type { SpeedPadConfig } from "../simulation/SpeedPad.js";
 import type { SpinnerConfig } from "../simulation/Spinner.js";
@@ -164,6 +165,7 @@ export const resolveTrack = (
   spinners: SpinnerConfig[];
   checkpoints: Checkpoint[];
   speedPads: SpeedPadConfig[];
+  launchPads: LaunchPadConfig[];
 } => {
   const statics: OrientedBox[] = [];
   const staticSurfaces: SurfaceId[] = [];
@@ -171,6 +173,7 @@ export const resolveTrack = (
   const spinners: SpinnerConfig[] = [];
   const checkpoints: Checkpoint[] = [];
   const speedPads: SpeedPadConfig[] = [];
+  const launchPads: LaunchPadConfig[] = [];
 
   for (const segment of track) {
     const module = modules[segment.moduleId];
@@ -226,7 +229,14 @@ export const resolveTrack = (
     for (const pad of module.speedPads ?? []) {
       speedPads.push({ capMultiplier: pad.capMultiplier, trigger: placeBox(pad.trigger) });
     }
+
+    for (const pad of module.launchPads ?? []) {
+      // `velocity` is a direction/magnitude, not a point — rotated by the
+      // Segment's own orientation (like a Spinner's `initialAngle`) but
+      // never translated (unlike `trigger`/`respawn`, which are positions).
+      launchPads.push({ trigger: placeBox(pad.trigger), velocity: rotateVec3ByQuat(pad.velocity, orientation) });
+    }
   }
 
-  return { statics, staticSurfaces, props, spinners, checkpoints, speedPads };
+  return { statics, staticSurfaces, props, spinners, checkpoints, speedPads, launchPads };
 };

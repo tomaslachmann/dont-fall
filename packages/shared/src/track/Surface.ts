@@ -41,6 +41,28 @@ export interface SurfaceConfig {
    * ice: acceleration and drag both slow to a crawl.
    */
   grip: number;
+  /**
+   * M3.7 ticket 02: if set, landing on this Surface reverses vertical
+   * velocity instead of the ordinary ground-stick clamp — a trampoline, not
+   * a launcher. Absent (the default) on every other Surface: a bounce is a
+   * per-Surface property, not something every floor tile has an opinion on.
+   */
+  bounce?: SurfaceBounceConfig;
+}
+
+/**
+ * A bouncy Surface's landing physics (M3.7 ticket 02) — computed from the
+ * Character's own impact velocity, per the research doc's own model
+ * (`docs/research/surface-and-volume-mechanics.md` §1.4): "one-shot per
+ * landing... that is what makes it a bounce rather than a launcher: a small
+ * fall gives a small bounce." Contrast with a launch pad (`LaunchPad.ts`),
+ * which sets a fixed velocity regardless of how you arrived.
+ */
+export interface SurfaceBounceConfig {
+  /** Multiplies incoming downward speed on landing. 0.85 = loses 15% of vertical speed per bounce, not a perfectly elastic one. */
+  restitution: number;
+  /** Floor under the resulting upward speed, so even a slow landing still bounces noticeably — a walk-on shouldn't feel like nothing happened. */
+  minSpeed: number;
 }
 
 /** What every Box/Module resolves to when it declares no Surface of its own. */
@@ -60,6 +82,7 @@ export const SURFACES: Record<SurfaceId, SurfaceConfig> = {
   [DEFAULT_SURFACE]: { topSpeedMultiplier: 1, grip: 1 },
   mud: { topSpeedMultiplier: 0.5, grip: 1 },
   ice: { topSpeedMultiplier: 1, grip: 0.001 },
+  bounce: { topSpeedMultiplier: 1, grip: 1, bounce: { restitution: 0.85, minSpeed: 6 } },
 };
 
 /**

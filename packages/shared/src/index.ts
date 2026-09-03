@@ -11,6 +11,7 @@ export * from "./timing/advanceFixed.js";
 export * from "./simulation/SimInputs.js";
 export * from "./simulation/Checkpoint.js";
 export * from "./simulation/SpeedPad.js";
+export * from "./simulation/LaunchPad.js";
 export * from "./simulation/CharacterStateMachine.js";
 export * from "./simulation/movementVerbs.js";
 export * from "./simulation/collisionGroups.js";

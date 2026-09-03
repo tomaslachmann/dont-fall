@@ -15,13 +15,14 @@ import { CharacterController, type CollisionListener } from "./CharacterControll
 import type { CharacterMotionState } from "./CharacterStateMachine.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
+import type { LaunchPadConfig } from "./LaunchPad.js";
 import { MirrorCharacter } from "./MirrorCharacter.js";
 import { Prop, type PropConfig, type PropSnapshot } from "./Prop.js";
 import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
 import type { SpeedPadConfig } from "./SpeedPad.js";
 import { Spinner, type SpinnerConfig } from "./Spinner.js";
 
-/** Whether `state` is a down state — a Character in either never receives a speed pad's one-shot boost (code review, M3.7 ticket 01). */
+/** Whether `state` is a down state — a Character in either never receives a speed/launch pad's one-shot effect (code review, M3.7 ticket 01). */
 const isDownState = (state: CharacterMotionState): boolean => state === "Ragdoll" || state === "GettingUp";
 
 /**
@@ -51,6 +52,8 @@ interface CharacterProgress {
    * fails under frequent reconciliation. Local bookkeeping, never replicated.
    */
   touchedSpeedPadIndex: number | undefined;
+  /** Same idea as {@link touchedSpeedPadIndex}, for launch pads (M3.7 ticket 02) — see `updateLaunchPad`. */
+  touchedLaunchPadIndex: number | undefined;
 }
 
 export interface SimulationConfig {
@@ -70,6 +73,8 @@ export interface SimulationConfig {
   checkpoints?: Checkpoint[];
   /** Speed/slow pads the Character can cross to fire a one-shot boost (M3.7 ticket 01). */
   speedPads?: SpeedPadConfig[];
+  /** Launch pads the Character can cross to fire a one-shot full-velocity SET (M3.7 ticket 02). */
+  launchPads?: LaunchPadConfig[];
   /** Height below which the Character has Fallen out of the playground. */
   killPlaneY?: number;
   /** Rotating-bar Obstacles (ticket 06). */
@@ -151,6 +156,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   private readonly statics: OrientedBox[];
   private readonly checkpoints: Checkpoint[];
   private readonly speedPads: SpeedPadConfig[];
+  private readonly launchPads: LaunchPadConfig[];
   private readonly killPlaneY: number;
   /** See `SimulationConfig.authoritative`. */
   private readonly authoritative: boolean;
@@ -207,6 +213,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     this.statics = config.statics ?? [DEFAULT_GROUND];
     this.checkpoints = config.checkpoints ?? [];
     this.speedPads = config.speedPads ?? [];
+    this.launchPads = config.launchPads ?? [];
     this.killPlaneY = config.killPlaneY ?? DEFAULT_KILL_PLANE_Y;
     this.authoritative = config.authoritative ?? true;
 
@@ -286,6 +293,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       phaseStartTick: 0,
       lastMotionState: "Controlled",
       touchedSpeedPadIndex: undefined,
+      touchedLaunchPadIndex: undefined,
     });
   }
 
@@ -387,7 +395,15 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     // `speedPadCapMultiplier` above) — it only seeds the baseline the very
     // next replayed tick's own rising-edge check compares against.
     const progress = this.progress.get(id);
-    if (progress) progress.touchedSpeedPadIndex = this.findTriggerIndex(this.speedPads, base.position);
+    if (progress) {
+      progress.touchedSpeedPadIndex = this.findTriggerIndex(this.speedPads, base.position);
+      // Launch pads (M3.7 ticket 02) need the identical re-derivation, for
+      // the identical reason — no decay curve to restore alongside it (a
+      // launch pad's whole effect already lives in `base.velocity`), but the
+      // touch index still needs to be right before the next replayed tick's
+      // own rising-edge check runs.
+      progress.touchedLaunchPadIndex = this.findTriggerIndex(this.launchPads, base.position);
+    }
   }
 
   /**
@@ -450,6 +466,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       character.endTick();
       this.updateCheckpoint(id);
       this.updateSpeedPad(id);
+      this.updateLaunchPad(id);
       this.detectFall(id);
       // Stamp the tick a `motionState` phase begins, in sim-tick space, exactly
       // once (ADR 0023). Must be here, not in `snapshot()` — that is called
@@ -468,6 +485,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       const surface = surfaceConfig(surfaceId);
       character.setSurfaceTopSpeedMultiplier(surface.topSpeedMultiplier);
       character.setSurfaceGrip(surface.grip);
+      character.setSurfaceBounce(surface.bounce);
     }
 
     // Client-only (ADR 0012 / 0016, ticket 06): every Prop is pinned to the
@@ -600,6 +618,25 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       character.triggerSpeedPad(this.speedPads[touched]!.capMultiplier);
     }
     progress.touchedSpeedPadIndex = touched;
+  }
+
+  /**
+   * Rising-edge launch pad detection (M3.7 ticket 02) — identical shape to
+   * {@link updateSpeedPad}, reusing the same {@link findTriggerIndex} lookup
+   * and the same down-state guard (a Ragdolling/GettingUp Character never
+   * gets launched — the whole point of a launch pad is a deliberate,
+   * player-caused jump, not something that fires while they have no control
+   * at all).
+   */
+  private updateLaunchPad(id: string): void {
+    const character = this.character(id);
+    if (isDownState(character.motionState)) return;
+    const progress = this.progress.get(id)!;
+    const touched = this.findTriggerIndex(this.launchPads, character.position);
+    if (touched !== undefined && touched !== progress.touchedLaunchPadIndex) {
+      character.triggerLaunchPad(this.launchPads[touched]!.velocity);
+    }
+    progress.touchedLaunchPadIndex = touched;
   }
 
   private detectFall(id: string): void {

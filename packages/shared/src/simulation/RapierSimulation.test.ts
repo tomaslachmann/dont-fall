@@ -8,6 +8,7 @@ import {
   DASH_COOLDOWN_TICKS,
   DASH_DURATION_MS,
   DASH_SPEED,
+  GROUND_STICK_SPEED,
   IMPACT_RAGDOLL_MIN,
   IMPACT_STAGGER_MIN,
   RAGDOLL_MAX_MS,
@@ -2607,5 +2608,291 @@ describe("RapierSimulation — speed pads, code review regressions (M3.7 ticket 
       }
     }
     expect(sawDown).toBe(true); // sanity: the down episode actually happened during this loop
+  });
+});
+
+describe("RapierSimulation — bounce Surface (M3.7 ticket 02): a per-Surface landing property, not a trigger", () => {
+  const BOUNCE_FLOOR: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 10, y: 0.5, z: 30 } };
+  const RESTITUTION = SURFACES.bounce!.bounce!.restitution;
+  const MIN_SPEED = SURFACES.bounce!.bounce!.minSpeed;
+
+  it("reverses (most of) an incoming fall's vertical speed on landing, instead of the ordinary ground-stick clamp", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: 6, z: 0 },
+      statics: [BOUNCE_FLOOR],
+      staticSurfaces: ["bounce"],
+    });
+    let peakFallSpeed = 0;
+    let bounced = false;
+    for (let i = 0; i < 60 && !bounced; i += 1) {
+      const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity.y;
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity.y;
+      if (before < 0) peakFallSpeed = Math.max(peakFallSpeed, -before);
+      if (after > 0) bounced = true; // the tick velocity.y flips positive is the bounce itself
+    }
+    expect(bounced).toBe(true);
+    const bounceSpeed = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity.y;
+    // Not a perfect mirror (restitution < 1), and the ground-handle-lag fix
+    // below can add a couple of extra gravity ticks to `peakFallSpeed` by
+    // the time the bounce actually fires, so this checks the right
+    // *ballpark* (within 15%) rather than an exact physics match — the
+    // property under test is "reverses most of the fall," not a precise
+    // restitution formula match. Comfortably nowhere near the flat
+    // GROUND_STICK_SPEED an ordinary floor would clamp to, either way.
+    expect(bounceSpeed).toBeGreaterThan(GROUND_STICK_SPEED * 2);
+    expect(bounceSpeed).toBeLessThan(peakFallSpeed);
+    expect(Math.abs(bounceSpeed - peakFallSpeed * RESTITUTION)).toBeLessThan(peakFallSpeed * 0.15);
+  });
+
+  it("never stops bouncing back below the Surface's own minSpeed floor, even from a barely-there fall", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.05, z: 0 }, // a trivial drop
+      statics: [BOUNCE_FLOOR],
+      staticSurfaces: ["bounce"],
+    });
+    let bounceSpeed = 0;
+    for (let i = 0; i < 10; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      const y = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity.y;
+      if (y > 0) {
+        bounceSpeed = y;
+        break;
+      }
+    }
+    expect(bounceSpeed).toBeGreaterThanOrEqual(MIN_SPEED * 0.95);
+  });
+
+  it("loses energy each bounce (restitution < 1) — successive bounce peaks get smaller, not perpetual motion", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: 10, z: 0 },
+      statics: [BOUNCE_FLOOR],
+      staticSurfaces: ["bounce"],
+    });
+    const bouncePeaks: number[] = [];
+    let wasFalling = false;
+    for (let i = 0; i < 400 && bouncePeaks.length < 3; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      const y = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity.y;
+      if (y > 0 && !wasFalling) bouncePeaks.push(y); // the tick it flips from falling to rising
+      wasFalling = y < 0;
+    }
+    expect(bouncePeaks.length).toBe(3);
+    expect(bouncePeaks[1]!).toBeLessThan(bouncePeaks[0]!);
+    expect(bouncePeaks[2]!).toBeLessThan(bouncePeaks[1]!);
+  });
+
+  it("stays Controlled through a bounce — no knockdown, no fall damage (ADR 0037: nothing exists to add)", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: 8, z: 0 },
+      statics: [BOUNCE_FLOOR],
+      staticSurfaces: ["bounce"],
+    });
+    tick(sim, 3);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.fallCount).toBe(0);
+  });
+
+  it("leaves ordinary walking speed untouched — bounce is purely a landing property, not a top-speed or grip change", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 },
+      statics: [BOUNCE_FLOOR],
+      staticSurfaces: ["bounce"],
+    });
+    tick(sim, 0.5);
+    const p0 = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    const p1 = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    expect((p0.z - p1.z) * TICK_RATE_HZ).toBeCloseTo(WALK_SPEED, 0);
+  });
+
+  it("does not carry a stale peak from an earlier, unrelated fall into a much later bounce (code review)", () => {
+    // Two adjacent, SAME-HEIGHT floor pieces — an ordinary one the Character
+    // falls onto from real height and settles on, then a bounce one reached
+    // purely by WALKING (no further vertical fall at all). The bug this
+    // guards: an earlier version only reset `airbornePeakFallSpeed` when a
+    // bounce actually consumed it, so the ORIGINAL big fall's peak survived
+    // untouched through every tick of ordinary walking afterward — reported
+    // (and empirically reproduced) by code review as a Character launching
+    // to the original fall's full bounce height on a later bounce tile it
+    // approached on a dead-flat walk.
+    const NORMAL_FLOOR: Box = { center: { x: 0, y: -0.5, z: 15 }, halfExtents: { x: 10, y: 0.5, z: 15 } }; // z: 0..30
+    const BOUNCE_FLOOR_2: Box = { center: { x: 0, y: -0.5, z: -10 }, halfExtents: { x: 10, y: 0.5, z: 10 } }; // z: -20..0, same Y
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: 12, z: 25 }, // a real, sizeable fall onto the ordinary floor
+      statics: [NORMAL_FLOOR, BOUNCE_FLOOR_2],
+      staticSurfaces: ["default", "bounce"],
+    });
+    tick(sim, 3); // fall from height, land and fully settle on the ordinary (non-bounce) floor
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.grounded).toBe(true);
+
+    // Walk north, dead flat, all the way across the ordinary floor and onto
+    // the bounce floor — stop the instant velocity.y goes positive (the
+    // bounce itself), never running a fixed batch past it.
+    let bounceSpeed: number | undefined;
+    for (let i = 0; i < 200 && bounceSpeed === undefined; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+      const v = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity.y;
+      if (v > 0) bounceSpeed = v;
+    }
+    expect(bounceSpeed).toBeDefined();
+    // A walk-on with no real fall behind it should bounce at (or barely
+    // above) minSpeed — nowhere near what the original ~12-unit fall would
+    // have produced (safely over 10 units/s once restitution is applied).
+    expect(bounceSpeed!).toBeLessThan(MIN_SPEED * 1.5);
+  });
+});
+
+describe("RapierSimulation — launch pads (M3.7 ticket 02): one-shot full-velocity SET, following Quake's jump pad", () => {
+  const LONG_GROUND: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 10, y: 0.5, z: 100 } };
+  const LAUNCH_VELOCITY = { x: 0, y: 16, z: -6 };
+  // 6 units wide, matching the speed pad suite's own "a wide pad touched across several ticks."
+  const LAUNCH_PAD: OrientedBox = { center: { x: 0, y: 0, z: -10 }, halfExtents: { x: 5, y: 1, z: 3 } };
+
+  const withLaunchPad = () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 },
+      statics: [LONG_GROUND],
+      launchPads: [{ trigger: LAUNCH_PAD, velocity: LAUNCH_VELOCITY }],
+    });
+    tick(sim, 0.5);
+    return sim;
+  };
+
+  it("fires exactly once for a wide pad crossed over several ticks — the Epoch idiom, same as speed pads", () => {
+    const sim = withLaunchPad();
+    tick(sim, 3, NORTH);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.launchPadEpoch).toBe(1);
+  });
+
+  it("does not fire before reaching the pad", () => {
+    const sim = withLaunchPad();
+    tick(sim, 0.5, NORTH);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.launchPadEpoch).toBe(0);
+  });
+
+  /**
+   * Walks NORTH one tick at a time until `launchPadEpoch` ticks over, then
+   * stops — rather than guessing a fixed z-threshold just short of the
+   * trigger's own edge (fragile: exactly which tick crosses it shifts with
+   * any change elsewhere in the settle/landing pipeline, as the ground-
+   * handle-lag fix above already demonstrated once).
+   */
+  const walkToLaunchPad = (sim: RapierSimulation, input: SimInputs = NORTH): void => {
+    for (let i = 0; i < 60; i += 1) {
+      const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.launchPadEpoch;
+      sim.tick({ [DEFAULT_CHARACTER_ID]: input });
+      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.launchPadEpoch > before) return;
+    }
+    throw new Error("never crossed the launch pad's trigger");
+  };
+
+  it("sets velocity to exactly the pad's own authored vector the tick after it fires — discarding incoming speed entirely, not adding to it", () => {
+    const sim = withLaunchPad();
+    walkToLaunchPad(sim); // fires on this call's own last tick
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }); // the queued SET applies this tick
+    const v = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity;
+    expect(v.x).toBeCloseTo(LAUNCH_VELOCITY.x, 5);
+    expect(v.y).toBeCloseTo(LAUNCH_VELOCITY.y, 5);
+    expect(v.z).toBeCloseTo(LAUNCH_VELOCITY.z, 5);
+  });
+
+  it("overrides an in-flight Dash entirely — unlike a speed pad's boost, a launch pad discards it completely, not folded on top", () => {
+    const sim = withLaunchPad();
+    const DASH_NORTH = input({ ...NORTH, dashHeld: true });
+    walkToLaunchPad(sim, DASH_NORTH); // starts the dash AND crosses the trigger, possibly on the same tick
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.dashing).toBe(true);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: DASH_NORTH }); // the queued SET applies, overriding the dash's own velocity
+    const v = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity;
+    expect(v.x).toBeCloseTo(LAUNCH_VELOCITY.x, 5);
+    expect(v.y).toBeCloseTo(LAUNCH_VELOCITY.y, 5);
+    expect(v.z).toBeCloseTo(LAUNCH_VELOCITY.z, 5);
+  });
+
+  it("re-arms after leaving — crossing back through fires a second time", () => {
+    const sim = withLaunchPad();
+    tick(sim, 3, NORTH);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.launchPadEpoch).toBe(1);
+    const SOUTH = input({ moveDirection: { x: 0, y: 0, z: 1 } });
+    // Fall back down and walk south, back through the pad from its far side.
+    for (let i = 0; i < 400 && sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z > -13; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: SOUTH });
+    }
+    tick(sim, 3, SOUTH);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.launchPadEpoch).toBe(2);
+  });
+
+  it("never fires for a Character that is Ragdolling or GettingUp", () => {
+    const trigger: OrientedBox = { center: { x: -0.5, y: 0.4, z: 0 }, halfExtents: { x: 0.4, y: 0.6, z: 1 } };
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 },
+      statics: [LONG_GROUND],
+      launchPads: [{ trigger, velocity: LAUNCH_VELOCITY }],
+    });
+    tick(sim, 0.5);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.launchPadEpoch).toBe(0);
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: -10, y: 4, z: 0 });
+    tick(sim, 0.3);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
+    let sawDown = false;
+    for (let i = 0; i < 400; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      const snap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      if (snap.motionState === "Ragdoll" || snap.motionState === "GettingUp") {
+        sawDown = true;
+        expect(snap.launchPadEpoch).toBe(0);
+      } else if (sawDown) {
+        break;
+      }
+    }
+    expect(sawDown).toBe(true);
+  });
+
+  it("a client corrected mid-flight neither double-fires the pad nor loses it", () => {
+    // Realistic single correction, not an exhaustive "reconciles literally
+    // every tick" LAG-loop — mirrors the speed pad suite's own equivalent
+    // test and its own comment on why: reconciling to an acked base that
+    // itself predates the crossing, then replaying across it, legitimately
+    // (and correctly) fires once per such cycle. Running that same loop
+    // continuously while a fast-moving launch is in flight compounds the
+    // effect further than a slow walk does (a launch's own huge velocity
+    // widens the gap between "already fired locally" and "acked base still
+    // predates the fire" for many consecutive iterations) — not a bug this
+    // test exists to catch; the realistic case is a correction landing
+    // *after* the pad already fired.
+    const sim = withLaunchPad();
+    walkToLaunchPad(sim); // fires on this call's own last tick
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }); // the queued SET applies — now genuinely mid-flight
+    const firedSnap = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(firedSnap.launchPadEpoch).toBe(1);
+
+    const LAG = 3;
+    const buffered: SimInputs[] = [];
+    const snapshotsSince: ReturnType<typeof sim.snapshot>["characters"][string][] = [];
+    for (let i = 0; i < LAG; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+      buffered.push(NORTH);
+      snapshotsSince.push(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!);
+    }
+    const expected = snapshotsSince.at(-1)!;
+
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+      position: { ...firedSnap.position },
+      velocity: { ...firedSnap.velocity },
+      grounded: firedSnap.grounded,
+      motionState: firedSnap.motionState,
+      dashCooldownMs: firedSnap.dashCooldownMs,
+      dashing: firedSnap.dashing,
+      speedPadMsLeft: firedSnap.speedPadMsLeft,
+      speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
+    });
+    sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, buffered);
+
+    const afterReplay = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(afterReplay.launchPadEpoch).toBe(1); // not lost, not double-fired
+    expect(afterReplay.position.x).toBeCloseTo(expected.position.x, 3);
+    expect(afterReplay.position.y).toBeCloseTo(expected.position.y, 3);
+    expect(afterReplay.position.z).toBeCloseTo(expected.position.z, 3);
   });
 });

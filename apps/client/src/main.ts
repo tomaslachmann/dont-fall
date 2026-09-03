@@ -109,7 +109,10 @@ const main = async () => {
     );
   }
   const { track } = (await trackRes.json()) as { track: Track };
-  const { statics, staticSurfaces, checkpoints, spinners, props, speedPads } = resolveTrack(MODULE_LIBRARY, track);
+  const { statics, staticSurfaces, checkpoints, spinners, props, speedPads, launchPads } = resolveTrack(
+    MODULE_LIBRARY,
+    track,
+  );
 
   const stage = createStage({
     statics,
@@ -143,6 +146,7 @@ const main = async () => {
     spinners,
     props,
     speedPads,
+    launchPads,
     withDefaultCharacter: false,
     // Never trust this Character's own settle-check to end a knockdown —
     // only a server snapshot can (ADR 0015). Makes `reconcile`'s

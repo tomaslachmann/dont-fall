@@ -27,6 +27,7 @@ import {
   WALL_NORMAL_MAX_Y,
 } from "../tuning.js";
 import type { ReconcileBase, RagdollCause } from "../state/SimState.js";
+import type { SurfaceBounceConfig } from "../track/Surface.js";
 import { CharacterStateMachine, type CharacterMotionState } from "./CharacterStateMachine.js";
 import { CHARACTER_GROUPS, GROUP_CHARACTER } from "./collisionGroups.js";
 import {
@@ -106,6 +107,8 @@ export interface CharacterState {
   speedPadMsLeft: number;
   /** The peak multiplier the currently-active pad effect is holding/fading from. */
   speedPadCapMultiplier: number;
+  /** Rises every time a launch pad fires (M3.7 ticket 02). */
+  launchPadEpoch: number;
   bones: BoneSnapshot[];
 }
 
@@ -213,6 +216,34 @@ export class CharacterController {
    * regardless of how many ticks the fading effect itself goes on to last.
    */
   private pendingSpeedPadCapMultiplier: number | undefined;
+  /**
+   * This tick's Surface-driven bounce config, if any (M3.7 ticket 02) — set
+   * from outside by `RapierSimulation` alongside {@link surfaceTopSpeedMultiplier}/
+   * {@link surfaceGrip}, from the same resolved Surface, with the same
+   * one-tick lag. `undefined` (no bounce, the ordinary ground-stick clamp)
+   * until anything ever calls {@link setSurfaceBounce}.
+   */
+  private surfaceBounce: SurfaceBounceConfig | undefined;
+  /**
+   * The true peak fall speed (units/s, always ≥ 0) since velocity.y was last
+   * non-negative — see the gravity-integration line in {@link beginCapsuleTick}
+   * for the full reasoning. Consumed (and reset) by a genuine bounce;
+   * otherwise reset the instant velocity.y next becomes non-negative (a
+   * jump/bounce/launch apex).
+   */
+  private airbornePeakFallSpeed = 0;
+  /** Rises every time a launch pad fires (M3.7 ticket 02) — the Epoch idiom, same as {@link speedPadEpoch}. */
+  private launchPadEpoch = 0;
+  /**
+   * Set by {@link triggerLaunchPad}, consumed at the top of the very next
+   * {@link beginCapsuleTick} — unlike a speed pad's boost (which only ever
+   * touches the horizontal wish velocity a Surface/Sliding model still gets
+   * to shape), a launch pad's SET overrides the tick's ENTIRE velocity
+   * outright, after every other contributor has already been computed —
+   * Quake's jump-pad model taken further: "your incoming speed is
+   * discarded" applies to gravity and Sliding too, not just walk/Dash.
+   */
+  private pendingLaunchVelocity: Vec3 | undefined;
   private jumpHeldLastTick = false;
   private dashHeldLastTick = false;
 
@@ -298,6 +329,11 @@ export class CharacterController {
     this.surfaceGrip = grip;
   }
 
+  /** Sets this tick's Surface-driven bounce config (M3.7 ticket 02) — see {@link surfaceBounce}. */
+  setSurfaceBounce(bounce: SurfaceBounceConfig | undefined): void {
+    this.surfaceBounce = bounce;
+  }
+
   /** The current motion state — a cheap read (no bone/pose computation), for transition detection. */
   get motionState(): CharacterMotionState {
     return this.machine.state;
@@ -321,6 +357,18 @@ export class CharacterController {
     this.speedPadEpoch += 1;
     this.speedPad.trigger(capMultiplier);
     this.pendingSpeedPadCapMultiplier = capMultiplier;
+  }
+
+  /**
+   * Fire a launch pad (M3.7 ticket 02) — called by `RapierSimulation` exactly
+   * once per crossing, same rising-edge timing as {@link triggerSpeedPad}.
+   * Queues the one-shot full-velocity write for the very next
+   * {@link beginCapsuleTick}; unlike a speed pad there is no ongoing decay
+   * state to arm — the launch's whole effect is this one write.
+   */
+  triggerLaunchPad(velocity: Vec3): void {
+    this.launchPadEpoch += 1;
+    this.pendingLaunchVelocity = { ...velocity };
   }
 
   /**
@@ -545,6 +593,27 @@ export class CharacterController {
     } else {
       const gravityScale = this.jump.gravityScale(fullControl && input.jumpHeld, this.velocity.y);
       this.velocity.y += GRAVITY_Y * gravityScale * TICK_DT;
+      // M3.7 ticket 02: tracks the TRUE peak fall speed across an entire
+      // fall, independent of the ordinary ground-stick clamp below —
+      // resets the instant velocity.y is non-negative (a jump/bounce/launch
+      // apex, or simply not falling), so it always reflects "how fast has
+      // this Character been falling since it was last not falling," never
+      // contaminated by an intervening clamp. Exists because `surfaceBounce`
+      // (like every Surface field) can take several ticks to resolve after
+      // a fast landing — Rapier's own snap-to-ground correction can report
+      // `computedGrounded()` true for multiple ticks without ever producing
+      // a `computedCollision()` entry (`resolveCollisions`'s own documented
+      // caveat) — and reading `-this.velocity.y` directly at the ground-
+      // stick check, once Surface finally does resolve, would by then only
+      // see whatever the ordinary clamp had already reduced it to on the
+      // ticks in between (empirically confirmed: a bounce Surface bounced
+      // back at exactly its own `minSpeed` floor regardless of fall height,
+      // because the real impact speed was already destroyed before the
+      // bounce math ever ran). Tracking the peak here, decoupled from
+      // `this.velocity.y`'s own clamped value, fixes this without changing
+      // the ground-stick clamp's own timing for every other (non-bounce)
+      // landing at all.
+      this.airbornePeakFallSpeed = this.velocity.y < 0 ? Math.max(this.airbornePeakFallSpeed, -this.velocity.y) : 0;
 
       if (speedPadBoost) {
         // M3.7 ticket 01: the one-shot velocity *write* — Quake's jump-pad
@@ -595,6 +664,17 @@ export class CharacterController {
       }
     }
 
+    if (this.pendingLaunchVelocity) {
+      // M3.7 ticket 02: a launch pad's SET overrides EVERYTHING computed
+      // above this tick — gravity, Sliding's slope-gravity integration, the
+      // Surface/Dash/accelerate model, all of it — not just the horizontal
+      // wish velocity a speed pad's boost touches. Quake's "your incoming
+      // speed is discarded" taken to its full conclusion: a launch pad cares
+      // where you're going, not how you got there.
+      this.velocity = { ...this.pendingLaunchVelocity };
+      this.pendingLaunchVelocity = undefined;
+    }
+
     // `filterGroups: CHARACTER_GROUPS` so the sweep honours collision groups
     // the way the rest of the world does — without it the character controller
     // collides against *everything*, including another Character's active
@@ -613,7 +693,45 @@ export class CharacterController {
     // is exactly the ground-stick-as-a-speed unit bug ticket 02 fixed —
     // reintroducing it here, just for Sliding, would recreate the same skip.
     if (this.grounded && this.velocity.y < 0 && !sliding) {
-      this.velocity.y = -GROUND_STICK_SPEED;
+      // M3.7 ticket 02: a bounce Surface takes this exact branch instead of
+      // the ordinary ground-stick clamp — the research doc's own words:
+      // "on the tick where computedGrounded() becomes true on a bouncy
+      // collider, set velocity.y = max(bounceMin, -velocity.y * restitution)
+      // and suppress the ground-stick that would otherwise clamp it." Uses
+      // {@link airbornePeakFallSpeed} rather than reading `-this.velocity.y`
+      // directly — see that field's own comment for why: `surfaceBounce`
+      // can take several ticks to resolve after landing, by which point an
+      // ordinary (non-bounce) clamp may already have run on the ticks in
+      // between, and reading the instantaneous value here would see that
+      // clamp's own residue instead of the real impact speed. A launch pad
+      // never reaches this branch with a negative Y in practice (a launch's
+      // own Y is virtually always positive), so it needs no corresponding
+      // handling here.
+      this.velocity.y = this.surfaceBounce
+        ? Math.max(this.surfaceBounce.minSpeed, this.airbornePeakFallSpeed * this.surfaceBounce.restitution)
+        : -GROUND_STICK_SPEED;
+      // Reset the peak once the ground handle has genuinely resolved,
+      // whether bounce or not — NOT merely "consumed by a bounce" (an
+      // earlier version, code review): `surfaceBounce`/`currentGroundColliderHandle`
+      // can still be stale on the very first landing tick(s) after a fast
+      // fall (see `airbornePeakFallSpeed`'s own comment), so resetting
+      // unconditionally on every ground-stick tick would re-introduce the
+      // original bug (the peak gone before a genuine bounce ever reads it).
+      // But resetting ONLY when a bounce consumes it left a stale peak from
+      // an unrelated, long-past fall sitting around indefinitely through
+      // ordinary walking on non-bounce ground — confirmed empirically: a
+      // Character that fell once, landed normally, then walked flatly for
+      // over a minute still launched to the ORIGINAL fall's full bounce
+      // height the instant it later stepped onto an actual bounce Surface,
+      // with no real fall behind it at all. `currentGroundColliderHandle`
+      // (checked here before `resolveCollisions` below updates it, so it
+      // still reflects whether Surface was ALREADY known going into this
+      // tick) is the same one-tick-lag signal `surfaceBounce` itself is
+      // derived from — once it's resolved, Surface is no longer in doubt,
+      // so it's always safe to let go of a peak nothing has consumed by then.
+      if (this.surfaceBounce || this.currentGroundColliderHandle !== undefined) {
+        this.airbornePeakFallSpeed = 0;
+      }
       this.jump.land();
     }
 
@@ -763,6 +881,8 @@ export class CharacterController {
     this.dashSpeed = 0;
     this.speedPad.reset();
     this.pendingSpeedPadCapMultiplier = undefined;
+    this.pendingLaunchVelocity = undefined;
+    this.airbornePeakFallSpeed = 0;
   }
 
   /** The GettingUp blend's current position — shared by `snapshot()` and `reconcileTo`'s position-tracking correction. */
@@ -809,6 +929,7 @@ export class CharacterController {
       speedPadEpoch: this.speedPadEpoch,
       speedPadMsLeft: this.speedPad.msLeft,
       speedPadCapMultiplier: this.speedPad.peak,
+      launchPadEpoch: this.launchPadEpoch,
       bones,
     };
   }
@@ -900,6 +1021,13 @@ export class CharacterController {
     this.currentGroundNormal = base.motionState === "Sliding" ? { x: 0, y: WALKABLE_NORMAL_MIN_Y - 0.01, z: 0 } : undefined;
     this.surfaceTopSpeedMultiplier = 1;
     this.surfaceGrip = 1;
+    this.surfaceBounce = undefined;
+    // Re-derived fresh from `base.velocity` starting the very next tick's
+    // own gravity-integration line — a reconciliation landing mid-fall onto
+    // a bounce Surface loses whatever higher peak a mispredicting client saw
+    // before the correction, the same one-off precision trade every other
+    // Surface-adjacent field here already accepts.
+    this.airbornePeakFallSpeed = 0;
     this.machine.snapTo(base.motionState);
     this.dash.restoreCooldownMs(base.dashCooldownMs, base.dashing);
     this.speedPad.restoreFromMs(base.speedPadMsLeft, base.speedPadCapMultiplier);
@@ -908,6 +1036,12 @@ export class CharacterController {
     // write is entirely up to `RapierSimulation`'s own rising-edge check
     // against the replayed position, exactly like every other tick.
     this.pendingSpeedPadCapMultiplier = undefined;
+    // A launch pad has no decay curve to restore (M3.7 ticket 02) — its
+    // whole effect already lives in `base.velocity` above. Only the pending
+    // one-shot write itself needs clearing, for the same reason as the speed
+    // pad's own: never replayed here, only ever re-derived fresh by
+    // `RapierSimulation`'s rising-edge check against the replayed position.
+    this.pendingLaunchVelocity = undefined;
     this.jump.reset(); // stale coyote/hold bookkeeping would let replay grant a jump the server won't
     this.pendingRespawn = null; // a Fall the client predicted but the server (this base) hasn't seen
   }
