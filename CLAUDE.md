@@ -39,8 +39,18 @@ builder — standalone tool, place/save with Module + Track visual previews (04)
 local playtest (05); track-service random Track generation (06). All manually verified live
 (real running processes; the builder/playtest via a real browser), not just under vitest.
 
-**Next:** M4 — Match structure (Rounds, Qualification, Time Limit) and the first Screens (React
-shell + lobby/results, ADR 0008).
+**M3.5 in progress** — Track builder v2: free position + full 3D rotation for Segments
+(ADR 0034, `.scratch/m3.5-free-placement/`). Tickets 01–03 landed; 04 (live overlap ghost-feedback)
+and 05 (multi-select) are being finished separately.
+
+**Next:** M3.6 then M3.7 — the ground becomes physical. Settled in an eight-round grilling session
+(2026-09) backed by two research passes (`docs/research/slope-and-surface-movement.md`,
+`docs/research/surface-and-volume-mechanics.md`) and recorded as ADR 0035 (Character movement
+becomes a persistent-velocity acceleration model), ADR 0036 (Surface is a per-Box property, Volume
+is its own entity kind) and ADR 0037 (a `Sliding` state, two independent slope thresholds, and a
+speed-gated wall Impact). M3.6 adds no replicated state except `Sliding`; everything needing an
+`Epoch` latch lands together in M3.7. **M4 (Match structure + the first Screens) moves behind
+both** — a deliberate choice: the game gets better feel before it gets a loop.
 
 ## Tech stack
 
@@ -90,6 +100,9 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 | **M1** | Local physics playground. "Fun to walk, jump, bump, and fall." |
 | **M2** | Netcode — 2 players validated, architected for up to 12 (ADR 0011), authoritative server. |
 | **M3** | Procedural Segments — build a Track from Modules. |
+| **M3.5** | Track builder v2 — free position and full 3D rotation for a Segment (ADR 0034). |
+| **M3.6** | Ground and the movement model — ramps, `Sliding`, persistent-velocity movement, Surface grip. |
+| **M3.7** | Impulses and air — speed/slow pads, bounce and launch pads, updraft Volumes. |
 | **M4** | Match structure — Rounds, Qualification, Time Limit. First Screens: React shell + lobby/results (ADR 0008). |
 | later | Power-ups, Grab, Betting/Spectator, level themes, the Skyfall final. |
 

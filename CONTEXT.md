@@ -94,6 +94,19 @@ A Module's declared occupied space and clearance, used to validate placement
 and overlap — independent of its visual geometry or collider.
 _Avoid_: bounding box
 
+**Surface**:
+A property of a piece of Track floor: how well a Character grips it (how fast it
+can accelerate and how fast it slows down) and how fast it may ultimately travel
+on it. A property of floor geometry, never a kind of Module — one Module may mix
+Surfaces across its floor pieces.
+_Avoid_: material, terrain, ice block, ground type
+
+**Volume**:
+A region of space that applies a force to any Character inside it — an updraft, a
+wind tunnel. Contrast with Surface, which acts on a Character standing on it, and
+with a Checkpoint's trigger region, which only detects and never pushes.
+_Avoid_: zone, field, trigger, area
+
 **Segment**:
 One concrete instance of a Module placed at a position in a Track. A Track is a
 sequence of Segments.
@@ -132,6 +145,13 @@ capsule.
 **Stagger**:
 A brief Character state after a minor Impact — movement input is dampened but the
 Character stays upright. Recovers automatically to Controlled.
+
+**Sliding**:
+The Character state on a Surface too steep to walk on: the Character keeps
+reduced movement input while gravity carries it down the slope. Held by the
+condition (standing on such a Surface), not by a timer — unlike Stagger. An
+Impact while Sliding knocks the Character straight into Ragdoll.
+_Avoid_: slipping, skidding
 
 **Ragdoll**:
 The Character state where the articulated body takes over full physics and the
