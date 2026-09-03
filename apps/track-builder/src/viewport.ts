@@ -1,9 +1,15 @@
-import { quatToEuler, type Module, type Track } from "@dont-fall/shared";
+import { orientBox, quatToEuler, type Module, type Track } from "@dont-fall/shared";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { applySegmentTransform, boundingRadius, buildModuleGroup, disposeGroup } from "./render.js";
-import { MOVE_STEP_FINE, ROTATE_STEP, ROTATE_STEP_FINE, snapPositionToNeighborSocket } from "./trackEdit.js";
+import {
+  MOVE_STEP_FINE,
+  ROTATE_STEP,
+  ROTATE_STEP_FINE,
+  segmentOverlapsAnyOther,
+  snapPositionToNeighborSocket,
+} from "./trackEdit.js";
 
 /**
  * A small, self-contained preview of one Module — the palette's "visual
@@ -108,6 +114,24 @@ export const createTrackViewport = (
   selectionBox.visible = false;
   scene.add(selectionBox);
 
+  // Live overlap ghost-feedback (ticket 04) — a translucent box sized to the
+  // dragged Segment's own Footprint (inflated by its clearance, via
+  // `segmentOverlapsAnyOther`), coloured red while it overlaps any other
+  // Segment's Footprint and green otherwise. A separate mesh rather than
+  // recoloring the Segment's own materials, so nothing about the Segment's
+  // actual geometry/materials needs saving and restoring around a drag.
+  const OVERLAP_RED = 0xef4444;
+  const OVERLAP_GREEN = 0x22c55e;
+  const overlapGhostMaterial = new THREE.MeshBasicMaterial({
+    color: OVERLAP_GREEN,
+    transparent: true,
+    opacity: 0.35,
+    depthWrite: false,
+  });
+  const overlapGhost = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), overlapGhostMaterial);
+  overlapGhost.visible = false;
+  scene.add(overlapGhost);
+
   // On-canvas drag gizmo (ticket 03). `modules`/`track`/`attachedIndex` are
   // kept up to date by `setTrack`/`setSelected` so the live-drag Socket-snap
   // and the drag-end commit both have what they need without the caller
@@ -143,14 +167,43 @@ export const createTrackViewport = (
   window.addEventListener("keydown", onShiftDown);
   window.addEventListener("keyup", onShiftUp);
 
+  /** Moves/recolors `overlapGhost` to match the object currently attached to the gizmo, or hides it if there's nothing to show. */
+  const updateOverlapGhost = (): void => {
+    const object = transformControls.object;
+    if (!object || attachedIndex === undefined) {
+      overlapGhost.visible = false;
+      return;
+    }
+    const segment = track[attachedIndex];
+    const module = segment && modules[segment.moduleId];
+    if (!module) {
+      overlapGhost.visible = false;
+      return;
+    }
+    const position = { x: object.position.x, y: object.position.y, z: object.position.z };
+    const q = object.quaternion;
+    const orientation = { x: q.x, y: q.y, z: q.z, w: q.w };
+    const box = orientBox(module.footprint.bounds, position, orientation);
+    overlapGhost.position.set(box.center.x, box.center.y, box.center.z);
+    overlapGhost.quaternion.set(q.x, q.y, q.z, q.w);
+    overlapGhost.scale.set(box.halfExtents.x * 2, box.halfExtents.y * 2, box.halfExtents.z * 2);
+    const overlapping = segmentOverlapsAnyOther(track, modules, attachedIndex, position, orientation);
+    overlapGhostMaterial.color.set(overlapping ? OVERLAP_RED : OVERLAP_GREEN);
+    overlapGhost.visible = true;
+  };
+
   // A drag must not also orbit the camera (standard TransformControls/
   // OrbitControls integration).
   transformControls.addEventListener("dragging-changed", (event) => {
     orbitControls.enabled = !event.value;
-    if (event.value) return; // drag started, nothing to commit yet
+    if (event.value) {
+      updateOverlapGhost(); // drag started — show the ghost even before the first move
+      return;
+    }
 
     // Drag ended — commit once (a single undo step), reading back whatever
     // the gizmo left the object at (already Socket-/grid-snapped live).
+    overlapGhost.visible = false;
     const object = transformControls.object;
     if (!object || attachedIndex === undefined) return;
     const q = object.quaternion;
@@ -178,6 +231,13 @@ export const createTrackViewport = (
       z: object.position.z,
     });
     object.position.set(snapped.x, snapped.y, snapped.z);
+  });
+
+  // Live overlap ghost-feedback (ticket 04) — runs after the Socket-snap
+  // listener above so the ghost reflects the final, post-snap transform, on
+  // both translate and rotate drags.
+  transformControls.addEventListener("objectChange", () => {
+    updateOverlapGhost();
   });
 
   const raycaster = new THREE.Raycaster();
@@ -273,6 +333,8 @@ export const createTrackViewport = (
       disposeGroup(trackGroup);
       transformControls.dispose();
       orbitControls.dispose();
+      overlapGhost.geometry.dispose();
+      overlapGhostMaterial.dispose();
       renderer.dispose();
     },
   };

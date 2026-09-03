@@ -1,12 +1,16 @@
 import {
   addVec3,
   findSocket,
+  inflateBox,
   lengthVec3,
+  obbsOverlap,
+  orientBox,
   placeAfter,
   rotateVec3ByQuat,
   segmentOrientation,
   subVec3,
   type Module,
+  type Quat,
   type Segment,
   type Track,
   type Vec3,
@@ -288,4 +292,48 @@ export const snapPositionToNeighborSocket = (
     }
   }
   return best?.position ?? candidatePosition;
+};
+
+/**
+ * Whether the Segment at `index`, placed at `candidatePosition`/
+ * `candidateOrientation` (a live drag's candidate transform, not necessarily
+ * its currently-stored one), overlaps any *other* Segment's Footprint — the
+ * live overlap-feedback primitive (ticket 04). Each Footprint is grown by its
+ * own `clearance` before testing (`inflateBox`), and overlap itself is the
+ * full oriented-box SAT test (`obbsOverlap`), so this is robust to any
+ * rotation either Segment is at, not just axis-aligned placements.
+ *
+ * Deliberately excludes the Segment's own immediate chain neighbors (`index -
+ * 1`, `index + 1`) — their Footprints are *supposed* to touch exactly at the
+ * shared Socket by construction (every Module's Footprint reaches its Socket
+ * boundary), so flagging that as "overlap" would make ordinary,
+ * correctly-connected Segments permanently show red. Same "the Track's own
+ * two natural connection points are special" scoping `snapPositionToNeighborSocket`
+ * already uses.
+ */
+export const segmentOverlapsAnyOther = (
+  track: Track,
+  modules: Record<string, Module>,
+  index: number,
+  candidatePosition: Vec3,
+  candidateOrientation: Quat,
+): boolean => {
+  const segment = track[index];
+  const module = segment && modules[segment.moduleId];
+  if (!module) return false;
+  const candidateBox = inflateBox(
+    orientBox(module.footprint.bounds, candidatePosition, candidateOrientation),
+    module.footprint.clearance,
+  );
+
+  return track.some((other, otherIndex) => {
+    if (otherIndex === index || otherIndex === index - 1 || otherIndex === index + 1) return false;
+    const otherModule = modules[other.moduleId];
+    if (!otherModule) return false;
+    const otherBox = inflateBox(
+      orientBox(otherModule.footprint.bounds, other.position, segmentOrientation(other)),
+      otherModule.footprint.clearance,
+    );
+    return obbsOverlap(candidateBox, otherBox);
+  });
 };

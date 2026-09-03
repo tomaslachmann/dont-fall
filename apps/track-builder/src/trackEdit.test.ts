@@ -1,4 +1,12 @@
-import { addVec3, rotateVec3ByQuat, rotateYaw, segmentOrientation, type Module, type Track } from "@dont-fall/shared";
+import {
+  addVec3,
+  IDENTITY_QUAT,
+  rotateVec3ByQuat,
+  rotateYaw,
+  segmentOrientation,
+  type Module,
+  type Track,
+} from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
 import {
   appendModule,
@@ -9,6 +17,7 @@ import {
   rechainFrom,
   removeLast,
   rotateSegment,
+  segmentOverlapsAnyOther,
   setSegmentTransform,
   snapPositionToNeighborSocket,
   SOCKET_SNAP_RADIUS,
@@ -360,5 +369,52 @@ describe("snapPositionToNeighborSocket (ticket 03 — translate-drag Socket snap
     // Returns a Vec3, not a Segment — nothing to assert about rotation here,
     // but confirms the function's contract stays position-only.
     expect(Object.keys(snapped).sort()).toEqual(["x", "y", "z"]);
+  });
+});
+
+describe("segmentOverlapsAnyOther (ticket 04 — live overlap-feedback primitive)", () => {
+  // Three auto-chained Segments: "start" (z=0), "bridge" (z=-6), "gap" (z=-12)
+  // — each footprint spans 6 units in Z (halfExtents.z=3), so adjacent
+  // Segments' footprints touch exactly at their shared Socket boundary.
+  const track = appendModule(appendModule(appendModule([], "start", MODULES), "bridge", MODULES), "gap", MODULES);
+
+  it("does not flag a Segment against its own immediate chain neighbors, even though their footprints touch exactly at the shared Socket", () => {
+    // Segment 1 ("bridge") touches both its neighbors by construction — that
+    // is the *normal*, intended connection, not a placement mistake, so it
+    // must never register as overlap (same "the Track's own two natural
+    // connection points are special" reasoning as ticket 03's Socket-snap).
+    const overlaps = segmentOverlapsAnyOther(track, MODULES, 1, track[1]!.position, IDENTITY_QUAT);
+    expect(overlaps).toBe(false);
+  });
+
+  it("flags overlap against a non-adjacent Segment", () => {
+    // Drag Segment 2 ("gap") onto exactly where Segment 0 ("start") sits —
+    // two steps away in the chain, not an immediate neighbor.
+    const overlaps = segmentOverlapsAnyOther(track, MODULES, 2, track[0]!.position, IDENTITY_QUAT);
+    expect(overlaps).toBe(true);
+  });
+
+  it("does not flag overlap when clearly separated from every non-adjacent Segment", () => {
+    const farAway = { x: 1000, y: 0, z: 1000 };
+    const overlaps = segmentOverlapsAnyOther(track, MODULES, 2, farAway, IDENTITY_QUAT);
+    expect(overlaps).toBe(false);
+  });
+
+  it("accounts for Footprint clearance — a small gap smaller than the combined clearance still flags overlap", () => {
+    // Segment 0's footprint spans world Z [-3, 3]. Each Module's clearance is
+    // 0.5, so two Footprints need at least a 1-unit gap to clear each other.
+    // Placing Segment 2's footprint 0.3 units short of Segment 0's edge
+    // leaves only a 0.3-unit real gap — inside the combined 1-unit clearance.
+    const closeGapCenter = { x: track[0]!.position.x, y: track[0]!.position.y, z: track[0]!.position.z + 3 + 0.3 + 3 };
+    expect(segmentOverlapsAnyOther(track, MODULES, 2, closeGapCenter, IDENTITY_QUAT)).toBe(true);
+  });
+
+  it("does not flag overlap once the gap exceeds the combined clearance", () => {
+    const clearGapCenter = { x: track[0]!.position.x, y: track[0]!.position.y, z: track[0]!.position.z + 3 + 1.2 + 3 };
+    expect(segmentOverlapsAnyOther(track, MODULES, 2, clearGapCenter, IDENTITY_QUAT)).toBe(false);
+  });
+
+  it("returns false for an out-of-range index instead of throwing — a live drag callback shouldn't crash the frame loop", () => {
+    expect(segmentOverlapsAnyOther(track, MODULES, 99, { x: 0, y: 0, z: 0 }, IDENTITY_QUAT)).toBe(false);
   });
 });
