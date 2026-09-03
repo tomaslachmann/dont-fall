@@ -28,6 +28,8 @@ const RESTING_SPAWN = { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 };
 
 const input = (partial: Partial<SimInputs> = {}): SimInputs => ({ ...IDLE_INPUTS, ...partial });
 const NORTH = input({ moveDirection: { x: 0, y: 0, z: -1 } });
+const SOUTH = input({ moveDirection: { x: 0, y: 0, z: 1 } });
+const SOUTH_DASH = input({ moveDirection: { x: 0, y: 0, z: 1 }, dashHeld: true });
 
 const tick = (sim: RapierSimulation, seconds: number, i: SimInputs = IDLE_INPUTS) => {
   for (let n = 0; n < Math.round(seconds * TICK_RATE_HZ); n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: i });
@@ -197,6 +199,92 @@ describe("RapierSimulation — tilted static floor (ADR 0034, ticket 01)", () =>
     // Settles near the plank's true local surface height, not falling through it.
     expect(character.position.y).toBeGreaterThan(surfaceYAt(0));
     expect(character.position.y).toBeLessThan(surfaceYAt(0) + 1);
+  });
+});
+
+describe("RapierSimulation — ground-stick as a distance, via Rapier's own snap-to-ground (ticket 02, ADR 0037)", () => {
+  // Steep enough that the old speed-based ground-stick reliably skipped (the
+  // ticket's own spike measured this at both ~30° and ~40°, walking and
+  // dashing) — a real regression guard, not just a happy-path smoke test.
+  const PITCH = 0.524; // ~30°
+  const ramp = (): OrientedBox => ({
+    center: { x: 0, y: 0, z: 0 },
+    halfExtents: { x: 5, y: 0.1, z: 15 },
+    rotation: pitchQuat(PITCH),
+  });
+  // Spawn straight above the ramp's own local origin by rotating a *local*
+  // offset before placing it — sidesteps ever needing to convert between the
+  // ramp's local Z and a world Z at an arbitrary point along its slope, which
+  // only agree near the plank's centre for a shallow pitch (exactly why the
+  // describe block above stays close to z=0 at a shallow 14.9°).
+  const spawnAboveCentre = (localClearance: number): { x: number; y: number; z: number } =>
+    rotateVec3ByQuat({ x: 0, y: 0.1 + localClearance, z: 0 }, pitchQuat(PITCH));
+
+  const remainsGroundedThroughout = (held: SimInputs, ticks: number): boolean => {
+    const sim = new RapierSimulation({ statics: [ramp()], spawn: spawnAboveCentre(2) });
+    tick(sim, 1); // settle at the ramp's centre before moving
+    for (let i = 0; i < ticks; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: held });
+      if (!sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.grounded) return false;
+    }
+    return true;
+  };
+
+  it("walks down the ramp without skipping into freefall", () => {
+    expect(remainsGroundedThroughout(SOUTH, 40)).toBe(true);
+  });
+
+  it("dashes down the ramp without skipping into freefall — the case that used to collapse to ~5°", () => {
+    expect(remainsGroundedThroughout(SOUTH_DASH, 20)).toBe(true);
+  });
+
+  it("still falls off a platform edge promptly — snap-to-ground doesn't stall the controller at a ledge", () => {
+    const PLATFORM: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 4, y: 0.5, z: 4 } };
+    const sim = new RapierSimulation({ spawn: { x: 0, y: 1.5, z: 0 }, statics: [PLATFORM], killPlaneY: -8 });
+    tick(sim, 0.5);
+    // Geometric expectation: (0.5 clearance + 4 to the edge) / WALK_SPEED.
+    const expectedEdgeTick = Math.round(((0.5 + 4) / WALK_SPEED) * TICK_RATE_HZ);
+    let firstUngroundedTick = -1;
+    for (let i = 0; i < expectedEdgeTick + 15 && firstUngroundedTick === -1; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+      if (!sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.grounded) firstUngroundedTick = i;
+    }
+    // A stall would show up as a delay past the geometric expectation; a
+    // handful of ticks of slack absorbs settle/physics noise (observed: 1-3
+    // ticks early/late across repeated runs), not a real multi-tick hold-back
+    // (code review: the original +15/+10 tolerance was loose enough to still
+    // pass through a real several-tick stall).
+    expect(firstUngroundedTick).toBeGreaterThan(-1);
+    expect(firstUngroundedTick).toBeLessThan(expectedEdgeTick + 5);
+  });
+
+  it("keeps reporting the Surface underfoot even on a tick where Rapier's own snap-to-ground corrects the Character without going through the collision list at all (code review — confirmed empirically: computedGrounded() can be true with zero qualifying computedCollision() entries)", () => {
+    // Steep enough (~45°) that this reliably exercises the snap-only path —
+    // measured directly: without the fix, groundColliderHandle silently goes
+    // undefined for many consecutive ticks here, dropping the Surface (and
+    // its speed cap) back to default while still visibly on the mud ramp.
+    const STEEP_PITCH = 0.785;
+    const mudRamp = (): OrientedBox => ({
+      center: { x: 0, y: 0, z: 0 },
+      halfExtents: { x: 5, y: 0.1, z: 15 },
+      rotation: pitchQuat(STEEP_PITCH),
+    });
+    const spawn = rotateVec3ByQuat({ x: 0, y: 0.1 + 2, z: 0 }, pitchQuat(STEEP_PITCH));
+    const sim = new RapierSimulation({ statics: [mudRamp()], staticSurfaces: ["mud"], spawn });
+    tick(sim, 1); // settle at the ramp's centre
+
+    let prev = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    const speeds: number[] = [];
+    for (let i = 0; i < 30; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: SOUTH });
+      const p = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+      speeds.push(Math.hypot(p.z - prev.z, p.y - prev.y) * TICK_RATE_HZ);
+      prev = p;
+    }
+    // Mud's speed cap (0.5×) should hold the whole descent — a leak back to
+    // unmultiplied WALK_SPEED would show up as roughly double this envelope
+    // (WALK_SPEED alone over a 45° slope is ~8.5 units/s of 3D distance).
+    for (const speed of speeds.slice(5)) expect(speed).toBeLessThan(6); // well under the ~8.5 an uncapped leak would show
   });
 });
 

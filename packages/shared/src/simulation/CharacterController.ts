@@ -11,6 +11,7 @@ import {
   GETUP_CAPSULE_LIFT,
   GETUP_TICKS,
   GRAVITY_Y,
+  GROUND_SNAP_DISTANCE,
   GROUND_STICK_SPEED,
   IMPACT_STAGGER_MIN,
   RAGDOLL_IMPACT_VELOCITY_SCALE,
@@ -189,10 +190,13 @@ export class CharacterController {
     );
 
     this.rapierController = world.createCharacterController(CHARACTER_CONTROLLER_OFFSET);
-    // Snap-to-ground and autostep are deliberately OFF: snap-to-ground stalls the
-    // controller near platform edges, and autostep hitches during fast movement
-    // (dash). M1 platforms are same-height or step down, so neither is needed;
-    // GROUND_STICK_SPEED keeps ground contact.
+    // Snap-to-ground ON (ticket 02, M3.6) — a spike measured it against the
+    // M1-era edge-stalling/Dash-hitching symptoms it was originally disabled
+    // for and reproduced neither; disabling it instead reliably reproduces
+    // the ramp-skip bug it now fixes (see ticket 02's notes for both sets of
+    // numbers). Autostep stays OFF: it hitches during fast movement (Dash),
+    // and nothing about this ticket touches that rationale.
+    this.rapierController.enableSnapToGround(GROUND_SNAP_DISTANCE);
     this.rapierController.setApplyImpulsesToDynamicBodies(false);
 
     this.ragdoll = new Ragdoll(world);
@@ -429,7 +433,23 @@ export class CharacterController {
         this.onCollision(collision.collider.handle, point, { ...this.velocity }, normal);
       }
     }
-    this.currentGroundColliderHandle = this.grounded ? groundHandle : undefined;
+    // Ticket 02 code review: Rapier's own snap-to-ground (enabled this
+    // ticket) can make `computedGrounded()` true via an internal correction
+    // that never goes through `computedCollision()`'s list at all — exactly
+    // on the steep/fast-descent ticks this ticket targets, since those are
+    // the ones the regular sweep alone doesn't keep contact on. When that
+    // happens `groundHandle` is `undefined` even though the Character is
+    // still standing on the same floor as last tick; overwriting
+    // `currentGroundColliderHandle` to `undefined` here would silently drop
+    // the Surface (mud/ice) back to default for as long as it persists —
+    // confirmed empirically to last many consecutive ticks, not just one.
+    // So: only ever *update* it when this tick's sweep actually found a
+    // qualifying collision; otherwise keep whatever it was, and only clear
+    // it once `grounded` itself goes false. Worst case this is one tick
+    // stale right at a genuine Surface boundary — the same order of lag
+    // already accepted everywhere else in this Surface pipeline.
+    if (!this.grounded) this.currentGroundColliderHandle = undefined;
+    else if (groundHandle !== undefined) this.currentGroundColliderHandle = groundHandle;
   }
 
   private beginRagdoll(): void {
