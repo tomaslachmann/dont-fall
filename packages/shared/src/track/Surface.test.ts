@@ -12,6 +12,25 @@ describe("SURFACES (ticket 01 — mud, the first Surface)", () => {
   });
 });
 
+describe("SURFACES (ticket 06 — grip: one scalar multiplying both acceleration and drag)", () => {
+  it("default has full grip", () => {
+    expect(SURFACES[DEFAULT_SURFACE]!.grip).toBe(1);
+  });
+
+  it("mud is re-expressed in grip terms too — its own grip stays neutral (only its top speed is capped)", () => {
+    expect(SURFACES.mud!.grip).toBe(1);
+  });
+
+  it("ice has near-zero grip, but not exactly zero — it still (slowly) accelerates and (slowly) stops, per the ticket's own \"accelerates slowly\" framing, not \"never moves\"", () => {
+    expect(SURFACES.ice!.grip).toBeGreaterThan(0);
+    expect(SURFACES.ice!.grip).toBeLessThan(0.2);
+  });
+
+  it("ice leaves top speed unchanged — \"ice makes you faster\" is the wrong intuition, per neither Quake nor Source altering max speed for slick surfaces", () => {
+    expect(SURFACES.ice!.topSpeedMultiplier).toBe(1);
+  });
+});
+
 describe("surfaceConfig", () => {
   it("looks up a known Surface", () => {
     expect(surfaceConfig("mud")).toBe(SURFACES.mud);

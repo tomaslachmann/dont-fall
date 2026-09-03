@@ -11,15 +11,36 @@
 export type SurfaceId = string;
 
 /**
- * A Surface's effect on movement. Ticket 01 (mud) only needs a top-speed
- * cap — the current movement model assigns velocity outright, so "grip"
- * (a scalar multiplying both acceleration and drag, ADR 0035/0036) has
- * nothing to multiply yet and lands once the acceleration model does
- * (ticket 05), alongside ice (ticket 06).
+ * A Surface's effect on movement (ADR 0035/0036). Two independent knobs,
+ * per Source's own model:
+ *
+ * - `topSpeedMultiplier` — scales the *target* (`WALK_SPEED`) a Character's
+ *   velocity is chasing. Mud's whole effect (ticket 01): a lower ceiling,
+ *   acceleration/drag left alone.
+ * - `grip` — one scalar multiplying **both** acceleration and drag
+ *   (`movementVerbs.ts`'s `accelerateVelocity` factors, ticket 06) — how
+ *   *quickly* that target is reached and how quickly you stop/turn,
+ *   independent of what the target itself is. Ice's whole effect: near-zero
+ *   grip, top speed untouched. "Ice makes you faster" is the intuitive
+ *   answer and the wrong one — neither Quake nor Source touches max speed
+ *   for slick surfaces; the feel is carried entirely by lost acceleration
+ *   and lost turn authority.
+ *
+ * Before ticket 05's acceleration model, `grip` had nothing to multiply —
+ * every Surface implicitly had "infinite" grip (velocity assigned outright
+ * every tick). Now that accelerate/drag/cap is real, both knobs are ordinary
+ * multipliers on the same pipeline, not two special cases.
  */
 export interface SurfaceConfig {
   /** Multiplies WALK_SPEED while standing on this Surface. 1 = unchanged. */
   topSpeedMultiplier: number;
+  /**
+   * Multiplies both `MOVE_ACCEL_FACTOR` and `MOVE_FRICTION_FACTOR` (ticket
+   * 06). 1 = full grip (today's engineered-to-saturate default — reaches
+   * target speed and stops within a single tick, ticket 05). Near-zero =
+   * ice: acceleration and drag both slow to a crawl.
+   */
+  grip: number;
 }
 
 /** What every Box/Module resolves to when it declares no Surface of its own. */
@@ -29,11 +50,16 @@ export const DEFAULT_SURFACE: SurfaceId = "default";
  * Every Surface a resolved Track's floor can be (ADR 0036). Numeric values
  * are deliberately provisional — the milestone spec records the exact
  * multiplier as "a measurement, not a decision," to be tuned against a real
- * ramp/mud Module once one exists, not re-litigated here.
+ * ramp/mud/ice Module once one exists, not re-litigated here. Mud and ice
+ * are deliberately near-mirror images of each other (ticket 06): mud caps
+ * the target speed and leaves grip alone, ice leaves the target speed alone
+ * and caps grip — the two knobs are independent, and each Surface here only
+ * ever needs to touch the one that carries its own feel.
  */
 export const SURFACES: Record<SurfaceId, SurfaceConfig> = {
-  [DEFAULT_SURFACE]: { topSpeedMultiplier: 1 },
-  mud: { topSpeedMultiplier: 0.5 },
+  [DEFAULT_SURFACE]: { topSpeedMultiplier: 1, grip: 1 },
+  mud: { topSpeedMultiplier: 0.5, grip: 1 },
+  ice: { topSpeedMultiplier: 1, grip: 0.001 },
 };
 
 /**

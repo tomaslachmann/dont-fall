@@ -428,11 +428,13 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       }
       // Ticket 01/ADR 0036: this tick's ground contact (just computed above,
       // in `endTick`/the sweep it followed) decides the Surface that gates
-      // *next* tick's walk speed — the same one-tick lag `grounded` itself
-      // already has relative to jump/landing.
+      // *next* tick's walk speed and (ticket 06) grip — the same one-tick
+      // lag `grounded` itself already has relative to jump/landing.
       const groundHandle = character.groundColliderHandle;
       const surfaceId = groundHandle !== undefined ? this.staticSurfaceByHandle.get(groundHandle) : undefined;
-      character.setSurfaceTopSpeedMultiplier(surfaceConfig(surfaceId).topSpeedMultiplier);
+      const surface = surfaceConfig(surfaceId);
+      character.setSurfaceTopSpeedMultiplier(surface.topSpeedMultiplier);
+      character.setSurfaceGrip(surface.grip);
     }
 
     // Client-only (ADR 0012 / 0016, ticket 06): every Prop is pinned to the

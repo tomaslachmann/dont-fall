@@ -100,6 +100,18 @@ export const M1_MODULES: Record<string, Module> = {
     footprint: STRAIGHT_FOOTPRINT,
     surface: "mud",
   },
+  /**
+   * Ice: the second Surface (M3.6 ticket 06) — same deliberately-identical-
+   * geometry-to-`bridge` treatment as `mud` above, and the same reasoning:
+   * the Surface is the deliverable, not the look.
+   */
+  ice: {
+    id: "ice",
+    statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
+    sockets: STRAIGHT_SOCKETS,
+    footprint: STRAIGHT_FOOTPRINT,
+    surface: "ice",
+  },
 };
 
 /** The M1 playground, reassembled through the Module/Track system (ticket 01, re-chained via Sockets in round 2). */

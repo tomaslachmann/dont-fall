@@ -157,6 +157,14 @@ export class CharacterController {
    */
   private surfaceTopSpeedMultiplier = 1;
   /**
+   * Multiplies both `MOVE_ACCEL_FACTOR` and `MOVE_FRICTION_FACTOR` this tick
+   * (ticket 06) — set from outside by `RapierSimulation` alongside
+   * {@link surfaceTopSpeedMultiplier}, from the same resolved Surface, with
+   * the same one-tick lag. 1 (full grip, today's saturating default) until
+   * anything ever calls {@link setSurfaceGrip}.
+   */
+  private surfaceGrip = 1;
+  /**
    * Monotonic count of Respawn teleports (ADR 0023 / Q9). The renderer holds the
    * last value it saw and snaps (no interpolation) when it changes — robust
    * against the interpolation buffer skipping the exact respawn tick, which a
@@ -259,6 +267,11 @@ export class CharacterController {
   /** Sets this tick's Surface-driven top-speed multiplier (ticket 01) — see {@link surfaceTopSpeedMultiplier}. */
   setSurfaceTopSpeedMultiplier(multiplier: number): void {
     this.surfaceTopSpeedMultiplier = multiplier;
+  }
+
+  /** Sets this tick's Surface-driven grip (ticket 06) — see {@link surfaceGrip}. */
+  setSurfaceGrip(grip: number): void {
+    this.surfaceGrip = grip;
   }
 
   /** The current motion state — a cheap read (no bone/pose computation), for transition detection. */
@@ -445,11 +458,20 @@ export class CharacterController {
       // — the structural change that later lets a wall-Impact rule (ADR
       // 0037) read "how fast is this Character going" without asking "was
       // this a Dash?" At today's saturating MOVE_ACCEL_FACTOR/
-      // MOVE_FRICTION_FACTOR, `accelerateVelocity` reaches `wish` exactly
-      // within this same tick — numerically identical to the direct
-      // `velocity.xz = wish` assignment it replaces.
+      // MOVE_FRICTION_FACTOR (full grip), `accelerateVelocity` reaches
+      // `wish` exactly within this same tick — numerically identical to the
+      // direct `velocity.xz = wish` assignment it replaces. `surfaceGrip`
+      // (ticket 06) multiplies both factors together — Source's own
+      // one-scalar-does-both model — so ice's near-zero grip alone is
+      // exactly what turns this from "identical" into "a genuine, gradual
+      // ramp," with no other code path change needed.
       const wish = addVec3(slopedWalk, dashBurst);
-      const newVelocity = accelerateVelocity(this.velocity, wish, MOVE_ACCEL_FACTOR, MOVE_FRICTION_FACTOR);
+      const newVelocity = accelerateVelocity(
+        this.velocity,
+        wish,
+        MOVE_ACCEL_FACTOR * this.surfaceGrip,
+        MOVE_FRICTION_FACTOR * this.surfaceGrip,
+      );
       this.velocity.x = newVelocity.x;
       this.velocity.z = newVelocity.z;
     }
@@ -723,13 +745,14 @@ export class CharacterController {
     this.body.setTranslation({ ...base.position }, false);
     this.velocity = { ...base.velocity };
     this.grounded = base.grounded;
-    // The correction can move the capsule across a Surface boundary (mud vs
-    // default) that a mispredicting client had no way to see coming — the
+    // The correction can move the capsule across a Surface boundary (mud/ice
+    // vs default) that a mispredicting client had no way to see coming — the
     // snapshot carries no Surface of its own (ADR 0036: it's a pure function
     // of position, never replicated), so the safest thing this can do is
-    // fall back to no cap and let the very next real ground sweep recompute
-    // the true Surface, exactly like the existing one-tick lag already does
-    // after a normal landing. Without this the first tick replayed from here
+    // fall back to full grip / no cap and let the very next real ground
+    // sweep recompute the true Surface, exactly like the existing one-tick
+    // lag already does after a normal landing. Without this the first tick
+    // replayed from here
     // would run with whatever multiplier happened to be set before the
     // correction (code review, ticket 01) — a *second*, undocumented tick of
     // wrong walk speed stacked on top of the position correction itself.
@@ -751,6 +774,7 @@ export class CharacterController {
     // discrepancy, fixed for real the moment the next sweep runs.
     this.currentGroundNormal = base.motionState === "Sliding" ? { x: 0, y: WALKABLE_NORMAL_MIN_Y - 0.01, z: 0 } : undefined;
     this.surfaceTopSpeedMultiplier = 1;
+    this.surfaceGrip = 1;
     this.machine.snapTo(base.motionState);
     this.dash.restoreCooldownMs(base.dashCooldownMs, base.dashing);
     this.jump.reset(); // stale coyote/hold bookkeeping would let replay grant a jump the server won't

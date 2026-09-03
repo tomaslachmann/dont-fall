@@ -159,6 +159,77 @@ describe("RapierSimulation — Surfaces (ticket 01, ADR 0036): the ground collid
     const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
     expect(before.z - after.z).toBeCloseTo(WALK_SPEED, 0);
   });
+
+  it("mud is re-expressed in grip terms too — its own grip stays full (1), reaching the capped target within the same single tick as before ticket 06 (ticket 01's own mud test, unchanged, already re-confirms the number; this locks down that grip:1 specifically is what makes it so)", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 8 },
+      statics: [MUD_FLOOR],
+      staticSurfaces: ["mud"],
+    });
+    tick(sim, 0.5);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    const p0 = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    const p1 = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    // Already at the mud-capped speed by the very next tick — full grip,
+    // just a lower target, not a slow ramp toward it.
+    expect((p0.z - p1.z) * TICK_RATE_HZ).toBeCloseTo(WALK_SPEED * SURFACES.mud!.topSpeedMultiplier, 0);
+  });
+});
+
+describe("RapierSimulation — ice (ticket 06, ADR 0035/0036): grip multiplies both acceleration and drag, top speed untouched", () => {
+  const ICE_FLOOR: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 10, y: 0.5, z: 30 } };
+
+  it("accelerates slowly on ice — noticeably below full WALK_SPEED shortly after starting from a standstill", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 10 },
+      statics: [ICE_FLOOR],
+      staticSurfaces: ["ice"],
+    });
+    tick(sim, 0.5); // settle, and let the one-tick Surface lag catch up
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    tick(sim, 0.3, NORTH); // a short burst — full grip would already be at WALK_SPEED throughout this
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    const speed = (before.z - after.z) / 0.3;
+    expect(speed).toBeGreaterThan(0); // it does move...
+    expect(speed).toBeLessThan(WALK_SPEED * 0.5); // ...but nowhere near full speed yet
+  });
+
+  it("eventually reaches full WALK_SPEED on ice, unchanged — \"ice makes you faster\" is the wrong intuition, but \"ice caps your speed\" would be just as wrong", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 10 },
+      statics: [ICE_FLOOR],
+      staticSurfaces: ["ice"],
+    });
+    tick(sim, 0.5);
+    tick(sim, 4, NORTH); // long enough to approach the (near-zero-accel) target
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    tick(sim, 0.5, NORTH);
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    const speed = (before.z - after.z) / 0.5;
+    expect(speed).toBeCloseTo(WALK_SPEED, 0); // top speed itself is exactly WALK_SPEED, same as full grip
+  });
+
+  it("slides past a turn on ice — releasing the original direction and pressing a new one doesn't reverse velocity the way full grip does; the Character keeps sliding in roughly the old direction for a while", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 20 },
+      statics: [ICE_FLOOR],
+      staticSurfaces: ["ice"],
+    });
+    tick(sim, 0.5);
+    tick(sim, 3, NORTH); // build up real speed in -Z first
+    const beforeTurn = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+
+    // Now try to turn sideways (+X) — on full grip this reverses/redirects
+    // velocity within a tick; on ice, residual -Z motion should still
+    // clearly dominate immediately after the input change.
+    const EAST = input({ moveDirection: { x: 1, y: 0, z: 0 } });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: EAST });
+    const p0 = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    const stillSlidingZ = Math.abs(p0.z - beforeTurn.z);
+    const newSidewaysX = Math.abs(p0.x - beforeTurn.x);
+    expect(stillSlidingZ).toBeGreaterThan(newSidewaysX * 3); // still mostly going the old way, not the new one
+  });
 });
 
 describe("RapierSimulation — tilted static floor (ADR 0034, ticket 01)", () => {
