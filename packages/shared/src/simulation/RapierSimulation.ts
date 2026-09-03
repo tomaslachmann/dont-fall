@@ -519,7 +519,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     const reached = progress.checkpointIndex ?? -1;
     const p = character.position;
     for (let i = reached + 1; i < this.checkpoints.length; i += 1) {
-      if (pointInOrientedBox(p, this.checkpoints[i]!.volume)) {
+      if (pointInOrientedBox(p, this.checkpoints[i]!.trigger)) {
         progress.checkpointIndex = i;
         progress.respawnPoint = { ...this.checkpoints[i]!.respawn };
       }
@@ -562,7 +562,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   getCheckpoints(): Checkpoint[] {
     return this.checkpoints.map((cp) => ({
       respawn: { ...cp.respawn },
-      volume: cloneOrientedBox(cp.volume),
+      trigger: cloneOrientedBox(cp.trigger),
     }));
   }
 

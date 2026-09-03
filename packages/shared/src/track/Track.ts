@@ -216,7 +216,7 @@ export const resolveTrack = (
         // time, so this is correct at any angle, not an axis-aligned
         // approximation (the old rotateBoxYaw90-based placement only handled
         // 90°/270° correctly, by swapping halfExtents).
-        volume: placeBox(module.checkpoint.volume),
+        trigger: placeBox(module.checkpoint.trigger),
       });
     }
   }

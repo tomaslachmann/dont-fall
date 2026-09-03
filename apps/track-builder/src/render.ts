@@ -33,7 +33,7 @@ const addProp = (group: THREE.Group, prop: PropConfig): void => {
 };
 
 const addCheckpoint = (group: THREE.Group, checkpoint: Checkpoint): void => {
-  const { center, halfExtents } = checkpoint.volume;
+  const { center, halfExtents } = checkpoint.trigger;
   const geo = new THREE.BoxGeometry(halfExtents.x * 2, halfExtents.y * 2, halfExtents.z * 2);
   const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: CHECKPOINT_COLOR, wireframe: true }));
   mesh.position.set(center.x, center.y, center.z);

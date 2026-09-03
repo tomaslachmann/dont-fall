@@ -126,7 +126,7 @@ const boxMesh = (box: OrientedBox, material: THREE.Material): THREE.Mesh => {
   );
   mesh.position.set(box.center.x, box.center.y, box.center.z);
   // ADR 0034: a static's OrientedBox may carry a real rotation now — Props/
-  // Checkpoint volumes/Spinner arms passed in here are still plain (rotation-
+  // Checkpoint triggers/Spinner arms passed in here are still plain (rotation-
   // less) Boxes, which default to identity, unchanged from before.
   const q = box.rotation ?? IDENTITY_QUAT;
   mesh.quaternion.set(q.x, q.y, q.z, q.w);
@@ -179,7 +179,7 @@ export const createStage = ({
     depthWrite: false,
   });
   for (const cp of checkpoints) {
-    scene.add(boxMesh(cp.volume, checkpointMaterial));
+    scene.add(boxMesh(cp.trigger, checkpointMaterial));
   }
 
   const spinnerMaterial = new THREE.MeshStandardMaterial({ color: 0xf25c54, roughness: 0.5 });

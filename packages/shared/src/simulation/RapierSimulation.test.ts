@@ -102,15 +102,15 @@ describe("RapierSimulation — walk", () => {
   it("exposes its resolved static geometry and checkpoints for the renderer", () => {
     const cp: Checkpoint = {
       respawn: { x: 1, y: 2, z: 3 },
-      volume: { center: { x: 1, y: 2, z: 3 }, halfExtents: { x: 1, y: 1, z: 1 } },
+      trigger: { center: { x: 1, y: 2, z: 3 }, halfExtents: { x: 1, y: 1, z: 1 } },
     };
     const sim = new RapierSimulation({ statics: [GROUND], checkpoints: [cp] });
     // getStatics() always fills in a concrete rotation (ADR 0034) — identity
     // when the input Box didn't specify one, as GROUND here doesn't.
     expect(sim.getStatics()).toEqual([{ ...GROUND, rotation: { x: 0, y: 0, z: 0, w: 1 } }]);
-    // getCheckpoints() also fills in a concrete rotation on the volume now
+    // getCheckpoints() also fills in a concrete rotation on the trigger now
     // (ADR 0034 code review) — identity when the input didn't specify one.
-    expect(sim.getCheckpoints()).toEqual([{ ...cp, volume: { ...cp.volume, rotation: { x: 0, y: 0, z: 0, w: 1 } } }]);
+    expect(sim.getCheckpoints()).toEqual([{ ...cp, trigger: { ...cp.trigger, rotation: { x: 0, y: 0, z: 0, w: 1 } } }]);
   });
 });
 
@@ -593,11 +593,11 @@ describe("RapierSimulation — Fall & Respawn", () => {
   it("does not move the respawn point backward when walking back through an earlier Checkpoint", () => {
     const near: Checkpoint = {
       respawn: { x: -8, y: 1.5, z: 4 },
-      volume: { center: { x: 0, y: 0.5, z: 4 }, halfExtents: { x: 3, y: 2, z: 1.5 } },
+      trigger: { center: { x: 0, y: 0.5, z: 4 }, halfExtents: { x: 3, y: 2, z: 1.5 } },
     };
     const far: Checkpoint = {
       respawn: { x: 8, y: 1.5, z: -4 },
-      volume: { center: { x: 0, y: 0.5, z: -4 }, halfExtents: { x: 3, y: 2, z: 1.5 } },
+      trigger: { center: { x: 0, y: 0.5, z: -4 }, halfExtents: { x: 3, y: 2, z: 1.5 } },
     };
     const sim = new RapierSimulation({
       spawn: { x: 0, y: 1.5, z: 6 },
@@ -616,7 +616,7 @@ describe("RapierSimulation — Fall & Respawn", () => {
   it("respawns at the last Checkpoint reached, not spawn", () => {
     const checkpoint: Checkpoint = {
       respawn: { x: 8, y: 1.5, z: 0 },
-      volume: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
+      trigger: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
     };
     const sim = new RapierSimulation({
       spawn: config.spawn,
@@ -627,7 +627,7 @@ describe("RapierSimulation — Fall & Respawn", () => {
       checkpoints: [checkpoint],
       killPlaneY: -8,
     });
-    tick(sim, 0.5); // settle inside the checkpoint volume
+    tick(sim, 0.5); // settle inside the checkpoint trigger
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.checkpointIndex).toBe(0);
 
     tickUntilFall(sim);
@@ -636,14 +636,14 @@ describe("RapierSimulation — Fall & Respawn", () => {
     expect(Math.abs(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x - 8)).toBeLessThan(3); // respawned at the pad
   });
 
-  it("detects containment in a rotated Checkpoint volume — not just an axis-aligned approximation (ADR 0034 code review)", () => {
-    // An oblong volume, long on local X (halfExtents.x=4, halfExtents.z=1),
+  it("detects containment in a rotated Checkpoint trigger — not just an axis-aligned approximation (ADR 0034 code review)", () => {
+    // An oblong trigger, long on local X (halfExtents.x=4, halfExtents.z=1),
     // rotated 90° around Y so its long axis now points along world Z. A
     // Character standing at (0, _, 3) is outside the *un-rotated* box
     // (z=3 > halfExtents.z=1) but inside the rotated one.
     const rotatedCheckpoint: Checkpoint = {
       respawn: { x: 8, y: 1.5, z: 0 },
-      volume: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 4, y: 2, z: 1 }, rotation: yawQuat(Math.PI / 2) },
+      trigger: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 4, y: 2, z: 1 }, rotation: yawQuat(Math.PI / 2) },
     };
     const sim = new RapierSimulation({
       spawn: { x: 0, y: 1.5, z: 3 },

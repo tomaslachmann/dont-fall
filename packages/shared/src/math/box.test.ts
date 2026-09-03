@@ -27,7 +27,7 @@ describe("pointInBox", () => {
   });
 });
 
-describe("pointInOrientedBox (ADR 0034 code review — a rotated Checkpoint volume must still detect containment correctly, at any angle, not just an axis-aligned approximation)", () => {
+describe("pointInOrientedBox (ADR 0034 code review — a rotated Checkpoint trigger must still detect containment correctly, at any angle, not just an axis-aligned approximation)", () => {
   it("agrees with pointInBox when there's no rotation", () => {
     const b: OrientedBox = { ...box };
     expect(pointInOrientedBox({ x: 0, y: 1, z: 0 }, b)).toBe(true);

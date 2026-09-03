@@ -34,10 +34,9 @@ export interface OrientedBox {
  * review) — un-rotates `point` into the box's own local frame (subtract the
  * centre, then apply the inverse rotation) and reuses {@link pointInBox}'s
  * plain axis-aligned check there. Used for Checkpoint containment: the old
- * `rotateBoxYaw90`-based placement kept an axis-aligned trigger volume
- * correctly sized at 90°/270° by swapping its halfExtents; a genuinely
- * rotated volume needs this instead, and it works at any angle, not just a
- * multiple of 90°.
+ * `rotateBoxYaw90`-based placement kept an axis-aligned trigger correctly
+ * sized at 90°/270° by swapping its halfExtents; a genuinely rotated trigger
+ * needs this instead, and it works at any angle, not just a multiple of 90°.
  */
 export const pointInOrientedBox = (point: Vec3, box: OrientedBox): boolean => {
   const local = rotateVec3ByQuat(subVec3(point, box.center), conjugateQuat(box.rotation ?? IDENTITY_QUAT));

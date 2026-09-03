@@ -49,7 +49,7 @@ export interface Footprint {
  * One of a Module's floor pieces — a plain {@link Box} plus its own optional
  * Surface override (ADR 0036). A separate type from `Box` deliberately
  * (code review, ticket 01): `Box` is a pure geometry primitive used well
- * beyond Module floors (`Footprint.bounds`, `Checkpoint.volume`), and giving
+ * beyond Module floors (`Footprint.bounds`, `Checkpoint.trigger`), and giving
  * *it* a `surface` field would mean every one of those unrelated uses
  * silently inherits a property with no meaning there.
  */

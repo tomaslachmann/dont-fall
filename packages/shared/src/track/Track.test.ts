@@ -36,7 +36,7 @@ const SPINNER_MODULE: Module = {
   props: [{ shape: { kind: "box", halfExtents: { x: 0.4, y: 0.4, z: 0.4 } }, center: { x: 1, y: 0, z: 0 } }],
   checkpoint: {
     respawn: { x: 0, y: 1, z: 0 },
-    volume: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
+    trigger: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
   },
   sockets: STRAIGHT_SOCKETS,
   footprint: FOOTPRINT,
@@ -113,7 +113,7 @@ describe("resolveTrack", () => {
     expect(resolved.spinners[0]!.initialAngle).toBe(0); // no rotation added at 0 rad
     expect(resolved.props[0]!.center).toEqual({ x: 6, y: -1, z: 20 });
     expect(resolved.checkpoints[0]!.respawn).toEqual({ x: 5, y: 0, z: 20 });
-    expect(resolved.checkpoints[0]!.volume.halfExtents).toEqual({ x: 2, y: 2, z: 2 });
+    expect(resolved.checkpoints[0]!.trigger.halfExtents).toEqual({ x: 2, y: 2, z: 2 });
   });
 
   it("never swaps a static Box's half-extents (ADR 0034) — carries its rotation instead, for a real rotated collider", () => {

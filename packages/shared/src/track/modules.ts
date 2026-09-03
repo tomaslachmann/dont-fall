@@ -54,7 +54,7 @@ export const M1_MODULES: Record<string, Module> = {
     statics: [box({ x: 0, y: -0.1, z: 0 }, { x: 3, y: 0.5, z: 4 })],
     checkpoint: {
       respawn: { x: 0, y: 1.35, z: 0 },
-      volume: { center: { x: 0, y: 1.35, z: 0 }, halfExtents: { x: 2.5, y: 2, z: 3.5 } },
+      trigger: { center: { x: 0, y: 1.35, z: 0 }, halfExtents: { x: 2.5, y: 2, z: 3.5 } },
     },
     spinners: [{ center: { x: 0, y: 0.95, z: 3 }, armLength: 2.5, halfHeight: 0.4, armRadius: 0.35, angularSpeed: 6.5 }],
     sockets: STRAIGHT_SOCKETS,
@@ -71,7 +71,7 @@ export const M1_MODULES: Record<string, Module> = {
     statics: [box({ x: 0, y: -0.6, z: 0 }, { x: 4, y: 0.5, z: 4.5 })],
     checkpoint: {
       respawn: { x: 0, y: 0.85, z: 0 },
-      volume: { center: { x: 0, y: 0.85, z: 0 }, halfExtents: { x: 3.5, y: 2, z: 4 } },
+      trigger: { center: { x: 0, y: 0.85, z: 0 }, halfExtents: { x: 3.5, y: 2, z: 4 } },
     },
     props: [
       { shape: { kind: "box", halfExtents: { x: 0.4, y: 0.4, z: 0.4 } }, center: { x: -1.5, y: 0.3, z: 1 } },
