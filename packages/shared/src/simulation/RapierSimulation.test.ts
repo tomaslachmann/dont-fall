@@ -11,6 +11,7 @@ import {
   IMPACT_RAGDOLL_MIN,
   IMPACT_STAGGER_MIN,
   RAGDOLL_MAX_MS,
+  SLIDE_INPUT_SCALE,
   TICK_RATE_HZ,
   WALK_SPEED,
 } from "../tuning.js";
@@ -259,11 +260,16 @@ describe("RapierSimulation — ground-stick as a distance, via Rapier's own snap
   });
 
   it("keeps reporting the Surface underfoot even on a tick where Rapier's own snap-to-ground corrects the Character without going through the collision list at all (code review — confirmed empirically: computedGrounded() can be true with zero qualifying computedCollision() entries)", () => {
-    // Steep enough (~45°) that this reliably exercises the snap-only path —
-    // measured directly: without the fix, groundColliderHandle silently goes
-    // undefined for many consecutive ticks here, dropping the Surface (and
-    // its speed cap) back to default while still visibly on the mud ramp.
-    const STEEP_PITCH = 0.785;
+    // Steep enough that this reliably exercises the snap-only path, but
+    // still under ticket 03's WALKABLE_SLOPE_MAX_ANGLE (35°) — a walking,
+    // not Sliding, scenario, since Sliding's own gravity-projected model
+    // makes "stays under mud's capped WALK_SPEED" the wrong invariant to
+    // check (it's supposed to accelerate). 34° is right at the edge of
+    // where this reliably reproduces (code review, ticket 03): verified by
+    // temporarily reverting the ticket-02 sticky fix and confirming this
+    // exact test fails at 34° but not at 32-33° — a shallower angle would
+    // silently stop testing the thing its own name claims to.
+    const STEEP_PITCH = 0.593; // ~34°
     const mudRamp = (): OrientedBox => ({
       center: { x: 0, y: 0, z: 0 },
       halfExtents: { x: 5, y: 0.1, z: 15 },
@@ -285,6 +291,129 @@ describe("RapierSimulation — ground-stick as a distance, via Rapier's own snap
     // unmultiplied WALK_SPEED would show up as roughly double this envelope
     // (WALK_SPEED alone over a 45° slope is ~8.5 units/s of 3D distance).
     for (const speed of speeds.slice(5)) expect(speed).toBeLessThan(6); // well under the ~8.5 an uncapped leak would show
+  });
+});
+
+describe("RapierSimulation — Sliding (ticket 03, M3.6, ADR 0037): the band between walkable and wall", () => {
+  // WALKABLE_SLOPE_MAX_ANGLE is ~35°, the wall threshold (from
+  // WALL_NORMAL_MAX_Y) is ~60° — these three pitches land cleanly inside
+  // "walkable," "Sliding," and (for a later ticket, not tested here) "wall."
+  const WALKABLE_PITCH = 0.349; // ~20°
+  const SLIDING_PITCH = 0.785; // ~45°
+
+  const ramp = (pitch: number): OrientedBox => ({
+    center: { x: 0, y: 0, z: 0 },
+    halfExtents: { x: 5, y: 0.1, z: 15 },
+    rotation: pitchQuat(pitch),
+  });
+  // Spawn straight above the ramp's own local origin (see ticket 02's own
+  // notes on why: avoids ever needing to convert between local and world Z).
+  const spawnAboveCentre = (pitch: number, localClearance: number): { x: number; y: number; z: number } =>
+    rotateVec3ByQuat({ x: 0, y: 0.1 + localClearance, z: 0 }, pitchQuat(pitch));
+
+  it("stays Controlled (walks normally) on a shallow ramp under the walkable limit", () => {
+    const sim = new RapierSimulation({ statics: [ramp(WALKABLE_PITCH)], spawn: spawnAboveCentre(WALKABLE_PITCH, 2) });
+    tick(sim, 1);
+    tick(sim, 1, SOUTH);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
+  });
+
+  it("enters Sliding on a ramp steeper than walkable, and accelerates downhill under gravity", () => {
+    const sim = new RapierSimulation({ statics: [ramp(SLIDING_PITCH)], spawn: spawnAboveCentre(SLIDING_PITCH, 2) });
+    tick(sim, 1);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS }); // grounded, too-steep condition now true from last tick's contact
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS }); // this tick's machine.tick() sees it
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Sliding");
+
+    // Accelerating, not a constant walk speed: distance covered in the next
+    // 0.3s should be noticeably more than in the following 0.3s-shifted
+    // window if it's truly speeding up under gravity.
+    const p0 = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    tick(sim, 0.3, IDLE_INPUTS);
+    const p1 = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    tick(sim, 0.3, IDLE_INPUTS);
+    const p2 = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    const firstLeg = Math.hypot(p1.z - p0.z, p1.y - p0.y);
+    const secondLeg = Math.hypot(p2.z - p1.z, p2.y - p1.y);
+    expect(secondLeg).toBeGreaterThan(firstLeg);
+  });
+
+  it("Sliding applies only while grounded — falling above a too-steep Surface keeps full Controlled air control", () => {
+    const sim = new RapierSimulation({
+      statics: [ramp(SLIDING_PITCH)],
+      spawn: { ...spawnAboveCentre(SLIDING_PITCH, 8) }, // well above the ramp, still airborne for a few ticks
+    });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.grounded).toBe(false);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
+  });
+
+  it("an Impact while Sliding sends the Character straight to Ragdoll, exactly as from Stagger", () => {
+    const sim = new RapierSimulation({ statics: [ramp(SLIDING_PITCH)], spawn: spawnAboveCentre(SLIDING_PITCH, 2) });
+    tick(sim, 1);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Sliding");
+
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: IMPACT_RAGDOLL_MIN + 3, y: 2, z: 0 });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
+  });
+
+  it("client prediction agrees with the server on Sliding — both derive it from the same resolved Track, no new message needed", () => {
+    const config = { statics: [ramp(SLIDING_PITCH)], spawn: spawnAboveCentre(SLIDING_PITCH, 2), withDefaultCharacter: false };
+    const server = new RapierSimulation(config);
+    const client = new RapierSimulation({ ...config, authoritative: false });
+    server.addCharacter(DEFAULT_CHARACTER_ID, config.spawn);
+    client.addCharacter(DEFAULT_CHARACTER_ID, config.spawn);
+
+    for (let i = 0; i < 45; i += 1) {
+      const input = { [DEFAULT_CHARACTER_ID]: IDLE_INPUTS };
+      server.tick(input);
+      client.tick(input);
+      expect(client.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe(
+        server.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState,
+      );
+    }
+    // Sanity: the agreement above wasn't vacuously "both always Controlled."
+    expect(server.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Sliding");
+  });
+
+  it("steering while Sliding stays bounded — it blends toward the reduced walk target but never runs away past it (code review)", () => {
+    // A much bigger, much deeper ramp than the other tests in this block —
+    // this one needs to stay Sliding for several real seconds (long enough
+    // for an *unbounded* integration bug to clearly separate from a bounded
+    // one), which the other tests' compact ramp/kill-plane don't leave room
+    // for on a 45° slope (gravity alone covers ~70 units in 3s).
+    const bigRamp: OrientedBox = { center: { x: 0, y: 0, z: 0 }, halfExtents: { x: 5, y: 0.1, z: 80 }, rotation: pitchQuat(SLIDING_PITCH) };
+    const sim = new RapierSimulation({ statics: [bigRamp], spawn: spawnAboveCentre(SLIDING_PITCH, 2), killPlaneY: -1000 });
+    tick(sim, 1);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Sliding");
+
+    // Pure sideways (world X) input: a pitch-only rotation never tilts the
+    // slope's normal away from X=0, so gravity's projection onto X is always
+    // exactly 0 here — X motion is *entirely* the steering contribution,
+    // isolating it cleanly from the downhill gravity acceleration. Stops if
+    // it ever does leave Sliding — once airborne it's correctly Controlled
+    // again, with full, unblended input authority, which would otherwise
+    // swamp this measurement with the *other* (already fully-tested)
+    // movement model.
+    const STEER = input({ moveDirection: { x: 1, y: 0, z: 0 } });
+    let prevX = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x;
+    let maxXSpeed = 0;
+    for (let i = 0; i < 90; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: STEER });
+      const character = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      if (character.motionState !== "Sliding") break;
+      maxXSpeed = Math.max(maxXSpeed, Math.abs(character.position.x - prevX) * TICK_RATE_HZ);
+      prevX = character.position.x;
+    }
+    // The steering target is WALK_SPEED * SLIDE_INPUT_SCALE; a small margin
+    // absorbs blend/settle noise, not runaway growth — the actual bug this
+    // guards against grew well past double this within the same window.
+    expect(maxXSpeed).toBeLessThan(WALK_SPEED * SLIDE_INPUT_SCALE * 1.3);
   });
 });
 
@@ -1794,6 +1923,27 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
 
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.fallCount).toBeGreaterThan(0);
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y).toBeGreaterThan(-6);
+  });
+
+  it("does not immediately flip a reconciled Sliding state back to Controlled for lack of a local ground normal (code review, ticket 03)", () => {
+    // The client never predicted this at all — no local settling, so it has
+    // no ground-contact normal of its own yet. The server's snapshot is the
+    // first it hears "you're on a too-steep Surface."
+    const pitch = 0.785; // ~45°, comfortably in the Sliding band
+    const rampBox: OrientedBox = { center: { x: 0, y: 0, z: 0 }, halfExtents: { x: 5, y: 0.1, z: 15 }, rotation: pitchQuat(pitch) };
+    const spawn = rotateVec3ByQuat({ x: 0, y: 0.1 + 2, z: 0 }, pitchQuat(pitch));
+    const sim = new RapierSimulation({ statics: [rampBox], spawn });
+
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+      position: spawn,
+      velocity: { x: 0, y: -2, z: 0 },
+      grounded: true,
+      motionState: "Sliding",
+      dashCooldownMs: 0,
+      dashing: false,
+    });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Sliding");
   });
 });
 

@@ -49,6 +49,8 @@ export const lerpVec3 = (a: Vec3, b: Vec3, t: number): Vec3 => ({
 export const lengthVec3 = (v: Vec3): number =>
   Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
 
+export const dotVec3 = (a: Vec3, b: Vec3): number => a.x * b.x + a.y * b.y + a.z * b.z;
+
 /** Returns the unit vector, or a zero vector if `v` has no length. */
 export const normalizeVec3 = (v: Vec3): Vec3 => {
   const len = lengthVec3(v);

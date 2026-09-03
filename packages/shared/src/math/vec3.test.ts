@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { pitchQuat, rollQuat, yawQuat } from "./quat.js";
-import { rotateVec3ByQuat, rotateYaw } from "./vec3.js";
+import { dotVec3, rotateVec3ByQuat, rotateYaw } from "./vec3.js";
 
 const closeVec = (v: { x: number; y: number; z: number }, expected: { x: number; y: number; z: number }): void => {
   expect(v.x).toBeCloseTo(expected.x, 10);
@@ -24,6 +24,20 @@ const rotateByQuat = (v: { x: number; y: number; z: number }, q: { x: number; y:
     z: v.z + 2 * q.w * uv.z + 2 * uuv.z,
   };
 };
+
+describe("dotVec3 (ticket 03, M3.6 — projecting gravity onto a slope plane)", () => {
+  it("is zero for perpendicular vectors", () => {
+    expect(dotVec3({ x: 1, y: 0, z: 0 }, { x: 0, y: 1, z: 0 })).toBe(0);
+  });
+
+  it("is the product of magnitudes for parallel vectors", () => {
+    expect(dotVec3({ x: 0, y: -22, z: 0 }, { x: 0, y: 1, z: 0 })).toBe(-22);
+  });
+
+  it("matches the standard component-wise formula", () => {
+    expect(dotVec3({ x: 1, y: 2, z: 3 }, { x: 4, y: 5, z: 6 })).toBe(1 * 4 + 2 * 5 + 3 * 6);
+  });
+});
 
 describe("rotateYaw", () => {
   it("is the identity at yaw 0", () => {

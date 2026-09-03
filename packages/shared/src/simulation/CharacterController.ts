@@ -1,5 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { lengthVec3, lerpVec3, normalizeVec3, scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
+import { dotVec3, lengthVec3, lerpVec3, normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
 import {
   CAPSULE_HALF_HEIGHT,
   CAPSULE_RADIUS,
@@ -17,9 +17,11 @@ import {
   RAGDOLL_IMPACT_VELOCITY_SCALE,
   RAGDOLL_SETTLE_SPEED,
   RESPAWN_FLOP_IMPULSE,
+  SLIDE_STEER_BLEND,
   SURFACE_GROUND_NORMAL_MIN_Y,
   TICK_DT,
   WALK_SPEED,
+  WALKABLE_SLOPE_MAX_ANGLE,
   WALL_NORMAL_MAX_Y,
 } from "../tuning.js";
 import type { CharacterSnapshot, RagdollCause } from "../state/SimState.js";
@@ -31,6 +33,9 @@ import { blendGettingUpBones, type BoneSnapshot } from "./ragdollSkeleton.js";
 import type { SimInputs } from "./SimInputs.js";
 
 const isDown = (state: CharacterMotionState): boolean => state === "Ragdoll" || state === "GettingUp";
+
+/** A ground normal's Y component below this is steeper than {@link WALKABLE_SLOPE_MAX_ANGLE} — the walkable/Sliding boundary, ticket 03. */
+const WALKABLE_NORMAL_MIN_Y = Math.cos(WALKABLE_SLOPE_MAX_ANGLE);
 
 interface PendingImpact {
   magnitude: number;
@@ -130,6 +135,18 @@ export class CharacterController {
    */
   private currentGroundColliderHandle: number | undefined;
   /**
+   * This tick's ground-contact surface normal, if any (ticket 03, M3.6) —
+   * what decides `tooSteepToWalk` (below) and, while `Sliding`, the
+   * direction gravity is projected along. Updated in {@link resolveCollisions}
+   * with exactly the same "only update on a fresh hit, clear only once
+   * ungrounded" stickiness as {@link currentGroundColliderHandle}, for the
+   * same reason (code review, ticket 02): Rapier's own snap-to-ground can
+   * make `computedGrounded()` true via a correction that never appears in
+   * `computedCollision()`'s list, and this is exactly the steep/fast-descent
+   * case that happens on.
+   */
+  private currentGroundNormal: Vec3 | undefined;
+  /**
    * Multiplies `WALK_SPEED` this tick (ticket 01) — set from outside by
    * `RapierSimulation` once it's resolved {@link groundColliderHandle}
    * against the Track's Surfaces, one tick behind (the same lag `grounded`
@@ -197,6 +214,20 @@ export class CharacterController {
     // numbers). Autostep stays OFF: it hitches during fast movement (Dash),
     // and nothing about this ticket touches that rationale.
     this.rapierController.enableSnapToGround(GROUND_SNAP_DISTANCE);
+    // Rapier's own climb/slide split is collapsed back to one coincident
+    // value (ticket 03, M3.6, ADR 0037) — but at the *wall* angle
+    // (`WALL_NORMAL_MAX_Y`), not its old 45°/45° default. That leaves Rapier
+    // responsible for exactly one thing: "is this even standable ground at
+    // all" (below it, `computedGrounded()` can be true; at/above it, this
+    // is a wall — blocked, never grounded). The finer walkable-vs-Sliding
+    // split within that band is this project's own job (`beginCapsuleTick`'s
+    // `tooSteepToWalk` branch + `CharacterStateMachine`), reading the actual
+    // ground-contact normal directly rather than leaning on a second Rapier
+    // threshold — the ADR's "two explicit, independent thresholds" are
+    // WALKABLE_SLOPE_MAX_ANGLE and WALL_NORMAL_MAX_Y, not two Rapier knobs.
+    const wallAngle = Math.acos(WALL_NORMAL_MAX_Y);
+    this.rapierController.setMaxSlopeClimbAngle(wallAngle);
+    this.rapierController.setMinSlopeSlideAngle(wallAngle);
     this.rapierController.setApplyImpulsesToDynamicBodies(false);
 
     this.ragdoll = new Ragdoll(world);
@@ -290,7 +321,16 @@ export class CharacterController {
     // snapshot still reporting the old episode would read as a fresh one.
     const settled =
       this.authoritative && this.ragdoll.isActive && this.ragdoll.maxSpeed() < RAGDOLL_SETTLE_SPEED;
-    const state = this.machine.tick(settled);
+    // Ticket 03, M3.6: last tick's ground contact (from `resolveCollisions`,
+    // read here before this tick's own sweep overwrites it) decides whether
+    // this tick enters/stays in `Sliding` — the same one-tick lag `grounded`
+    // itself already has relative to jump/landing. `currentGroundNormal` is
+    // `undefined` both while airborne and while grounded on a Surface flat
+    // enough to be filtered out by `SURFACE_GROUND_NORMAL_MIN_Y`, so both
+    // correctly read as "not too steep" here.
+    const tooSteepToWalk =
+      this.grounded && this.currentGroundNormal !== undefined && this.currentGroundNormal.y < WALKABLE_NORMAL_MIN_Y;
+    const state = this.machine.tick(settled, tooSteepToWalk);
 
     // Every entry to Ragdoll is a new down episode (ADR 0023) — whether it came
     // from an Impact, a forced Fall, or the Respawn flop.
@@ -324,6 +364,7 @@ export class CharacterController {
       // somewhere else entirely. The next real `beginCapsuleTick` recomputes
       // this fresh from an actual sweep.
       this.currentGroundColliderHandle = undefined;
+      this.currentGroundNormal = undefined;
     }
     this.tickCount += 1;
   }
@@ -335,24 +376,55 @@ export class CharacterController {
     this.endTick();
   }
 
-  /** Controlled / Stagger / GettingUp: queue the kinematic capsule's movement, input scaled by the state. */
+  /** Controlled / Stagger / Sliding / GettingUp: queue the kinematic capsule's movement, input scaled by the state. */
   private beginCapsuleTick(input: SimInputs, jumpPressed: boolean, dashPressed: boolean): void {
-    // Stagger dampens *all* movement input — walk, jump and dash — not just walk.
+    // Stagger/Sliding both dampen *all* movement input — walk, jump and dash
+    // — not just walk.
     const fullControl = this.machine.inputScale >= 1;
     const move = scaleVec3(input.moveDirection, this.machine.inputScale);
+    const sliding = this.machine.state === "Sliding";
 
     const takeoff = this.jump.beginTick(this.grounded, fullControl && jumpPressed);
     if (takeoff !== null) this.velocity.y = takeoff;
-    const gravityScale = this.jump.gravityScale(fullControl && input.jumpHeld, this.velocity.y);
-    this.velocity.y += GRAVITY_Y * gravityScale * TICK_DT;
-
-    const walk = scaleVec3(move, WALK_SPEED * this.surfaceTopSpeedMultiplier);
-    // Dash only starts while grounded (a walking burst, not an air dash); an
-    // already-active burst keeps running if it carries the Character off an edge.
+    // Dash only starts while grounded and in full control (a walking burst,
+    // not an air dash, and never while Sliding); an already-active burst's
+    // own remaining duration still ticks down here even while Sliding, it
+    // just doesn't contribute to velocity below (ticket 03 simplification —
+    // ADR 0035's persistent-velocity model, not yet built, is what would
+    // unify how a burst's momentum carries across a state change).
     const dashBurst = this.dash.beginTick(move, fullControl && dashPressed && this.grounded);
-    this.dashSpeed = lengthVec3(dashBurst);
-    this.velocity.x = walk.x + dashBurst.x;
-    this.velocity.z = walk.z + dashBurst.z;
+    this.dashSpeed = sliding ? 0 : lengthVec3(dashBurst);
+    const walk = scaleVec3(move, WALK_SPEED * this.surfaceTopSpeedMultiplier);
+
+    if (sliding && this.currentGroundNormal) {
+      // ADR 0037: the one place gravity is projected onto the slope plane and
+      // integrated tick over tick, rather than the direct `velocity.xz =
+      // target` assignment every other Controlled/Stagger tick uses below —
+      // ADR 0035 rejects that accelerating model for ordinary walking, but
+      // adopts it here.
+      const gravity = vec3(0, GRAVITY_Y, 0);
+      const normal = this.currentGroundNormal;
+      const slopeGravity = subVec3(gravity, scaleVec3(normal, dotVec3(gravity, normal)));
+      // `walk` is already reduced via SLIDE_INPUT_SCALE (folded into `move`
+      // above) — but it's still a *velocity*, not an acceleration, so it
+      // can't just be integrated (`+= walk * TICK_DT`) alongside gravity
+      // the way a first attempt at this did (code review): that grows
+      // without bound the longer a direction is held, eventually swamping
+      // the slide itself. Blending the horizontal velocity toward `walk`
+      // each tick keeps steering genuinely limited — it can pull the
+      // Character's own speed at most as far as `walk`'s magnitude, never
+      // past it, while gravity keeps accumulating independently.
+      const horizontal = lerpVec3({ x: this.velocity.x, y: 0, z: this.velocity.z }, walk, SLIDE_STEER_BLEND);
+      this.velocity.x = horizontal.x + slopeGravity.x * TICK_DT;
+      this.velocity.y += slopeGravity.y * TICK_DT;
+      this.velocity.z = horizontal.z + slopeGravity.z * TICK_DT;
+    } else {
+      const gravityScale = this.jump.gravityScale(fullControl && input.jumpHeld, this.velocity.y);
+      this.velocity.y += GRAVITY_Y * gravityScale * TICK_DT;
+
+      this.velocity.x = walk.x + dashBurst.x;
+      this.velocity.z = walk.z + dashBurst.z;
+    }
 
     // `filterGroups: CHARACTER_GROUPS` so the sweep honours collision groups
     // the way the rest of the world does — without it the character controller
@@ -367,7 +439,11 @@ export class CharacterController {
     );
     const corrected = this.rapierController.computedMovement();
     this.grounded = this.rapierController.computedGrounded();
-    if (this.grounded && this.velocity.y < 0) {
+    // Skipped while Sliding: this would overwrite the very slope-gravity
+    // velocity just built up above with a flat constant every tick, which
+    // is exactly the ground-stick-as-a-speed unit bug ticket 02 fixed —
+    // reintroducing it here, just for Sliding, would recreate the same skip.
+    if (this.grounded && this.velocity.y < 0 && !sliding) {
       this.velocity.y = -GROUND_STICK_SPEED;
       this.jump.land();
     }
@@ -412,6 +488,7 @@ export class CharacterController {
     // real floor and report the wrong (or no) Surface (code review).
     let groundNormalY = -Infinity;
     let groundHandle: number | undefined;
+    let groundNormal: Vec3 | undefined;
     for (let i = 0; i < count; i += 1) {
       const collision = this.rapierController.computedCollision(i);
       if (!collision?.collider) continue;
@@ -422,6 +499,7 @@ export class CharacterController {
       if (!hitCharacter && normal.y > SURFACE_GROUND_NORMAL_MIN_Y && normal.y > groundNormalY) {
         groundNormalY = normal.y;
         groundHandle = collision.collider.handle;
+        groundNormal = normal;
       }
 
       if (dashingFastEnough && !hitCharacter && Math.abs(normal.y) < WALL_NORMAL_MAX_Y) {
@@ -448,8 +526,13 @@ export class CharacterController {
     // it once `grounded` itself goes false. Worst case this is one tick
     // stale right at a genuine Surface boundary — the same order of lag
     // already accepted everywhere else in this Surface pipeline.
-    if (!this.grounded) this.currentGroundColliderHandle = undefined;
-    else if (groundHandle !== undefined) this.currentGroundColliderHandle = groundHandle;
+    if (!this.grounded) {
+      this.currentGroundColliderHandle = undefined;
+      this.currentGroundNormal = undefined;
+    } else if (groundHandle !== undefined) {
+      this.currentGroundColliderHandle = groundHandle;
+      this.currentGroundNormal = groundNormal;
+    }
   }
 
   private beginRagdoll(): void {
@@ -623,6 +706,22 @@ export class CharacterController {
     // correction (code review, ticket 01) — a *second*, undocumented tick of
     // wrong walk speed stacked on top of the position correction itself.
     this.currentGroundColliderHandle = undefined;
+    // Code review, ticket 03: a snapshot's `motionState` is authoritative for
+    // *state* but carries no ground normal of its own (never replicated —
+    // it's a pure function of position, ADR 0036/0037). Clearing this to
+    // `undefined` unconditionally (as the Surface handle above still
+    // correctly does) would break reconciling into "Sliding" specifically:
+    // `beginTick`'s `tooSteepToWalk` reads this field *before* this same
+    // tick's own sweep can refresh it, so it would read `false` and the
+    // state machine would immediately flip the just-restored Sliding back to
+    // Controlled for one tick — discarding the server's own conclusion. A
+    // synthetic near-vertical normal (just past the walkable threshold) is
+    // enough to keep the *state* correct for that one tick; projected onto a
+    // vertical normal, its own tangential-gravity contribution is ~0, so the
+    // Character simply doesn't accelerate for that one tick instead of
+    // wrongly regaining full control — a much smaller, self-correcting
+    // discrepancy, fixed for real the moment the next sweep runs.
+    this.currentGroundNormal = base.motionState === "Sliding" ? { x: 0, y: WALKABLE_NORMAL_MIN_Y - 0.01, z: 0 } : undefined;
     this.surfaceTopSpeedMultiplier = 1;
     this.machine.snapTo(base.motionState);
     this.dash.restoreCooldownMs(base.dashCooldownMs, base.dashing);

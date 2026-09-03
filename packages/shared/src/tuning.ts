@@ -147,6 +147,27 @@ export const STAGGER_MS = 350;
 /** Movement input multiplier while Staggered. */
 export const STAGGER_INPUT_SCALE = 0.35;
 
+/**
+ * Movement input multiplier while Sliding (ticket 03, M3.6, ADR 0037) — some
+ * steering authority remains (unlike Ragdoll/GettingUp's 0), but reduced
+ * (unlike Controlled's 1), matching CONTEXT.md's "keeps reduced movement
+ * input while gravity carries it down the slope." A placeholder value —
+ * this milestone's numbers are deliberately provisional, tuned later against
+ * a real ramp, not decided here.
+ */
+export const SLIDE_INPUT_SCALE = 0.3;
+
+/**
+ * How far the horizontal velocity blends toward the (already-reduced)
+ * steering target each tick while Sliding (ticket 03, M3.6, ADR 0037) — 0
+ * would mean no steering at all, 1 would mean instant full authority every
+ * tick. Bounded blending, not integration (code review): steering is a
+ * *velocity* target, and integrating it as if it were an acceleration grows
+ * without bound the longer a direction is held. A placeholder value, like
+ * every other number this milestone defers to real-ramp tuning.
+ */
+export const SLIDE_STEER_BLEND = 0.15;
+
 /** Minimum time spent in Ragdoll before it can begin getting up (ms). */
 export const RAGDOLL_MIN_MS = 500;
 
@@ -242,6 +263,24 @@ export const WALL_NORMAL_MAX_Y = 0.5;
  * ticket 01).
  */
 export const SURFACE_GROUND_NORMAL_MIN_Y = 0.5;
+
+// --- Slopes: walkable / Sliding / wall (ticket 03, M3.6, ADR 0037) ----------
+
+/**
+ * Steeper than this (radians, from horizontal) and a grounded Character
+ * slides instead of walking with full control — the walkable/Sliding
+ * boundary. Deliberately independent of {@link WALL_NORMAL_MAX_Y} (the
+ * Sliding/wall boundary): a single threshold would make a steep ramp either
+ * "walk up it" or "unclimbable wall," with no band to slide down in between
+ * — the entire point of tilted geometry (ADR 0037). Replaces Rapier's own
+ * coincident `maxSlopeClimbAngle`/`minSlopeSlideAngle` defaults (both 45°,
+ * verified against the installed 0.20.0) — see `CharacterController`'s
+ * constructor, which sets both of Rapier's own knobs to the *wall* angle
+ * instead (derived from `WALL_NORMAL_MAX_Y`) and leaves the walkable/Sliding
+ * split entirely to this project's own state machine. A placeholder value,
+ * like every other number this milestone defers to real-ramp tuning.
+ */
+export const WALKABLE_SLOPE_MAX_ANGLE = (35 * Math.PI) / 180;
 
 /** Upward bias mixed into the wall-bounce direction, before normalising, for a visible pop. */
 export const DASH_WALL_LIFT_RATIO = 0.3;
