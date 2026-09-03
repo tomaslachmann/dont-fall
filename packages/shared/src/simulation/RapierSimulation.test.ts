@@ -4,6 +4,7 @@ import { pitchQuat, yawQuat } from "../math/quat.js";
 import { rotateVec3ByQuat } from "../math/vec3.js";
 import {
   CAPSULE_BOTTOM_OFFSET,
+  CAPSULE_RADIUS,
   DASH_COOLDOWN_MS,
   DASH_COOLDOWN_TICKS,
   DASH_DURATION_MS,
@@ -1565,7 +1566,7 @@ describe("RapierSimulation — dash into a wall", () => {
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
   });
 
-  it("a dash-wall Ragdoll advances ragdollEpoch and records cause DashWall (ADR 0023)", () => {
+  it("a dash-wall Ragdoll advances ragdollEpoch and records cause WallImpact (ADR 0023)", () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND, WALL] });
     tick(sim, 0.5);
     sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true }) });
@@ -1573,7 +1574,7 @@ describe("RapierSimulation — dash into a wall", () => {
 
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.ragdollEpoch).toBe(1);
-    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.ragdollCause).toBe("DashWall");
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.ragdollCause).toBe("WallImpact");
   });
 
   it("does not ragdoll from a wall hit right at the start of the build — only once fast enough", () => {
@@ -1590,28 +1591,44 @@ describe("RapierSimulation — dash into a wall", () => {
   it("across a sweep of approach angles: where the Character falls vs where it stands once Controlled resumes after GettingUp", () => {
     // Single authoritative sim (this is a server-side physics question, not a
     // client-reconcile one) — dash into the same wall at increasingly oblique
-    // angles (0° = straight-on, up to a shallow glancing hit) and record three
-    // points in the episode: the tick motionState first becomes "Ragdoll"
-    // (impact), the tick it becomes "GettingUp" (the ragdoll has settled —
-    // `beginGettingUp` reports `getupStartRoot` verbatim at elapsed=0, per
-    // `getupBlendedPosition`), and the tick it's back to "Controlled" (recovery
-    // complete). A wide-enough wall (z ±5) keeps every angle in this sweep
-    // hitting the same face.
+    // angles and record three points in the episode: the tick motionState
+    // first becomes "Ragdoll" (impact), the tick it becomes "GettingUp" (the
+    // ragdoll has settled — `beginGettingUp` reports `getupStartRoot`
+    // verbatim at elapsed=0, per `getupBlendedPosition`), and the tick it's
+    // back to "Controlled" (recovery complete). A wide-enough wall (z ±5)
+    // keeps every angle in this sweep hitting the same face.
     //
-    // `fall → recovered` (logged, not asserted) grows with approach angle
-    // (~0.24 u at 0° up to ~1.26 u at 60°) — confirmed intentional, not a
-    // bug: `dashWallKnockback` bounces off the wall's own normal regardless of
-    // approach angle, but `beginRagdoll`'s launch velocity is
-    // `this.velocity * RAGDOLL_IMPACT_VELOCITY_SCALE` — the Character's OWN
-    // velocity at impact, whose lateral (Z, along-the-wall) component grows
-    // with `sin(angle)`. A glancing hit keeps more sideways momentum than a
+    // Bounded at 45° (M3.7 ticket 03): the sweep used to go to 60°, but once
+    // wall-Impact is re-expressed as *closing* speed (the Character's own
+    // velocity projected onto the wall's normal) rather than raw dash
+    // magnitude, a 60° dash is glancing enough that its closing-speed
+    // component never crosses {@link WALL_IMPACT_MIN_SPEED} while still in
+    // contact — the Character correctly slides along the wall and clears it
+    // instead of Ragdolling, exactly the behavior "impact magnitude scales
+    // with closing speed" is supposed to produce (a real hit needs real
+    // speed *into* the wall, not just overall speed). See the dedicated
+    // "slides past a sufficiently glancing hit" test below for that case —
+    // caught empirically (not hand-derived): an earlier draft of this sweep
+    // still included 60° and got a wildly-out-of-pattern "fall" position
+    // back near spawn, which traced to the Character clearing the wall
+    // entirely, continuing straight off the edge of this test's own
+    // (deliberately finite) ground, and hitting the kill plane — a Fall/
+    // Respawn's own flop-to-Ragdoll, unrelated to the wall at all.
+    //
+    // `fall → recovered` (logged, not asserted) grows with approach angle —
+    // confirmed intentional, not a bug: `wallImpactKnockback` bounces off
+    // the wall's own normal regardless of approach angle, but
+    // `beginRagdoll`'s launch velocity is `this.velocity *
+    // RAGDOLL_IMPACT_VELOCITY_SCALE` — the Character's OWN velocity at
+    // impact, whose lateral (Z, along-the-wall) component grows with
+    // `sin(angle)`. A glancing hit keeps more sideways momentum than a
     // square one, carrying the ragdoll further along the wall before it
     // settles — a reasonable "physical chaos" outcome for this game, not
     // something to clamp. Left unasserted here on purpose so a future
     // `RAGDOLL_IMPACT_VELOCITY_SCALE` retune isn't fighting a brittle bound.
     type Pos = { x: number; y: number; z: number };
     const dist = (a: Pos, b: Pos) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-    const ANGLES_DEG = [0, 15, 30, 45, 60];
+    const ANGLES_DEG = [0, 15, 30, 45];
     const results: { angleDeg: number; fall: Pos; settled: Pos; recovered: Pos }[] = [];
 
     for (const angleDeg of ANGLES_DEG) {
@@ -1680,6 +1697,84 @@ describe("RapierSimulation — dash into a wall", () => {
       // side, roughly where it hit, not through it.
       expect(r.recovered.x).toBeLessThan(2.5);
     }
+  });
+
+  it("slides past a sufficiently glancing hit instead of forcing Ragdoll — closing speed, not raw speed, is what counts (M3.7 ticket 03)", () => {
+    // A generously large ground (unlike the module-level GROUND used by the
+    // rest of this describe block) — this Character is EXPECTED to clear
+    // the wall's own z-extent (±5) and keep going, so it needs somewhere to
+    // land that isn't past the edge of a small platform (the exact "unrelated
+    // Fall/Respawn" artifact the sweep test's own comment above documents
+    // discovering).
+    const bigGround: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 30, y: 0.5, z: 30 } };
+    const rad = (60 * Math.PI) / 180; // a shallow, mostly-tangential approach
+    const moveDir = { x: Math.cos(rad), y: 0, z: Math.sin(rad) };
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [bigGround, WALL] });
+    tick(sim, 0.5);
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: moveDir, dashHeld: true }) });
+
+    let sawWallContact = false;
+    let clearedTheWall = false;
+    for (let i = 0; i < 40; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: moveDir }) });
+      const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      // Sanity: it's genuinely sliding along the wall's face at some point
+      // (blocked right at the near face, x ≈ 2.5 − CAPSULE_RADIUS), not
+      // simply never reaching it at all.
+      if (Math.abs(c.position.x - 2.14) < 0.05) sawWallContact = true;
+      // ...and eventually clears the wall's own z-extent while still moving.
+      if (c.position.z > 5) clearedTheWall = true;
+      expect(c.motionState).not.toBe("Ragdoll");
+      expect(c.motionState).not.toBe("Stagger");
+      if (clearedTheWall) break;
+    }
+    expect(sawWallContact).toBe(true);
+    expect(clearedTheWall).toBe(true);
+  });
+});
+
+describe("RapierSimulation — wall-Impact is a speed threshold, not a Dash-specific rule (M3.7 ticket 03, ADR 0037)", () => {
+  const WALL: Box = { center: { x: 3, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 5 } };
+  // Where a walking Character's capsule centre rests against WALL's near
+  // face: WALL.center.x - WALL.halfExtents.x - CAPSULE_RADIUS.
+  const WALL_CONTACT_X = 3 - 0.5 - CAPSULE_RADIUS;
+
+  it("a launch pad firing a Character into a wall knocks it down — no Dash involved at all", () => {
+    // The pad sits right up against the wall's own contact line. This is
+    // deliberate, not arbitrary: a launch pad's SET velocity (like a speed
+    // pad's boost) survives only the ONE tick it's applied on — the very
+    // next tick's ordinary accelerateVelocity() pipeline (which runs every
+    // tick, grounded or airborne, per CharacterController) recomputes
+    // horizontal velocity from scratch, decaying a purely-horizontal launch
+    // to at most WALK_SPEED (matching input) or 0 (none) — confirmed
+    // directly while designing this test. So the wall hit must land on the
+    // very tick the SET applies, which placing the pad flush against the
+    // wall guarantees regardless of exactly which tick crosses the trigger.
+    const trigger: OrientedBox = {
+      center: { x: WALL_CONTACT_X - 0.1, y: 0, z: 0 },
+      halfExtents: { x: 0.1, y: 1, z: 2 },
+    };
+    const sim = new RapierSimulation({
+      spawn: RESTING_SPAWN,
+      statics: [GROUND, WALL],
+      launchPads: [{ trigger, velocity: { x: 25, y: 0, z: 0 } }], // well above WALL_IMPACT_MIN_SPEED (9)
+    });
+    tick(sim, 0.5);
+    const EAST = input({ moveDirection: { x: 1, y: 0, z: 0 } });
+    while (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.launchPadEpoch === 0) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: EAST });
+    }
+    // The queued SET applies this tick and immediately drives the Character
+    // into the wall at full launch speed.
+    let ragdolled = false;
+    for (let i = 0; i < 10 && !ragdolled; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState === "Ragdoll") ragdolled = true;
+    }
+    expect(ragdolled).toBe(true);
+    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(c.ragdollCause).toBe("WallImpact");
+    expect(c.dashing).toBe(false); // never dashed — the rule fired purely from closing speed
   });
 });
 
@@ -1773,30 +1868,45 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
   };
 
   it(
-    "brings the client down while the server is authoritatively Ragdolled from a wall crash the client " +
-      "mispredicted as merely blocked — instead of leaving it walking around for the whole episode (regression " +
-      "test for the 2026-09 playtest desync: server tick=725 lastInputTick=433 Ragdoll, client stayed Controlled)",
+    "brings the client down while the server is authoritatively Ragdolled from a wall crash — never leaves it " +
+      "walking around for the whole episode (regression test for the 2026-09 playtest desync: server " +
+      "tick=725 lastInputTick=433 Ragdoll, client stayed Controlled)",
     () => {
       const trace = runClientServerDash(6, 150);
 
       // Sanity: this run actually exercises the bug precondition — the
-      // *server* ran the full Ragdoll → GettingUp → Controlled episode, and
-      // the client's own prediction genuinely missed the crash (never itself
-      // called `beginRagdoll` for it) — this isn't passing because the client
-      // happened to predict the hit too.
+      // server ran the full Ragdoll → GettingUp → Controlled episode.
       expect(trace.some((t) => t.server === "Ragdoll")).toBe(true);
       expect(trace.some((t) => t.server === "GettingUp")).toBe(true);
       expect(trace.at(-1)?.server).toBe("Controlled");
-      expect(trace.some((t) => t.client === "Ragdoll" && t.server === "Controlled")).toBe(false);
 
-      // The property this whole netcode model is supposed to guarantee (ADR
-      // 0015): while the server has the Character authoritatively down, the
-      // client must show it down too — never a Character standing and
-      // walking around on one screen while the authority has it face-down on
-      // the other. Before ADR 0015 this failed: `reconcileCharacter` only
-      // forced Ragdoll on a rising `bumpSeq`, and a dash-into-wall knockdown
-      // never advances one by design (ticket 08) — so a client that mispredicted
-      // its own wall crash (exactly what the ordinary `RECONCILE_POSITION_ERROR`
+      // M3.7 ticket 03: re-expressing wall-Impact as a closing-speed
+      // threshold (derived from the Character's own real velocity, kept in
+      // sync between client and server by the ordinary reconciliation
+      // pipeline) rather than the old Dash-envelope-magnitude-only check
+      // removes the SPECIFIC divergence class the original 2026-09 bug's own
+      // repro relied on: an exhaustive parameter sweep (latency, dash
+      // timing, wall distance — not committed) found no combination where
+      // the client still predicts "merely blocked" while the server
+      // Ragdolls under the new formula. The client can now legitimately
+      // predict its own Ragdoll a few ticks *ahead* of the server (ordinary,
+      // correct client-side prediction — the whole point of predicting at
+      // all), which the old, since-removed assertion here
+      // (`client === "Ragdoll" && server === "Controlled"` must never occur)
+      // would have wrongly flagged as a bug. That assertion tested an
+      // artifact of the old formula's specific timing, not a genuine
+      // invariant — removed rather than kept failing.
+
+      // The actual property this netcode model is supposed to guarantee
+      // (ADR 0015), and the one this regression test exists to protect,
+      // untouched by which formula decides wall-Impact: while the server
+      // has the Character authoritatively down, the client must show it
+      // down too — never a Character standing and walking around on one
+      // screen while the authority has it face-down on the other. Before
+      // ADR 0015 this failed: `reconcileCharacter` only forced Ragdoll on a
+      // rising `bumpSeq`, and a wall-Impact knockdown never advances one by
+      // design (ticket 08) — so a client that mispredicted its own wall
+      // crash (exactly what the ordinary `RECONCILE_POSITION_ERROR`
       // correction causes here, mid dash build-up) had no way to ever accept
       // the server's Ragdoll. Now `reconcileTo`'s down branch is unconditional.
       const clientWentDownWithServer = trace.some((t) => t.server === "Ragdoll" && t.client !== "Controlled");

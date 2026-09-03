@@ -4,15 +4,12 @@ import {
   CAPSULE_HALF_HEIGHT,
   CAPSULE_RADIUS,
   CHARACTER_CONTROLLER_OFFSET,
-  DASH_SPEED,
-  DASH_WALL_IMPACT_MAGNITUDE,
-  DASH_WALL_LIFT_RATIO,
-  DASH_WALL_MIN_SPEED_RATIO,
   GETUP_CAPSULE_LIFT,
   GETUP_TICKS,
   GRAVITY_Y,
   GROUND_SNAP_DISTANCE,
   GROUND_STICK_SPEED,
+  IMPACT_RAGDOLL_MIN,
   IMPACT_STAGGER_MIN,
   MOVE_ACCEL_FACTOR,
   MOVE_FRICTION_FACTOR,
@@ -24,6 +21,9 @@ import {
   TICK_DT,
   WALK_SPEED,
   WALKABLE_SLOPE_MAX_ANGLE,
+  WALL_IMPACT_LIFT_RATIO,
+  WALL_IMPACT_MIN_SPEED,
+  WALL_IMPACT_SCALE,
   WALL_NORMAL_MAX_Y,
 } from "../tuning.js";
 import type { ReconcileBase, RagdollCause } from "../state/SimState.js";
@@ -72,14 +72,31 @@ export type CollisionListener = (
 ) => void;
 
 /**
- * Knockback for a Dash blocked by a near-vertical surface: bounces back along
- * `normal` (the obstacle's outward contact normal, which already points away
- * from the surface toward the Character — no sign flip needed), plus a small
- * lift, always at {@link DASH_WALL_IMPACT_MAGNITUDE}.
+ * Knockback for a Character moving fast enough into a near-vertical surface
+ * (M3.7 ticket 03, ADR 0037) — Dash is one contributor to that speed among
+ * several (a bounce, a launch pad, an updraft), never a special case of its
+ * own. Bounces back along `normal` (the obstacle's outward contact normal,
+ * which already points away from the surface toward the Character — no sign
+ * flip needed), plus a small lift, with a magnitude that scales with
+ * `closingSpeed` (how fast the Character was moving into the wall) instead
+ * of the flat constant this replaced — a glancing, barely-qualifying hit now
+ * lands softer than someone launched into the same wall at twice the speed.
+ *
+ * Floored at {@link IMPACT_RAGDOLL_MIN} (code review): `WALL_IMPACT_SCALE` is
+ * calibrated so a full-strength Dash reproduces its old flat magnitude
+ * exactly (`DASH_SPEED * WALL_IMPACT_SCALE === 14`), which makes a
+ * closing speed only just at {@link WALL_IMPACT_MIN_SPEED} scale down to
+ * ~8.4 — below `IMPACT_RAGDOLL_MIN`, so the wall-Impact check would fire
+ * (`resolveCollisions` decided this was a wall hit) yet only Stagger the
+ * Character, contradicting this very ticket's "any Character moving fast
+ * enough into a wall goes down." The floor guarantees every hit that clears
+ * the gate actually forces Ragdoll; it never engages above ~9.6 units/s
+ * closing speed, so the proportional scaling (and the full-Dash-speed
+ * continuity above) is otherwise untouched.
  */
-export const dashWallKnockback = (normal: Vec3): Vec3 => {
-  const away = normalizeVec3(vec3(normal.x, DASH_WALL_LIFT_RATIO, normal.z));
-  return scaleVec3(away, DASH_WALL_IMPACT_MAGNITUDE);
+export const wallImpactKnockback = (normal: Vec3, closingSpeed: number): Vec3 => {
+  const away = normalizeVec3(vec3(normal.x, WALL_IMPACT_LIFT_RATIO, normal.z));
+  return scaleVec3(away, Math.max(IMPACT_RAGDOLL_MIN, closingSpeed * WALL_IMPACT_SCALE));
 };
 
 /** What {@link CharacterController.snapshot} reports back to `RapierSimulation` each tick. */
@@ -735,7 +752,7 @@ export class CharacterController {
       this.jump.land();
     }
 
-    this.resolveCollisions(lengthVec3(dashBurst));
+    this.resolveCollisions();
 
     const at = this.body.translation();
     this.body.setNextKinematicTranslation({
@@ -749,19 +766,26 @@ export class CharacterController {
   }
 
   /**
-   * Walk this tick's `computeColliderMovement` collisions (ticket 06): a Dash
-   * burst moving at or above {@link DASH_WALL_MIN_SPEED_RATIO} of full speed,
-   * blocked by a near-vertical surface, knocks the Character down (wall or
-   * Spinner or Prop — whatever it hit) — a slow build-up or late-release hit
-   * is just a blocked walk. Another Character is the exception: dashing into a
-   * player never knocks the *mover* down (ticket 04 — Bump is one-sided, only
-   * the one bumped goes down), so the wall-crash check skips Character
-   * colliders. Every collision is still forwarded to {@link onCollision} so
-   * `RapierSimulation` can resolve the contact — Spinner Knockback, a shoved
-   * Prop, or a Bump delivered to the other Character.
+   * Walk this tick's `computeColliderMovement` collisions (ticket 06;
+   * re-expressed as a speed threshold, M3.7 ticket 03, ADR 0037): a
+   * Character closing on a near-vertical surface at or above
+   * {@link WALL_IMPACT_MIN_SPEED} knocks it down (wall or Spinner or Prop —
+   * whatever it hit), magnitude scaling with that same closing speed — a
+   * slow build-up or late-release Dash, or simply walking into a wall, is
+   * just a blocked walk. Closing speed is `this.velocity`'s own component
+   * *into* the surface along its normal, whatever gave the Character that
+   * velocity — Dash, a bounce, a launch pad, an updraft, all qualify
+   * identically; there is deliberately no second, parallel "is this
+   * Character Dashing/launched" check (two rules for one event drift apart
+   * under tuning, and then neither can be blamed). Another Character is the
+   * exception: crashing into a player never knocks the *mover* down (ticket
+   * 04 — Bump is one-sided, only the one bumped goes down), so this check
+   * skips Character colliders. Every collision is still forwarded to
+   * {@link onCollision} so `RapierSimulation` can resolve the contact —
+   * Spinner Knockback, a shoved Prop, or a Bump delivered to the other
+   * Character.
    */
-  private resolveCollisions(dashSpeed: number): void {
-    const dashingFastEnough = dashSpeed >= DASH_SPEED * DASH_WALL_MIN_SPEED_RATIO;
+  private resolveCollisions(): void {
     const count = this.rapierController.numComputedCollisions();
     // The most floor-like collision this tick (highest normal.y among the
     // roughly-horizontal, non-Character ones) — the ground contact ticket
@@ -789,8 +813,15 @@ export class CharacterController {
         groundNormal = normal;
       }
 
-      if (dashingFastEnough && !hitCharacter && Math.abs(normal.y) < WALL_NORMAL_MAX_Y) {
-        this.applyImpact(dashWallKnockback(normal), "DashWall");
+      if (!hitCharacter && Math.abs(normal.y) < WALL_NORMAL_MAX_Y) {
+        // `normal` points away from the wall, toward the Character (Rapier's
+        // own convention — see `wallImpactKnockback`'s doc comment) — moving
+        // *into* the wall is moving opposite to it, so the closing speed is
+        // the negated dot product, not the raw one.
+        const closingSpeed = -dotVec3(this.velocity, normal);
+        if (closingSpeed >= WALL_IMPACT_MIN_SPEED) {
+          this.applyImpact(wallImpactKnockback(normal, closingSpeed), "WallImpact");
+        }
       }
 
       if (this.onCollision) {

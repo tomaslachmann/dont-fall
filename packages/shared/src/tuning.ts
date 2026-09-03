@@ -329,19 +329,12 @@ export const GETUP_TICKS = msToTicks(GETUP_MS);
 /** Default height below which a Character has Fallen out of the playground (units). */
 export const DEFAULT_KILL_PLANE_Y = -8;
 
-// --- Dash into a wall (ticket 06) --------------------------------------------
-
-/**
- * Impulse magnitude of the Knockback applied when a Dash burst is blocked by a
- * near-vertical surface. Always at or above {@link IMPACT_RAGDOLL_MIN} — dashing
- * into a wall always knocks the Character down, never just Staggers it.
- */
-export const DASH_WALL_IMPACT_MAGNITUDE = 14;
+// --- Wall Impact (ticket 06, M1; re-expressed as a speed threshold, M3.7 ticket 03, ADR 0037) --
 
 /**
  * A collision normal counts as a "wall" (not a floor or ceiling) when the
  * absolute value of its Y component is below this. Above it, the surface is
- * treated as roughly horizontal and ignored for the dash-into-wall check.
+ * treated as roughly horizontal and ignored for the wall-Impact check.
  */
 export const WALL_NORMAL_MAX_Y = 0.5;
 
@@ -396,16 +389,38 @@ export const SLOPE_SPEED_ANGLE_FACTOR = 0.4;
  */
 export const SLOPE_SPEED_MULTIPLIER_MIN = 0.1;
 
-/** Upward bias mixed into the wall-bounce direction, before normalising, for a visible pop. */
-export const DASH_WALL_LIFT_RATIO = 0.3;
+/** Upward bias mixed into the wall-Impact knockback direction, before normalising, for a visible pop. */
+export const WALL_IMPACT_LIFT_RATIO = 0.3;
 
 /**
- * Minimum current Dash speed, as a fraction of {@link DASH_SPEED}, for hitting
- * a wall to force Ragdoll. Below this — early in the build-up or late in the
- * release (`dashEnvelope`) — a wall hit is just an ordinary blocked walk, not
- * a knockdown; only a hit near the top of the build counts as a real crash.
+ * Minimum closing speed (units/s) — how fast the Character is moving *into*
+ * the wall along its own normal, not just "how fast is this Character" in
+ * general — for hitting a near-vertical surface to force Ragdoll (M3.7
+ * ticket 03, ADR 0037). Re-expressed from the old Dash-specific
+ * `DASH_WALL_MIN_SPEED_RATIO * DASH_SPEED` ratio to this same numeric value
+ * (`DASH_SPEED * 0.6 = 9`) as a standalone absolute speed: the rule cares
+ * *how fast*, never *why* — a bounce, a launch pad or an updraft crossing
+ * this same threshold qualifies exactly like a full-strength Dash always
+ * did, with no second, parallel rule for "launched" states (two rules for
+ * one event drift apart under tuning, and then neither can be blamed).
+ * Below this — early in a Dash's build-up or late in its release
+ * (`dashEnvelope`), or simply walking fast on a downhill Surface — a wall
+ * hit is just an ordinary blocked walk, not a knockdown; only real speed
+ * counts as a real crash.
  */
-export const DASH_WALL_MIN_SPEED_RATIO = 0.6;
+export const WALL_IMPACT_MIN_SPEED = DASH_SPEED * 0.6;
+
+/**
+ * Impact magnitude per unit of closing speed (M3.7 ticket 03) — replaces the
+ * old flat `DASH_WALL_IMPACT_MAGNITUDE` (always 14, however fast the Dash
+ * actually was) with a magnitude that genuinely scales, so a glancing,
+ * barely-qualifying hit lands softer than someone launched into the same
+ * wall at twice the speed. Derived from the two previous, separately-tuned
+ * constants (`14 / DASH_SPEED`) so a full-strength Dash into a wall reaches
+ * *exactly* the same magnitude it always did — "Dashing into a wall feels
+ * as it did" is the ticket's own explicit requirement, not a coincidence.
+ */
+export const WALL_IMPACT_SCALE = 14 / DASH_SPEED;
 
 // --- Spinner Obstacle (ticket 06) --------------------------------------------
 
@@ -494,7 +509,7 @@ export const BUMP_IMPULSE_SCALE = 0.6;
 
 /**
  * Upward bias mixed into the Bump knockback direction before normalising, for
- * a visible pop off the ground — same idea as {@link DASH_WALL_LIFT_RATIO}.
+ * a visible pop off the ground — same idea as {@link WALL_IMPACT_LIFT_RATIO}.
  */
 export const BUMP_LIFT_RATIO = 0.3;
 
