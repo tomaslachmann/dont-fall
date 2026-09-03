@@ -16,6 +16,21 @@ import {
   type Vec3,
 } from "@dont-fall/shared";
 
+/**
+ * An absolute Segment position/orientation — what `setSegmentTransform`/
+ * `setSegmentTransforms` set wholesale, and what the on-canvas gizmo's
+ * drag-end commit produces (ticket 03/05). Canonical home for this shape:
+ * `viewport.ts` re-exports it as `SegmentTransform` rather than declaring
+ * its own copy (code review, ticket 05), since `trackEdit.ts` can't import
+ * from `viewport.ts` (which already imports the other direction, from here).
+ */
+export interface SegmentTransform {
+  position: Vec3;
+  rotation: number;
+  pitch: number;
+  roll: number;
+}
+
 const assertIndexInRange = (fn: string, track: Track, index: number): void => {
   if (!Number.isInteger(index) || index < 0 || index >= track.length) {
     throw new Error(`${fn}: index ${index} is out of range for a Track of length ${track.length}`);
@@ -225,7 +240,7 @@ export const setSegmentTransform = (
   track: Track,
   modules: Record<string, Module>,
   index: number,
-  transform: { position: Vec3; rotation: number; pitch: number; roll: number },
+  transform: SegmentTransform,
 ): Track => {
   assertIndexInRange("setSegmentTransform", track, index);
   const segment = settleOne("setSegmentTransform", track, modules, index);
@@ -235,6 +250,22 @@ export const setSegmentTransform = (
   const withUpdated = [...track.slice(0, index), updated, ...track.slice(index + 1)];
   return rechainFrom(withUpdated, modules, index + 1);
 };
+
+/**
+ * Batched form of {@link setSegmentTransform} — the multi-select gizmo's
+ * rigid-group drag-end commit (ticket 05): every Segment named in `updates`
+ * gets its own absolute transform and `manuallyPlaced` flag, exactly as a
+ * single-Segment drag would. Implemented as a straight fold over the
+ * single-Segment function rather than a new algorithm — each update already
+ * carries its own final absolute transform (computed live by the caller from
+ * the dragged pivot's offset), so there's nothing about "doing several at
+ * once" that isn't just "do each one, in turn."
+ */
+export const setSegmentTransforms = (
+  track: Track,
+  modules: Record<string, Module>,
+  updates: { index: number; transform: SegmentTransform }[],
+): Track => updates.reduce((acc, { index, transform }) => setSegmentTransform(acc, modules, index, transform), track);
 
 /** Snap radius (world units) for Socket-snapping a translate drag (ticket 03). */
 export const SOCKET_SNAP_RADIUS = 1.5;

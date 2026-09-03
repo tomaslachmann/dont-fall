@@ -9,7 +9,10 @@ import {
   ROTATE_STEP_FINE,
   segmentOverlapsAnyOther,
   snapPositionToNeighborSocket,
+  type SegmentTransform,
 } from "./trackEdit.js";
+
+export type { SegmentTransform };
 
 /**
  * A small, self-contained preview of one Module — the palette's "visual
@@ -47,14 +50,6 @@ export const createModulePreview = (canvas: HTMLCanvasElement, module: Module): 
 
 const SELECTION_COLOR = 0xfacc15;
 
-/** The absolute transform an on-canvas gizmo drag commits (ticket 03) — see `trackEdit.ts`'s `setSegmentTransform`. */
-export interface SegmentTransform {
-  position: { x: number; y: number; z: number };
-  rotation: number;
-  pitch: number;
-  roll: number;
-}
-
 export interface TrackViewport {
   setTrack: (modules: Record<string, Module>, track: Track) => void;
   /**
@@ -67,8 +62,14 @@ export interface TrackViewport {
    * count or order must use `setTrack` instead.
    */
   retransformSegments: (track: Track) => void;
-  /** Highlights Segment `index` (or clears the highlight if `undefined`) — also attaches/detaches the drag gizmo (ticket 03). */
-  setSelected: (index: number | undefined) => void;
+  /**
+   * Highlights every Segment in `indices` (or clears all highlights if
+   * empty) — also attaches/detaches the drag gizmo (ticket 03). A single
+   * index attaches the gizmo directly to that Segment; more than one
+   * attaches it to a synthetic pivot so a drag/rotate moves the whole
+   * selection together as a rigid group (ticket 05).
+   */
+  setSelected: (indices: number[]) => void;
   /** Switches the gizmo between moving and rotating the selected Segment (ticket 03). No-op if nothing is selected. */
   setGizmoMode: (mode: "translate" | "rotate") => void;
   /**
@@ -87,7 +88,7 @@ export interface TrackViewport {
 /** The whole-assembled-Track overview (ticket 04's second visual-preview requirement) — an orbit camera over every placed Segment, distinct from first-person placement. */
 export const createTrackViewport = (
   container: HTMLElement,
-  onSegmentTransformCommit: (index: number, transform: SegmentTransform) => void,
+  onSegmentTransformCommit: (updates: { index: number; transform: SegmentTransform }[]) => void,
 ): TrackViewport => {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio);
@@ -110,9 +111,28 @@ export const createTrackViewport = (
   let trackGroup = new THREE.Group();
   scene.add(trackGroup);
 
-  const selectionBox = new THREE.BoxHelper(new THREE.Object3D(), SELECTION_COLOR);
-  selectionBox.visible = false;
-  scene.add(selectionBox);
+  // One BoxHelper per selected Segment (ticket 05 — a single-Segment
+  // selection is just the length-1 case of this).
+  let selectionBoxes: THREE.BoxHelper[] = [];
+  const clearSelectionBoxes = (): void => {
+    for (const box of selectionBoxes) {
+      scene.remove(box);
+      box.dispose();
+    }
+    selectionBoxes = [];
+  };
+
+  // A synthetic, invisible pivot the gizmo attaches to for a multi-Segment
+  // selection (ticket 05) — TransformControls can only ever drive one
+  // Object3D, so a rigid-group drag/rotate needs something to drive that
+  // isn't any one of the selected Segments themselves. Positioned at
+  // whichever Segment is first in the selection each time `setSelected` is
+  // called; every selected Segment's transform *relative* to the pivot is
+  // recorded in `multiOffsets` at that moment, then reproduced live as the
+  // pivot moves.
+  const pivotObject = new THREE.Object3D();
+  scene.add(pivotObject);
+  const multiOffsets = new Map<number, { position: THREE.Vector3; quaternion: THREE.Quaternion }>();
 
   // Live overlap ghost-feedback (ticket 04) — a translucent box sized to the
   // dragged Segment's own Footprint (inflated by its clearance, via
@@ -132,7 +152,7 @@ export const createTrackViewport = (
   overlapGhost.visible = false;
   scene.add(overlapGhost);
 
-  // On-canvas drag gizmo (ticket 03). `modules`/`track`/`attachedIndex` are
+  // On-canvas drag gizmo (ticket 03). `modules`/`track`/`attachedIndices` are
   // kept up to date by `setTrack`/`setSelected` so the live-drag Socket-snap
   // and the drag-end commit both have what they need without the caller
   // threading them through every call.
@@ -140,8 +160,14 @@ export const createTrackViewport = (
   scene.add(transformControls.getHelper());
   let modules: Record<string, Module> = {};
   let track: Track = [];
-  let attachedIndex: number | undefined;
+  let attachedIndices: number[] = [];
   let shiftHeld = false;
+
+  // Rebuilt by `setTrack` alongside `trackGroup` — an O(1) lookup for the
+  // gizmo/selection code below, which (since ticket 05's multi-select) can
+  // call this once per selected Segment on every drag-update frame.
+  let groupByIndex = new Map<number, THREE.Object3D>();
+  const findGroup = (index: number): THREE.Object3D | undefined => groupByIndex.get(index);
 
   const applySnapTiers = (): void => {
     // Position: the default tier is Socket-snap (custom logic below, on
@@ -167,16 +193,23 @@ export const createTrackViewport = (
   window.addEventListener("keydown", onShiftDown);
   window.addEventListener("keyup", onShiftUp);
 
-  /** Moves/recolors `overlapGhost` to match the object currently attached to the gizmo, or hides it if there's nothing to show. */
+  /**
+   * Moves/recolors `overlapGhost` to match the Segment currently attached to
+   * the gizmo, or hides it if there's nothing to show. Single-Segment only
+   * (ticket 05 doesn't ask for group-wide overlap feedback, and
+   * `segmentOverlapsAnyOther` is itself a single-Segment primitive) — hidden
+   * whenever more than one Segment is selected.
+   */
   const updateOverlapGhost = (): void => {
-    const object = transformControls.object;
-    if (!object || attachedIndex === undefined) {
+    if (attachedIndices.length !== 1) {
       overlapGhost.visible = false;
       return;
     }
-    const segment = track[attachedIndex];
+    const index = attachedIndices[0]!;
+    const object = transformControls.object;
+    const segment = track[index];
     const module = segment && modules[segment.moduleId];
-    if (!module) {
+    if (!object || !module) {
       overlapGhost.visible = false;
       return;
     }
@@ -187,7 +220,7 @@ export const createTrackViewport = (
     overlapGhost.position.set(box.center.x, box.center.y, box.center.z);
     overlapGhost.quaternion.set(q.x, q.y, q.z, q.w);
     overlapGhost.scale.set(box.halfExtents.x * 2, box.halfExtents.y * 2, box.halfExtents.z * 2);
-    const overlapping = segmentOverlapsAnyOther(track, modules, attachedIndex, position, orientation);
+    const overlapping = segmentOverlapsAnyOther(track, modules, index, position, orientation);
     overlapGhostMaterial.color.set(overlapping ? OVERLAP_RED : OVERLAP_GREEN);
     overlapGhost.visible = true;
   };
@@ -201,31 +234,40 @@ export const createTrackViewport = (
       return;
     }
 
-    // Drag ended — commit once (a single undo step), reading back whatever
-    // the gizmo left the object at (already Socket-/grid-snapped live).
+    // Drag ended — commit once per selected Segment (still a single undo
+    // step, via one `history.apply` in main.ts), reading back whatever the
+    // gizmo/pivot propagation left each one at (already Socket-/grid-snapped
+    // live for a single-Segment drag; the multi-select path below keeps
+    // every Segment's own group already up to date on every `objectChange`,
+    // so reading them here is exactly the same shape either way).
     overlapGhost.visible = false;
-    const object = transformControls.object;
-    if (!object || attachedIndex === undefined) return;
-    const q = object.quaternion;
-    const { yaw, pitch, roll } = quatToEuler({ x: q.x, y: q.y, z: q.z, w: q.w });
-    onSegmentTransformCommit(attachedIndex, {
-      position: { x: object.position.x, y: object.position.y, z: object.position.z },
-      rotation: yaw,
-      pitch,
-      roll,
-    });
+    if (attachedIndices.length === 0) return;
+    const updates: { index: number; transform: SegmentTransform }[] = [];
+    for (const index of attachedIndices) {
+      const group = findGroup(index);
+      if (!group) continue;
+      const q = group.quaternion;
+      const { yaw, pitch, roll } = quatToEuler({ x: q.x, y: q.y, z: q.z, w: q.w });
+      updates.push({
+        index,
+        transform: { position: { x: group.position.x, y: group.position.y, z: group.position.z }, rotation: yaw, pitch, roll },
+      });
+    }
+    if (updates.length > 0) onSegmentTransformCommit(updates);
   });
 
   // Live Socket-snap while translating (ticket 03) — TransformControls has
   // no concept of "snap to another object's socket," only uniform grids, so
   // this overrides the object's position on every drag update whenever the
   // fine grid tier (Shift) isn't active. Never touches rotation — Socket-
-  // snap and rotate-snap are independent concerns.
+  // snap and rotate-snap are independent concerns. Single-Segment only — a
+  // multi-select's Socket-snap would have to pick which of the selected
+  // Segments' Sockets to chase, which the ticket doesn't ask for.
   transformControls.addEventListener("objectChange", () => {
-    if (transformControls.mode !== "translate" || shiftHeld || attachedIndex === undefined) return;
+    if (transformControls.mode !== "translate" || shiftHeld || attachedIndices.length !== 1) return;
     const object = transformControls.object;
     if (!object) return;
-    const snapped = snapPositionToNeighborSocket(track, modules, attachedIndex, {
+    const snapped = snapPositionToNeighborSocket(track, modules, attachedIndices[0]!, {
       x: object.position.x,
       y: object.position.y,
       z: object.position.z,
@@ -233,9 +275,24 @@ export const createTrackViewport = (
     object.position.set(snapped.x, snapped.y, snapped.z);
   });
 
-  // Live overlap ghost-feedback (ticket 04) — runs after the Socket-snap
-  // listener above so the ghost reflects the final, post-snap transform, on
-  // both translate and rotate drags.
+  // Rigid-group propagation for a multi-Segment selection (ticket 05) — the
+  // gizmo drives `pivotObject` only; every other selected Segment's group is
+  // repositioned/reoriented here on each drag update, from its transform
+  // *relative* to the pivot recorded by `setSelected` when the selection was
+  // made, so the whole group moves/rotates together preserving offsets.
+  transformControls.addEventListener("objectChange", () => {
+    if (transformControls.object !== pivotObject) return;
+    for (const [index, offset] of multiOffsets) {
+      const group = findGroup(index);
+      if (!group) continue;
+      group.quaternion.copy(pivotObject.quaternion).multiply(offset.quaternion);
+      group.position.copy(offset.position).applyQuaternion(pivotObject.quaternion).add(pivotObject.position);
+    }
+  });
+
+  // Live overlap ghost-feedback (ticket 04) — runs after the Socket-snap/
+  // multi-select propagation listeners above so the ghost reflects the
+  // final, post-snap transform, on both translate and rotate drags.
   transformControls.addEventListener("objectChange", () => {
     updateOverlapGhost();
   });
@@ -259,6 +316,7 @@ export const createTrackViewport = (
       scene.remove(trackGroup);
       disposeGroup(trackGroup);
       trackGroup = new THREE.Group();
+      groupByIndex = new Map();
       nextTrack.forEach((segment, index) => {
         const module = nextModules[segment.moduleId];
         if (!module) return;
@@ -266,13 +324,14 @@ export const createTrackViewport = (
         applySegmentTransform(group, segment);
         group.userData.segmentIndex = index;
         trackGroup.add(group);
+        groupByIndex.set(index, group);
       });
       scene.add(trackGroup);
       if (nextTrack.length > 0) {
         const mid = nextTrack[Math.floor(nextTrack.length / 2)]!.position;
         orbitControls.target.set(mid.x, mid.y, mid.z);
       }
-      selectionBox.visible = false;
+      clearSelectionBoxes();
     },
     retransformSegments(nextTrack) {
       track = nextTrack;
@@ -282,22 +341,53 @@ export const createTrackViewport = (
         if (segment) applySegmentTransform(group, segment);
       }
     },
-    setSelected(index) {
-      attachedIndex = index;
-      if (index === undefined) {
-        selectionBox.visible = false;
+    setSelected(indices) {
+      attachedIndices = [...indices];
+
+      clearSelectionBoxes();
+      selectionBoxes = attachedIndices
+        .map((index) => findGroup(index))
+        .filter((group): group is THREE.Object3D => group !== undefined)
+        .map((group) => {
+          const box = new THREE.BoxHelper(group, SELECTION_COLOR);
+          scene.add(box);
+          return box;
+        });
+
+      if (attachedIndices.length === 0) {
         transformControls.detach();
         return;
       }
-      const group = trackGroup.children.find((c) => c.userData.segmentIndex === index);
-      if (!group) {
-        selectionBox.visible = false;
+
+      if (attachedIndices.length === 1) {
+        const group = findGroup(attachedIndices[0]!);
+        if (group) transformControls.attach(group);
+        else transformControls.detach();
+        return;
+      }
+
+      // Multi-select: anchor the pivot at the first selected Segment's
+      // current transform, and record every selected Segment's transform
+      // relative to it — the rigid-group offsets the `objectChange`
+      // propagation listener above reproduces on every drag update.
+      const anchorGroup = findGroup(attachedIndices[0]!);
+      if (!anchorGroup) {
         transformControls.detach();
         return;
       }
-      selectionBox.setFromObject(group);
-      selectionBox.visible = true;
-      transformControls.attach(group);
+      pivotObject.position.copy(anchorGroup.position);
+      pivotObject.quaternion.copy(anchorGroup.quaternion);
+      const invPivotQuat = pivotObject.quaternion.clone().invert();
+      multiOffsets.clear();
+      for (const index of attachedIndices) {
+        const group = findGroup(index);
+        if (!group) continue;
+        multiOffsets.set(index, {
+          position: group.position.clone().sub(pivotObject.position).applyQuaternion(invPivotQuat),
+          quaternion: invPivotQuat.clone().multiply(group.quaternion),
+        });
+      }
+      transformControls.attach(pivotObject);
     },
     setGizmoMode(mode) {
       transformControls.setMode(mode);
@@ -333,6 +423,7 @@ export const createTrackViewport = (
       disposeGroup(trackGroup);
       transformControls.dispose();
       orbitControls.dispose();
+      clearSelectionBoxes();
       overlapGhost.geometry.dispose();
       overlapGhostMaterial.dispose();
       renderer.dispose();

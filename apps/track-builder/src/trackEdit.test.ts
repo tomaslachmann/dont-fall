@@ -19,6 +19,7 @@ import {
   rotateSegment,
   segmentOverlapsAnyOther,
   setSegmentTransform,
+  setSegmentTransforms,
   snapPositionToNeighborSocket,
   SOCKET_SNAP_RADIUS,
 } from "./trackEdit.js";
@@ -316,6 +317,79 @@ describe("setSegmentTransform (ticket 03 — the on-canvas gizmo commits an abso
     expect(() =>
       setSegmentTransform(track, MODULES, 5, { position: { x: 0, y: 0, z: 0 }, rotation: 0, pitch: 0, roll: 0 }),
     ).toThrow(/out of range/);
+  });
+});
+
+describe("setSegmentTransforms (ticket 05 — the multi-select gizmo's rigid-group drag-end commit)", () => {
+  const buildTrack = (): Track =>
+    insertSegment(
+      insertSegment(appendModule(appendModule([], "start", MODULES), "bridge", MODULES), MODULES, 2, "gap"),
+      MODULES,
+      3,
+      "start",
+    );
+
+  it("sets every given Segment's absolute transform and flags each manuallyPlaced", () => {
+    const track = buildTrack();
+    const result = setSegmentTransforms(track, MODULES, [
+      { index: 0, transform: { position: { x: 1, y: 0, z: 1 }, rotation: 0.1, pitch: 0, roll: 0 } },
+      { index: 2, transform: { position: { x: 5, y: 0, z: 5 }, rotation: 0.2, pitch: 0, roll: 0 } },
+    ]);
+    expect(result[0]).toMatchObject({ position: { x: 1, y: 0, z: 1 }, rotation: 0.1, manuallyPlaced: true });
+    expect(result[2]).toMatchObject({ position: { x: 5, y: 0, z: 5 }, rotation: 0.2, manuallyPlaced: true });
+  });
+
+  it("preserves the relative offset between two updated Segments — a rigid-group move", () => {
+    const track = buildTrack();
+    // Segments 0 and 2 start 12 units apart on X (two auto-chained hops of 6);
+    // moving both by the same +100 offset must land them exactly 12 apart still.
+    const offsetBy = { x: 100, y: 0, z: 0 };
+    const p0 = addVec3(track[0]!.position, offsetBy);
+    const p2 = addVec3(track[2]!.position, offsetBy);
+    const result = setSegmentTransforms(track, MODULES, [
+      { index: 0, transform: { position: p0, rotation: 0, pitch: 0, roll: 0 } },
+      { index: 2, transform: { position: p2, rotation: 0, pitch: 0, roll: 0 } },
+    ]);
+    expect(result[2]!.position.x - result[0]!.position.x).toBeCloseTo(track[2]!.position.x - track[0]!.position.x, 10);
+  });
+
+  it("re-chains everything after the last-updated Segment, but a later manually-placed Segment among the updates is left for rechainFrom's usual manuallyPlaced skip", () => {
+    const track = buildTrack(); // start(0), bridge(1), gap(2), start(3)
+    const result = setSegmentTransforms(track, MODULES, [
+      { index: 0, transform: { position: { x: 0, y: 0, z: 0 }, rotation: 0, pitch: 0, roll: 0 } },
+      { index: 1, transform: { position: { x: 50, y: 0, z: 0 }, rotation: 0, pitch: 0, roll: 0 } },
+    ]);
+    // Segment 2 ("gap", never in the update list) must now chain from Segment
+    // 1's *new* (x=50) placement, not its original one.
+    expect(result[2]!.position.x).toBeCloseTo(50, 10);
+  });
+
+  it("an untouched, already manually-placed Segment survives an unrelated later edit exactly as this commit left it", () => {
+    const track = buildTrack();
+    const committed = setSegmentTransforms(track, MODULES, [
+      { index: 0, transform: { position: { x: 1, y: 2, z: 3 }, rotation: 0.4, pitch: 0.1, roll: 0.2 } },
+      { index: 3, transform: { position: { x: 9, y: 8, z: 7 }, rotation: 0.6, pitch: 0.3, roll: 0.4 } },
+    ]);
+    // An unrelated upstream edit elsewhere in the Track re-chains from 0 —
+    // both manually-placed Segments must come through byte-for-byte.
+    const afterUnrelatedEdit = rechainFrom(committed, MODULES, 0);
+    expect(afterUnrelatedEdit[0]).toEqual(committed[0]);
+    expect(afterUnrelatedEdit[3]).toEqual(committed[3]);
+  });
+
+  it("rejects an out-of-range index among the updates", () => {
+    const track = buildTrack();
+    expect(() =>
+      setSegmentTransforms(track, MODULES, [
+        { index: 0, transform: { position: { x: 0, y: 0, z: 0 }, rotation: 0, pitch: 0, roll: 0 } },
+        { index: 99, transform: { position: { x: 0, y: 0, z: 0 }, rotation: 0, pitch: 0, roll: 0 } },
+      ]),
+    ).toThrow(/out of range/);
+  });
+
+  it("an empty updates list is a no-op", () => {
+    const track = buildTrack();
+    expect(setSegmentTransforms(track, MODULES, [])).toEqual(track);
   });
 });
 

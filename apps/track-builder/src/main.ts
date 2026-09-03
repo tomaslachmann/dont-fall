@@ -12,7 +12,7 @@ import {
   ROTATE_STEP,
   ROTATE_STEP_FINE,
   rotateSegment,
-  setSegmentTransform,
+  setSegmentTransforms,
   type RotateAxis,
 } from "./trackEdit.js";
 import { TrackHistory } from "./trackHistory.js";
@@ -40,7 +40,13 @@ const axisButtons: Record<RotateAxis, HTMLButtonElement> = {
 };
 
 const history = new TrackHistory([]);
-let selectedIndex: number | undefined;
+// Every currently-selected Segment index (ticket 05 — shift-click extends
+// this beyond a single entry). Set insertion order tracks click order, so
+// `primaryIndex()` (the last one clicked, used by every single-target action
+// — duplicate/delete/rotate buttons/keyboard nudge/inspector label) is just
+// its last element.
+let selectedIndices = new Set<number>();
+const primaryIndex = (): number | undefined => [...selectedIndices].at(-1);
 const previewRenders: (() => void)[] = [];
 
 // Assigned below, once `commitSegmentTransform` (which needs `applyEdit`) is
@@ -59,17 +65,33 @@ const setStatus = (text: string): void => {
   statusEl.textContent = text;
 };
 
-const select = (index: number | undefined): void => {
-  selectedIndex = index !== undefined && index >= 0 && index < history.track.length ? index : undefined;
-  viewport.setSelected(selectedIndex);
-  if (selectedIndex === undefined) {
+/** Pushes the current `selectedIndices` to the viewport (gizmo + highlight) and inspector — the one place either is ever touched, so they can never drift apart. */
+const applySelectionView = (): void => {
+  viewport.setSelected([...selectedIndices]);
+  const primary = primaryIndex();
+  if (primary === undefined) {
     inspector.hidden = true;
   } else {
     inspector.hidden = false;
-    const segment = history.track[selectedIndex]!;
+    const segment = history.track[primary]!;
     const manualHint = segment.manuallyPlaced ? " (manually placed)" : "";
-    inspectorLabel.textContent = `#${selectedIndex} ${segment.moduleId}${manualHint}`;
+    const countSuffix = selectedIndices.size > 1 ? ` (+${selectedIndices.size - 1} more selected)` : "";
+    inspectorLabel.textContent = `#${primary} ${segment.moduleId}${manualHint}${countSuffix}`;
   }
+};
+
+/** Replaces the whole selection with a single Segment (or clears it) — every edit's own re-selection, and a plain (non-shift) click. */
+const select = (index: number | undefined): void => {
+  selectedIndices = index !== undefined && index >= 0 && index < history.track.length ? new Set([index]) : new Set();
+  applySelectionView();
+};
+
+/** Adds/removes `index` from the current selection without disturbing the rest — a shift-click (ticket 05). */
+const toggleSelect = (index: number): void => {
+  if (index < 0 || index >= history.track.length) return;
+  if (selectedIndices.has(index)) selectedIndices.delete(index);
+  else selectedIndices.add(index);
+  applySelectionView();
 };
 
 // `setTrack` rebuilds the whole Three.js Group (fresh `segmentIndex` tags), so
@@ -101,14 +123,22 @@ const applyEdit = (next: Track, nextSelected: number | undefined, transformOnly 
   select(nextSelected);
 };
 
-// `applyEdit` is defined above, so this closure has no forward reference to
-// resolve. `transformOnly: true` (ticket 02's fast path) since a gizmo drag
-// never adds/removes/reassigns a Segment's `moduleId`.
-const commitSegmentTransform = (index: number, transform: SegmentTransform): void => {
-  applyEdit(setSegmentTransform(history.track, MODULE_LIBRARY, index, transform), index, true);
+// `applyEdit`/`applySelectionView` are defined above, so this closure has no
+// forward reference to resolve. `transformOnly: true` (ticket 02's fast path)
+// since a gizmo drag never adds/removes/reassigns a Segment's `moduleId`. A
+// single-Segment drag and a multi-select rigid-group drag (ticket 05) both
+// arrive here as a `updates` array (length 1 for the former) — one
+// `history.apply` either way, so a multi-Segment drag is still a single undo
+// step. Re-asserts the same Segments as selected afterward rather than
+// calling `select` (which would collapse a multi-selection to just one).
+const commitSegmentTransforms = (updates: { index: number; transform: SegmentTransform }[]): void => {
+  history.apply(setSegmentTransforms(history.track, MODULE_LIBRARY, updates));
+  rerender(true);
+  selectedIndices = new Set(updates.map((u) => u.index));
+  applySelectionView();
 };
 
-viewport = createTrackViewport(viewportContainer, commitSegmentTransform);
+viewport = createTrackViewport(viewportContainer, commitSegmentTransforms);
 const editCanvas = viewportContainer.querySelector("canvas")!;
 
 // Module palette — one entry per Module in the library, each with its own
@@ -129,7 +159,8 @@ for (const [moduleId, module] of Object.entries(MODULE_LIBRARY)) {
 
   entry.addEventListener("click", () => {
     if (mode !== "edit") return;
-    const insertAt = selectedIndex !== undefined ? selectedIndex + 1 : history.track.length;
+    const primary = primaryIndex();
+    const insertAt = primary !== undefined ? primary + 1 : history.track.length;
     applyEdit(insertSegment(history.track, MODULE_LIBRARY, insertAt, moduleId), insertAt);
   });
 
@@ -147,9 +178,11 @@ inspector.addEventListener("click", (e) => e.stopPropagation());
 browsePanel.addEventListener("click", (e) => e.stopPropagation());
 
 // Click a placed Segment in the overview to select it; click empty space to
-// deselect. A drag-to-orbit (OrbitControls) still fires a native `click` on
-// mouseup at the drag's end point — only treat it as a pick if the pointer
-// barely moved between press and release (code review, ticket 08).
+// deselect. Shift-click adds/removes it from the current selection instead
+// of replacing it (ticket 05). A drag-to-orbit (OrbitControls) still fires a
+// native `click` on mouseup at the drag's end point — only treat it as a
+// pick if the pointer barely moved between press and release (code review,
+// ticket 08).
 const DRAG_THRESHOLD_PX = 5;
 let pointerDownAt: { x: number; y: number } | undefined;
 viewportContainer.addEventListener("pointerdown", (e) => {
@@ -165,17 +198,20 @@ viewportContainer.addEventListener("click", (e) => {
   const moved = pointerDownAt ? Math.hypot(e.clientX - pointerDownAt.x, e.clientY - pointerDownAt.y) : 0;
   if (moved > DRAG_THRESHOLD_PX) return;
   const index = viewport.pick(e.clientX, e.clientY);
-  select(index);
+  if (index !== undefined && e.shiftKey) toggleSelect(index);
+  else select(index);
 });
 
 $("rotate-left").addEventListener("click", () => {
-  if (selectedIndex === undefined) return;
-  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, Math.PI / 2), selectedIndex, true);
+  const index = primaryIndex();
+  if (index === undefined) return;
+  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, index, Math.PI / 2), index, true);
 });
 
 $("rotate-right").addEventListener("click", () => {
-  if (selectedIndex === undefined) return;
-  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, -Math.PI / 2), selectedIndex, true);
+  const index = primaryIndex();
+  if (index === undefined) return;
+  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, index, -Math.PI / 2), index, true);
 });
 
 // On-canvas drag gizmo mode (ticket 03) — Move shows translate handles,
@@ -220,15 +256,20 @@ const MOVE_DIRECTIONS: Record<string, Vec3> = {
 const isTypingTarget = (target: EventTarget | null): boolean =>
   target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
 
+// Keyboard nudge/rotate stays scoped to the primary (last-clicked) Segment
+// even with a multi-selection active — only the on-canvas gizmo drag moves a
+// whole selection together (ticket 05 asks for the gizmo specifically, not
+// every input path).
 window.addEventListener("keydown", (e) => {
-  if (mode !== "edit" || selectedIndex === undefined || isTypingTarget(e.target)) return;
+  const index = primaryIndex();
+  if (mode !== "edit" || index === undefined || isTypingTarget(e.target)) return;
 
   const direction = MOVE_DIRECTIONS[e.code];
   if (direction) {
     e.preventDefault();
     const step = e.shiftKey ? MOVE_STEP_FINE : MOVE_STEP;
     const delta: Vec3 = { x: direction.x * step, y: direction.y * step, z: direction.z * step };
-    applyEdit(moveSegment(history.track, MODULE_LIBRARY, selectedIndex, delta), selectedIndex, true);
+    applyEdit(moveSegment(history.track, MODULE_LIBRARY, index, delta), index, true);
     return;
   }
 
@@ -236,22 +277,20 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     const step = e.shiftKey ? ROTATE_STEP_FINE : ROTATE_STEP;
     const signedStep = e.code === "BracketRight" ? step : -step;
-    applyEdit(
-      rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, signedStep, activeRotateAxis),
-      selectedIndex,
-      true,
-    );
+    applyEdit(rotateSegment(history.track, MODULE_LIBRARY, index, signedStep, activeRotateAxis), index, true);
   }
 });
 
 $("duplicate").addEventListener("click", () => {
-  if (selectedIndex === undefined) return;
-  applyEdit(duplicateSegment(history.track, MODULE_LIBRARY, selectedIndex), selectedIndex + 1);
+  const index = primaryIndex();
+  if (index === undefined) return;
+  applyEdit(duplicateSegment(history.track, MODULE_LIBRARY, index), index + 1);
 });
 
 $("delete").addEventListener("click", () => {
-  if (selectedIndex === undefined) return;
-  applyEdit(deleteSegment(history.track, MODULE_LIBRARY, selectedIndex), undefined);
+  const index = primaryIndex();
+  if (index === undefined) return;
+  applyEdit(deleteSegment(history.track, MODULE_LIBRARY, index), undefined);
 });
 
 $("remove-last").addEventListener("click", () => {
