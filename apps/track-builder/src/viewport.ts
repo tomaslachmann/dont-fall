@@ -41,6 +41,16 @@ const SELECTION_COLOR = 0xfacc15;
 
 export interface TrackViewport {
   setTrack: (modules: Record<string, Module>, track: Track) => void;
+  /**
+   * Re-applies every existing Segment group's position/orientation from
+   * `track` without disposing/rebuilding any geometry (code review, ticket
+   * 02) — for a move/rotate, which never adds, removes, or changes the
+   * `moduleId` of any Segment, so the existing groups are still valid, just
+   * out of place. `track` must be the same length, in the same Segment
+   * order, as whatever `setTrack` last built — callers that change Segment
+   * count or order must use `setTrack` instead.
+   */
+  retransformSegments: (track: Track) => void;
   /** Highlights Segment `index` (or clears the highlight if `undefined`). */
   setSelected: (index: number | undefined) => void;
   /** Raycasts from a mouse event's client coordinates; returns the Segment index hit, if any. */
@@ -107,6 +117,13 @@ export const createTrackViewport = (container: HTMLElement): TrackViewport => {
         controls.target.set(mid.x, mid.y, mid.z);
       }
       selectionBox.visible = false;
+    },
+    retransformSegments(track) {
+      for (const group of trackGroup.children) {
+        const index = group.userData.segmentIndex as number | undefined;
+        const segment = index !== undefined ? track[index] : undefined;
+        if (segment) applySegmentTransform(group, segment);
+      }
     },
     setSelected(index) {
       if (index === undefined) {

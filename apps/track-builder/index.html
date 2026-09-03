@@ -24,7 +24,9 @@
       #inspector .row { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
       #inspector button { background: #1c2430; color: #cdd9e5; border: 1px solid #2f3b4c; border-radius: 3px; padding: 4px 8px; font: inherit; cursor: pointer; flex: 1; }
       #inspector button:hover { border-color: #4a90d9; }
-      #hint { position: absolute; bottom: 12px; left: 12px; font-size: 11px; color: #5a6b80; }
+      #inspector button.active { background: #2a4a72; border-color: #4a90d9; }
+      #inspector .axis-label { font-size: 10px; color: #5a6b80; text-transform: uppercase; letter-spacing: 0.06em; margin: 4px 0 2px; }
+      #hint { position: absolute; bottom: 12px; left: 12px; font-size: 11px; color: #5a6b80; line-height: 1.6; }
       #browse {
         position: absolute; top: 12px; left: 12px; width: 220px; max-height: 60%; overflow-y: auto;
         background: rgba(16, 20, 28, 0.9); border: 1px solid #232a36; border-radius: 4px; padding: 10px;
@@ -61,12 +63,21 @@
             <button id="rotate-left">↺ 90°</button>
             <button id="rotate-right">↻ 90°</button>
           </div>
+          <div class="axis-label">keyboard rotate axis</div>
+          <div class="row">
+            <button id="axis-yaw" class="active">Yaw</button>
+            <button id="axis-pitch">Pitch</button>
+            <button id="axis-roll">Roll</button>
+          </div>
           <div class="row">
             <button id="duplicate">Duplicate</button>
             <button id="delete">Delete</button>
           </div>
         </div>
-        <div id="hint">click a Module to select it · click empty space to deselect</div>
+        <div id="hint">
+          click a Module to select it · click empty space to deselect<br />
+          arrows/PageUp/PageDown move selected · [ ] rotate on the active axis · hold Shift for fine steps
+        </div>
       </div>
       <div id="toolbar">
         <label>track-service <input id="service-url" value="http://localhost:8081" size="24" /></label>

@@ -16,6 +16,15 @@ import { findSocket, type Module, type Socket } from "./Module.js";
  * restricted to a multiple of 90° (ADR 0031's restriction existed only
  * because the old placement scheme pre-rotated an axis-aligned box by hand
  * instead of giving `RapierSimulation` a real rotated collider).
+ *
+ * `manuallyPlaced` (ticket 02) is a pure Track-builder authoring concern —
+ * `resolveTrack`/`RapierSimulation`/the Match server never read it, a Segment
+ * always just has whatever position/orientation it has. It exists so the
+ * builder's `rechainFrom` (auto-recompute from the socket chain) can skip a
+ * Segment the author has explicitly moved/rotated by hand, rather than
+ * silently overwriting it on the next unrelated edit. Lives on `Segment`
+ * itself (not a side-table keyed by index) so it naturally survives
+ * insert/delete/reorder and undo/redo along with the Segment it describes.
  */
 export interface Segment {
   moduleId: string;
@@ -23,6 +32,7 @@ export interface Segment {
   rotation: number;
   pitch?: number;
   roll?: number;
+  manuallyPlaced?: boolean;
 }
 
 /** A Track: an ordered sequence of Segments (CONTEXT.md). */

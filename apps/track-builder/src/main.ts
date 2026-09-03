@@ -1,7 +1,15 @@
-import { MODULE_LIBRARY, type Track } from "@dont-fall/shared";
+import { MODULE_LIBRARY, type Track, type Vec3 } from "@dont-fall/shared";
 import { listTracks, loadTrack, saveTrack } from "./api.js";
 import { startPlaytest, type Playtest } from "./playtest.js";
-import { deleteSegment, duplicateSegment, insertSegment, removeLast, rotateSegment } from "./trackEdit.js";
+import {
+  deleteSegment,
+  duplicateSegment,
+  insertSegment,
+  moveSegment,
+  removeLast,
+  rotateSegment,
+  type RotateAxis,
+} from "./trackEdit.js";
 import { TrackHistory } from "./trackHistory.js";
 import { createModulePreview, createTrackViewport } from "./viewport.js";
 
@@ -20,6 +28,11 @@ const inspector = $("inspector");
 const inspectorLabel = $("inspector-label");
 const browsePanel = $("browse");
 const browseList = $("browse-list");
+const axisButtons: Record<RotateAxis, HTMLButtonElement> = {
+  yaw: $("axis-yaw"),
+  pitch: $("axis-pitch"),
+  roll: $("axis-roll"),
+};
 
 const history = new TrackHistory([]);
 let selectedIndex: number | undefined;
@@ -42,7 +55,9 @@ const select = (index: number | undefined): void => {
     inspector.hidden = true;
   } else {
     inspector.hidden = false;
-    inspectorLabel.textContent = `#${selectedIndex} ${history.track[selectedIndex]!.moduleId}`;
+    const segment = history.track[selectedIndex]!;
+    const manualHint = segment.manuallyPlaced ? " (manually placed)" : "";
+    inspectorLabel.textContent = `#${selectedIndex} ${segment.moduleId}${manualHint}`;
   }
 };
 
@@ -52,17 +67,26 @@ const select = (index: number | undefined): void => {
 // thing that ever calls `viewport.setSelected` (previously `rerender` did
 // too, with a stale pre-edit index a following `select` immediately
 // overwrote — code review, ticket 08).
-const rerender = (): void => {
-  viewport.setTrack(MODULE_LIBRARY, history.track);
+//
+// `transformOnly` (code review, ticket 02) skips the full dispose+rebuild for
+// a move/rotate — neither ever adds, removes, or reassigns the `moduleId` of
+// any Segment, so the existing Three.js groups are still valid and only need
+// their transform refreshed. Matters for the keyboard nudge's "held for
+// repeat": OS key-repeat can fire many times a second, and a full Group
+// teardown/rebuild per Segment on every one of those was visible jank on
+// anything but a tiny Track.
+const rerender = (transformOnly = false): void => {
+  if (transformOnly) viewport.retransformSegments(history.track);
+  else viewport.setTrack(MODULE_LIBRARY, history.track);
   undoButton.disabled = !history.canUndo;
   redoButton.disabled = !history.canRedo;
   setStatus(`${history.track.length} Segment(s)`);
 };
 
-/** Applies an edit and selects the resulting Segment in one step — the pattern every mutating action (insert/rotate/duplicate/delete) shares. */
-const applyEdit = (next: Track, nextSelected: number | undefined): void => {
+/** Applies an edit and selects the resulting Segment in one step — the pattern every mutating action (insert/rotate/duplicate/delete/move) shares. */
+const applyEdit = (next: Track, nextSelected: number | undefined, transformOnly = false): void => {
   history.apply(next);
-  rerender();
+  rerender(transformOnly);
   select(nextSelected);
 };
 
@@ -120,12 +144,69 @@ viewportContainer.addEventListener("click", (e) => {
 
 $("rotate-left").addEventListener("click", () => {
   if (selectedIndex === undefined) return;
-  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, Math.PI / 2), selectedIndex);
+  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, Math.PI / 2), selectedIndex, true);
 });
 
 $("rotate-right").addEventListener("click", () => {
   if (selectedIndex === undefined) return;
-  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, -Math.PI / 2), selectedIndex);
+  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, -Math.PI / 2), selectedIndex, true);
+});
+
+// Which axis the keyboard rotate step (below) turns — the toolbar's ±90°
+// buttons above stay yaw-only regardless, matching their established meaning.
+let activeRotateAxis: RotateAxis = "yaw";
+const setActiveAxis = (axis: RotateAxis): void => {
+  activeRotateAxis = axis;
+  for (const [a, button] of Object.entries(axisButtons)) button.classList.toggle("active", a === axis);
+};
+axisButtons.yaw.addEventListener("click", () => setActiveAxis("yaw"));
+axisButtons.pitch.addEventListener("click", () => setActiveAxis("pitch"));
+axisButtons.roll.addEventListener("click", () => setActiveAxis("roll"));
+
+// Keyboard move/rotate (ticket 02): arrows + PageUp/PageDown nudge the
+// selected Segment's position, [ ] rotate it on the active axis. Both use a
+// two-tier step (ADR 0034) — Shift switches to the finer tier, never to a
+// fully unconstrained value. Ignored while a toolbar text field has focus,
+// so typing an id/name/URL doesn't hijack arrow keys.
+const MOVE_STEP = 0.5;
+const MOVE_STEP_FINE = 0.1;
+const ROTATE_STEP = (15 * Math.PI) / 180;
+const ROTATE_STEP_FINE = (5 * Math.PI) / 180;
+
+const MOVE_DIRECTIONS: Record<string, Vec3> = {
+  ArrowUp: { x: 0, y: 0, z: -1 },
+  ArrowDown: { x: 0, y: 0, z: 1 },
+  ArrowLeft: { x: -1, y: 0, z: 0 },
+  ArrowRight: { x: 1, y: 0, z: 0 },
+  PageUp: { x: 0, y: 1, z: 0 },
+  PageDown: { x: 0, y: -1, z: 0 },
+};
+
+const isTypingTarget = (target: EventTarget | null): boolean =>
+  target instanceof HTMLElement && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
+
+window.addEventListener("keydown", (e) => {
+  if (mode !== "edit" || selectedIndex === undefined || isTypingTarget(e.target)) return;
+
+  const direction = MOVE_DIRECTIONS[e.code];
+  if (direction) {
+    e.preventDefault();
+    const step = e.shiftKey ? MOVE_STEP_FINE : MOVE_STEP;
+    const delta: Vec3 = { x: direction.x * step, y: direction.y * step, z: direction.z * step };
+    applyEdit(moveSegment(history.track, MODULE_LIBRARY, selectedIndex, delta), selectedIndex, true);
+    return;
+  }
+
+  if (e.code === "BracketLeft" || e.code === "BracketRight") {
+    e.preventDefault();
+    const step = e.shiftKey ? ROTATE_STEP_FINE : ROTATE_STEP;
+    const signedStep = e.code === "BracketRight" ? step : -step;
+    applyEdit(
+      rotateSegment(history.track, MODULE_LIBRARY, selectedIndex, signedStep, activeRotateAxis),
+      selectedIndex,
+      true,
+    );
+  }
 });
 
 $("duplicate").addEventListener("click", () => {

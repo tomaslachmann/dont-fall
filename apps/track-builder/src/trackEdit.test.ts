@@ -1,10 +1,11 @@
-import { addVec3, rotateYaw, type Module, type Track } from "@dont-fall/shared";
+import { addVec3, rotateVec3ByQuat, rotateYaw, segmentOrientation, type Module, type Track } from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
 import {
   appendModule,
   deleteSegment,
   duplicateSegment,
   insertSegment,
+  moveSegment,
   rechainFrom,
   removeLast,
   rotateSegment,
@@ -141,6 +142,96 @@ describe("rotateSegment", () => {
     const rotated = rotateSegment(track, MODULES, 1, Math.PI / 2);
     expect(rotated[1]!.pitch).toBeCloseTo(settled[1]!.pitch!, 10);
     expect(rotated[1]!.roll).toBeCloseTo(settled[1]!.roll!, 10);
+  });
+
+  it("marks the rotated Segment manuallyPlaced (ticket 02)", () => {
+    const track = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);
+    const rotated = rotateSegment(track, MODULES, 1, Math.PI / 2);
+    expect(rotated[1]!.manuallyPlaced).toBe(true);
+  });
+
+  it("rotates on the pitch axis when asked, still pivoting around the entry Socket", () => {
+    const track = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);
+    const before = track[1]!;
+    const rotated = rotateSegment(track, MODULES, 1, 0.3, "pitch");
+    const after = rotated[1]!;
+
+    expect(after.pitch).toBeCloseTo(0.3, 10);
+    expect(after.rotation).toBeCloseTo(before.rotation, 10); // yaw untouched
+
+    const entryLocal = { x: 0, y: 0, z: 3 };
+    const anchorBefore = addVec3(before.position, rotateVec3ByQuat(entryLocal, segmentOrientation(before)));
+    const anchorAfter = addVec3(after.position, rotateVec3ByQuat(entryLocal, segmentOrientation(after)));
+    expect(anchorAfter.x).toBeCloseTo(anchorBefore.x, 10);
+    expect(anchorAfter.y).toBeCloseTo(anchorBefore.y, 10);
+    expect(anchorAfter.z).toBeCloseTo(anchorBefore.z, 10);
+  });
+
+  it("rotates on the roll axis when asked, additively on top of any existing roll", () => {
+    const track = appendModule([], "start", MODULES);
+    track[0] = { ...track[0]!, roll: 0.1 };
+    const rotated = rotateSegment(track, MODULES, 0, 0.2, "roll");
+    expect(rotated[0]!.roll).toBeCloseTo(0.3, 10);
+  });
+
+  it("normalizes an accumulated angle into [0, 2π) instead of growing unbounded", () => {
+    const track = appendModule([], "start", MODULES);
+    let result = track;
+    for (let i = 0; i < 30; i += 1) result = rotateSegment(result, MODULES, 0, Math.PI / 6); // 30 x 30° = 900°
+    expect(result[0]!.rotation).toBeGreaterThanOrEqual(0);
+    expect(result[0]!.rotation).toBeLessThan(2 * Math.PI);
+  });
+});
+
+describe("moveSegment (ticket 02)", () => {
+  it("offsets the Segment's world position by the given delta", () => {
+    const track = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);
+    const before = track[1]!.position;
+    const moved = moveSegment(track, MODULES, 1, { x: 1, y: 0.5, z: -2 });
+    expect(moved[1]!.position).toEqual({ x: before.x + 1, y: before.y + 0.5, z: before.z - 2 });
+  });
+
+  it("marks the moved Segment manuallyPlaced", () => {
+    const track = appendModule([], "start", MODULES);
+    const moved = moveSegment(track, MODULES, 0, { x: 1, y: 0, z: 0 });
+    expect(moved[0]!.manuallyPlaced).toBe(true);
+  });
+
+  it("re-chains everything after the moved Segment from its new position", () => {
+    const track = insertSegment(appendModule(appendModule([], "start", MODULES), "bridge", MODULES), MODULES, 2, "gap");
+    const moved = moveSegment(track, MODULES, 1, { x: 5, y: 0, z: 0 });
+    // "gap" (index 2) must now continue from "bridge"'s new (moved) placement.
+    expect(moved[2]!.position.x).toBeCloseTo(moved[1]!.position.x, 10);
+  });
+
+  it("rejects an out-of-range index", () => {
+    const track = appendModule([], "start", MODULES);
+    expect(() => moveSegment(track, MODULES, 5, { x: 0, y: 0, z: 0 })).toThrow(/out of range/);
+  });
+});
+
+describe("rechainFrom + manuallyPlaced (ticket 02)", () => {
+  it("preserves pitch/roll/manuallyPlaced on the first Segment (code review-style gap: used to build a bare {moduleId,position,rotation} literal)", () => {
+    const track: Track = [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0, pitch: 0.2, roll: 0.1, manuallyPlaced: true }];
+    const result = rechainFrom(track, MODULES, 0);
+    expect(result[0]).toEqual(track[0]);
+  });
+
+  it("does not overwrite a manuallyPlaced Segment when cascading from an earlier edit", () => {
+    const track = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);
+    const manual = moveSegment(track, MODULES, 1, { x: 10, y: 3, z: -7 });
+    // Simulate an unrelated edit earlier in the sequence by re-chaining from
+    // index 0 — the manually-placed Segment 1 must come through untouched.
+    const result = rechainFrom(manual, MODULES, 0);
+    expect(result[1]).toEqual(manual[1]);
+  });
+
+  it("a Segment after a manually-placed one still chains from the manually-placed Segment's actual position", () => {
+    const track = insertSegment(appendModule(appendModule([], "start", MODULES), "bridge", MODULES), MODULES, 2, "gap");
+    const manual = moveSegment(track, MODULES, 1, { x: 10, y: 0, z: 0 });
+    const result = rechainFrom(manual, MODULES, 0);
+    // "gap" (index 2, never touched) must follow "bridge"'s moved position, not its original one.
+    expect(result[2]!.position.x).toBeCloseTo(manual[1]!.position.x, 10);
   });
 });
 

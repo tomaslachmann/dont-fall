@@ -2,11 +2,13 @@ import {
   addVec3,
   findSocket,
   placeAfter,
-  rotateYaw,
+  rotateVec3ByQuat,
+  segmentOrientation,
   subVec3,
   type Module,
   type Segment,
   type Track,
+  type Vec3,
 } from "@dont-fall/shared";
 
 const assertIndexInRange = (fn: string, track: Track, index: number): void => {
@@ -25,19 +27,22 @@ const assertInsertIndexInRange = (fn: string, track: Track, index: number): void
 /**
  * Re-derives every Segment from `fromIndex` onward via `placeAfter`, chained
  * from whatever sits at `fromIndex - 1` — the single operation every edit
- * (delete/insert/duplicate/rotate) reduces to (ticket 08). `fromIndex`'s own
- * `moduleId` is kept; its position/rotation is recomputed unless it's index
- * 0, which has no predecessor to chain from and keeps its own values as-is.
+ * (delete/insert/duplicate/rotate/move) reduces to (ticket 08). `fromIndex`'s
+ * own `moduleId` is kept; its position/rotation/pitch/roll are recomputed
+ * unless it's index 0 (no predecessor to chain from) or it's flagged
+ * `manuallyPlaced` (ticket 02) — either way it keeps its own values as-is,
+ * and whatever comes after it still chains from wherever it actually is.
  */
 export const rechainFrom = (track: Track, modules: Record<string, Module>, fromIndex: number): Track => {
   const result: Track = track.slice(0, fromIndex);
   for (let i = fromIndex; i < track.length; i += 1) {
-    const moduleId = track[i]!.moduleId;
+    const segment = track[i]!;
+    const moduleId = segment.moduleId;
     const module = modules[moduleId];
     if (!module) throw new Error(`rechainFrom: unknown Module "${moduleId}"`);
 
-    if (i === 0) {
-      result.push({ moduleId, position: track[i]!.position, rotation: track[i]!.rotation });
+    if (i === 0 || segment.manuallyPlaced) {
+      result.push({ ...segment });
     } else {
       const prevSegment = result[i - 1]!;
       const prevModule = modules[prevSegment.moduleId];
@@ -82,22 +87,31 @@ export const duplicateSegment = (track: Track, modules: Record<string, Module>, 
 };
 
 const TWO_PI = Math.PI * 2;
-const normalizeYaw = (yaw: number): number => ((yaw % TWO_PI) + TWO_PI) % TWO_PI;
+const normalizeAngle = (radians: number): number => ((radians % TWO_PI) + TWO_PI) % TWO_PI;
+
+/** Which of a Segment's three orientation fields a rotate step turns (ADR 0034/ticket 02). */
+export type RotateAxis = "yaw" | "pitch" | "roll";
+
+const FIELD_BY_AXIS: Record<RotateAxis, "rotation" | "pitch" | "roll"> = {
+  yaw: "rotation",
+  pitch: "pitch",
+  roll: "roll",
+};
 
 /**
- * Rotates the Segment at `index` by `deltaRadians` (yaw only — ticket 01/02
- * generalize the Track/Segment data model to full 3D orientation, but this
- * editor function stays yaw-only until ticket 02/03 build real free-rotation
- * UI) around its own entry Socket — the world point where it connects to
+ * Rotates the Segment at `index` by `deltaRadians` on `axis` (defaults to
+ * `"yaw"`, matching every existing caller — the toolbar's ±90° buttons)
+ * around its own entry Socket — the world point where it connects to
  * whatever's before it stays fixed, only its facing (and, since it pivots
  * around an off-centre Socket, its own position) changes. Everything after
  * `index` is then re-chained naturally from the newly-rotated Segment.
+ * Marks the Segment `manuallyPlaced` (ticket 02) — an explicit rotation
+ * exempts it from a later unrelated edit silently resetting it.
  *
  * No longer restricted to a multiple of 90° (ADR 0034 lifted ADR 0031's
- * restriction at the data-model/physics level) — today's two toolbar buttons
- * still only ever call this with exactly ±90°, so this is a forward-
- * compatibility unblock for ticket 02/03's free-rotation UI, not a behavior
- * change for the current UI.
+ * restriction at the data-model/physics level) — the toolbar's two buttons
+ * still only ever call this with exactly ±90° on the yaw axis; `axis` and
+ * finer deltas exist for ticket 02's keyboard nudge / ticket 03's gizmo.
  *
  * Simplification: rotating Segment `index` does not try to preserve any
  * rotation a later Segment already had independently — re-chaining always
@@ -111,6 +125,7 @@ export const rotateSegment = (
   modules: Record<string, Module>,
   index: number,
   deltaRadians: number,
+  axis: RotateAxis = "yaw",
 ): Track => {
   assertIndexInRange("rotateSegment", track, index);
   // Defensive, not redundant: `track` isn't guaranteed already-settled — it
@@ -122,22 +137,37 @@ export const rotateSegment = (
   const module = modules[segment.moduleId];
   if (!module) throw new Error(`rotateSegment: unknown Module "${segment.moduleId}"`);
 
-  const newRotation = normalizeYaw(segment.rotation + deltaRadians);
+  const field = FIELD_BY_AXIS[axis];
+  const newValue = normalizeAngle((segment[field] ?? 0) + deltaRadians);
+  const withNewAngle: Segment = { ...segment, [field]: newValue, manuallyPlaced: true };
+
   let rotated: Segment;
   if (index === 0) {
-    rotated = { ...segment, rotation: newRotation };
+    rotated = withNewAngle;
   } else {
     const entry = findSocket(module, "entry");
-    const anchor = addVec3(segment.position, rotateYaw(entry.position, segment.rotation));
-    const newPosition = subVec3(anchor, rotateYaw(entry.position, newRotation));
-    // Code review: this used to build a fresh `{ moduleId, position,
-    // rotation }` literal instead of spreading `segment`, silently dropping
-    // any `pitch`/`roll` a Segment already had — this yaw-only rotate never
-    // touches those fields, so they must survive exactly like the index-0
-    // branch above already preserves them.
-    rotated = { ...segment, position: newPosition, rotation: newRotation };
+    const anchor = addVec3(segment.position, rotateVec3ByQuat(entry.position, segmentOrientation(segment)));
+    const newPosition = subVec3(anchor, rotateVec3ByQuat(entry.position, segmentOrientation(withNewAngle)));
+    rotated = { ...withNewAngle, position: newPosition };
   }
 
   const withRotated = [...settled.slice(0, index), rotated, ...settled.slice(index + 1)];
   return rechainFrom(withRotated, modules, index + 1);
+};
+
+/**
+ * Moves the Segment at `index` by `delta` (world-space, ticket 02's keyboard
+ * nudge) — unlike `rotateSegment`, there's no Socket to keep anchored; the
+ * Segment's position is simply offset. Marks it `manuallyPlaced`, then
+ * re-chains everything after it from the new position, exactly like every
+ * other edit in this module.
+ */
+export const moveSegment = (track: Track, modules: Record<string, Module>, index: number, delta: Vec3): Track => {
+  assertIndexInRange("moveSegment", track, index);
+  const settled = rechainFrom(track, modules, index);
+  const segment = settled[index]!;
+  const moved: Segment = { ...segment, position: addVec3(segment.position, delta), manuallyPlaced: true };
+
+  const withMoved = [...settled.slice(0, index), moved, ...settled.slice(index + 1)];
+  return rechainFrom(withMoved, modules, index + 1);
 };
