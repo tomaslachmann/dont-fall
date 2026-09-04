@@ -43,14 +43,28 @@ local playtest (05); track-service random Track generation (06). All manually ve
 (ADR 0034, `.scratch/m3.5-free-placement/`). Tickets 01–03 landed; 04 (live overlap ghost-feedback)
 and 05 (multi-select) are being finished separately.
 
-**Next:** M3.6 then M3.7 — the ground becomes physical. Settled in an eight-round grilling session
-(2026-09) backed by two research passes (`docs/research/slope-and-surface-movement.md`,
-`docs/research/surface-and-volume-mechanics.md`) and recorded as ADR 0035 (Character movement
-becomes a persistent-velocity acceleration model), ADR 0036 (Surface is a per-Box property, Volume
-is its own entity kind) and ADR 0037 (a `Sliding` state, two independent slope thresholds, and a
-speed-gated wall Impact). M3.6 adds no replicated state except `Sliding`; everything needing an
-`Epoch` latch lands together in M3.7. **M4 (Match structure + the first Screens) moves behind
-both** — a deliberate choice: the game gets better feel before it gets a loop.
+**M3.6 done** — Ground and the movement model (`.scratch/m3.6-ground-and-movement/issues/`). Settled
+in an eight-round grilling session (2026-09) backed by two research passes
+(`docs/research/slope-and-surface-movement.md`, `docs/research/surface-and-volume-mechanics.md`) and
+recorded as ADR 0035 (Character movement becomes a persistent-velocity acceleration model), ADR 0036
+(Surface is a per-Box property, Volume is its own entity kind) and ADR 0037 (a `Sliding` state, two
+independent slope thresholds, and a speed-gated wall Impact). Tickets 01–07: mud, the first Surface
+(01); ramps you don't skip down (02); `Sliding` down a steep ramp (03); downhill faster, uphill
+slower (04); velocity persists — the accelerate/drag/cap movement model (05); ice (06); the
+`Checkpoint.volume` → `trigger` rename that frees the word `Volume` (07). Adds no replicated state
+except `Sliding`.
+
+**M3.7 done** — Impulses and air (`docs/milestones/M3.7.md`, "Done when" met). Everything needing an
+`Epoch` latch, deferred from M3.6 so the replication protocol changes once. Tickets 01–04 in
+`.scratch/m3.7-impulses-and-air/issues/`: speed pads and slow pads, an Epoch-latched write plus a
+fading `WALK_SPEED` cap (01); bounce Surfaces and launch pads, a one-shot velocity SET following
+Quake's jump pad (02); wall Impact re-expressed as a closing-speed threshold rather than "are you
+dashing" (03); Volumes as their own entity kind and an updraft demo Module (04). All manually
+verified live through the real `apps/client` render/prediction/network pipeline (headless Chrome
+over raw CDP against a real match server and track-service), not just track-builder's own preview.
+
+**Next:** M4 (Match structure + the first Screens) — a deliberate choice made when M3.6/M3.7 were
+scoped: the game gets better feel before it gets a loop.
 
 ## Tech stack
 
