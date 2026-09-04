@@ -1,5 +1,13 @@
 import { createServer } from "node:http";
-import { M1_TRACK, RapierSimulation, type ClientMessage, type ServerMessage, type SimInputs, type Track } from "@dont-fall/shared";
+import {
+  DEFAULT_TIME_LIMIT_MS,
+  M1_TRACK,
+  RapierSimulation,
+  type ClientMessage,
+  type ServerMessage,
+  type SimInputs,
+  type Track,
+} from "@dont-fall/shared";
 import { startTrackService, type TrackService } from "@dont-fall/track-service";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -41,11 +49,11 @@ const nextMessage = (socket: WebSocket): Promise<ServerMessage> =>
  * Revision (ADR 0032) instead of creating a fresh one — Playtest always
  * reuses the same fixed reserved id across repeated clicks.
  */
-const publishTrack = async (track: Track = M1_TRACK, id?: string): Promise<string> => {
+const publishTrack = async (track: Track = M1_TRACK, id?: string, timeLimitMs?: number): Promise<string> => {
   const res = await fetch(`http://localhost:${trackService.port}/tracks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(id ? { id, track } : { track }),
+    body: JSON.stringify({ track, ...(id ? { id } : {}), ...(timeLimitMs !== undefined ? { timeLimitMs } : {}) }),
   });
   const body = (await res.json()) as { id: string };
   return body.id;
@@ -611,5 +619,77 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
 
     expect(lastZ).toBeLessThan(startZ - 1); // NORTH must still walk the Character, post-reload
     second.close();
+  });
+});
+
+describe("startServer — the Round clock (M4 ticket 03, ADR 0038)", () => {
+  /** The next `snapshot` (skipping the welcome and any pongs). */
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  it("counts down from the Revision's own authored Time Limit, not a server-wide default", async () => {
+    const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    server = await startServer({ port: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+
+    const first = await nextSnapshot(socket);
+
+    // The whole point of ADR 0038: a long Track can be given more time than a
+    // short one, so this has to be the authored number and nothing else.
+    expect(first.timeLeftMs).toBeLessThanOrEqual(45_000);
+    expect(first.timeLeftMs).toBeGreaterThan(44_000);
+    socket.close();
+  });
+
+  it("gives a Revision published without one the backfill default", async () => {
+    const trackId = await publishTrack();
+    server = await startServer({ port: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+
+    const first = await nextSnapshot(socket);
+
+    expect(first.timeLeftMs).toBeLessThanOrEqual(DEFAULT_TIME_LIMIT_MS);
+    expect(first.timeLeftMs).toBeGreaterThan(DEFAULT_TIME_LIMIT_MS - 1_000);
+    socket.close();
+  });
+
+  it("keeps counting down as the server Ticks", async () => {
+    const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    server = await startServer({ port: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+
+    const first = await nextSnapshot(socket);
+    let later = first;
+    for (let i = 0; i < 12; i += 1) later = await nextSnapshot(socket);
+
+    expect(later.timeLeftMs).toBeLessThan(first.timeLeftMs);
+    socket.close();
+  });
+
+  it("shows every client the same clock — one Round, one authority", async () => {
+    const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    server = await startServer({ port: 0 });
+    // The first connection loads the Track; the second just joins whatever is
+    // already running (a `?track=` reload is refused while anyone is here).
+    const a = connect(server.port, `?track=${trackId}`);
+    await nextSnapshot(a);
+    const b = connect(server.port);
+
+    const [snapA, snapB] = await Promise.all([nextSnapshot(a), nextSnapshot(b)]);
+
+    // Both are built from the same server Tick in the same broadcast, so they
+    // agree exactly — the client never computes time remaining (ADR 0038).
+    expect(snapA.state.tick === snapB.state.tick ? snapA.timeLeftMs : snapB.timeLeftMs).toBe(snapB.timeLeftMs);
+    expect(Math.abs(snapA.timeLeftMs - snapB.timeLeftMs)).toBeLessThan(200);
+    a.close();
+    b.close();
   });
 });

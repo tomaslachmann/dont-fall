@@ -8,6 +8,7 @@ export * from "./state/errorOffset.js";
 export * from "./input/movementDirection.js";
 export * from "./timing/FixedSimulation.js";
 export * from "./timing/advanceFixed.js";
+export * from "./timing/roundClock.js";
 export * from "./simulation/SimInputs.js";
 export * from "./simulation/Checkpoint.js";
 export * from "./simulation/FinishZone.js";

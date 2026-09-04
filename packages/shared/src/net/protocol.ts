@@ -61,6 +61,17 @@ export interface SnapshotMessage {
    * the client that owns this Character.
    */
   commandQueueDepth: number;
+  /**
+   * Milliseconds left on this Round's Time Limit (M4 ticket 03, ADR 0038),
+   * counted down by the server from its own Tick against the value the
+   * Revision was published with.
+   *
+   * A Match-level field rather than part of {@link SimState}: the clock is
+   * Round state the server owns, not something the shared simulation derives
+   * — which is exactly why the client never computes it and only renders what
+   * arrives here. Reaching 0 does not end anything yet (M4 ticket 05).
+   */
+  timeLeftMs: number;
 }
 
 /** Server → client, reply to a {@link PingMessage} (time sync, ADR 0019). */

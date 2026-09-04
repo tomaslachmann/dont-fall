@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { sql } from "drizzle-orm";
+import { DEFAULT_TIME_LIMIT_MS } from "@dont-fall/shared";
 import * as schema from "./schema.js";
 
 /**
@@ -47,9 +48,28 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
       content_hash TEXT NOT NULL,
       data TEXT NOT NULL,
       created_at INTEGER NOT NULL,
+      time_limit_ms INTEGER NOT NULL DEFAULT ${sql.raw(String(DEFAULT_TIME_LIMIT_MS))},
       PRIMARY KEY (track_id, revision)
     )
   `);
+
+  // M4 ticket 03 / ADR 0038: a real additive migration, not the
+  // drop-and-recreate above. That escape hatch was justified while the schema
+  // change was structural and there was nothing worth keeping; this one adds
+  // a column to a volume that now genuinely persists published Revisions, and
+  // a Revision is immutable (ADR 0032) — dropping them would destroy content
+  // rather than reshape it.
+  //
+  // `ADD COLUMN ... NOT NULL DEFAULT` *is* the backfill: SQLite writes the
+  // default into every existing row, so a Revision published before M4 (the
+  // M1 seed included) comes back with the default clock and keeps loading and
+  // playing unchanged.
+  const columns = sqlite.pragma("table_info(tracks)") as { name: string }[];
+  if (!columns.some((c) => c.name === "time_limit_ms")) {
+    console.log(`track-service: backfilling time_limit_ms = ${DEFAULT_TIME_LIMIT_MS} onto pre-M4 Revisions`);
+    sqlite.exec(`ALTER TABLE tracks ADD COLUMN time_limit_ms INTEGER NOT NULL DEFAULT ${DEFAULT_TIME_LIMIT_MS}`);
+  }
+
   return db;
 };
 

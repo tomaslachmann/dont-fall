@@ -648,3 +648,22 @@ export const TRACK_FETCH_RETRY_DELAY_MS = 1_000;
  * budget on one stuck attempt instead of retrying.
  */
 export const TRACK_FETCH_ATTEMPT_TIMEOUT_MS = 5_000;
+
+// --- Round clock (M4 ticket 03, ADR 0038) -----------------------------------
+
+/**
+ * The Time Limit a Revision published before M4 — the M1 seed included —
+ * backfills to (ADR 0038), and what the Track builder offers as the default
+ * for a new one. Three minutes: comfortably more than any current Track needs,
+ * so backfilling it can't make an existing Track unraceable.
+ */
+export const DEFAULT_TIME_LIMIT_MS = 180_000;
+
+/**
+ * Bounds on an authored Time Limit. Not balance values — a floor low enough
+ * to be worth authoring at all and a ceiling that keeps a typo (a stray zero)
+ * from producing a Round nobody can wait out. Enforced by track-service on
+ * publish, so a Revision can never carry a nonsense clock.
+ */
+export const MIN_TIME_LIMIT_MS = 10_000;
+export const MAX_TIME_LIMIT_MS = 30 * 60_000;

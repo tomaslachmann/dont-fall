@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Track } from "@dont-fall/shared";
+import {
+  DEFAULT_TIME_LIMIT_MS,
+  MAX_TIME_LIMIT_MS,
+  MIN_TIME_LIMIT_MS,
+  type Track,
+} from "@dont-fall/shared";
 import { M1_SEED_TRACK_ID, startTrackService, type TrackService } from "./index.js";
 
 let dir: string;
@@ -284,5 +289,79 @@ describe("track-service", () => {
     const byId = await fetch(`http://localhost:${service.port}/tracks/${M1_SEED_TRACK_ID}`);
     expect(res.status).toBe(200);
     expect(byId.status).toBe(200);
+  });
+});
+
+describe("Time Limit on publish (M4 ticket 03, ADR 0038)", () => {
+  const publish = async (port: number, body: Record<string, unknown>) =>
+    fetch(`http://localhost:${port}/tracks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("returns the authored Time Limit alongside the Track", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const { id } = (await (await publish(service.port, { track: SAMPLE_TRACK, timeLimitMs: 45_000 })).json()) as {
+      id: string;
+    };
+
+    const stored = (await (await fetch(`http://localhost:${service.port}/tracks/${id}`)).json()) as {
+      timeLimitMs: number;
+      track: Track;
+    };
+
+    expect(stored.timeLimitMs).toBe(45_000);
+    expect(stored.track).toEqual(SAMPLE_TRACK);
+  });
+
+  it("defaults a publish that omits it, so every existing caller keeps working", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const { id } = (await (await publish(service.port, { track: SAMPLE_TRACK })).json()) as { id: string };
+
+    const stored = (await (await fetch(`http://localhost:${service.port}/tracks/${id}`)).json()) as {
+      timeLimitMs: number;
+    };
+
+    expect(stored.timeLimitMs).toBe(DEFAULT_TIME_LIMIT_MS);
+  });
+
+  it("gives the M1 seed the default clock, so the seeded Track stays raceable", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    const stored = (await (await fetch(`http://localhost:${service.port}/tracks/${M1_SEED_TRACK_ID}`)).json()) as {
+      timeLimitMs: number;
+    };
+
+    expect(stored.timeLimitMs).toBe(DEFAULT_TIME_LIMIT_MS);
+  });
+
+  it("rejects a Time Limit below the floor rather than storing an unraceable Revision", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    const res = await publish(service.port, { track: SAMPLE_TRACK, timeLimitMs: MIN_TIME_LIMIT_MS - 1 });
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/timeLimitMs/);
+  });
+
+  it("rejects a Time Limit above the ceiling — a stray zero shouldn't make a Round nobody can wait out", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    expect((await publish(service.port, { track: SAMPLE_TRACK, timeLimitMs: MAX_TIME_LIMIT_MS + 1 })).status).toBe(400);
+  });
+
+  it("rejects a non-integer Time Limit", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    expect((await publish(service.port, { track: SAMPLE_TRACK, timeLimitMs: 45_000.5 })).status).toBe(400);
+    expect((await publish(service.port, { track: SAMPLE_TRACK, timeLimitMs: "60000" })).status).toBe(400);
+  });
+
+  it("accepts exactly the floor and the ceiling", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    expect((await publish(service.port, { track: SAMPLE_TRACK, timeLimitMs: MIN_TIME_LIMIT_MS })).status).toBe(201);
+    expect((await publish(service.port, { track: SAMPLE_TRACK, timeLimitMs: MAX_TIME_LIMIT_MS })).status).toBe(201);
   });
 });

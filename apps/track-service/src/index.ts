@@ -5,7 +5,7 @@ import { DEFAULT_TRACK_SERVICE_PORT, MODULE_LIBRARY, M1_TRACK } from "@dont-fall
 import { openDb, type TrackDb } from "./db.js";
 import { generateRandomTrack } from "./generate.js";
 import { getAnyTrack, getTrackById, listTracks, saveTrack, seedIfEmpty } from "./store.js";
-import { unknownModuleIds } from "./validate.js";
+import { invalidTimeLimitReason, unknownModuleIds } from "./validate.js";
 
 /**
  * track-service (ADR 0028): the single source of truth for Tracks, separate
@@ -87,7 +87,7 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
       json(res, 400, { error: "invalid JSON body" });
       return;
     }
-    const body = parsed as { id?: unknown; name?: unknown; track?: unknown };
+    const body = parsed as { id?: unknown; name?: unknown; track?: unknown; timeLimitMs?: unknown };
     if (!isTrack(body.track)) {
       json(res, 400, { error: "body.track must be a Segment[] (moduleId, position, rotation)" });
       return;
@@ -97,12 +97,20 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
       json(res, 400, { error: `unknown Module id(s): ${unknown.join(", ")}` });
       return;
     }
+    const badTimeLimit = invalidTimeLimitReason(body.timeLimitMs);
+    if (badTimeLimit) {
+      json(res, 400, { error: badTimeLimit });
+      return;
+    }
     // An explicit body.id republishes that same trackId as a new Revision
     // (ADR 0032) instead of creating a fresh one — never mutates Revision 1.
     const saved = saveTrack(db, {
       track: body.track,
       ...(typeof body.id === "string" ? { id: body.id } : {}),
       ...(typeof body.name === "string" ? { name: body.name } : {}),
+      // Absent is valid and means "the default" (ADR 0038) — already
+      // validated above, so anything still here is a real integer.
+      ...(typeof body.timeLimitMs === "number" ? { timeLimitMs: body.timeLimitMs } : {}),
     });
     json(res, 201, saved);
     return;

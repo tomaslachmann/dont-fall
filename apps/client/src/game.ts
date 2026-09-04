@@ -43,6 +43,7 @@ import { NetMetrics } from "./netMetrics.js";
 import { PropPredictionController, graceTicksForRtt } from "./propPrediction.js";
 import { needsCorrection } from "./reconcileGate.js";
 import { qualificationPlacement } from "./qualification.js";
+import { formatRoundClock } from "./roundTimer.js";
 import { SnapshotInterpolator } from "./snapshotInterpolation.js";
 import { createTeardown, type Teardown } from "./teardown.js";
 import { TimeSync } from "./timeSync.js";
@@ -242,6 +243,8 @@ const boot = async (
   // The raw latest snapshot, kept only for `reconcile` (tick-aligned replay).
   let latestServerSnapshot: SimState | null = null;
   let lastSnapshotArrivedAt = 0;
+  /** Latest server-reported Round clock (M4 ticket 03); `null` until the first snapshot. */
+  let timeLeftMs: number | null = null;
   const netMetrics = new NetMetrics();
   // NTP-style clock sync (ADR 0019) — feeds the interpolation buffer's clock
   // and the net-graph RTT.
@@ -386,6 +389,11 @@ const boot = async (
         latestServerSnapshot = message.state;
         lastSnapshotArrivedAt = performance.now();
         serverInterp.receive(message.state, lastSnapshotArrivedAt, message.serverTimeMs);
+        // The Round clock is the server's (ADR 0038) — held as it arrived and
+        // rendered, never advanced locally between snapshots. At the snapshot
+        // rate that is a visible step of at most one tenth of a second on a
+        // display that only shows whole seconds.
+        timeLeftMs = message.timeLeftMs;
         netMetrics.commandQueueDepth = message.commandQueueDepth;
         smoothedQueueDepth += (message.commandQueueDepth - smoothedQueueDepth) * 0.2;
 
@@ -689,6 +697,7 @@ const boot = async (
     // come from the server, which is the only side that knows when anyone
     // else crossed, so it fills in a moment later; until then the banner
     // stands without a number rather than guessing "#1".
+    const roundClock = timeLeftMs === null ? "--:--" : formatRoundClock(timeLeftMs);
     const qualified = c.finishTick !== null;
     const placement = latestServerSnapshot ? qualificationPlacement(latestServerSnapshot.characters, myId) : null;
     const banner = qualified ? `\n${placement === null ? "QUALIFIED" : `QUALIFIED #${placement}`}` : "";
@@ -709,6 +718,7 @@ const boot = async (
 
     hud.setText(
       `DON'T FALL — M2 · predicted + reconciled\n` +
+        `time ${roundClock}\n` +
         `sim ${TICK_RATE_HZ} Hz · render ${fps.toFixed(0)} fps · tick ${predictionTick}\n` +
         `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · ${c.motionState}\n` +
         `checkpoint ${cp} · falls ${c.fallCount}${banner}\n` +

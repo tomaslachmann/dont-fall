@@ -20,6 +20,14 @@ export const tracks = sqliteTable(
     /** JSON-serialized `Segment[]` (`@dont-fall/shared`'s `Track` type). */
     data: text("data").notNull(),
     createdAt: integer("created_at").notNull(),
+    /**
+     * How long a Round on this Revision gets, in milliseconds (M4 ticket 03,
+     * ADR 0038). A row attribute, keyed per `(track_id, revision)` like
+     * everything else here — deliberately NOT folded into `data`, which stays
+     * exactly the `Segment[]` every existing consumer already parses and which
+     * `resolveTrack` never needs this to do its job.
+     */
+    timeLimitMs: integer("time_limit_ms").notNull(),
   },
   (table) => [primaryKey({ columns: [table.trackId, table.revision] })],
 );

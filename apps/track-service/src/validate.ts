@@ -1,4 +1,4 @@
-import type { Module, Track } from "@dont-fall/shared";
+import { MAX_TIME_LIMIT_MS, MIN_TIME_LIMIT_MS, type Module, type Track } from "@dont-fall/shared";
 
 /**
  * Every `Segment.moduleId` in `track` must reference a real Module — before
@@ -18,4 +18,25 @@ export const unknownModuleIds = (track: Track, modules: Record<string, Module>):
     if (!Object.hasOwn(modules, segment.moduleId)) unknown.add(segment.moduleId);
   }
   return [...unknown];
+};
+
+/**
+ * Validates an authored Time Limit (M4 ticket 03, ADR 0038), returning the
+ * reason it is unacceptable or `undefined` if it's fine. `undefined` input is
+ * valid — a publish that omits it takes the default, which is what keeps
+ * every pre-M4 caller working unchanged.
+ *
+ * Rejected here rather than clamped: a Revision is immutable (ADR 0032), so a
+ * silently-corrected clock would be permanent and invisible to the author who
+ * typed it.
+ */
+export const invalidTimeLimitReason = (value: unknown): string | undefined => {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    return `timeLimitMs must be an integer number of milliseconds, got ${JSON.stringify(value)}`;
+  }
+  if (value < MIN_TIME_LIMIT_MS || value > MAX_TIME_LIMIT_MS) {
+    return `timeLimitMs must be between ${MIN_TIME_LIMIT_MS} and ${MAX_TIME_LIMIT_MS}, got ${value}`;
+  }
+  return undefined;
 };

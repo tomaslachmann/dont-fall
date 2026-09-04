@@ -10,12 +10,14 @@ import {
   RapierSimulation,
   SNAPSHOT_HZ,
   TICK_MS,
+  DEFAULT_TIME_LIMIT_MS,
   TICK_RATE_HZ,
   TRACK_FETCH_ATTEMPT_TIMEOUT_MS,
   TRACK_FETCH_MAX_WAIT_MS,
   TRACK_FETCH_RETRY_DELAY_MS,
   initPhysics,
   resolveTrack,
+  roundTimeLeftMs,
   trackSpawn,
   type ClientMessage,
   type ServerMessage,
@@ -28,6 +30,8 @@ export interface FetchedTrack {
   id: string;
   revision: number;
   track: Track;
+  /** The Time Limit published with this Revision (M4 ticket 03, ADR 0038). */
+  timeLimitMs: number;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -73,9 +77,17 @@ const fetchTrack = async (
     try {
       const res = await fetch(`${trackServiceUrl}${path}`, { signal: AbortSignal.timeout(attemptTimeoutMs) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = (await res.json()) as { id: string; revision: number; track: Track };
+      const body = (await res.json()) as { id: string; revision: number; track: Track; timeLimitMs?: number };
       if (attempt > 1) console.log(`DON'T FALL: track-service reachable after ${attempt} attempts`);
-      return { id: body.id, revision: body.revision, track: body.track };
+      return {
+        id: body.id,
+        revision: body.revision,
+        track: body.track,
+        // Defaulted rather than required, so a track-service that predates
+        // the column (ADR 0038's own backfill hasn't run yet) still yields a
+        // playable Round rather than a Match server that won't start.
+        timeLimitMs: body.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS,
+      };
     } catch (err) {
       lastError = err;
       console.warn(`DON'T FALL: track-service fetch attempt ${attempt} failed, retrying: ${(err as Error).message}`);
@@ -183,6 +195,16 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   // stepping physics every interval regardless, so its position for tick N
   // used to run ahead of what the client had actually predicted for N).
   let serverTick = 0;
+  /**
+   * The Tick this Round's clock counts from (M4 ticket 03, ADR 0038).
+   *
+   * Anchored when the first player arrives at an empty server, so a Match
+   * server that has been idle for an hour doesn't greet its first joiner with
+   * an already-expired clock. That is a stand-in, and deliberately a
+   * single variable: M4 ticket 04 gives the server a real Match phase, and
+   * the RUNNING transition becomes the one thing that sets this.
+   */
+  let roundStartTick = 0;
   // A short per-client queue absorbs network jitter and reordering;
   // `lastApplied` fills a tick a client's packet hasn't arrived for yet, and
   // `lastInputTick` — the server tick actually simulated, whether a real input
@@ -249,18 +271,26 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
           // in between, so this whole reload is effectively atomic with
           // respect to the `sockets.size` check just above.
           //
-          // Known, accepted limitation (code review): the discarded
-          // `simulation` below is never disposed — `RapierSimulation` has no
-          // `dispose()`/`free()` of its own, so its Rapier WASM `World`'s
-          // native memory leaks on every reload. Giving the whole class a
-          // real disposal lifecycle is a bigger, cross-cutting change this
-          // local-only dev tool doesn't warrant on its own; a developer
-          // hitting this in practice would need many edit→Playtest cycles in
-          // one long-lived server process before it mattered, and
-          // restarting the dev server (already the fix for the "occupied"
-          // refusal above) clears it.
+          // Built BEFORE the old world is discarded, and only swapped in once
+          // it exists: `resolveForSimulation` can throw (an unknown Module id
+          // in a Track published against a newer library), and disposing
+          // first would leave this server holding a freed Rapier world —
+          // every subsequent tick throwing, for every future connection,
+          // rather than just this one Playtest attempt failing.
+          const nextSimulation = new RapierSimulation({
+            ...resolveForSimulation(candidate.track),
+            withDefaultCharacter: false,
+          });
+          // The replaced `simulation`'s Rapier WASM `World` is native memory
+          // the JS garbage collector never reclaims, so it is released
+          // explicitly. (This used to be a documented leak: `RapierSimulation`
+          // had no disposal lifecycle at all until M4 ticket 01 gave it one
+          // for the client's own mount/unmount, which makes the fix here a
+          // single call.) Safe at exactly this point: `sockets.size === 0`
+          // was checked above, so no Character in this world is still in use.
+          simulation.dispose();
           fetched = candidate;
-          simulation = new RapierSimulation({ ...resolveForSimulation(fetched.track), withDefaultCharacter: false });
+          simulation = nextSimulation;
           // The new simulation's own tick counter restarts at 0 (ADR 0027) —
           // `serverTick` must restart with it, or every subsequent input
           // (stamped from the client's *new* `state.tick`, always small)
@@ -271,9 +301,16 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
           // think everything it sent already got applied. No one can move,
           // for the rest of this server process's life, not just this Track.
           serverTick = 0;
+          // A reload is a new Round on a new Track, so its clock starts over
+          // too — and `serverTick` has just been reset under it.
+          roundStartTick = 0;
           console.log(`DON'T FALL: reloaded Track "${fetched.id}"@${fetched.revision} for a Playtest connection`);
         }
       }
+
+      // First arrival at an empty server starts the Round's clock (see
+      // `roundStartTick`). Checked before this socket is registered below.
+      if (sockets.size === 0) roundStartTick = serverTick;
 
       const id = randomUUID();
       // Spawn in the loaded Track's own start frame (free placement puts the
@@ -402,6 +439,10 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       // One `JSON.stringify` per client — negligible at M2 scale, and the shape
       // binary + delta encoding will need anyway.
       const serverTimeMs = performance.now();
+      // Counted here, once per broadcast, so every client in this Round reads
+      // the identical clock off the identical Tick (ADR 0038 — the client
+      // never computes time remaining, it only renders this).
+      const timeLeftMs = roundTimeLeftMs(fetched.timeLimitMs, serverTick - roundStartTick);
       for (const [id, socket] of sockets) {
         if (socket.readyState !== socket.OPEN) continue;
         trySend(
@@ -411,6 +452,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
             state,
             serverTimeMs,
             commandQueueDepth: inputQueues.get(id)?.length ?? 0,
+            timeLeftMs,
           } satisfies ServerMessage),
         );
       }
