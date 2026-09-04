@@ -5,16 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DON'T FALL</title>
     <style>
-      html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e14; }
+      /* Pre-paint fallback, matching --df-color-surface-0 — src/app.css
+         takes over via the token itself once it loads. */
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #14161c; }
     </style>
   </head>
   <body>
     <!--
-      The game mounts its own canvas and HUD in here and removes them again on
-      teardown (M4 ticket 01) — the page holds no game-owned markup or styling,
-      so React can take this element over as `<GameCanvas>`'s host (ADR 0008).
+      React owns this element as the app shell's root (ADR 0008, M4 ticket
+      06) — routing, the Main Menu, and every other Screen render here.
+      `<GameCanvas>` (src/game/GameCanvas.tsx) is the one exception: it
+      renders a plain, React-untouched div and hands that div to the game's
+      own bootstrap (src/game.ts, M4 ticket 01), which mounts its canvas and
+      HUD into it directly and tears them down again on teardown. The game
+      loop never runs through React either way.
     -->
     <div id="game"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

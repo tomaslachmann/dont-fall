@@ -1,0 +1,40 @@
+/* Full-bleed, React-untouched — the game's own bootstrap (src/game.ts)
+   mounts its canvas and HUD directly into this element and empties it
+   again on teardown. React never renders children into it. */
+.mount {
+  position: fixed;
+  inset: 0;
+}
+
+.notice {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-6);
+  text-align: center;
+  color: var(--df-color-ink-primary);
+  background: var(--df-color-surface-0);
+}
+.detail {
+  color: var(--df-color-ink-secondary);
+  font-size: var(--df-type-label);
+  max-width: 60ch;
+}
+
+/* Shown over the game's own frozen last frame and HUD message on exit
+   (currently only a lost connection) — a small banner, not a takeover, so
+   the frozen scene and the game's own message stay visible underneath
+   until the player actually chooses to leave. */
+.exitBanner {
+  position: fixed;
+  left: 50%;
+  bottom: var(--df-space-6);
+  transform: translateX(-50%);
+  padding: var(--df-space-3);
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: var(--df-radius-standard);
+}

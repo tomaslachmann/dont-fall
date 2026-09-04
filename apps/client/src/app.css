@@ -1,0 +1,35 @@
+/*
+ * Page-level styles, driven by the shared design tokens
+ * (@dont-fall/shared/design/tokens.css, imported once in main.tsx before
+ * this file) — the mechanism docs/research/design-system.md §3 describes.
+ * index.html's own inline <style> only resets layout (margin/height); the
+ * actual color values live here so they can reference the tokens.
+ */
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--df-color-surface-0);
+  color: var(--df-color-ink-primary);
+  font-family: var(--df-font-body);
+}
+
+#game {
+  height: 100%;
+}
+
+/* A flat single-color ground reads as an admin panel; a fixed, subtle
+   light source gives the whole app one shared sense of depth instead of a
+   solid fill. A whisper of the accent hue in that glow (6% mix, not a
+   visible color) is the one place the brand color touches the whole
+   screen instead of just its reserved spots (wordmark, primary button). */
+#game {
+  background:
+    radial-gradient(
+      ellipse 1400px 900px at 20% -10%,
+      color-mix(in srgb, var(--df-color-accent) 6%, var(--df-color-surface-1)) 0%,
+      transparent 60%
+    ),
+    var(--df-color-surface-0);
+}

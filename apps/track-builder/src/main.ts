@@ -398,7 +398,10 @@ playtestButton.addEventListener("click", () => {
       // 5173 is apps/client's own fixed dev port (its `vite.config.ts`) — a
       // local-dev-only detail, not a shared runtime constant the way the
       // server/track-service ports are (ADR 0028's own network protocol).
-      window.open(`http://${location.hostname}:5173/?track=${encodeURIComponent(id)}`, "_blank");
+      // `/play` (M4 ticket 06): opening straight into a running game is the
+      // whole point of Playtest, so this targets the game route directly
+      // rather than the Main Menu now sitting at `/`.
+      window.open(`http://${location.hostname}:5173/play?track=${encodeURIComponent(id)}`, "_blank");
       setStatus(`playtest opened in a new tab (Track "${id}")`);
     } catch (err) {
       setStatus(`playtest failed: ${(err as Error).message}`);
