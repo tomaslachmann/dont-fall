@@ -28,6 +28,14 @@ export interface WelcomeMessage {
   playerId: string;
   sessionToken: string;
   spawn: Vec3;
+  /**
+   * The exact Track (ADR 0028) this Match server fetched at startup —
+   * `trackId`/`revision` from track-service's Revision model (ADR 0032).
+   * Every client fetches this exact Revision (ticket 11), not "latest",
+   * so a publish landing mid-Match can never desync client from server.
+   */
+  trackId: string;
+  trackRevision: number;
   config: {
     /** How often the server sends snapshots (Hz). May be ≤ the sim tick rate (ADR 0020). */
     snapshotHz: number;
@@ -98,3 +106,10 @@ export type ClientMessage = InputMessage | PingMessage | ReclaimMessage;
 
 /** Default port the server listens on and the client connects to when nothing else is configured. */
 export const DEFAULT_SERVER_PORT = 8080;
+
+/**
+ * Default port track-service (ADR 0028/0029) listens on. The Match server
+ * fetches its Track from here at startup — a real runtime dependency, not
+ * optional (ADR 0028's accepted trade-off).
+ */
+export const DEFAULT_TRACK_SERVICE_PORT = 8081;

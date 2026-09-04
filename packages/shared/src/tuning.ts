@@ -29,7 +29,17 @@ export const MAX_STEPS_PER_FRAME = 5;
 /** Downward acceleration (units/s²). Stronger than real gravity for snappier falls. */
 export const GRAVITY_Y = -22;
 
-/** Ground movement speed (units/s) while Controlled. */
+/**
+ * Ground movement **target** (units/s) while Controlled (ticket 05, M3.6,
+ * ADR 0035) — not, since this ticket, an instantaneous value assigned
+ * straight into velocity every tick. It is what `beginCapsuleTick`'s
+ * accelerate → drag → cap pipeline (`movementVerbs.ts`'s `accelerateVelocity`)
+ * chases; at today's (full-grip) `MOVE_ACCEL_FACTOR`/`MOVE_FRICTION_FACTOR`
+ * it still reaches this target within a single tick, so the change is
+ * structural, not felt — a Surface with its own, slower factors (ticket 06,
+ * ice/mud) is what turns "target reached over time" into something a player
+ * can actually feel.
+ */
 export const WALK_SPEED = 6;
 
 /**
@@ -37,8 +47,99 @@ export const WALK_SPEED = 6;
  * always has a non-degenerate vertical to solve — a flat `0` makes Rapier's
  * controller stall when the capsule rests exactly flush after a step-down. The
  * controller's own depenetration keeps the capsule from actually sinking.
+ *
+ * This is *not* what keeps the Character glued to a downhill slope (ticket 02,
+ * M3.6) — that was the actual unit bug: a fixed velocity produces a per-tick
+ * probe distance that shrinks relative to the ground the faster you're moving
+ * or the steeper the slope, capping clean descent at `atan(2/WALK_SPEED) ≈
+ * 18°` (about 5° mid-Dash). That job now belongs to Rapier's own
+ * `enableSnapToGround` (a real distance, not a speed) — see
+ * `GROUND_SNAP_DISTANCE`. This constant's remaining job is narrower: give the
+ * controller a small, constant, non-zero downward velocity to solve each
+ * grounded tick, so a Character walking off a ledge starts falling from a
+ * small speed rather than whatever happened to accumulate while grounded.
  */
 export const GROUND_STICK_SPEED = 2;
+
+/**
+ * How far below the capsule's feet Rapier's own snap-to-ground (ticket 02,
+ * M3.6/ADR 0037) will look for ground to pull the Character down onto — the
+ * actual fix for the ground-stick unit bug documented on
+ * {@link GROUND_STICK_SPEED}. Settled by a spike: enabling it on the
+ * installed `@dimforge/rapier3d-compat@0.20.0` was measured against the
+ * M1-era edge-stalling/Dash-hitching symptoms it was originally disabled
+ * for, and reproduced neither (see ticket 02's own notes for the numbers).
+ * `0.5` comfortably covers the worst case this project cares about — a
+ * ~40° slope at full Dash speed — while staying far short of any
+ * intentional gap/Fall in the current Track (the M1 seed's smallest
+ * kill-plane drop is 7.5 units).
+ */
+export const GROUND_SNAP_DISTANCE = 0.5;
+
+// --- Movement model: accelerate -> drag -> cap (ticket 05, M3.6, ADR 0035) --
+//
+// `movementVerbs.ts`'s `accelerateVelocity` replaces the old direct
+// `velocity.xz = wish` assignment with Source's own `Friction()`/
+// `Accelerate()` shape (the reference implementation ADR 0035 names
+// alongside Quake 3's `PM_Friction`/`PM_Accelerate`) — chosen deliberately
+// over a naive "step by a flat units/s² amount every tick" design: a flat
+// step's magnitude doesn't scale with anything, so a drag step and an
+// accelerate step of comparable size can fully cancel each other at low
+// speed, permanently stalling far short of the real target — verified
+// during this ticket's own development, not a hypothetical. Source's shapes
+// avoid this because `Accelerate()`'s magnitude scales with the *target*
+// speed (`wishSpeed`, a roughly-constant, comparatively large quantity) while
+// `Friction()`'s scales with the *current* speed (small until real motion
+// has built up) — different quantities, not the same one racing itself.
+
+/**
+ * Defensive backstop on the Character's own horizontal move velocity — the
+ * final "cap" stage of the pipeline. Comfortably above any speed the walk
+ * model can currently produce (`WALK_SPEED` × the highest Surface/slope
+ * multiplier, plus `DASH_SPEED`, ≈ 22.5 units/s), so it never actually fires
+ * today — it exists so a future stacked combination of Surface/slope/Dash
+ * effects fails safe instead of accumulating without bound.
+ */
+export const MOVE_VELOCITY_CAP = 30;
+
+/**
+ * Source's `sv_accelerate` — a dimensionless multiplier on `wishSpeed` (not
+ * an absolute units/s² rate): `accelerateVelocity`'s Accelerate() stage adds
+ * `min(MOVE_ACCEL_FACTOR * wishSpeed * TICK_DT, addSpeed)` toward the wish
+ * velocity every tick. `* TICK_DT >= 1` (true here, with generous margin —
+ * the exact threshold is `TICK_RATE_HZ`) guarantees the addable amount
+ * always reaches (never merely approaches) `wishSpeed`, saturating every
+ * tick — deliberate, not an oversight: this ticket's whole job is
+ * introducing the accelerate → drag → cap *shape*, numerically **identical**
+ * today to the direct assignment it replaces. A separately-tuned, genuinely
+ * gradual value only appears once a Surface (ticket 06, ice/mud) supplies
+ * its own, per the "one scalar per Surface multiplies both" rule (ADR 0035)
+ * — that scalar multiplies this constant (and `MOVE_FRICTION_FACTOR` below)
+ * directly, exactly like Source's own `surfaceFriction`.
+ */
+export const MOVE_ACCEL_FACTOR = 1000;
+
+/**
+ * Source's `sv_friction` — the Friction() stage's own dimensionless rate,
+ * kept as an independent constant from {@link MOVE_ACCEL_FACTOR} (Source's
+ * own reference values, 10 and 4, aren't equal either) even though both
+ * happen to need the same "saturates every tick" property today. Drop this
+ * tick is `max(speed, MOVE_STOP_SPEED) * MOVE_FRICTION_FACTOR * TICK_DT`;
+ * saturating (same `* TICK_DT >= 1` reasoning as above) fully zeroes any
+ * residual velocity every tick, matching the old model's implicit "no input
+ * held, no memory of the last direction" behaviour exactly.
+ */
+export const MOVE_FRICTION_FACTOR = 1000;
+
+/**
+ * Source's `sv_stopspeed` — a floor under Friction()'s `control` term, so a
+ * small residual speed gets a real, fast stop instead of an exponential tail
+ * that never quite reaches zero. Inert today: at {@link MOVE_FRICTION_FACTOR}'s
+ * current saturating value, drop already exceeds any realistic speed on its
+ * own, so this floor is never what decides the outcome. It starts mattering
+ * only once a Surface (ticket 06) supplies a much smaller friction scalar.
+ */
+export const MOVE_STOP_SPEED = 1;
 
 // --- Jump ------------------------------------------------------------------
 
@@ -93,6 +194,24 @@ export const DASH_RELEASE_TICKS = msToTicks(DASH_RELEASE_MS);
 /** {@link DASH_COOLDOWN_MS} in whole ticks. */
 export const DASH_COOLDOWN_TICKS = msToTicks(DASH_COOLDOWN_MS);
 
+// --- Speed pads (M3.7 ticket 01, ADR 0035) ----------------------------------
+
+/**
+ * How long a speed/slow pad's raised (or lowered) speed cap holds at full
+ * magnitude after the one-shot trigger, before {@link SPEED_PAD_FADE_MS}
+ * starts fading it back to 1 — SuperTuxKart's zipper model (`max-speed-
+ * increase` held for `duration`, then a linear fade over `fade-out-time`;
+ * `docs/research/surface-and-volume-mechanics.md` §1.2). A pure continuous
+ * multiplier (no hold, no one-shot write) was rejected: on a short pad the
+ * very next tick's cap would clip it right back down, doing almost nothing.
+ * Provisional, like every other Surface/pad number in this project so far —
+ * a measurement against a real pad, not a decision, once one exists.
+ */
+export const SPEED_PAD_HOLD_MS = 3000;
+
+/** How long the cap takes to linearly fade from its peak back to 1 (ms), once {@link SPEED_PAD_HOLD_MS} elapses. */
+export const SPEED_PAD_FADE_MS = 1000;
+
 /** Capsule radius (units). */
 export const CAPSULE_RADIUS = 0.35;
 
@@ -120,6 +239,27 @@ export const STAGGER_MS = 350;
 
 /** Movement input multiplier while Staggered. */
 export const STAGGER_INPUT_SCALE = 0.35;
+
+/**
+ * Movement input multiplier while Sliding (ticket 03, M3.6, ADR 0037) — some
+ * steering authority remains (unlike Ragdoll/GettingUp's 0), but reduced
+ * (unlike Controlled's 1), matching CONTEXT.md's "keeps reduced movement
+ * input while gravity carries it down the slope." A placeholder value —
+ * this milestone's numbers are deliberately provisional, tuned later against
+ * a real ramp, not decided here.
+ */
+export const SLIDE_INPUT_SCALE = 0.3;
+
+/**
+ * How far the horizontal velocity blends toward the (already-reduced)
+ * steering target each tick while Sliding (ticket 03, M3.6, ADR 0037) — 0
+ * would mean no steering at all, 1 would mean instant full authority every
+ * tick. Bounded blending, not integration (code review): steering is a
+ * *velocity* target, and integrating it as if it were an acceleration grows
+ * without bound the longer a direction is held. A placeholder value, like
+ * every other number this milestone defers to real-ramp tuning.
+ */
+export const SLIDE_STEER_BLEND = 0.15;
 
 /** Minimum time spent in Ragdoll before it can begin getting up (ms). */
 export const RAGDOLL_MIN_MS = 500;
@@ -189,32 +329,98 @@ export const GETUP_TICKS = msToTicks(GETUP_MS);
 /** Default height below which a Character has Fallen out of the playground (units). */
 export const DEFAULT_KILL_PLANE_Y = -8;
 
-// --- Dash into a wall (ticket 06) --------------------------------------------
-
-/**
- * Impulse magnitude of the Knockback applied when a Dash burst is blocked by a
- * near-vertical surface. Always at or above {@link IMPACT_RAGDOLL_MIN} — dashing
- * into a wall always knocks the Character down, never just Staggers it.
- */
-export const DASH_WALL_IMPACT_MAGNITUDE = 14;
+// --- Wall Impact (ticket 06, M1; re-expressed as a speed threshold, M3.7 ticket 03, ADR 0037) --
 
 /**
  * A collision normal counts as a "wall" (not a floor or ceiling) when the
  * absolute value of its Y component is below this. Above it, the surface is
- * treated as roughly horizontal and ignored for the dash-into-wall check.
+ * treated as roughly horizontal and ignored for the wall-Impact check.
  */
 export const WALL_NORMAL_MAX_Y = 0.5;
 
-/** Upward bias mixed into the wall-bounce direction, before normalising, for a visible pop. */
-export const DASH_WALL_LIFT_RATIO = 0.3;
+/**
+ * A collision normal counts as "ground" for Surface lookup (ticket 01, ADR
+ * 0036) when its Y component is above this — deliberately a *separate*
+ * constant from {@link WALL_NORMAL_MAX_Y} even though it starts at the same
+ * value: that one is tuned for "is this steep enough to dash-crash into,"
+ * this one for "is this floor-like enough to trust for a Surface lookup."
+ * Sharing one knob between the two would mean a future dash-feel tuning pass
+ * silently retunes which collisions report a Surface too (code review,
+ * ticket 01).
+ */
+export const SURFACE_GROUND_NORMAL_MIN_Y = 0.5;
+
+// --- Slopes: walkable / Sliding / wall (ticket 03, M3.6, ADR 0037) ----------
 
 /**
- * Minimum current Dash speed, as a fraction of {@link DASH_SPEED}, for hitting
- * a wall to force Ragdoll. Below this — early in the build-up or late in the
- * release (`dashEnvelope`) — a wall hit is just an ordinary blocked walk, not
- * a knockdown; only a hit near the top of the build counts as a real crash.
+ * Steeper than this (radians, from horizontal) and a grounded Character
+ * slides instead of walking with full control — the walkable/Sliding
+ * boundary. Deliberately independent of {@link WALL_NORMAL_MAX_Y} (the
+ * Sliding/wall boundary): a single threshold would make a steep ramp either
+ * "walk up it" or "unclimbable wall," with no band to slide down in between
+ * — the entire point of tilted geometry (ADR 0037). Replaces Rapier's own
+ * coincident `maxSlopeClimbAngle`/`minSlopeSlideAngle` defaults (both 45°,
+ * verified against the installed 0.20.0) — see `CharacterController`'s
+ * constructor, which sets both of Rapier's own knobs to the *wall* angle
+ * instead (derived from `WALL_NORMAL_MAX_Y`) and leaves the walkable/Sliding
+ * split entirely to this project's own state machine. A placeholder value,
+ * like every other number this milestone defers to real-ramp tuning.
  */
-export const DASH_WALL_MIN_SPEED_RATIO = 0.6;
+export const WALKABLE_SLOPE_MAX_ANGLE = (35 * Math.PI) / 180;
+
+/**
+ * How strongly walking speed scales with the signed slope angle (ticket 04,
+ * M3.6) — `slopeSpeedMultiplier` (`movementVerbs.ts`) computes
+ * `1 - SLOPE_SPEED_ANGLE_FACTOR * angle`, where `angle` is the slope's tilt
+ * toward the direction of travel (positive uphill, negative downhill —
+ * Unity's Character Controller package's own documented convention). Bounded
+ * automatically by {@link WALKABLE_SLOPE_MAX_ANGLE}: since this multiplier
+ * only ever applies while walking (never `Sliding`), the steepest angle it
+ * ever sees is that limit, giving roughly 0.76x uphill / 1.24x downhill at
+ * the walkable ceiling with this value — a provisional number, like every
+ * other one this milestone defers to real-ramp tuning.
+ */
+export const SLOPE_SPEED_ANGLE_FACTOR = 0.4;
+
+/**
+ * Defensive floor on {@link import("../simulation/movementVerbs.js").slopeSpeedMultiplier}'s
+ * output — never lets an (unexpectedly, given the bound above) steep uphill
+ * angle multiply speed down to zero or negative.
+ */
+export const SLOPE_SPEED_MULTIPLIER_MIN = 0.1;
+
+/** Upward bias mixed into the wall-Impact knockback direction, before normalising, for a visible pop. */
+export const WALL_IMPACT_LIFT_RATIO = 0.3;
+
+/**
+ * Minimum closing speed (units/s) — how fast the Character is moving *into*
+ * the wall along its own normal, not just "how fast is this Character" in
+ * general — for hitting a near-vertical surface to force Ragdoll (M3.7
+ * ticket 03, ADR 0037). Re-expressed from the old Dash-specific
+ * `DASH_WALL_MIN_SPEED_RATIO * DASH_SPEED` ratio to this same numeric value
+ * (`DASH_SPEED * 0.6 = 9`) as a standalone absolute speed: the rule cares
+ * *how fast*, never *why* — a bounce, a launch pad or an updraft crossing
+ * this same threshold qualifies exactly like a full-strength Dash always
+ * did, with no second, parallel rule for "launched" states (two rules for
+ * one event drift apart under tuning, and then neither can be blamed).
+ * Below this — early in a Dash's build-up or late in its release
+ * (`dashEnvelope`), or simply walking fast on a downhill Surface — a wall
+ * hit is just an ordinary blocked walk, not a knockdown; only real speed
+ * counts as a real crash.
+ */
+export const WALL_IMPACT_MIN_SPEED = DASH_SPEED * 0.6;
+
+/**
+ * Impact magnitude per unit of closing speed (M3.7 ticket 03) — replaces the
+ * old flat `DASH_WALL_IMPACT_MAGNITUDE` (always 14, however fast the Dash
+ * actually was) with a magnitude that genuinely scales, so a glancing,
+ * barely-qualifying hit lands softer than someone launched into the same
+ * wall at twice the speed. Derived from the two previous, separately-tuned
+ * constants (`14 / DASH_SPEED`) so a full-strength Dash into a wall reaches
+ * *exactly* the same magnitude it always did — "Dashing into a wall feels
+ * as it did" is the ticket's own explicit requirement, not a coincidence.
+ */
+export const WALL_IMPACT_SCALE = 14 / DASH_SPEED;
 
 // --- Spinner Obstacle (ticket 06) --------------------------------------------
 
@@ -303,7 +509,7 @@ export const BUMP_IMPULSE_SCALE = 0.6;
 
 /**
  * Upward bias mixed into the Bump knockback direction before normalising, for
- * a visible pop off the ground — same idea as {@link DASH_WALL_LIFT_RATIO}.
+ * a visible pop off the ground — same idea as {@link WALL_IMPACT_LIFT_RATIO}.
  */
 export const BUMP_LIFT_RATIO = 0.3;
 
@@ -421,3 +627,24 @@ export const INTERP_RATIO = 2;
  * The packet always carries the current tick's input plus this many older ones.
  */
 export const INPUT_REDUNDANCY = 2;
+
+// --- track-service fetch (ADR 0028; ticket 12) ------------------------------
+
+/**
+ * Total bounded time the Match server keeps retrying its startup Track fetch
+ * before giving up loudly (ticket 12) — covers track-service still coming up
+ * (e.g. Docker container start order isn't instant), not track-service being
+ * genuinely gone.
+ */
+export const TRACK_FETCH_MAX_WAIT_MS = 30_000;
+
+/** Delay between retry attempts while the startup Track fetch keeps failing. */
+export const TRACK_FETCH_RETRY_DELAY_MS = 1_000;
+
+/**
+ * Per-attempt timeout on the startup Track fetch itself — bounds a single
+ * request that hangs (track-service accepts the connection but never
+ * responds) so it can't silently eat the whole {@link TRACK_FETCH_MAX_WAIT_MS}
+ * budget on one stuck attempt instead of retrying.
+ */
+export const TRACK_FETCH_ATTEMPT_TIMEOUT_MS = 5_000;

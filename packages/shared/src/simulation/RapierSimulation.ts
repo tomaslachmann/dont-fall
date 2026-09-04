@@ -1,7 +1,8 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { pointInBox, type Box } from "../math/box.js";
+import { pointInOrientedBox, type OrientedBox } from "../math/box.js";
+import { IDENTITY_QUAT } from "../math/quat.js";
 import { normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
-import { characterSnapshot, type CharacterSnapshot, type SimState } from "../state/SimState.js";
+import { characterSnapshot, type CharacterSnapshot, type ReconcileBase, type SimState } from "../state/SimState.js";
 import type { FixedSimulation } from "../timing/FixedSimulation.js";
 import {
   BUMP_IMPULSE_SCALE,
@@ -9,14 +10,21 @@ import {
   DEFAULT_KILL_PLANE_Y,
   GRAVITY_Y,
 } from "../tuning.js";
+import { DEFAULT_SURFACE, surfaceConfig, type SurfaceId } from "../track/Surface.js";
 import { CharacterController, type CollisionListener } from "./CharacterController.js";
 import type { CharacterMotionState } from "./CharacterStateMachine.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
+import type { LaunchPadConfig } from "./LaunchPad.js";
 import { MirrorCharacter } from "./MirrorCharacter.js";
 import { Prop, type PropConfig, type PropSnapshot } from "./Prop.js";
 import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
+import type { SpeedPadConfig } from "./SpeedPad.js";
 import { Spinner, type SpinnerConfig } from "./Spinner.js";
+import type { VolumeConfig } from "./Volume.js";
+
+/** Whether `state` is a down state — a Character in either never receives a speed/launch pad's one-shot effect (code review, M3.7 ticket 01). */
+const isDownState = (state: CharacterMotionState): boolean => state === "Ragdoll" || state === "GettingUp";
 
 /**
  * ID of the Character `SimulationConfig.spawn` auto-creates — the only
@@ -35,15 +43,41 @@ interface CharacterProgress {
   phaseStartTick: number;
   /** The `motionState` seen in the previous snapshot, for transition detection. */
   lastMotionState: CharacterMotionState;
+  /**
+   * Index into `speedPads` this Character was touching as of the last check,
+   * or `undefined` (M3.7 ticket 01) — the rising-edge memory `updateSpeedPad`
+   * compares against, so a wide pad touched across several ticks fires once
+   * and leaving-then-re-entering (even the same pad) re-arms it. Re-derived
+   * (never blanked) on every `reconcileCharacter` from the restored
+   * position — see that method's own comment for why a naive blank reset
+   * fails under frequent reconciliation. Local bookkeeping, never replicated.
+   */
+  touchedSpeedPadIndex: number | undefined;
+  /** Same idea as {@link touchedSpeedPadIndex}, for launch pads (M3.7 ticket 02) — see `updateLaunchPad`. */
+  touchedLaunchPadIndex: number | undefined;
 }
 
 export interface SimulationConfig {
   /** Where the Character starts (capsule centre). Also its first respawn point. */
   spawn?: Vec3;
   /** Static collision geometry. Defaults to a single large ground box. */
-  statics?: Box[];
+  statics?: OrientedBox[];
+  /**
+   * Each `statics` entry's Surface id, index-aligned with it (ticket 01,
+   * ADR 0036) — `Track.ts`'s `resolveTrack` produces both together. Missing
+   * or shorter than `statics` (e.g. the M1-era `DEFAULT_GROUND` fallback,
+   * or any hand-built `statics` array in a test) resolves the remainder to
+   * {@link DEFAULT_SURFACE}.
+   */
+  staticSurfaces?: SurfaceId[];
   /** Checkpoints the Character can walk through to move its respawn point. */
   checkpoints?: Checkpoint[];
+  /** Speed/slow pads the Character can cross to fire a one-shot boost (M3.7 ticket 01). */
+  speedPads?: SpeedPadConfig[];
+  /** Launch pads the Character can cross to fire a one-shot full-velocity SET (M3.7 ticket 02). */
+  launchPads?: LaunchPadConfig[];
+  /** Volumes that apply a continuous force to any Character inside them (M3.7 ticket 04, ADR 0036). */
+  volumes?: VolumeConfig[];
   /** Height below which the Character has Fallen out of the playground. */
   killPlaneY?: number;
   /** Rotating-bar Obstacles (ticket 06). */
@@ -72,14 +106,16 @@ export interface SimulationConfig {
 }
 
 const DEFAULT_SPAWN = vec3(0, 2, 0);
-const DEFAULT_GROUND: Box = {
+const DEFAULT_GROUND: OrientedBox = {
   center: vec3(0, -0.5, 0),
   halfExtents: vec3(30, 0.5, 30),
+  rotation: IDENTITY_QUAT,
 };
 
-const cloneBox = (box: Box): Box => ({
+const cloneOrientedBox = (box: OrientedBox): OrientedBox => ({
   center: { ...box.center },
   halfExtents: { ...box.halfExtents },
+  rotation: { ...(box.rotation ?? IDENTITY_QUAT) },
 });
 
 const cloneSpinnerConfig = (config: SpinnerConfig): SpinnerConfig => ({
@@ -120,8 +156,17 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   private readonly world: RAPIER.World;
   private readonly characters = new Map<string, CharacterController>();
   private readonly progress = new Map<string, CharacterProgress>();
-  private readonly statics: Box[];
+  private readonly statics: OrientedBox[];
   private readonly checkpoints: Checkpoint[];
+  private readonly speedPads: SpeedPadConfig[];
+  private readonly launchPads: LaunchPadConfig[];
+  /**
+   * Volumes, sorted highest-`priority`-first once here at construction
+   * (M3.7 ticket 04, ADR 0036) — resolving containment every tick against a
+   * pre-sorted array means "first match wins" is all `resolveActiveVolume`
+   * needs, rather than re-scanning for a max every tick.
+   */
+  private readonly volumes: VolumeConfig[];
   private readonly killPlaneY: number;
   /** See `SimulationConfig.authoritative`. */
   private readonly authoritative: boolean;
@@ -132,6 +177,14 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   private readonly propIndexByHandle = new Map<number, number>();
   /** Capsule collider handle → Character ID, so a Character-to-Character contact can find the Character it hit (ticket 04 — Bump). */
   private readonly characterIdByHandle = new Map<number, string>();
+  /**
+   * Static collider handle → Surface id (ticket 01, ADR 0036) — the one
+   * piece of plumbing the whole Surface path needed: without this, reading
+   * "what Surface is this Character standing on?" from a collider handle
+   * would mean a new scene query instead, which would depend on collider
+   * insertion order and break client/server determinism quietly.
+   */
+  private readonly staticSurfaceByHandle = new Map<number, SurfaceId>();
   /**
    * Other players mirrored into this world as positioned obstacles (ADR 0012,
    * ticket 04) — a client's local prediction world only. The server has real
@@ -169,20 +222,29 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   constructor(config: SimulationConfig = {}) {
     this.statics = config.statics ?? [DEFAULT_GROUND];
     this.checkpoints = config.checkpoints ?? [];
+    this.speedPads = config.speedPads ?? [];
+    this.launchPads = config.launchPads ?? [];
+    this.volumes = [...(config.volumes ?? [])].sort((a, b) => b.priority - a.priority);
     this.killPlaneY = config.killPlaneY ?? DEFAULT_KILL_PLANE_Y;
     this.authoritative = config.authoritative ?? true;
 
     this.world = new RAPIER.World({ x: 0, y: GRAVITY_Y, z: 0 });
 
-    for (const box of this.statics) {
-      this.world.createCollider(
+    this.statics.forEach((box, i) => {
+      // ADR 0034: a real rotated rigid body, not the old pre-rotated-AABB
+      // trick — Rapier itself has always supported this; nothing here needed
+      // the previous multiple-of-90°-only restriction.
+      const collider = this.world.createCollider(
         RAPIER.ColliderDesc.cuboid(box.halfExtents.x, box.halfExtents.y, box.halfExtents.z)
           .setCollisionGroups(STATIC_GROUPS),
         this.world.createRigidBody(
-          RAPIER.RigidBodyDesc.fixed().setTranslation(box.center.x, box.center.y, box.center.z),
+          RAPIER.RigidBodyDesc.fixed()
+            .setTranslation(box.center.x, box.center.y, box.center.z)
+            .setRotation(box.rotation ?? IDENTITY_QUAT),
         ),
       );
-    }
+      this.staticSurfaceByHandle.set(collider.handle, config.staticSurfaces?.[i] ?? DEFAULT_SURFACE);
+    });
 
     this.spinners = (config.spinners ?? []).map((c) => new Spinner(this.world, c));
     for (const spinner of this.spinners) this.spinnerByHandle.set(spinner.collider.handle, spinner);
@@ -241,6 +303,8 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       fallCount: 0,
       phaseStartTick: 0,
       lastMotionState: "Controlled",
+      touchedSpeedPadIndex: undefined,
+      touchedLaunchPadIndex: undefined,
     });
   }
 
@@ -325,11 +389,32 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * there is no "stale vs. live" report to tell apart. See
    * {@link CharacterController.reconcileTo}.
    */
-  reconcileCharacter(
-    id: string,
-    base: Pick<CharacterSnapshot, "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs" | "dashing">,
-  ): void {
+  reconcileCharacter(id: string, base: ReconcileBase): void {
     this.character(id).reconcileTo(base);
+    // Re-derive "which pad (if any) is this Character standing in" from the
+    // RESTORED position, rather than blanking it to "touching nothing." A
+    // wide pad's trigger can easily span many ticks' worth of travel — under
+    // realistic reconciliation cadence this rarely matters (the correction
+    // and the pad's own edges rarely coincide), but a naive blank reset fails
+    // badly under a "reconciles every single tick" stress: dozens of
+    // consecutive corrections would each independently see a "fresh" rising
+    // edge into a pad the Character has been inside the whole time, firing
+    // the one-shot write over and over — precisely the double-fire the
+    // ticket's own prediction test (RapierSimulation.test.ts) exists to
+    // catch. Never re-fires here itself (that would double-apply the
+    // one-shot write this correction already carries via `speedPadMsLeft`/
+    // `speedPadCapMultiplier` above) — it only seeds the baseline the very
+    // next replayed tick's own rising-edge check compares against.
+    const progress = this.progress.get(id);
+    if (progress) {
+      progress.touchedSpeedPadIndex = this.findTriggerIndex(this.speedPads, base.position);
+      // Launch pads (M3.7 ticket 02) need the identical re-derivation, for
+      // the identical reason — no decay curve to restore alongside it (a
+      // launch pad's whole effect already lives in `base.velocity`), but the
+      // touch index still needs to be right before the next replayed tick's
+      // own rising-edge check runs.
+      progress.touchedLaunchPadIndex = this.findTriggerIndex(this.launchPads, base.position);
+    }
   }
 
   /**
@@ -391,6 +476,8 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     for (const [id, character] of this.characters) {
       character.endTick();
       this.updateCheckpoint(id);
+      this.updateSpeedPad(id);
+      this.updateLaunchPad(id);
       this.detectFall(id);
       // Stamp the tick a `motionState` phase begins, in sim-tick space, exactly
       // once (ADR 0023). Must be here, not in `snapshot()` — that is called
@@ -400,6 +487,23 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
         progress.phaseStartTick = this.tickCount;
         progress.lastMotionState = character.motionState;
       }
+      // Ticket 01/ADR 0036: this tick's ground contact (just computed above,
+      // in `endTick`/the sweep it followed) decides the Surface that gates
+      // *next* tick's walk speed and (ticket 06) grip — the same one-tick
+      // lag `grounded` itself already has relative to jump/landing.
+      const groundHandle = character.groundColliderHandle;
+      const surfaceId = groundHandle !== undefined ? this.staticSurfaceByHandle.get(groundHandle) : undefined;
+      const surface = surfaceConfig(surfaceId);
+      character.setSurfaceTopSpeedMultiplier(surface.topSpeedMultiplier);
+      character.setSurfaceGrip(surface.grip);
+      character.setSurfaceBounce(surface.bounce);
+      // M3.7 ticket 04, ADR 0036: same one-tick lag as Surface above — this
+      // tick's now-updated position decides the Volume that pushes *next*
+      // tick. `this.volumes` is pre-sorted highest-priority-first, so the
+      // first containing entry found is the one that wins outright (never
+      // summed).
+      const volume = this.volumes.find((v) => pointInOrientedBox(character.position, v.bounds));
+      character.setActiveVolume(volume ? { force: volume.force, maxInducedSpeed: volume.maxInducedSpeed } : undefined);
     }
 
     // Client-only (ADR 0012 / 0016, ticket 06): every Prop is pinned to the
@@ -478,17 +582,79 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     }));
   }
 
+  /**
+   * Which entry of `triggers` (if any) `point` currently lies inside — one
+   * lookup shared by every rising-edge `OrientedBox` trigger this project
+   * has (M3.7 ticket 01's speed pads today; the milestone's own bounce/
+   * launch pads, ticket 02, need the identical one-shot-on-entry check
+   * next). `Checkpoint`'s own containment check doesn't route through this:
+   * it only ever moves forward (`reached + 1..`), never re-arms, and has no
+   * "which one changed" question to answer — a plain `pointInOrientedBox`
+   * scan is all it needs.
+   */
+  private findTriggerIndex(triggers: readonly { trigger: OrientedBox }[], point: Vec3): number | undefined {
+    const index = triggers.findIndex((t) => pointInOrientedBox(point, t.trigger));
+    return index === -1 ? undefined : index;
+  }
+
   private updateCheckpoint(id: string): void {
     const character = this.character(id);
     const progress = this.progress.get(id)!;
     const reached = progress.checkpointIndex ?? -1;
     const p = character.position;
     for (let i = reached + 1; i < this.checkpoints.length; i += 1) {
-      if (pointInBox(p, this.checkpoints[i]!.volume)) {
+      if (pointInOrientedBox(p, this.checkpoints[i]!.trigger)) {
         progress.checkpointIndex = i;
         progress.respawnPoint = { ...this.checkpoints[i]!.respawn };
       }
     }
+  }
+
+  /**
+   * Rising-edge pad detection (M3.7 ticket 01, ADR 0035) — fires
+   * {@link CharacterController.triggerSpeedPad} exactly once per crossing:
+   * the tick this Character's (just-updated) position enters a pad's
+   * `trigger` it wasn't already inside. Leaving (or switching to a different
+   * pad) re-arms it. One tick behind the movement it's based on, same as
+   * every other Surface-style effect resolved from `endTick`'s fresh sweep.
+   *
+   * Skipped entirely while down (code review) — a Ragdolling/GettingUp
+   * Character's `position` tracks the ragdoll root, which can still drag
+   * across a pad's trigger, and `CharacterController`'s own boost math would
+   * silently discard the effect anyway (`machine.inputScale` is 0 for both
+   * states) — without this guard, `speedPadEpoch` would rise for an effect
+   * the Character never actually felt. `touchedSpeedPadIndex` is left
+   * untouched (not blanked) while down, so standing back up still inside the
+   * same trigger correctly reads as "already touching it," not a fresh edge.
+   */
+  private updateSpeedPad(id: string): void {
+    const character = this.character(id);
+    if (isDownState(character.motionState)) return;
+    const progress = this.progress.get(id)!;
+    const touched = this.findTriggerIndex(this.speedPads, character.position);
+    if (touched !== undefined && touched !== progress.touchedSpeedPadIndex) {
+      character.triggerSpeedPad(this.speedPads[touched]!.capMultiplier);
+    }
+    progress.touchedSpeedPadIndex = touched;
+  }
+
+  /**
+   * Rising-edge launch pad detection (M3.7 ticket 02) — identical shape to
+   * {@link updateSpeedPad}, reusing the same {@link findTriggerIndex} lookup
+   * and the same down-state guard (a Ragdolling/GettingUp Character never
+   * gets launched — the whole point of a launch pad is a deliberate,
+   * player-caused jump, not something that fires while they have no control
+   * at all).
+   */
+  private updateLaunchPad(id: string): void {
+    const character = this.character(id);
+    if (isDownState(character.motionState)) return;
+    const progress = this.progress.get(id)!;
+    const touched = this.findTriggerIndex(this.launchPads, character.position);
+    if (touched !== undefined && touched !== progress.touchedLaunchPadIndex) {
+      character.triggerLaunchPad(this.launchPads[touched]!.velocity);
+    }
+    progress.touchedLaunchPadIndex = touched;
   }
 
   private detectFall(id: string): void {
@@ -519,15 +685,15 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   }
 
   /** The resolved static geometry (including the default ground), for the renderer. */
-  getStatics(): Box[] {
-    return this.statics.map(cloneBox);
+  getStatics(): OrientedBox[] {
+    return this.statics.map(cloneOrientedBox);
   }
 
   /** The configured checkpoints, for the renderer. */
   getCheckpoints(): Checkpoint[] {
     return this.checkpoints.map((cp) => ({
       respawn: { ...cp.respawn },
-      volume: cloneBox(cp.volume),
+      trigger: cloneOrientedBox(cp.trigger),
     }));
   }
 

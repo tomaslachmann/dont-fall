@@ -21,8 +21,8 @@ _Avoid_: avatar, player (when you mean the body), pawn
 ### Match structure
 
 **Match**:
-One full session from lobby to a single winner, made of several Rounds.
-_Avoid_: game, session, lobby
+One full session from Lobby to a single winner, made of several Rounds.
+_Avoid_: game, session
 
 **Round**:
 One run through a single obstacle course within a Match. Ends by Qualification or
@@ -50,30 +50,99 @@ The condition for advancing out of a Round — reaching the Finish Zone, or bein
 among the survivors, before the Round ends.
 _Avoid_: passing, promotion
 
+**Elimination**:
+A Player who did not Qualify before the Round ended. A Fall never eliminates — it
+only costs time through Respawn with a penalty.
+_Avoid_: death, KO
+
 **Time Limit**:
 The countdown for a Round. When it hits zero, every Player not yet Qualified is
-eliminated. Preferred over a fixed "first N players" cutoff.
+eliminated. Preferred over a fixed "first N players" cutoff. Each Revision carries
+its own default Time Limit — a longer Track allows more time; the lobby shows it and
+the server enforces it.
 
 **Finish Zone**:
 The area at the end of a Race that grants Qualification on entry. Deliberately an
-area, not a line, so the end of a Round stays chaotic and contested.
+area, not a line, so the end of a Round stays chaotic and contested. A detection-only
+trigger entity on a Module — like a Checkpoint's trigger region, never a Volume;
+distinct from Checkpoint, which sets a Respawn point.
 _Avoid_: finish line, goal
+
+**Lobby**:
+The gathering before a Round — nicknames, ready toggles, Track selection, host start.
+Ends when the host starts the Countdown.
+_Avoid_: waiting room
+
+**Countdown**:
+The short delay between Start and the live Round. Characters are already spawned but
+their input is locked.
+_Avoid_: warmup
+
+**Results**:
+The Screen after a Round ends — rank with Qualified ordered by finish time and the rest
+by Track progress, and a way back to the Lobby.
+_Avoid_: scoreboard, leaderboard
 
 ### Track
 
 **Track**:
-The full obstacle course a Round runs on, assembled from Segments.
+The full obstacle course a Round runs on, assembled from Segments. What a Round
+actually runs is always one immutable Revision of a Track — see Draft, Revision.
 _Avoid_: map, course, level
+
+**Draft**:
+A Track being composed in the Track builder — mutable, not yet published.
+Publishing a Draft creates a new Revision; the Draft itself is never what a
+Round runs on.
+_Avoid_: track (when you specifically mean the mutable, in-progress one)
+
+**Revision**:
+One immutable, numbered publish of a Track — the only form a Round ever runs
+on. Publishing a Draft again creates a new Revision; an existing Revision is
+never mutated.
+_Avoid_: version, save
 
 **Module**:
 A reusable template for a piece of Track (e.g. "Spinner", "Ice", "Moving
 Platforms", "Straight", "Gap"). Authored once.
 _Avoid_: prefab, block, piece
 
+**Socket**:
+A Module's named local connection point (a position and rotation) that another
+Module can be placed against, so a Track builder can snap pieces together
+instead of only chaining a single uniform step.
+_Avoid_: connector, port, anchor
+
+**Footprint**:
+A Module's declared occupied space and clearance, used to validate placement
+and overlap — independent of its visual geometry or collider.
+_Avoid_: bounding box
+
+**Surface**:
+A property of a piece of Track floor: how well a Character grips it (how fast it
+can accelerate and how fast it slows down) and how fast it may ultimately travel
+on it. A property of floor geometry, never a kind of Module — one Module may mix
+Surfaces across its floor pieces.
+_Avoid_: material, terrain, ice block, ground type
+
+**Volume**:
+A region of space that applies a force to any Character inside it — an updraft, a
+wind tunnel. Contrast with Surface, which acts on a Character standing on it, and
+with a Checkpoint's trigger region, which only detects and never pushes.
+_Avoid_: zone, field, trigger, area
+
+**Speed pad** / **Slow pad**:
+A floor trigger that fires once as a Character crosses it: an instant velocity write
+plus a temporarily raised (speed pad) or lowered (slow pad) speed cap that fades back
+to normal. One mechanism, cap raised or lowered — never two separate ones. Contrast
+with Surface (a standing property of the floor itself, with no one-shot component) and
+Volume (continuous, not latched).
+_Avoid_: boost pad, zipper, jump pad (that's a bounce/launch pad, a different mechanic)
+
 **Segment**:
 One concrete instance of a Module placed at a position in a Track. A Track is a
 sequence of Segments.
-_Avoid_: section, tile, chunk
+_Avoid_: section, tile, chunk, piece
 
 **Obstacle**:
 A Module (or part of one) that actively threatens the Character — a Spinner,
@@ -84,6 +153,14 @@ _Avoid_: hazard, trap
 A dynamic physics body that reacts to being bumped (a box, a ball) but never
 threatens the Character on its own. Contrast with Obstacle.
 _Avoid_: crate (see Item Box), object, decoration
+
+**Projectile**:
+A dynamic physics body spawned at runtime by an Obstacle (e.g. a cannon), with
+an initial velocity, that threatens the Character on contact and despawns
+after its lifetime. Contrast with Prop (permanent, never threatens) and
+Obstacle (stationary, pre-placed). Full spawn/replication design deferred
+(post-M3).
+_Avoid_: bullet, shot
 
 **Checkpoint**:
 A point on the Track that a Character respawns at after a Fall.
@@ -100,6 +177,13 @@ capsule.
 **Stagger**:
 A brief Character state after a minor Impact — movement input is dampened but the
 Character stays upright. Recovers automatically to Controlled.
+
+**Sliding**:
+The Character state on a Surface too steep to walk on: the Character keeps
+reduced movement input while gravity carries it down the slope. Held by the
+condition (standing on such a Surface), not by a timer — unlike Stagger. An
+Impact while Sliding knocks the Character straight into Ragdoll.
+_Avoid_: slipping, skidding
 
 **Ragdoll**:
 The Character state where the articulated body takes over full physics and the
@@ -236,9 +320,9 @@ game state; a client never asserts its own position, only sends Commands.
 
 **Epoch**:
 A monotonic counter identifying a discrete episode (a knockdown —
-`ragdollEpoch`; a Respawn — `respawnCount`) so a one-shot effect fires exactly
-once even if the Snapshot carrying it is seen across many frames. Never a
-one-Tick boolean.
+`ragdollEpoch`; a Respawn — `respawnCount`; a speed/slow pad firing —
+`speedPadEpoch`) so a one-shot effect fires exactly once even if the Snapshot
+carrying it is seen across many frames. Never a one-Tick boolean.
 
 **Contacted Prop**:
 The one Prop the local Character is currently touching (plus a short grace after

@@ -3,23 +3,106 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SERVER_PORT,
+  DEFAULT_TRACK_SERVICE_PORT,
   GRACE_WINDOW_MS,
   IDLE_INPUTS,
-  PLAYGROUND_CHECKPOINTS,
-  PLAYGROUND_PROPS,
-  PLAYGROUND_SPINNERS,
-  PLAYGROUND_STATICS,
+  MODULE_LIBRARY,
   RapierSimulation,
   SNAPSHOT_HZ,
   TICK_MS,
   TICK_RATE_HZ,
+  TRACK_FETCH_ATTEMPT_TIMEOUT_MS,
+  TRACK_FETCH_MAX_WAIT_MS,
+  TRACK_FETCH_RETRY_DELAY_MS,
   initPhysics,
-  playgroundSpawn,
+  resolveTrack,
+  trackSpawn,
   type ClientMessage,
   type ServerMessage,
   type SimInputs,
+  type Track,
 } from "@dont-fall/shared";
 import { WebSocketServer, type WebSocket } from "ws";
+
+export interface FetchedTrack {
+  id: string;
+  revision: number;
+  track: Track;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Fetches a fully-resolved Track from track-service (ADR 0028) — the Match
+ * server never holds Module data or generates a Track itself, whether it's
+ * hand-built or randomly assembled makes no difference here. `id`/`revision`
+ * are carried into every client's `welcome` (ticket 11) so a client fetches
+ * this *exact* Revision, never "latest" independently — a publish landing
+ * mid-Match could otherwise desync a client from what the server is running.
+ *
+ * Retries with backoff (ticket 12) — track-service may still be starting up
+ * (e.g. Docker container ordering isn't instant); a single-shot fetch failing
+ * on that transient race isn't the same problem as track-service being
+ * genuinely gone. Still fails loudly (and unmasked) once the budget runs out.
+ * Each attempt itself is bounded ({@link TRACK_FETCH_ATTEMPT_TIMEOUT_MS}) —
+ * without that, a single hung request (track-service accepts the connection
+ * but never responds) could block past the whole retry budget instead of
+ * being abandoned and retried.
+ *
+ * `trackId`, when given, fetches that exact id's latest Revision (`GET
+ * /tracks/:id`) instead of a random one (`GET /tracks/any`) — the Track
+ * Builder's Playtest button (a connecting client's own `?track=` query
+ * param, see {@link startServer}) is the only caller that ever passes this;
+ * the normal boot-time fetch never does.
+ */
+const fetchTrack = async (
+  trackServiceUrl: string,
+  {
+    maxWaitMs = TRACK_FETCH_MAX_WAIT_MS,
+    retryDelayMs = TRACK_FETCH_RETRY_DELAY_MS,
+    attemptTimeoutMs = TRACK_FETCH_ATTEMPT_TIMEOUT_MS,
+    trackId,
+  }: { maxWaitMs?: number; retryDelayMs?: number; attemptTimeoutMs?: number; trackId?: string } = {},
+): Promise<FetchedTrack> => {
+  const path = trackId !== undefined ? `/tracks/${encodeURIComponent(trackId)}` : "/tracks/any";
+  const deadline = Date.now() + maxWaitMs;
+  let attempt = 0;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    attempt += 1;
+    try {
+      const res = await fetch(`${trackServiceUrl}${path}`, { signal: AbortSignal.timeout(attemptTimeoutMs) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as { id: string; revision: number; track: Track };
+      if (attempt > 1) console.log(`DON'T FALL: track-service reachable after ${attempt} attempts`);
+      return { id: body.id, revision: body.revision, track: body.track };
+    } catch (err) {
+      lastError = err;
+      console.warn(`DON'T FALL: track-service fetch attempt ${attempt} failed, retrying: ${(err as Error).message}`);
+      await sleep(retryDelayMs);
+    }
+  }
+  throw new Error(
+    `track-service unreachable or has no Track at ${trackServiceUrl} after ${attempt} attempts (ADR 0028): ${(lastError as Error)?.message}`,
+  );
+};
+
+/**
+ * A WebSocket close reason is capped at 123 UTF-8 bytes (RFC 6455) — `ws`
+ * throws if handed more. Truncating defensively here means a future longer
+ * message (a longer trackId, a longer underlying fetch error) degrades
+ * gracefully instead of crashing the connection handler outright.
+ */
+const CLOSE_REASON_MAX_BYTES = 123;
+const truncateForCloseReason = (reason: string): string => {
+  // Pops whole Unicode code points, not UTF-16 code units (code review) —
+  // `.slice(0, -1)` on the raw string can cut a surrogate pair in half,
+  // turning a multi-byte character right at the boundary into a lone
+  // surrogate that re-encodes as U+FFFD instead of truncating cleanly.
+  const codePoints = Array.from(reason);
+  while (Buffer.byteLength(codePoints.join(""), "utf8") > CLOSE_REASON_MAX_BYTES) codePoints.pop();
+  return codePoints.join("");
+};
 
 /**
  * The authoritative match server (ADR 0002, ticket 02): one `RapierSimulation`
@@ -37,6 +120,12 @@ export interface MatchServer {
 export interface StartServerConfig {
   /** Port to listen on. `0` asks the OS for an ephemeral port. Defaults to {@link DEFAULT_SERVER_PORT}. */
   port?: number;
+  /** track-service base URL (ADR 0028). Defaults to `TRACK_SERVICE_URL` env, then localhost:{@link DEFAULT_TRACK_SERVICE_PORT}. */
+  trackServiceUrl?: string;
+  /** Ticket 12: how long/often to retry the startup Track fetch. Test-only knobs; production uses `fetchTrack`'s defaults. */
+  trackFetchMaxWaitMs?: number;
+  trackFetchRetryDelayMs?: number;
+  trackFetchAttemptTimeoutMs?: number;
 }
 
 /**
@@ -61,15 +150,28 @@ const send = (socket: WebSocket, message: ServerMessage): void => {
 export const startServer = async (config: StartServerConfig = {}): Promise<MatchServer> => {
   await initPhysics();
 
+  // ADR 0028: the Match server never holds Module data or generates a Track
+  // itself — it always just fetches one, resolved against every Module the
+  // shared package currently knows (`MODULE_LIBRARY`).
+  const trackServiceUrl =
+    config.trackServiceUrl ?? process.env.TRACK_SERVICE_URL ?? `http://localhost:${DEFAULT_TRACK_SERVICE_PORT}`;
+  // Ticket 12's test-only knobs, shared by every `fetchTrack` call this
+  // server ever makes — the boot-time one below, and a Playtest connection's
+  // live reload (further down) — so a test can bound both the same way.
+  const trackFetchRetryOptions = {
+    ...(config.trackFetchMaxWaitMs !== undefined ? { maxWaitMs: config.trackFetchMaxWaitMs } : {}),
+    ...(config.trackFetchRetryDelayMs !== undefined ? { retryDelayMs: config.trackFetchRetryDelayMs } : {}),
+    ...(config.trackFetchAttemptTimeoutMs !== undefined ? { attemptTimeoutMs: config.trackFetchAttemptTimeoutMs } : {}),
+  };
+  // `let`, not `const`: a Playtest connection's `?track=` (below) can replace
+  // both with a freshly-fetched/rebuilt Track+simulation while the server is
+  // already running — the one thing that never used to change after boot.
+  let fetched = await fetchTrack(trackServiceUrl, trackFetchRetryOptions);
+  const resolveForSimulation = (track: Track) => resolveTrack(MODULE_LIBRARY, track);
+
   // The Match starts with no players; ticket 01's single-player default
   // Character is opted out here rather than added and immediately disposed.
-  const simulation = new RapierSimulation({
-    statics: PLAYGROUND_STATICS,
-    checkpoints: PLAYGROUND_CHECKPOINTS,
-    spinners: PLAYGROUND_SPINNERS,
-    props: PLAYGROUND_PROPS,
-    withDefaultCharacter: false,
-  });
+  let simulation = new RapierSimulation({ ...resolveForSimulation(fetched.track), withDefaultCharacter: false });
 
   const sockets = new Map<string, WebSocket>();
   // The server's own monotonic tick — advances by exactly one every interval,
@@ -100,69 +202,146 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
 
   const wss = new WebSocketServer({ port: config.port ?? DEFAULT_SERVER_PORT });
 
-  wss.on("connection", (socket) => {
-    const id = randomUUID();
-    const spawn = playgroundSpawn(joinCount);
-    joinCount += 1;
-    sockets.set(id, socket);
-    inputQueues.set(id, []);
-    lastApplied.set(id, IDLE_INPUTS);
-    lastInputTicks.set(id, 0);
-    simulation.addCharacter(id, spawn);
-
-    send(socket, {
-      type: "welcome",
-      playerId: id,
-      // A bearer credential the client presents on reconnect (ADR 0024). M2
-      // issues it; no reconnect logic acts on it yet.
-      sessionToken: randomBytes(32).toString("base64url"),
-      spawn,
-      config: { snapshotHz: SNAPSHOT_HZ, graceWindowMs: GRACE_WINDOW_MS },
-    });
-
-    // A single client's socket erroring (an abrupt reset, a write to a
-    // half-closed pipe) must never take the Match down for everyone else
-    // (ADR 0011). 'close' still fires afterwards and does the cleanup.
-    socket.on("error", () => {});
-
-    socket.on("message", (raw) => {
-      // A malformed frame from one client must never take the Match down for
-      // everyone else (ADR 0011: the server keeps running regardless).
-      let message: ClientMessage;
-      try {
-        message = JSON.parse(raw.toString()) as ClientMessage;
-      } catch {
-        return;
-      }
-      if (message.type === "ping" && typeof message.clientTimeMs === "number") {
-        // Transport echo for the client's clock sync (ADR 0019). No server state.
-        send(socket, { type: "pong", clientTimeMs: message.clientTimeMs, serverTimeMs: performance.now() });
-        return;
-      }
-      if (message.type === "input" && Array.isArray(message.inputs)) {
-        const queue = inputQueues.get(id);
-        if (!queue) return;
-        // Each packet carries the current input plus a redundant tail of recent
-        // ones (ADR 0021). Dedupe by tick against what's been applied and
-        // what's already queued; a head-of-line burst or reorder loses nothing.
-        for (const entry of message.inputs) {
-          if (typeof entry?.tick !== "number" || !Number.isFinite(entry.tick)) continue;
-          if (entry.tick <= (lastInputTicks.get(id) ?? 0)) continue;
-          if (queue.some((q) => q.tick === entry.tick)) continue;
-          queue.push({ tick: entry.tick, input: entry.input });
+  wss.on("connection", (socket, req) => {
+    void (async () => {
+      // Track Builder's Playtest button (`?track=<id>` on the connection URL,
+      // read by `apps/client`'s own bootstrap and forwarded onto its
+      // WebSocket URL) — the one way this always-on dev server ever serves
+      // anything other than whatever it fetched at boot. Absent for every
+      // ordinary player connection, which behaves exactly as before.
+      const requestedTrackId = new URL(req.url ?? "/", "http://match-server").searchParams.get("track");
+      if (requestedTrackId !== null) {
+        // Always re-fetch by id rather than short-circuiting on
+        // `requestedTrackId === fetched.id` (code review): Playtest
+        // republishes to the same fixed reserved id every time (a new
+        // Revision, ADR 0032) — comparing id alone would keep this server
+        // serving the very first Revision it ever loaded forever, silently
+        // ignoring every subsequent edit+Playtest cycle.
+        let candidate: FetchedTrack;
+        try {
+          candidate = await fetchTrack(trackServiceUrl, { ...trackFetchRetryOptions, trackId: requestedTrackId });
+        } catch (err) {
+          socket.close(4002, truncateForCloseReason(`failed to load Track "${requestedTrackId}": ${(err as Error).message}`));
+          return;
         }
-        queue.sort((a, b) => a.tick - b.tick);
-        while (queue.length > MAX_QUEUED_INPUTS) queue.shift();
-      }
-    });
 
-    socket.on("close", () => {
-      sockets.delete(id);
-      inputQueues.delete(id);
-      lastApplied.delete(id);
-      lastInputTicks.delete(id);
-      simulation.removeCharacter(id);
-    });
+        const alreadyLoaded = candidate.id === fetched.id && candidate.revision === fetched.revision;
+        if (!alreadyLoaded) {
+          // Checked here — AFTER the `await` above, immediately before the
+          // synchronous mutation below — not earlier (code review: a check
+          // taken before an `await` is stale by the time that `await`
+          // resolves). An ordinary connection with no `?track=` never awaits
+          // anything before registering itself, so if one lands while this
+          // fetch was in flight, `sockets.size` here already reflects it —
+          // this connection then correctly refuses instead of silently
+          // replacing the `simulation` a just-joined player's Character
+          // only exists in.
+          if (sockets.size > 0) {
+            // Refuse rather than silently swap the Track under already-connected
+            // players' feet — this server has no concept of separate concurrent
+            // Matches yet (that's M4's job), so "reload" can only ever mean
+            // "reload for everyone," which is only ever safe with no one here.
+            socket.close(4001, truncateForCloseReason(`server already has ${sockets.size} player(s) connected on a different Track — restart to test a new one`));
+            return;
+          }
+          // Everything from here to the end of this `if` is synchronous (no
+          // `await`) — the event loop cannot run another 'connection' handler
+          // in between, so this whole reload is effectively atomic with
+          // respect to the `sockets.size` check just above.
+          //
+          // Known, accepted limitation (code review): the discarded
+          // `simulation` below is never disposed — `RapierSimulation` has no
+          // `dispose()`/`free()` of its own, so its Rapier WASM `World`'s
+          // native memory leaks on every reload. Giving the whole class a
+          // real disposal lifecycle is a bigger, cross-cutting change this
+          // local-only dev tool doesn't warrant on its own; a developer
+          // hitting this in practice would need many edit→Playtest cycles in
+          // one long-lived server process before it mattered, and
+          // restarting the dev server (already the fix for the "occupied"
+          // refusal above) clears it.
+          fetched = candidate;
+          simulation = new RapierSimulation({ ...resolveForSimulation(fetched.track), withDefaultCharacter: false });
+          // The new simulation's own tick counter restarts at 0 (ADR 0027) —
+          // `serverTick` must restart with it, or every subsequent input
+          // (stamped from the client's *new* `state.tick`, always small)
+          // reads as permanently stale against the old, much larger
+          // `serverTick`: every queued input gets discarded as stale before
+          // it can ever match `thisTick`, and the resulting `lastInputTick`
+          // ack — now way ahead of what the client sent — makes the client
+          // think everything it sent already got applied. No one can move,
+          // for the rest of this server process's life, not just this Track.
+          serverTick = 0;
+          console.log(`DON'T FALL: reloaded Track "${fetched.id}"@${fetched.revision} for a Playtest connection`);
+        }
+      }
+
+      const id = randomUUID();
+      // Spawn in the loaded Track's own start frame (free placement puts the
+      // start platform anywhere) — never M1's world coords (playtest bug, 2026-09).
+      const spawn = trackSpawn(fetched.track, joinCount);
+      joinCount += 1;
+      sockets.set(id, socket);
+      inputQueues.set(id, []);
+      lastApplied.set(id, IDLE_INPUTS);
+      lastInputTicks.set(id, 0);
+      simulation.addCharacter(id, spawn);
+
+      send(socket, {
+        type: "welcome",
+        playerId: id,
+        // A bearer credential the client presents on reconnect (ADR 0024). M2
+        // issues it; no reconnect logic acts on it yet.
+        sessionToken: randomBytes(32).toString("base64url"),
+        spawn,
+        trackId: fetched.id,
+        trackRevision: fetched.revision,
+        config: { snapshotHz: SNAPSHOT_HZ, graceWindowMs: GRACE_WINDOW_MS },
+      });
+
+      // A single client's socket erroring (an abrupt reset, a write to a
+      // half-closed pipe) must never take the Match down for everyone else
+      // (ADR 0011). 'close' still fires afterwards and does the cleanup.
+      socket.on("error", () => {});
+
+      socket.on("message", (raw) => {
+        // A malformed frame from one client must never take the Match down for
+        // everyone else (ADR 0011: the server keeps running regardless).
+        let message: ClientMessage;
+        try {
+          message = JSON.parse(raw.toString()) as ClientMessage;
+        } catch {
+          return;
+        }
+        if (message.type === "ping" && typeof message.clientTimeMs === "number") {
+          // Transport echo for the client's clock sync (ADR 0019). No server state.
+          send(socket, { type: "pong", clientTimeMs: message.clientTimeMs, serverTimeMs: performance.now() });
+          return;
+        }
+        if (message.type === "input" && Array.isArray(message.inputs)) {
+          const queue = inputQueues.get(id);
+          if (!queue) return;
+          // Each packet carries the current input plus a redundant tail of recent
+          // ones (ADR 0021). Dedupe by tick against what's been applied and
+          // what's already queued; a head-of-line burst or reorder loses nothing.
+          for (const entry of message.inputs) {
+            if (typeof entry?.tick !== "number" || !Number.isFinite(entry.tick)) continue;
+            if (entry.tick <= (lastInputTicks.get(id) ?? 0)) continue;
+            if (queue.some((q) => q.tick === entry.tick)) continue;
+            queue.push({ tick: entry.tick, input: entry.input });
+          }
+          queue.sort((a, b) => a.tick - b.tick);
+          while (queue.length > MAX_QUEUED_INPUTS) queue.shift();
+        }
+      });
+
+      socket.on("close", () => {
+        sockets.delete(id);
+        inputQueues.delete(id);
+        lastApplied.delete(id);
+        lastInputTicks.delete(id);
+        simulation.removeCharacter(id);
+      });
+    })();
   });
 
   let consecutiveTickFailures = 0;

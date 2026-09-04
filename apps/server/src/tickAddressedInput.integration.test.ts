@@ -6,6 +6,7 @@ import {
   PLAYGROUND_CHECKPOINTS,
   PLAYGROUND_PROPS,
   PLAYGROUND_SPINNERS,
+  PLAYGROUND_STATIC_SURFACES,
   PLAYGROUND_STATICS,
   RECONCILE_POSITION_EPSILON,
   RapierSimulation,
@@ -16,7 +17,8 @@ import {
   type SimInputs,
   type Vec3,
 } from "@dont-fall/shared";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { startTrackService, type TrackService } from "@dont-fall/track-service";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { startServer, type MatchServer } from "./index.js";
 
@@ -76,8 +78,19 @@ import { startServer, type MatchServer } from "./index.js";
  * zero.
  */
 
+// ADR 0028: startServer now fetches its Track from track-service; one shared
+// instance for this file, via TRACK_SERVICE_URL (startServer's default reads it).
+let trackService: TrackService;
+
 beforeAll(async () => {
   await initPhysics();
+  trackService = await startTrackService({ port: 0, dbPath: ":memory:" });
+  process.env.TRACK_SERVICE_URL = `http://localhost:${trackService.port}`;
+});
+
+afterAll(async () => {
+  await trackService.close();
+  delete process.env.TRACK_SERVICE_URL;
 });
 
 let server: MatchServer | undefined;
@@ -92,6 +105,7 @@ const SOUTH: SimInputs = { moveDirection: { x: 0, y: 0, z: 1 }, jumpHeld: false,
 const OSCILLATE_TICKS = 10;
 const simConfig = {
   statics: PLAYGROUND_STATICS,
+  staticSurfaces: PLAYGROUND_STATIC_SURFACES,
   checkpoints: PLAYGROUND_CHECKPOINTS,
   spinners: PLAYGROUND_SPINNERS,
   props: PLAYGROUND_PROPS,
@@ -275,6 +289,8 @@ class FaithfulClient {
       motionState: "Controlled",
       dashCooldownMs: 0,
       dashing: false, // this client never dashes — walks only (north/south)
+      speedPadMsLeft: 0,
+      speedPadCapMultiplier: 1,
     });
     this.sim.syncTick(serverTick);
     const replayed = this.sim.replayLocalCharacter(

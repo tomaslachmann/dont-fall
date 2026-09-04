@@ -5,6 +5,7 @@ import {
   IMPACT_STAGGER_MIN,
   RAGDOLL_MAX_TICKS,
   RAGDOLL_MIN_TICKS,
+  SLIDE_INPUT_SCALE,
   STAGGER_INPUT_SCALE,
   STAGGER_TICKS,
 } from "../tuning.js";
@@ -122,5 +123,82 @@ describe("CharacterStateMachine", () => {
     m.reset();
     expect(m.state).toBe("Controlled");
     expect(m.inputScale).toBe(1);
+  });
+});
+
+describe("CharacterStateMachine — Sliding (ticket 03, M3.6, ADR 0037): a condition, not a timer", () => {
+  it("enters Sliding while grounded on a too-steep Surface, with reduced input", () => {
+    const m = new CharacterStateMachine();
+    m.tick(false, true);
+    expect(m.state).toBe("Sliding");
+    expect(m.inputScale).toBe(SLIDE_INPUT_SCALE);
+  });
+
+  it("leaves Sliding the instant the condition no longer holds — no timer, no minimum duration", () => {
+    const m = new CharacterStateMachine();
+    m.tick(false, true);
+    expect(m.state).toBe("Sliding");
+    m.tick(false, false);
+    expect(m.state).toBe("Controlled");
+  });
+
+  it("stays Sliding for as long as the condition holds, however many ticks", () => {
+    const m = new CharacterStateMachine();
+    for (let i = 0; i < 200; i += 1) m.tick(false, true);
+    expect(m.state).toBe("Sliding");
+  });
+
+  it("a sub-threshold Impact while Sliding does not interrupt it", () => {
+    const m = new CharacterStateMachine();
+    m.tick(false, true);
+    m.impact(IMPACT_STAGGER_MIN);
+    m.tick(false, true);
+    expect(m.state).toBe("Sliding");
+  });
+
+  it("a hard Impact while Sliding goes straight to Ragdoll, exactly as from Stagger", () => {
+    const m = new CharacterStateMachine();
+    m.tick(false, true);
+    m.impact(IMPACT_RAGDOLL_MIN);
+    m.tick(false, true);
+    expect(m.state).toBe("Ragdoll");
+  });
+
+  it("a too-steep Surface takes priority over a merely-medium Impact from Controlled — sliding away matters more than a wobble in place", () => {
+    const m = new CharacterStateMachine();
+    m.impact((IMPACT_STAGGER_MIN + IMPACT_RAGDOLL_MIN) / 2);
+    m.tick(false, true); // both conditions true on the same tick
+    expect(m.state).toBe("Sliding");
+  });
+
+  it("does not enter Sliding while Staggering — the Stagger timer runs its course regardless of the slope condition", () => {
+    const m = new CharacterStateMachine();
+    m.impact((IMPACT_STAGGER_MIN + IMPACT_RAGDOLL_MIN) / 2);
+    m.tick(false, false); // enters Stagger, not on a slope
+    expect(m.state).toBe("Stagger");
+    for (let i = 0; i < STAGGER_TICKS - 1; i += 1) m.tick(false, true); // now on a too-steep Surface, but still Staggering
+    expect(m.state).toBe("Stagger");
+  });
+
+  it("reaches Sliding on the tick after Stagger recovers, if still on a too-steep Surface — one transition per tick, same as every other state (e.g. GettingUp -> Controlled)", () => {
+    const m = new CharacterStateMachine();
+    m.impact((IMPACT_STAGGER_MIN + IMPACT_RAGDOLL_MIN) / 2);
+    m.tick(false, false); // enters Stagger, not on a slope
+    expect(m.state).toBe("Stagger");
+    for (let i = 0; i < STAGGER_TICKS - 1; i += 1) m.tick(false, true); // too-steep for the rest of the Stagger
+    expect(m.state).toBe("Stagger"); // one tick before recovery
+    m.tick(false, true); // recovers to Controlled this tick — the still-too-steep condition isn't re-checked until the next
+    expect(m.state).toBe("Controlled");
+    m.tick(false, true);
+    expect(m.state).toBe("Sliding");
+  });
+
+  it("forceRagdoll overrides Sliding", () => {
+    const m = new CharacterStateMachine();
+    m.tick(false, true);
+    expect(m.state).toBe("Sliding");
+    m.forceRagdoll();
+    m.tick(false, true);
+    expect(m.state).toBe("Ragdoll");
   });
 });

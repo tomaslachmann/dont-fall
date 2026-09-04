@@ -1,0 +1,1185 @@
+<title>Screens Wireframe Set</title>
+<style>
+  :root {
+    --wf-paper: #f4f4f2;
+    --wf-line: #9a9a94;
+    --wf-line-strong: #3a3a36;
+    --wf-fill: #e6e6e2;
+    --wf-fill-2: #dcdcd6;
+    --wf-fill-3: #cfcfc8;
+    --wf-ink: #232320;
+    --wf-ink-soft: #6b6b64;
+    --wf-note: #3a6ea5;
+    --wf-note-bg: #eaf1f8;
+    background: var(--wf-paper);
+    color: var(--wf-ink);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--wf-paper);
+    color: var(--wf-ink);
+    font-family: -apple-system, "Segoe UI", Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 0 28px 40px;
+  }
+
+  /* ---------------------------- top nav (sticky) ---------------------------- */
+  .toc {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--wf-paper);
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 16px 0 12px;
+    display: flex;
+    align-items: baseline;
+    gap: 18px;
+    flex-wrap: wrap;
+    border-bottom: 2px solid var(--wf-line-strong);
+  }
+  .toc .doc-title { font-size: 15px; font-weight: 700; margin-right: 8px; }
+  .toc a {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--wf-ink-soft);
+    text-decoration: none;
+    padding-bottom: 2px;
+    border-bottom: 1px dotted transparent;
+  }
+  .toc a:hover, .toc a:focus-visible { color: var(--wf-ink); border-bottom-color: var(--wf-line); }
+
+  .doc-note {
+    max-width: 1180px;
+    margin: 14px auto 0;
+    font-size: 12px;
+    color: var(--wf-ink-soft);
+  }
+  .doc-note code { font-family: ui-monospace, monospace; }
+
+  /* ------------------------------- section shell ------------------------------- */
+  section.screen {
+    max-width: 1180px;
+    margin: 44px auto 0;
+    scroll-margin-top: 76px;
+  }
+  .page-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 16px;
+    margin: 0 0 18px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--wf-line);
+  }
+  .page-head h2 {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+  }
+  .page-head .status {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--wf-ink-soft);
+    background: var(--wf-fill);
+    border: 1px solid var(--wf-line);
+    border-radius: 3px;
+    padding: 2px 6px;
+    margin-left: 10px;
+  }
+  .page-head p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--wf-ink-soft);
+    max-width: 42ch;
+    min-width: 0;
+    flex: 1 1 auto;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+  .page-head code { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+
+  .frame-wrap {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 300px);
+    gap: 24px;
+    align-items: start;
+  }
+
+  /* the "screen" itself — a plain outlined rectangle, nothing decided about
+     what fills it visually, per the header note on every section */
+  .frame {
+    position: relative;
+    border: 2px solid var(--wf-line-strong);
+    background: repeating-linear-gradient(45deg, transparent 0 11px, rgba(0, 0, 0, 0.035) 11px 12px);
+    width: 100%;
+    aspect-ratio: 16 / 9;
+  }
+  .frame.tall { aspect-ratio: 16 / 11; }
+
+  .zone-label {
+    position: absolute;
+    top: 6px;
+    left: 8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--wf-ink-soft);
+  }
+
+  .region-bg { position: absolute; inset: 0; border: 1px dashed var(--wf-line); }
+
+  .region-content {
+    position: absolute;
+    inset: 40px 40px 40px 56px;
+    display: grid;
+    grid-template-rows: 1fr auto;
+  }
+
+  .hero-block {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    align-items: flex-start;
+    justify-content: center;
+    max-width: 60%;
+  }
+
+  .box {
+    border: 2px solid var(--wf-line-strong);
+    background: var(--wf-fill);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: var(--wf-ink);
+    font-weight: 600;
+    padding: 4px 8px;
+  }
+  .box .cap { display: block; font-weight: 400; font-size: 10px; margin-top: 2px; color: var(--wf-ink-soft); }
+
+  .box-wordmark { width: 100%; height: 92px; font-size: 20px; letter-spacing: 0.02em; }
+  .line-tagline {
+    width: 88%; height: 14px;
+    background: repeating-linear-gradient(90deg, var(--wf-line) 0 46%, transparent 46% 54%);
+    opacity: 0.6;
+  }
+  .line-tagline.short { width: 55%; }
+
+  .action-row { display: flex; gap: 12px; margin-top: 6px; }
+  .box-primary { width: 160px; height: 52px; font-size: 15px; background: var(--wf-fill-2); border-width: 3px; }
+  .box-secondary { width: 120px; height: 52px; font-size: 13px; font-weight: 500; }
+
+  .rail-row { justify-self: end; display: flex; gap: 18px; align-items: center; }
+  .rail-item { font-size: 12px; color: var(--wf-ink-soft); border-bottom: 1px dotted var(--wf-line); padding-bottom: 2px; }
+
+  /* -------------------------------- Lobby -------------------------------- */
+  .party-bar-strip {
+    position: absolute; top: -22px; left: 0; right: 0;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 10px; color: var(--wf-ink-soft);
+  }
+  .party-bar-strip .chip { border: 1px dashed var(--wf-line); padding: 2px 8px; font-size: 10px; }
+  .lobby-layout {
+    position: absolute;
+    inset: 28px;
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr 0.85fr;
+    gap: 20px;
+  }
+  .lobby-col { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .col-heading { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--wf-ink-soft); }
+  .player-row {
+    display: flex; align-items: center; gap: 10px;
+    border: 1.5px solid var(--wf-line-strong);
+    background: var(--wf-fill);
+    padding: 8px 10px;
+  }
+  .player-row.host { border-width: 3px; background: var(--wf-fill-3); }
+  .player-row .name { flex: 1; height: 12px; background: repeating-linear-gradient(90deg, var(--wf-line) 0 55%, transparent 55% 65%); }
+  .player-row .toggle { width: 44px; height: 22px; border: 1.5px solid var(--wf-line-strong); background: var(--wf-fill-3); font-size: 9px; display: flex; align-items: center; justify-content: center; }
+  .player-row .host-tag { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--wf-ink-soft); }
+  .activity-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    border: 1.5px solid var(--wf-line-strong);
+    background: transparent;
+    flex-shrink: 0;
+  }
+  .activity-dot.active { background: var(--wf-note); border-color: var(--wf-note); }
+  .track-card {
+    border: 2px solid var(--wf-line-strong); background: var(--wf-fill);
+    height: 84px; display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 600;
+  }
+  .badge-row { display: flex; gap: 10px; }
+  .badge { border: 1.5px dashed var(--wf-line); padding: 6px 10px; font-size: 11px; color: var(--wf-ink-soft); flex: 1; text-align: center; }
+  .start-btn { margin-top: auto; height: 48px; border: 3px solid var(--wf-line-strong); background: var(--wf-fill-2); font-weight: 700; display: flex; align-items: center; justify-content: center; }
+
+  /* compact chat, embedded in Lobby's 3rd column */
+  .chat-col { flex: 1; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+  .chat-messages { flex: 1; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+  .chat-msg { border: 1px solid var(--wf-line); background: var(--wf-fill); padding: 5px 8px; font-size: 10px; }
+  .chat-msg .who { font-weight: 700; margin-right: 4px; }
+  .chat-input { height: 30px; border: 1.5px solid var(--wf-line-strong); background: var(--wf-fill); display: flex; align-items: center; padding: 0 8px; font-size: 10px; color: var(--wf-ink-soft); }
+  .typing-row { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--wf-ink-soft); }
+  .typing-row .activity-dot { width: 7px; height: 7px; }
+
+  /* ------------------------------ Countdown ------------------------------ */
+  .live-scene {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px dashed var(--wf-line);
+  }
+  .numeral-box {
+    width: 140px; height: 140px;
+    border: 3px solid var(--wf-line-strong);
+    background: var(--wf-fill-2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 56px; font-weight: 700;
+  }
+
+  /* -------------------------------- Results -------------------------------- */
+  .results-layout { position: absolute; inset: 28px; display: flex; flex-direction: column; gap: 16px; }
+  .banner-box {
+    height: 76px;
+    border: 3px solid var(--wf-line-strong);
+    background: var(--wf-fill-3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 700; letter-spacing: 0.03em;
+  }
+  .results-list { display: flex; flex-direction: column; gap: 6px; flex: 1; overflow: hidden; }
+  .result-row {
+    display: grid; grid-template-columns: 28px 1fr 90px 60px; gap: 10px; align-items: center;
+    border: 1.5px solid var(--wf-line-strong); background: var(--wf-fill); padding: 6px 10px; font-size: 12px;
+  }
+  .result-row.dnf { border-style: dashed; background: transparent; color: var(--wf-ink-soft); }
+  .result-row .rank { font-weight: 700; text-align: center; }
+  .result-row .bar { height: 10px; background: repeating-linear-gradient(90deg, var(--wf-line) 0 55%, transparent 55% 65%); opacity: 0.6; }
+  .result-row .stat { font-variant-numeric: tabular-nums; text-align: right; }
+  .back-btn { align-self: flex-start; height: 40px; width: 160px; border: 2px solid var(--wf-line-strong); background: var(--wf-fill-2); font-weight: 600; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+
+  /* -------------------------------- Settings -------------------------------- */
+  .settings-layout { position: absolute; inset: 28px; display: grid; grid-template-columns: 160px 1fr; gap: 24px; }
+  .tab-rail { display: flex; flex-direction: column; gap: 6px; }
+  .tab-item {
+    border: 1.5px solid var(--wf-line-strong); background: var(--wf-fill); padding: 10px; font-size: 12px; font-weight: 600; text-align: left;
+  }
+  .tab-item.active { background: var(--wf-fill-3); border-width: 3px; }
+  .settings-panel { display: flex; flex-direction: column; gap: 14px; }
+  .setting-row { display: grid; grid-template-columns: 140px 1fr; align-items: center; gap: 14px; }
+  .setting-row .label { font-size: 11px; color: var(--wf-ink-soft); }
+  .slider-track { height: 8px; border: 1px solid var(--wf-line-strong); background: var(--wf-fill); position: relative; }
+  .slider-track .thumb { position: absolute; top: -4px; width: 16px; height: 16px; background: var(--wf-fill-3); border: 2px solid var(--wf-line-strong); }
+  .keybind-box { width: 64px; height: 30px; border: 1.5px solid var(--wf-line-strong); background: var(--wf-fill); font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+
+  /* ---------------------------- Account / registration ---------------------------- */
+  .account-layout {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 22px;
+  }
+  .guest-block { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 300px; }
+  .guest-nickname { width: 100%; height: 40px; border: 1.5px solid var(--wf-line-strong); background: var(--wf-fill); display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--wf-ink-soft); }
+  .guest-cta { width: 100%; height: 52px; border: 3px solid var(--wf-line-strong); background: var(--wf-fill-2); font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .divider-row { display: flex; align-items: center; gap: 10px; width: 300px; color: var(--wf-ink-soft); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .divider-row .rule { flex: 1; height: 1px; background: var(--wf-line); }
+  .secondary-path { width: 220px; height: 40px; border: 1.5px solid var(--wf-line); background: transparent; font-size: 12px; font-weight: 500; display: flex; align-items: center; justify-content: center; color: var(--wf-ink-soft); }
+
+  /* ---------------------------- Login / Register (new, speculative) ---------------------------- */
+  .auth-layout { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  .auth-form { display: flex; flex-direction: column; gap: 14px; width: 300px; }
+  .form-field { display: flex; flex-direction: column; gap: 5px; }
+  .form-field .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--wf-ink-soft); }
+  .form-field .input-box { height: 36px; border: 1.5px solid var(--wf-line-strong); background: var(--wf-fill); }
+  .form-link { font-size: 11px; color: var(--wf-note); text-decoration: underline; align-self: center; }
+  .form-row-split { display: flex; justify-content: space-between; align-items: center; }
+  .form-row-split .form-link { font-size: 10px; }
+
+  /* -------------------------------- Bet overlay -------------------------------- */
+  .bet-layout {
+    position: absolute; inset: 0;
+    display: flex; align-items: flex-end; justify-content: center;
+    padding-bottom: 26px;
+  }
+  .bet-panel {
+    width: 76%;
+    border: 2px solid var(--wf-line-strong);
+    background: var(--wf-fill);
+    padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .bet-heading { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--wf-ink-soft); }
+  .bet-picks { display: flex; gap: 10px; }
+  .bet-pick {
+    flex: 1; height: 64px;
+    border: 1.5px solid var(--wf-line-strong);
+    background: var(--wf-fill-2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600;
+  }
+  .bet-pick.picked { border-width: 3px; background: var(--wf-fill-3); }
+  .bet-confirm { align-self: flex-end; width: 130px; height: 36px; border: 2px solid var(--wf-line-strong); background: var(--wf-fill-3); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .spectator-tag { position: absolute; top: 16px; left: 16px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--wf-ink-soft); border: 1px dashed var(--wf-line); padding: 4px 8px; }
+
+  /* ------------------------------ generic tile grid ------------------------------ */
+  .tile-grid-layout { position: absolute; inset: 24px; display: flex; flex-direction: column; gap: 14px; }
+  .tile-grid-top { display: flex; justify-content: space-between; align-items: center; }
+  .tile-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; flex: 1; }
+  .tile {
+    border: 2px solid var(--wf-line-strong); background: var(--wf-fill);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    font-size: 11px; font-weight: 600; padding: 8px;
+  }
+  .tile .thumb { width: 56%; aspect-ratio: 1; border: 1.5px solid var(--wf-line); background: var(--wf-fill-2); }
+  .tile.selected { border-width: 3px; background: var(--wf-fill-3); }
+  .tile.locked { opacity: 0.5; border-style: dashed; }
+  .tile .price { font-size: 10px; font-weight: 400; color: var(--wf-ink-soft); }
+  .currency-pill { border: 1.5px solid var(--wf-line-strong); background: var(--wf-fill-2); padding: 4px 10px; font-size: 11px; font-weight: 700; }
+  .filter-bar { display: flex; gap: 8px; }
+  .filter-chip { border: 1px solid var(--wf-line); padding: 3px 10px; font-size: 10px; color: var(--wf-ink-soft); }
+
+  /* generic chip base — usable standalone (a cross-reference link) or nested inside .party-bar-strip/.compact-entry, which add their own specifics on top */
+  .chip {
+    display: inline-block;
+    border: 1.5px solid var(--wf-line-strong);
+    background: var(--wf-fill);
+    padding: 6px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  /* ------------------------------ generic list rows ------------------------------ */
+  .list-frame { position: absolute; inset: 24px; display: flex; flex-direction: column; gap: 8px; }
+  .list-row2 {
+    display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px;
+    border: 1.5px solid var(--wf-line-strong); background: var(--wf-fill); padding: 8px 12px; font-size: 12px;
+  }
+  .list-row2 .bar2 { height: 10px; background: repeating-linear-gradient(90deg, var(--wf-line) 0 55%, transparent 55% 65%); opacity: 0.6; }
+  .list-row2 .stat2 { font-variant-numeric: tabular-nums; font-size: 11px; color: var(--wf-ink-soft); }
+
+  /* ---------------------------- compact "not a screen" entries ---------------------------- */
+  .compact-entries { display: flex; flex-direction: column; gap: 14px; }
+  .compact-entry {
+    border: 1.5px dashed var(--wf-line-strong);
+    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 300px);
+    gap: 20px;
+    align-items: start;
+  }
+  .compact-entry .diagram { display: flex; align-items: center; gap: 10px; min-height: 60px; flex-wrap: wrap; }
+  .compact-entry .chip { border: 1.5px solid var(--wf-line-strong); background: var(--wf-fill); padding: 8px 12px; font-size: 11px; font-weight: 600; }
+  .compact-entry .chip.ghost { border-style: dashed; background: transparent; color: var(--wf-ink-soft); font-weight: 500; }
+  .compact-entry .arrow { font-size: 14px; color: var(--wf-ink-soft); }
+
+  /* --------------------------------- shared --------------------------------- */
+  .callouts { display: flex; flex-direction: column; gap: 14px; }
+  .callout { background: var(--wf-note-bg); border: 1px solid var(--wf-note); border-radius: 3px; padding: 10px 12px; }
+  .callout .tag { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--wf-note); margin-bottom: 4px; }
+  .callout p { margin: 0; font-size: 12px; color: var(--wf-ink); overflow-wrap: anywhere; }
+  .callout code { font-family: ui-monospace, monospace; font-size: 11px; overflow-wrap: anywhere; }
+
+  .legend {
+    max-width: 1180px;
+    margin: 40px auto 0;
+    display: flex;
+    gap: 22px;
+    flex-wrap: wrap;
+    font-size: 11px;
+    color: var(--wf-ink-soft);
+    padding-top: 16px;
+    border-top: 2px solid var(--wf-line-strong);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 14px; height: 14px; display: inline-block; border: 1px solid var(--wf-line-strong); }
+  .swatch.solid { background: var(--wf-fill); }
+  .swatch.strong { background: var(--wf-fill-3); border-width: 3px; }
+  .swatch.dashed { background: transparent; border-style: dashed; border-color: var(--wf-line); }
+  .swatch.note { background: var(--wf-note-bg); border-color: var(--wf-note); }
+
+  @media (max-width: 860px) {
+    .frame-wrap { grid-template-columns: 1fr; }
+    .page-head { flex-direction: column; align-items: flex-start; }
+    .page-head p { text-align: left; }
+  }
+</style>
+
+<nav class="toc">
+  <span class="doc-title">Screens — wireframe set</span>
+  <a href="#main-menu">Main menu</a>
+  <a href="#lobby">Lobby</a>
+  <a href="#countdown">Countdown</a>
+  <a href="#results">Results</a>
+  <a href="#settings">Settings</a>
+  <a href="#account">Account</a>
+  <a href="#login">Log in</a>
+  <a href="#register">Register</a>
+  <a href="#bet">Bet</a>
+  <a href="#profile">Profile</a>
+  <a href="#friends">Friends</a>
+  <a href="#chat">Emote wheel</a>
+  <a href="#lobby-code">Lobby code</a>
+  <a href="#character-select">Character</a>
+  <a href="#shop">Shop</a>
+  <a href="#progression">Progression</a>
+  <a href="#matchmaking">Matchmaking</a>
+  <a href="#create-join">Create/Join</a>
+  <a href="#spectate">Spectate</a>
+  <a href="#track-browser">Track browser</a>
+  <a href="#leaderboards">Leaderboards</a>
+  <a href="#match-history">Match history</a>
+  <a href="#disconnect">Disconnect</a>
+  <a href="#credits">Credits</a>
+  <a href="#not-screens">Not new screens</a>
+</nav>
+<p class="doc-note">
+  Greyscale, structure-only. No color, type, or motion decisions applied anywhere on this page —
+  every section cites the region/hierarchy it draws from <code>screens-wireframes-and-components.md</code>
+  and flags what's still an open slot in <code>design-system.md</code> §6, rather than guessing at it.
+</p>
+
+<section class="screen" id="main-menu">
+  <div class="page-head">
+    <h2>Main menu <span class="status">confirmed</span> <span class="status" style="background:var(--wf-note-bg); border-color:var(--wf-note); color:var(--wf-note);">revised — party bar added</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.1 + §3.12 (&lt;PartyBar&gt;).</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame" style="margin-top: 22px;">
+      <div class="party-bar-strip"><span class="chip">&lt;PartyBar&gt; — 2 friends, same shared chrome as Lobby (§3.12)</span></div>
+      <span class="zone-label">Viewport — Main Menu</span>
+      <div class="region-bg">
+        <span class="zone-label" style="top:auto; bottom:6px;">&lt;MenuBackground&gt; — undecided, not drawn</span>
+      </div>
+      <div class="region-content">
+        <div class="hero-block">
+          <div class="box box-wordmark">DON'T FALL<span class="cap">&lt;wordmark placeholder&gt;</span></div>
+          <div class="line-tagline"></div>
+          <div class="line-tagline short"></div>
+          <div class="action-row">
+            <div class="box box-primary">PLAY<span class="cap">&lt;PrimaryPlayAction&gt;</span></div>
+            <div class="box box-secondary">Options</div>
+          </div>
+        </div>
+        <div class="rail-row">
+          <span class="rail-item">Settings</span>
+          <span class="rail-item">Credits</span>
+          <span class="rail-item">Changelog</span>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Hierarchy</span><p>One primary action, alone, not sharing weight with secondary items — §3.1: "a primary 'Play' action large and alone."</p></div>
+      <div class="callout"><span class="tag">Background</span><p>Dashed placeholder. §3.1 proposes a live/looping render of the game's own physics; every color/motion value for it is an open slot (design-system.md §6). Not guessed here.</p></div>
+      <div class="callout"><span class="tag">Secondary rail</span><p>Corner-anchored, small — Golf With Friends / Fall Guys precedent for a Settings gear tucked in a corner, not competing with Play.</p></div>
+      <div class="callout"><span class="tag">Party bar, now shown here too</span><p>§3.12 names &lt;PartyBar&gt; as visible from "both Main menu and Lobby" — previously only drawn on Lobby; added here so the cross-Screen chrome is honest about where it actually persists.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="lobby">
+  <div class="page-head">
+    <h2>Lobby <span class="status">confirmed</span> <span class="status" style="background:var(--wf-note-bg); border-color:var(--wf-note); color:var(--wf-note);">revised — now integrates chat</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.2 + §3.12 (&lt;PartyBar&gt;) + §3.13 (&lt;LobbyChatPanel&gt;), merged.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame tall" style="margin-top: 22px;">
+      <div class="party-bar-strip"><span class="chip">&lt;PartyBar&gt; — 2 friends, shared chrome with Main menu (§3.12)</span></div>
+      <span class="zone-label">Viewport — Lobby</span>
+      <div class="lobby-layout">
+        <div class="lobby-col">
+          <span class="col-heading">&lt;LobbyPlayerList&gt;</span>
+          <div class="player-row host">
+            <span class="activity-dot active"></span>
+            <span class="host-tag">HOST</span>
+            <div class="name"></div>
+            <div class="toggle">READY</div>
+          </div>
+          <div class="player-row">
+            <span class="activity-dot"></span>
+            <div class="name"></div>
+            <div class="toggle">ready?</div>
+          </div>
+          <div class="player-row">
+            <span class="activity-dot active"></span>
+            <div class="name"></div>
+            <div class="toggle">ready?</div>
+          </div>
+        </div>
+        <div class="lobby-col">
+          <span class="col-heading">&lt;TrackPicker&gt;</span>
+          <div class="track-card">Track card &lt;TrackListing&gt;</div>
+          <div class="badge-row">
+            <div class="badge">&lt;TimeLimitBadge&gt; — read only</div>
+          </div>
+          <div class="start-btn">START &lt;HostStartButton&gt; — host only</div>
+        </div>
+        <div class="lobby-col chat-col">
+          <span class="col-heading">&lt;LobbyChatPanel&gt;</span>
+          <div class="chat-messages">
+            <div class="chat-msg"><span class="who">Host:</span>ready when u are</div>
+            <div class="chat-msg"><span class="who">P2:</span>lol ok</div>
+          </div>
+          <div class="typing-row"><span class="activity-dot active"></span>P3 is typing…</div>
+          <div class="chat-input">type a message…</div>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Chat, integrated — not a separate Screen</span><p>§3.13's own wireframe already says lobby chat sits "beside the player list" — previously drawn as its own isolated section; corrected here to actually sit inside Lobby, where it will really ship.</p></div>
+      <div class="callout"><span class="tag">Activity dot — an honest substitute for "speaking"</span><p><strong>Not sourced</strong> — this project has no voice-chat concept anywhere in its docs. What IS grounded is text-chat activity, so a small dot (filled = recently sent a message / typing) rides on the player row instead of inventing a voice feature nobody has decided on. Flagged as this document's own addition.</p></div>
+      <div class="callout"><span class="tag">Party bar, shared chrome</span><p>§3.12: &lt;PartyBar&gt; "has to live outside a single route" — visible from both Main menu and Lobby. Drawn here as a strip above the frame to show it's shared chrome, not this Screen's own content (see Main menu, revised below).</p></div>
+      <div class="callout"><span class="tag">Host row</span><p>Structurally different, not a small badge — §3.2: "should look different... reinforces the game's own 'host = first joiner' rule." Drawn here with a heavier border, not a color.</p></div>
+      <div class="callout"><span class="tag">Card pattern</span><p>&lt;TrackPicker&gt;'s card is the clearest cross-surface reuse case in the whole catalog — same visual idea as the Track builder's own Module palette and a future Track browser (§2.1b), three separate implementations.</p></div>
+      <div class="callout"><span class="tag">Start, apart from Ready</span><p>Kept visually separate from the Ready toggles so it can't be mis-tapped as another ready button — own layout reasoning from §3.2.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="countdown">
+  <div class="page-head">
+    <h2>Countdown (overlay) <span class="status">routing unsettled</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.3.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame">
+      <span class="zone-label">Viewport — Countdown, over a live GameCanvas</span>
+      <div class="live-scene" style="flex-direction:column; justify-content:flex-start; padding-top:28px;">
+        <span class="zone-label" style="position:static;">&lt;GameCanvas&gt; — already live, Characters spawned, input locked</span>
+      </div>
+      <div class="live-scene" style="pointer-events:none;">
+        <div class="numeral-box">3</div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Open question</span><p>Own routed Screen, or an overlay on &lt;GameCanvas&gt;? Unsettled in ADR 0040/M4.md alike — §3.3 flags this directly, carried forward here.</p></div>
+      <div class="callout"><span class="tag">Not dimmed</span><p>The scene behind the numeral fades in rather than dims heavily — dimming would fight the one thing M4.md calls out here: cameras are already live.</p></div>
+      <div class="callout"><span class="tag">HUD-adjacent</span><p>§3.3's own reusability note: this may end up plain-DOM/game-loop-driven like the HUD, not a React component at all — flagged, not decided.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="results">
+  <div class="page-head">
+    <h2>Results <span class="status">confirmed</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.5.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame tall">
+      <span class="zone-label">Viewport — Results</span>
+      <div class="results-layout">
+        <div class="banner-box">&lt;PersonalResultBanner&gt; — QUALIFIED / ELIMINATED</div>
+        <div class="results-list">
+          <div class="result-row"><span class="rank">1</span><span class="bar"></span><span class="stat">0:42.1</span><span class="stat">0 falls</span></div>
+          <div class="result-row"><span class="rank">2</span><span class="bar"></span><span class="stat">0:47.8</span><span class="stat">2 falls</span></div>
+          <div class="result-row dnf"><span class="rank">—</span><span class="bar"></span><span class="stat">CP 3/5</span><span class="stat">4 falls</span></div>
+          <div class="result-row dnf"><span class="rank">—</span><span class="bar"></span><span class="stat">CP 1/5</span><span class="stat">6 falls</span></div>
+        </div>
+        <div class="back-btn">Back to Lobby</div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Row ordering</span><p>Qualified by finish time, then DNF by Track progress underneath — CONTEXT.md "Results," exact order. DNF rows drawn dashed, a different kind of row, not a color-only variant.</p></div>
+      <div class="callout"><span class="tag">DNF as comedy, not shame</span><p>§3.5: a real chance to lean into "hilarious when you fail" instead of the generic quietly-greyed-out-loser pattern — where/how a DNF fell is content, not an apology.</p></div>
+      <div class="callout"><span class="tag">Row pattern reuse</span><p>Same "ranked list of {name, time/score, stat}" language as a future Leaderboards (§3.22) and Match history (§3.23) — one visual idea, several screens.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="settings">
+  <div class="page-head">
+    <h2>Settings <span class="status">named, unscoped — ship-blocking</span> <span class="status" style="background:var(--wf-note-bg); border-color:var(--wf-note); color:var(--wf-note);">revised — accessibility moved to Video</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.6 + §3.24 (&lt;AccessibilitySection&gt;), merged.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame tall">
+      <span class="zone-label">Viewport — Settings, Controls tab active</span>
+      <div class="settings-layout">
+        <div class="tab-rail">
+          <div class="tab-item active">Controls</div>
+          <div class="tab-item">Audio</div>
+          <div class="tab-item">Video</div>
+        </div>
+        <div class="settings-panel">
+          <div class="setting-row"><span class="label">Move forward</span><div class="keybind-box">W</div></div>
+          <div class="setting-row"><span class="label">Dash</span><div class="keybind-box">Shift</div></div>
+          <div class="setting-row"><span class="label">Look sensitivity</span><div class="slider-track"><div class="thumb" style="left:38%"></div></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Why 3 tabs</span><p>Controls/Audio/Video matches this project's actual current input surface (WASD, free-look, Dash) — Among Us' simpler split, not Fall Guys' larger one, is the apter comparison per §3.6.</p></div>
+      <div class="callout"><span class="tag">One shared slider</span><p>&lt;SensitivitySlider&gt; is reused for look-sensitivity, volume, AND accessibility sliders (Video tab, below) — one primitive everywhere, not several, per §3.6's reusability note.</p></div>
+      <div class="callout"><span class="tag">Camera shake moved</span><p>Previously (incorrectly) shown under Controls. §3.24 nests it inside &lt;VideoPanel&gt; alongside colorblind mode and subtitle size — corrected below, under the Video tab.</p></div>
+    </div>
+  </div>
+  <div class="frame-wrap" style="margin-top: 22px;">
+    <div class="frame tall">
+      <span class="zone-label">Viewport — Settings, Video tab active</span>
+      <div class="settings-layout">
+        <div class="tab-rail">
+          <div class="tab-item">Controls</div>
+          <div class="tab-item">Audio</div>
+          <div class="tab-item active">Video</div>
+        </div>
+        <div class="settings-panel">
+          <div class="setting-row"><span class="label">Resolution</span><div class="keybind-box" style="width:90px;">1920×1080</div></div>
+          <div class="setting-row"><span class="label">Quality</span><div class="keybind-box" style="width:90px;">High</div></div>
+          <div class="col-heading" style="margin-top:8px;">&lt;AccessibilitySection&gt;</div>
+          <div class="setting-row"><span class="label">Camera shake</span><div class="slider-track"><div class="thumb" style="left:64%"></div></div></div>
+          <div class="setting-row"><span class="label">Field of view</span><div class="slider-track"><div class="thumb" style="left:50%"></div></div></div>
+          <div class="setting-row"><span class="label">Colorblind mode</span><div class="keybind-box" style="width:90px;">Off</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Nested, not a second-class section</span><p>§3.24's anti-slop point: give accessibility controls "the same motion/interaction quality as every other control" — same &lt;SensitivitySlider&gt;/&lt;keybind-box&gt; primitives, not a visually demoted checkbox list.</p></div>
+      <div class="callout"><span class="tag">Promotable, not promised</span><p>Stays nested inside Video "only if it grows past what a single panel section can hold" (§3.24) — shown here as a subsection, not yet its own tab.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="account">
+  <div class="page-head">
+    <h2>Account / registration <span class="status">named, unscoped — nice-eventually</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.7.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame">
+      <span class="zone-label">Viewport — Account</span>
+      <div class="account-layout">
+        <div class="guest-block">
+          <div class="guest-cta">Continue as Guest &lt;GuestContinueAction&gt;</div>
+          <div class="guest-nickname">nickname entry — shared with Lobby</div>
+        </div>
+        <div class="divider-row"><span class="rule"></span>or<span class="rule"></span></div>
+        <a href="#login" class="secondary-path" style="text-decoration:none;">Create Account / Sign In</a>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Emphasis, deliberately inverted</span><p>Guest is large and primary, account creation small below it — §3.7: "never the reverse emphasis." Matches Golf With Friends' own account-free precedent (§4 of the inventory).</p></div>
+      <div class="callout"><span class="tag">&lt;AuthForm&gt; now shown, at direct request</span><p>§3.7 originally left this unspecified on purpose ("inventing wizard steps for a feature with zero product decision behind it yet would be worse than saying so"). Fleshed out below (Login / Register) at explicit request — still the smallest honest version, not a full account system.</p></div>
+      <div class="callout"><span class="tag">Real component reuse</span><p>&lt;GuestContinueAction&gt;'s nickname entry is the one case in this whole catalog of literal (not just pattern) component reuse — same React tree as the Lobby's own nickname field.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="login">
+  <div class="page-head">
+    <h2>Log in <span class="status" style="background:var(--wf-note-bg); border-color:var(--wf-note); color:var(--wf-note);">new — beyond §3.7's own scope</span></h2>
+    <p>Extends <code>screens-wireframes-and-components.md</code> §3.7 at explicit request; not sourced to any reference game.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame" style="aspect-ratio:16/8;">
+      <span class="zone-label">Viewport — Log in</span>
+      <div class="auth-layout">
+        <div class="auth-form">
+          <div class="form-field"><span class="label">Email or nickname</span><div class="input-box"></div></div>
+          <div class="form-field">
+            <div class="form-row-split"><span class="label">Password</span><a href="#" class="form-link" onclick="return false;">Forgot password?</a></div>
+            <div class="input-box"></div>
+          </div>
+          <div class="box box-primary" style="width:100%; height:44px;">Log in</div>
+          <a href="#register" class="form-link">New here? Create an account</a>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Two fields, nothing else</span><p>No social-login icon row, no "remember me" checkbox row, no CAPTCHA — §3.7's own anti-slop point names a social-icon row as part of the generic SaaS-signup tell to avoid; not added here without a reason.</p></div>
+      <div class="callout"><span class="tag">Not a tab-switcher card</span><p>Login and Register are two separate Screens, not one centered card with a Sign-up/Log-in tab switcher — §3.7 flags exactly that tab-switcher pattern as the generic default; kept apart deliberately.</p></div>
+      <div class="callout"><span class="tag">Still genuinely unscoped</span><p>What "forgot password" actually does (email reset link? nothing exists to email yet — no backend/account system is built anywhere in this project) is intentionally not resolved here — the link exists to show where it would go, not to claim the flow behind it is designed.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="register">
+  <div class="page-head">
+    <h2>Create account <span class="status" style="background:var(--wf-note-bg); border-color:var(--wf-note); color:var(--wf-note);">new — beyond §3.7's own scope</span></h2>
+    <p>Extends <code>screens-wireframes-and-components.md</code> §3.7 at explicit request; not sourced to any reference game.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame" style="aspect-ratio:16/9;">
+      <span class="zone-label">Viewport — Create account</span>
+      <div class="auth-layout">
+        <div class="auth-form">
+          <div class="form-field"><span class="label">Nickname</span><div class="input-box"></div></div>
+          <div class="form-field"><span class="label">Email</span><div class="input-box"></div></div>
+          <div class="form-field"><span class="label">Password</span><div class="input-box"></div></div>
+          <div class="form-field"><span class="label">Confirm password</span><div class="input-box"></div></div>
+          <div class="box box-primary" style="width:100%; height:44px;">Create account</div>
+          <a href="#login" class="form-link">Already have an account? Log in</a>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Nickname, not a separate "username"</span><p>Reuses the exact same nickname concept as &lt;GuestContinueAction&gt; and the Lobby's own nickname field (§3.7's own literal-reuse case) — an Account doesn't introduce a second, competing identity field.</p></div>
+      <div class="callout"><span class="tag">No email verification flow shown</span><p>Deliberately not designed — this project has no backend account system, no email sending, no session/reset infrastructure anywhere in its docs. Inventing a verification-code screen here would be exactly the kind of manufactured decision §3.7 originally warned against; flagged, not built.</p></div>
+      <div class="callout"><span class="tag">Same anti-slop discipline as Login</span><p>No social-signup icons, no separate marketing copy panel beside the form — the generic two-column "hero image + signup form" SaaS layout is avoided on purpose.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="bet">
+  <div class="page-head">
+    <h2>The Bet screen <span class="status">named, unscoped — mechanic-gated</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.8.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame">
+      <span class="zone-label">Viewport — Bet, over a live spectator camera</span>
+      <span class="spectator-tag">Spectator Mode — already eliminated</span>
+      <div class="bet-layout">
+        <div class="bet-panel">
+          <span class="bet-heading">&lt;CharacterPickList&gt; — who wins?</span>
+          <div class="bet-picks">
+            <div class="bet-pick">Player A</div>
+            <div class="bet-pick picked">Player B</div>
+            <div class="bet-pick">Player C</div>
+          </div>
+          <div class="bet-confirm">Lock in pick</div>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">No reference to lean on</span><p>§3.8: none of Fall Guys, Trackmania, or Golf With Friends has anything like this — reasoned from first principles, flagged as such rather than borrowing a gambling-app template.</p></div>
+      <div class="callout"><span class="tag">Overlay, not a route</span><p>Drawn over the still-live spectator camera, same structural idea as Countdown (§3.3) — betting while watching who's winning is the point.</p></div>
+      <div class="callout"><span class="tag">No odds, no stake</span><p>A single pick, no odds ticker or stake slider — CONTEXT.md's own "Bet" entry only ever commits to "a prediction... for XP / coins," not a wagering amount.</p></div>
+      <div class="callout"><span class="tag">Don't confuse with Spectate</span><p>Easy to mix up with the plain <a href="#spectate">Spectating a match in progress</a> overlay (§3.20, below) — that one is a non-participant observer with no pick/confirm action at all; this one is specifically an <em>eliminated</em> Player in Spectator Mode who gets the pick UI.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="profile">
+  <div class="page-head">
+    <h2>Profile / stats-summary <span class="status">proposed — mechanic-gated on Account</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.11.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame">
+      <span class="zone-label">Viewport — Profile</span>
+      <div class="tile-grid-layout">
+        <div class="tile-grid-top">
+          <div class="box" style="width:180px; height:44px;">&lt;CharacterBadge&gt;</div>
+        </div>
+        <div class="tile-grid" style="grid-template-columns: repeat(3, 1fr);">
+          <div class="tile" style="aspect-ratio:auto; height:90px;">Most falls in one Round<span class="cap">&lt;StatTile&gt; — weighted, not uniform</span></div>
+          <div class="tile" style="aspect-ratio:auto; height:90px;">Qualification rate<span class="cap">&lt;StatTile&gt;</span></div>
+          <div class="tile" style="aspect-ratio:auto; height:90px;">Longest streak<span class="cap">&lt;StatTile&gt;</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Not a uniform KPI grid</span><p>§3.11's anti-slop point: weight tiles by what's actually notable/funny about this Player (falls!) rather than identically-sized generic tiles — directly against Krebs' "stat banner rows" tell.</p></div>
+      <div class="callout"><span class="tag">No new data source</span><p>Every stat here is Results data (§3.5) aggregated over many Rounds — a profile is Results replayed over time, not a new computation.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="friends">
+  <div class="page-head">
+    <h2>Friends list / party <span class="status">proposed — nice-eventually</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.12.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame">
+      <span class="zone-label">Viewport — Friends</span>
+      <div class="list-frame">
+        <span class="col-heading">&lt;FriendsScreen&gt;</span>
+        <div class="list-row2"><div class="bar2"></div><span class="stat2">online — invite</span></div>
+        <div class="list-row2"><div class="bar2"></div><span class="stat2">online — invite</span></div>
+        <div class="list-row2" style="opacity:.55;"><div class="bar2"></div><span class="stat2">offline</span></div>
+        <div class="box box-secondary" style="width:170px; height:38px; margin-top:auto;">Create/Join party</div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Feeds into Lobby, doesn't replace it</span><p>§3.12: a party is a group that then joins one Lobby together — no separate persistent room concept, per every reference researched.</p></div>
+      <div class="callout"><span class="tag">Subordinate, not a messaging-app panel</span><p>Small, corner-anchored per §1.2 — avoids the "lifted Discord sidebar grafted onto a racing game" tell.</p></div>
+      <div class="callout"><span class="tag">Missing affordance, added</span><p>§3.12's own wireframe text names "a 'create/join party' affordance" alongside the friend list — previously drawn without it. Once a party forms, it's the &lt;PartyBar&gt; strip (Main menu/Lobby, above) that carries it forward.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="chat">
+  <div class="page-head">
+    <h2>In-match emote wheel <span class="status">proposed — nice-eventually, genre-generic</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.13.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame" style="aspect-ratio:16/8;">
+      <span class="zone-label">Viewport — mid-Round, over the live game view · &lt;QuickEmoteWheel&gt; (HUD-adjacent, not React)</span>
+      <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center;">
+        <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:10px; width:32%;">
+          <div class="tile" style="aspect-ratio:1;">stumble</div>
+          <div class="tile" style="aspect-ratio:1;">wobble</div>
+          <div class="tile" style="aspect-ratio:1;">gg</div>
+          <div class="tile" style="aspect-ratio:1;">oops</div>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Lobby chat moved</span><p>The in-Lobby half of §3.13 (&lt;LobbyChatPanel&gt;) is now shown integrated inside the Lobby wireframe, where it actually ships beside the player list — see Lobby, above. This section is the mid-Round half only.</p></div>
+      <div class="callout"><span class="tag">A different technical bucket</span><p>Unlike Lobby's real React chat panel, this wheel is HUD-adjacent plain DOM, per §3.13 — same reasoning as the Countdown/tutorial overlays: mid-Round UI is the HUD's territory, not React's.</p></div>
+      <div class="callout"><span class="tag">Emotes = the game's own physical vocabulary</span><p>A stumble/wobble animation, not a generic emoji — on-identity per §1.2.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="lobby-code">
+  <div class="page-head">
+    <h2>Private-lobby-via-code <span class="status">proposed — nice-eventually</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.14.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame">
+      <span class="zone-label">Viewport — Lobby code</span>
+      <div class="account-layout">
+        <div class="box" style="width:260px; height:80px; font-size:32px; letter-spacing:0.1em;">FALL4<span class="cap">&lt;LobbyCodeDisplay&gt;</span></div>
+        <div class="box" style="width:100px; height:100px; font-size:11px;">QR &lt;QRCode&gt;</div>
+        <div class="divider-row"><span class="rule"></span>or join<span class="rule"></span></div>
+        <div class="guest-block" style="flex-direction:row; width:auto;">
+          <div class="guest-nickname" style="width:140px;">enter code</div>
+          <div class="secondary-path" style="width:80px;">Join</div>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Jackbox model, not Fall Guys'</span><p>A single code, not a two-tier Share-Code/Lobby-Code split — §3.14: Fall Guys' two-tier system exists for up to 40 players, unneeded at this project's 2-12 scale (ADR 0011).</p></div>
+      <div class="callout"><span class="tag">Code impossible to overlook</span><p>Large, prominent, matching Jackbox's own "nearly impossible to overlook" precedent — plus a QR shortcut, cheap given Jackbox proves its value.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="character-select">
+  <div class="page-head">
+    <h2>Character/skin-select <span class="status">proposed — nice-eventually</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.15.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame">
+      <span class="zone-label">Viewport — Character select</span>
+      <div class="tile-grid-layout">
+        <div class="tile-grid">
+          <div class="tile selected"><div class="thumb"></div>MushroomKing</div>
+          <div class="tile"><div class="thumb"></div>Model B</div>
+          <div class="tile locked"><div class="thumb"></div>Locked</div>
+          <div class="tile locked"><div class="thumb"></div>Locked</div>
+        </div>
+        <div class="box box-primary" style="width:140px; align-self:flex-end;">Select</div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Live 3D preview, not a flat icon</span><p>§3.15: reuses the game's own render pipeline for a live-rotating preview — the same "don't waste the game's own 3D assets" point made for Main menu's background (§3.1).</p></div>
+      <div class="callout"><span class="tag">No invented combat stats</span><p>Purely cosmetic — no stat-bar comparison panel implying a balance dimension this game doesn't have, unlike a generic fighting-game character-select UI kit.</p></div>
+      <div class="callout"><span class="tag">Open placement question</span><p>§3.15 flags this could instead be a Lobby sub-panel rather than its own route — same data either way. Shown here as a standalone Screen for clarity; not resolved which wiring wins.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="shop">
+  <div class="page-head">
+    <h2>Cosmetics shop / currency <span class="status">proposed — mechanic-gated</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.16.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame">
+      <span class="zone-label">Viewport — Shop</span>
+      <div class="tile-grid-layout">
+        <div class="tile-grid-top">
+          <span class="col-heading">&lt;ShopItemGrid&gt;</span>
+          <div class="currency-pill">128 &lt;CurrencyBalance&gt;</div>
+        </div>
+        <div class="tile-grid">
+          <div class="tile"><div class="thumb"></div>Hat<span class="price">40 coins</span></div>
+          <div class="tile"><div class="thumb"></div>Trail<span class="price">60 coins</span></div>
+          <div class="tile selected"><div class="thumb"></div>Owned<span class="price">equipped</span></div>
+          <div class="tile"><div class="thumb"></div>Skin<span class="price">120 coins</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Fully speculative — no economy decided</span><p>§3.16 deliberately doesn't pick paid-vs-earned; this shows only the shape both cited precedents (Fall Guys' shop, Golf With Friends' all-earned model) agree on regardless of that decision.</p></div>
+      <div class="callout"><span class="tag">Same visual family as Character-select</span><p>&lt;ShopItemGrid&gt;/&lt;ShopItemDetail&gt; mirror &lt;CharacterGrid&gt;/&lt;CharacterPreview&gt; almost exactly — a shop is "the locked half of Character-select plus a price."</p></div>
+      <div class="callout"><span class="tag">Flavor the currency</span><p>Per §1.2: name/flavor currency around falling or chaos rather than a generic "Coins" — both Fall Guys and Golf With Friends already do this in their own voice.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="progression">
+  <div class="page-head">
+    <h2>XP/progression track <span class="status">proposed — mechanic-gated on Betting</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.17.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame">
+      <span class="zone-label">Viewport — Progression</span>
+      <div class="tile-grid-layout">
+        <div class="tile-grid-top">
+          <span class="col-heading">&lt;TierTrack&gt;</span>
+          <div class="currency-pill">&lt;CurrencyBalance&gt; — shared with Shop</div>
+        </div>
+        <div style="display:flex; gap:10px; flex:1; overflow-x:auto;">
+          <div class="tile" style="min-width:80px;">Tier 1</div>
+          <div class="tile" style="min-width:80px;">Tier 2</div>
+          <div class="tile selected" style="min-width:80px;">Tier 3<span class="cap">current</span></div>
+          <div class="tile locked" style="min-width:80px;">Tier 4</div>
+          <div class="tile locked" style="min-width:80px;">Tier 5</div>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Overwatch 2's short-track shape, not Fortnite's</span><p>§3.17: a single horizontal row of tiers, no free/paid dual-track split — this project has no paid tier implied anywhere in its own docs.</p></div>
+      <div class="callout"><span class="tag">The one economy Screen with real textual grounding</span><p>CONTEXT.md's own "Bet" entry commits to "for XP / coins" — this Screen is implied the moment Betting ships, unlike the Shop which is fully speculative.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="matchmaking">
+  <div class="page-head">
+    <h2>Matchmaking / server browser <span class="status">proposed — minimal by design</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.18.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame" style="aspect-ratio: 16/6;">
+      <span class="zone-label">Viewport — a transient overlay, not a full Screen</span>
+      <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center;">
+        <div class="box" style="width:260px; height:60px;">Searching… 0:12<span class="cap">&lt;MatchmakingStatus&gt; — elapsed, playersFound</span></div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Deliberately not a server-list grid</span><p>§3.18: both Fall Guys (queue-only) and Golf With Friends (flat Host/Join) argue against a filterable region/ping/player-count browser — that's a different genre's convention, imported with no reason.</p></div>
+      <div class="callout"><span class="tag">Transitions straight into Lobby</span><p>No standalone route — folded into Main menu's Play action (§3.1) once/if automated matchmaking exists at all.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="create-join">
+  <div class="page-head">
+    <h2>Create/Join private match <span class="status">proposed — nice-eventually</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.19.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame" style="aspect-ratio: 16/7;">
+      <span class="zone-label">Viewport — Create/Join fork</span>
+      <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:14px;">
+        <div class="box box-primary" style="width:150px;">Create</div>
+        <span class="arrow">→</span>
+        <a href="#lobby-code" class="chip" style="text-decoration:none; color:inherit;">&lt;LobbyCodeDisplay&gt;<br /><span style="font-size:9px; font-weight:400;">generated, §3.14</span></a>
+        <span style="width:1px; align-self:stretch; background:var(--wf-line); margin:0 10px;"></span>
+        <div class="box box-secondary" style="width:150px;">Join</div>
+        <span class="arrow">→</span>
+        <a href="#lobby-code" class="chip" style="text-decoration:none; color:inherit;">&lt;JoinByCodeForm&gt;<br /><span style="font-size:9px; font-weight:400;">inline, §3.14</span></a>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Two buttons, nothing else</span><p>§3.19: the whole flow stays at most two taps before a Lobby — padding this with promotional filler would be the same "inventing content" trap as §3.1's Main menu.</p></div>
+      <div class="callout"><span class="tag">Reuses §3.14 directly</span><p>Create leads to a fresh Lobby with a generated code; Join surfaces &lt;JoinByCodeForm&gt; inline — literal component reuse, not new UI. Both destinations linked above, not just described.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="spectate">
+  <div class="page-head">
+    <h2>Spectating a match in progress <span class="status">proposed — mechanic-gated</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.20.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame">
+      <span class="zone-label">Viewport — Spectate, over a live game view</span>
+      <span class="spectator-tag">Non-participant observer — no Character in the Round</span>
+      <div class="bet-layout" style="align-items:center; padding-bottom:0;">
+        <div class="bet-panel" style="width:50%;">
+          <span class="bet-heading">&lt;SpectateOverlay&gt; — follow</span>
+          <div class="bet-picks">
+            <div class="bet-pick picked">Player A</div>
+            <div class="bet-pick">Player B</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Distinct from Spectator Mode</span><p>CONTEXT.md's Spectator Mode is for an <em>eliminated</em> Player. This is a late-joining friend or pure observer — "no camera/UI concept named anywhere for this case" per the inventory, §3.20. See also <a href="#bet">the Bet screen</a>, which is the eliminated-Player version and does carry a pick/confirm action.</p></div>
+      <div class="callout"><span class="tag">No control-implying HUD</span><p>No Dash cooldown, no checkpoint splits — those belong to a Character being controlled, which this observer has none of.</p></div>
+      <div class="callout"><span class="tag">Real reuse: camera behavior, not UI</span><p>The free/cycling camera logic itself should be shared with eliminated-Player Spectator Mode (§2.1c) — worth building generalizable from the start.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="track-browser">
+  <div class="page-head">
+    <h2>Player-facing Track browser/gallery <span class="status">proposed — nice-eventually, escalating</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.21.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame tall">
+      <span class="zone-label">Viewport — Track browser</span>
+      <div class="tile-grid-layout">
+        <div class="box" style="height:70px;">&lt;FeaturedTrackHero&gt; — Trackmania TOTD-style featured slot</div>
+        <div class="filter-bar"><div class="filter-chip">All</div><div class="filter-chip">Newest</div><div class="filter-chip">Most played</div></div>
+        <div class="tile-grid" style="grid-template-columns:repeat(4,1fr); flex:1;">
+          <div class="tile" style="aspect-ratio:auto; border-width:3px;"><div class="thumb" style="width:80%;"></div>Track A<span class="cap">author · best 0:41</span><a href="#leaderboards" style="font-size:9px; text-decoration:underline; color:var(--wf-note); font-weight:400;">view leaderboard →</a></div>
+          <div class="tile" style="aspect-ratio:auto;"><div class="thumb" style="width:80%;"></div>Track B<span class="cap">author · best 1:02</span></div>
+          <div class="tile" style="aspect-ratio:auto;"><div class="thumb" style="width:80%;"></div>Track C<span class="cap">author · best 0:58</span></div>
+          <div class="tile" style="aspect-ratio:auto;"><div class="thumb" style="width:80%;"></div>Track D<span class="cap">author · best 1:14</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Trackmania TOTD + Fall Guys playlist, combined</span><p>A featured rotating slot (TOTD model) above a filterable catalog grid (Show Selector model) — §3.21's own combination of both cited precedents.</p></div>
+      <div class="callout"><span class="tag">Strongest cross-surface case in the whole catalog</span><p>&lt;TrackCard&gt; is the large-scale sibling of the Lobby's &lt;TrackPicker&gt; (§3.2) and the Track builder's own #palette/#browse panels — one visual idea, three separate implementations across two apps.</p></div>
+      <div class="callout"><span class="tag">Live geometry preview, never a screenshot</span><p>Per §1.2: this game's Modules (Spinner, Ice, Moving Platforms) are physically distinctive — a looping render shows that; a static thumbnail wastes it.</p></div>
+      <div class="callout"><span class="tag">Actually links to Leaderboards now</span><p>§3.22 says a per-Track leaderboard is "reached from that Track's own card... a natural 'view leaderboard' action" — previously only stated in Leaderboards' own text with no visible affordance here. Added directly on Track A's card.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="leaderboards">
+  <div class="page-head">
+    <h2>Leaderboards <span class="status">proposed — higher-value than convention suggests</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.22.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame">
+      <span class="zone-label">Viewport — Track Leaderboard (launched from &lt;TrackCard&gt;, §3.21)</span>
+      <div class="list-frame">
+        <span class="col-heading">&lt;TrackLeaderboardScreen&gt; — Track A · resets in 04:12:33</span>
+        <div class="result-row"><span class="rank">1</span><span class="bar"></span><span class="stat">0:41.0</span></div>
+        <div class="result-row"><span class="rank">2</span><span class="bar"></span><span class="stat">0:42.7</span></div>
+        <div class="result-row"><span class="rank">3</span><span class="bar"></span><span class="stat">0:44.1</span></div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Same row, same logic, as Results</span><p>§3.22: &lt;LeaderboardRow&gt; is near-identical to &lt;ResultsRow&gt; (§3.5) — the strongest plain-logic reuse case in the whole catalog, same sort-by-finish-time computation over a different data scope.</p></div>
+      <div class="callout"><span class="tag">Time-boxed, visibly</span><p>A visible countdown-to-reset (Trackmania's 24-hour TOTD model) makes it feel alive rather than a static table, per §1.2's motion-with-personality point.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="match-history">
+  <div class="page-head">
+    <h2>Match history <span class="status">proposed — lower priority than leaderboards</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.23.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame">
+      <span class="zone-label">Viewport — Match history</span>
+      <div class="list-frame">
+        <span class="col-heading">&lt;MatchHistoryScreen&gt; — gated on Account existing</span>
+        <div class="result-row"><span class="rank">✓</span><span class="bar"></span><span class="stat">0:42.1</span><span class="stat">0 falls</span></div>
+        <div class="result-row dnf"><span class="rank">—</span><span class="bar"></span><span class="stat">CP 2/5</span><span class="stat">5 falls</span></div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Honestly, Results persisted over time</span><p>§3.23: "it's Results, persisted and listed" — same &lt;ResultsRow&gt; shape plus a Track name/date, not a new row design.</p></div>
+      <div class="callout"><span class="tag">Pure genre speculation, flagged as such</span><p>None of the three reference games surfaced a dedicated history Screen distinct from stats/profile — this document doesn't overstate that gap as a citation.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="disconnect">
+  <div class="page-head">
+    <h2>Disconnect / error / reconnect <span class="status">proposed — ship-blocking for 2 of 3 sub-cases</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.25.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame">
+      <span class="zone-label">Viewport — full-screen modal takeover, never a toast</span>
+      <div style="position:absolute; top:18px; left:0; right:0; display:flex; justify-content:center; gap:8px;">
+        <span class="filter-chip" style="border-width:2px; border-color:var(--wf-line-strong); font-weight:700;">local-disconnect</span>
+        <span class="filter-chip">server-full</span>
+        <span class="filter-chip">version-mismatch</span>
+        <span class="filter-chip">mid-round-disconnect</span>
+      </div>
+      <div style="position:absolute; inset:0; background:rgba(58,58,54,0.12); display:flex; align-items:center; justify-content:center;">
+        <div class="box" style="width:340px; height:150px; flex-direction:column; gap:10px;">
+          Connection lost<span class="cap">&lt;ConnectionErrorScreen kind="local-disconnect"&gt;</span>
+          <div class="box box-secondary" style="width:180px; height:36px;">Return to Main Menu</div>
+        </div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">One component, four message variants</span><p>local-disconnect / server-full / version-mismatch / mid-round-disconnect (chips above, active one shown) all share this identical modal-takeover shape per §3.25's own research — four bespoke Screens would be over-engineering, not thoroughness. Only the message text and, for the two join-time cases, where the takeover appears (over Main menu/Create-Join rather than mid-Round) actually differ.</p></div>
+      <div class="callout"><span class="tag">Never a subtle toast</span><p>The one load-bearing finding: "a modal... that cannot be missed or mistaken for still-being-connected," explicitly against a rejected red-bar-while-still-playable pattern.</p></div>
+      <div class="callout"><span class="tag">HUD already gets this half-right</span><p><code>apps/client/src/main.ts</code> already sets the HUD's own plain text to "connection lost / reload the page to rejoin" on disconnect — already aligned with this research, not new work.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="credits">
+  <div class="page-head">
+    <h2>Credits <span class="status">proposed — low cost</span></h2>
+    <p>Regions/hierarchy: <code>screens-wireframes-and-components.md</code> §3.26.</p>
+  </div>
+  <div class="frame-wrap">
+    <div class="frame" style="aspect-ratio:16/8;">
+      <span class="zone-label">Viewport — Credits, scroll only</span>
+      <div class="list-frame">
+        <div class="col-heading">Design</div>
+        <div class="line-tagline"></div>
+        <div class="col-heading" style="margin-top:8px;">Engineering</div>
+        <div class="line-tagline short"></div>
+      </div>
+    </div>
+    <div class="callouts">
+      <div class="callout"><span class="tag">Lowest-complexity Screen in the catalog</span><p>Simple, scrollable, grouped by role — reached from Main menu's secondary rail (§3.1).</p></div>
+      <div class="callout"><span class="tag">One small physical touch</span><p>Names that "fall" into place as they scroll into view (§1.2's &lt;--df-motion-land&gt; primitive) rather than a flat fade-in list — cheap, on-identity.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="not-screens">
+  <div class="page-head">
+    <h2>Not new Screens — additive to existing ones, or resolved as non-Screens</h2>
+    <p>§3.9, §3.10, §3.27–§3.31 — each recorded here rather than inventing a Screen that shouldn't exist. (§3.24 Accessibility is now shown fully integrated in Settings, above — no longer just a diagram here.)</p>
+  </div>
+  <div class="compact-entries">
+    <div class="compact-entry">
+      <div class="diagram">
+        <span class="chip ghost">first Round starts</span><span class="arrow">→</span><span class="chip ghost">HUD hint fades after ~3s of movement</span>
+      </div>
+      <div class="callout"><span class="tag">§3.9 Tutorial/controls-intro</span><p>Not a Screen at all — a dismissible HUD-plain-DOM hint, matching Fall Guys/Golf With Friends both dropping players straight into a menu with no mandatory tutorial.</p></div>
+    </div>
+    <div class="compact-entry">
+      <div class="diagram">
+        <span class="chip">&lt;GuestContinueAction&gt;</span><span class="arrow">=</span><span class="chip ghost">permanent path, not a stopgap</span>
+      </div>
+      <div class="callout"><span class="tag">§3.10 Guest/nickname-only play</span><p>A decision about existing components (§3.2, §3.7), not new UI — nickname collisions resolve per-Lobby, never a global "taken" error.</p></div>
+    </div>
+    <div class="compact-entry">
+      <div class="diagram">
+        <span class="chip ghost">Main menu secondary rail</span><span class="arrow">→</span><span class="chip">external page, new tab</span>
+      </div>
+      <div class="callout"><span class="tag">§3.27 Changelog · §3.28 Legal</span><p>&lt;ExternalLinkAction&gt; — a link-style entry point only, cheaper than an in-app Screen; both share one primitive.</p></div>
+    </div>
+    <div class="compact-entry">
+      <div class="diagram">
+        <span class="chip">&lt;ResultsRow&gt;</span><span class="arrow">→</span><span class="chip ghost">finishTime | survivedMs | itemsCollected</span>
+      </div>
+      <div class="callout"><span class="tag">§3.29 Round-type Results variants</span><p>One row primitive, a different secondary-stat column per Round type — never a redesigned Results per type.</p></div>
+    </div>
+    <div class="compact-entry">
+      <div class="diagram">
+        <span class="chip ghost">undefined concept</span><span class="arrow">→</span><span class="chip ghost">§3.21 &lt;TrackGrid&gt; with a theme filter, if anything</span>
+      </div>
+      <div class="callout"><span class="tag">§3.30 Level-select / theme-select</span><p>Genuinely unscoped — "level themes" has no definition anywhere in this project's own docs. Not wireframed further; inventing one would manufacture a decision nobody made.</p></div>
+    </div>
+    <div class="compact-entry">
+      <div class="diagram">
+        <span class="chip">&lt;CountdownOverlay variant="finalRace"&gt;</span>
+      </div>
+      <div class="callout"><span class="tag">§3.31 Final Race / Skyfall transition</span><p>A camera pull-back beat added to the existing Countdown overlay (§3.3), not a new routed Screen — Skyfall's verticality is dramatic enough on its own; the UI's job is not to smother it.</p></div>
+    </div>
+  </div>
+</section>
+
+<div class="legend">
+  <span><span class="swatch solid"></span> confirmed region (has content, per the wireframes doc)</span>
+  <span><span class="swatch strong"></span> emphasized region (host row, active tab — weight, not color)</span>
+  <span><span class="swatch dashed"></span> placeholder / not yet designed</span>
+  <span><span class="swatch note"></span> annotation, not part of the screen itself</span>
+</div>
