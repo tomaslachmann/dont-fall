@@ -1,5 +1,6 @@
 import type { Vec3 } from "../math/vec3.js";
 import type { SimInputs } from "../simulation/SimInputs.js";
+import type { MatchPhase } from "../match/MatchPhase.js";
 import type { SimState } from "../state/SimState.js";
 
 /**
@@ -41,6 +42,14 @@ export interface WelcomeMessage {
     snapshotHz: number;
     /** How long a disconnected Character is parked / the session token stays valid (ms) (ADR 0024). */
     graceWindowMs: number;
+    /**
+     * How many connected Players this server waits for before starting a
+     * Round (M4 ticket 04). Sent rather than assumed: it is configurable, and
+     * a client that hardcoded the default would tell a player they were
+     * waiting for someone who was never going to be needed (ADR 0040 —
+     * clients render what the server decides, they never compute it).
+     */
+    playersToStart: number;
   };
 }
 
@@ -70,8 +79,24 @@ export interface SnapshotMessage {
    * Round state the server owns, not something the shared simulation derives
    * — which is exactly why the client never computes it and only renders what
    * arrives here. Reaching 0 does not end anything yet (M4 ticket 05).
+   *
+   * Holds at the Revision's full Time Limit until the Round is actually
+   * RUNNING — the clock starts when the Countdown ends, not when the server did.
    */
   timeLeftMs: number;
+  /**
+   * Where the Match is (M4 ticket 04, ADR 0040). The server owns every
+   * transition; clients render this rather than computing it, which is what
+   * makes the start synchronous instead of two clients each deciding when
+   * their own Countdown ran out.
+   */
+  phase: MatchPhase;
+  /**
+   * Milliseconds left on the Countdown, or 0 in every other phase (M4 ticket
+   * 04) — what the client's "3, 2, 1" overlay renders. Derived by the server
+   * from its own Tick, never from a client's wall clock.
+   */
+  countdownMsLeft: number;
 }
 
 /** Server → client, reply to a {@link PingMessage} (time sync, ADR 0019). */

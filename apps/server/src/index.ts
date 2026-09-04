@@ -11,6 +11,11 @@ import {
   SNAPSHOT_HZ,
   TICK_MS,
   DEFAULT_TIME_LIMIT_MS,
+  COUNTDOWN_MS,
+  PLAYERS_TO_START,
+  advanceMatchPhase,
+  countdownMsLeft,
+  phaseLocksInput,
   TICK_RATE_HZ,
   TRACK_FETCH_ATTEMPT_TIMEOUT_MS,
   TRACK_FETCH_MAX_WAIT_MS,
@@ -20,6 +25,7 @@ import {
   roundTimeLeftMs,
   trackSpawn,
   type ClientMessage,
+  type MatchState,
   type ServerMessage,
   type SimInputs,
   type Track,
@@ -138,6 +144,23 @@ export interface StartServerConfig {
   trackFetchMaxWaitMs?: number;
   trackFetchRetryDelayMs?: number;
   trackFetchAttemptTimeoutMs?: number;
+  /**
+   * How many connected Players a Round waits for before its Countdown starts
+   * (M4 ticket 04, ADR 0040). Defaults to `PLAYERS_TO_START` env, then
+   * {@link PLAYERS_TO_START}.
+   *
+   * Configurable so a developer working alone can set it to 1: until ticket
+   * 07's Lobby there is nothing in the game able to press start, so a
+   * single-browser Playtest would otherwise sit in LOBBY forever.
+   */
+  playersToStart?: number;
+  /**
+   * How long the Countdown holds before a Round is released (M4 ticket 04).
+   * Defaults to {@link COUNTDOWN_MS}. A test-only knob, like the track-fetch
+   * timings above — it lets a test put this server into a running Round
+   * without waiting out three real seconds.
+   */
+  countdownMs?: number;
 }
 
 /**
@@ -170,6 +193,10 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   // Ticket 12's test-only knobs, shared by every `fetchTrack` call this
   // server ever makes — the boot-time one below, and a Playtest connection's
   // live reload (further down) — so a test can bound both the same way.
+  const countdownMs = config.countdownMs ?? COUNTDOWN_MS;
+  const envPlayersToStart = Number(process.env.PLAYERS_TO_START);
+  const playersToStart =
+    config.playersToStart ?? (Number.isInteger(envPlayersToStart) && envPlayersToStart > 0 ? envPlayersToStart : PLAYERS_TO_START);
   const trackFetchRetryOptions = {
     ...(config.trackFetchMaxWaitMs !== undefined ? { maxWaitMs: config.trackFetchMaxWaitMs } : {}),
     ...(config.trackFetchRetryDelayMs !== undefined ? { retryDelayMs: config.trackFetchRetryDelayMs } : {}),
@@ -196,15 +223,17 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   // used to run ahead of what the client had actually predicted for N).
   let serverTick = 0;
   /**
-   * The Tick this Round's clock counts from (M4 ticket 03, ADR 0038).
-   *
-   * Anchored when the first player arrives at an empty server, so a Match
-   * server that has been idle for an hour doesn't greet its first joiner with
-   * an already-expired clock. That is a stand-in, and deliberately a
-   * single variable: M4 ticket 04 gives the server a real Match phase, and
-   * the RUNNING transition becomes the one thing that sets this.
+   * The Tick this Round's clock counts from (M4 ticket 03, ADR 0038) — set by
+   * the COUNTDOWN → RUNNING transition and nothing else (M4 ticket 04), so a
+   * Round's Time Limit starts when the Round does rather than when the server
+   * did. Until then the clock reads its full authored value.
    */
   let roundStartTick = 0;
+  /**
+   * The authoritative Match phase (ADR 0040) — the server owns every
+   * transition and clients only render what rides the snapshot.
+   */
+  let match: MatchState = { phase: "LOBBY", phaseStartTick: 0 };
   // A short per-client queue absorbs network jitter and reordering;
   // `lastApplied` fills a tick a client's packet hasn't arrived for yet, and
   // `lastInputTick` — the server tick actually simulated, whether a real input
@@ -301,16 +330,13 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
           // think everything it sent already got applied. No one can move,
           // for the rest of this server process's life, not just this Track.
           serverTick = 0;
-          // A reload is a new Round on a new Track, so its clock starts over
-          // too — and `serverTick` has just been reset under it.
+          // A reload is a new Round on a new Track, so its clock and its phase
+          // both start over — and `serverTick` has just been reset under them.
           roundStartTick = 0;
+          match = { phase: "LOBBY", phaseStartTick: 0 };
           console.log(`DON'T FALL: reloaded Track "${fetched.id}"@${fetched.revision} for a Playtest connection`);
         }
       }
-
-      // First arrival at an empty server starts the Round's clock (see
-      // `roundStartTick`). Checked before this socket is registered below.
-      if (sockets.size === 0) roundStartTick = serverTick;
 
       const id = randomUUID();
       // Spawn in the loaded Track's own start frame (free placement puts the
@@ -332,7 +358,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         spawn,
         trackId: fetched.id,
         trackRevision: fetched.revision,
-        config: { snapshotHz: SNAPSHOT_HZ, graceWindowMs: GRACE_WINDOW_MS },
+        config: { snapshotHz: SNAPSHOT_HZ, graceWindowMs: GRACE_WINDOW_MS, playersToStart },
       });
 
       // A single client's socket erroring (an abrupt reset, a write to a
@@ -403,6 +429,22 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     // number" (ADR 0027) for the rest of the Match.
     const thisTick = serverTick + 1;
     try {
+      // Decided before anything is simulated, and committed below only once
+      // the tick has actually succeeded — the same discipline `serverTick`
+      // itself follows, so a failed tick retries this exact decision rather
+      // than advancing the Match past a Tick that never ran.
+      const nextMatch = advanceMatchPhase(match, {
+        tick: thisTick,
+        connectedPlayers: sockets.size,
+        playersToStart,
+        countdownMs,
+      });
+      // Input is locked in every phase but RUNNING (ADR 0040). Enforced here
+      // rather than by refusing the packet: the client runs the same rule on
+      // its own prediction, so both sides stop and start driving the
+      // Character on the identical Tick, and a client that ignores the rule
+      // simply has its input replaced.
+      const inputLocked = phaseLocksInput(nextMatch.phase);
       const tickInputs: Record<string, SimInputs> = {};
       for (const id of sockets.keys()) {
         const queue = inputQueues.get(id);
@@ -419,11 +461,18 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         // real input matched it or `lastApplied` repeated — never left behind
         // at the last tick a *distinct* input happened to land on.
         lastInputTicks.set(id, thisTick);
-        tickInputs[id] = lastApplied.get(id) ?? IDLE_INPUTS;
+        // The ack bookkeeping above stays honest whatever the phase — the
+        // client is still reconciling against these Ticks — only the input
+        // actually simulated is replaced.
+        tickInputs[id] = inputLocked ? IDLE_INPUTS : (lastApplied.get(id) ?? IDLE_INPUTS);
       }
 
       simulation.tick(tickInputs);
       serverTick = thisTick;
+      // The Round's clock starts the Tick the Countdown ends, not when the
+      // server did (M4 ticket 03's anchor, now owned by this transition).
+      if (nextMatch.phase === "RUNNING" && match.phase !== "RUNNING") roundStartTick = thisTick;
+      match = nextMatch;
       consecutiveTickFailures = 0;
 
       snapshotAccumulatorMs += TICK_MS;
@@ -442,7 +491,11 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       // Counted here, once per broadcast, so every client in this Round reads
       // the identical clock off the identical Tick (ADR 0038 — the client
       // never computes time remaining, it only renders this).
-      const timeLeftMs = roundTimeLeftMs(fetched.timeLimitMs, serverTick - roundStartTick);
+      // Before the Round is RUNNING none of its clock has been spent, so it
+      // reads its full authored value rather than counting down in the Lobby.
+      const timeLeftMs =
+        match.phase === "RUNNING" ? roundTimeLeftMs(fetched.timeLimitMs, serverTick - roundStartTick) : fetched.timeLimitMs;
+      const countdown = countdownMsLeft(match, serverTick, countdownMs);
       for (const [id, socket] of sockets) {
         if (socket.readyState !== socket.OPEN) continue;
         trySend(
@@ -453,6 +506,8 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
             serverTimeMs,
             commandQueueDepth: inputQueues.get(id)?.length ?? 0,
             timeLeftMs,
+            phase: match.phase,
+            countdownMsLeft: countdown,
           } satisfies ServerMessage),
         );
       }

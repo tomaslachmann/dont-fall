@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import {
+  COUNTDOWN_MS,
   DEFAULT_TIME_LIMIT_MS,
   M1_TRACK,
   RapierSimulation,
@@ -15,7 +16,7 @@ import { startServer, type MatchServer } from "./index.js";
 
 // ADR 0028: the Match server now has a hard runtime dependency on track-service.
 // One shared instance for this whole file, pointed to by TRACK_SERVICE_URL, so
-// every existing `startServer({ port: 0 })` call site below keeps working
+// every existing `startServer({ port: 0, playersToStart: 1, countdownMs: 0 })` call site below keeps working
 // unchanged — `startServer` picks up the env var as its default.
 let trackService: TrackService;
 
@@ -29,6 +30,14 @@ afterAll(async () => {
   delete process.env.TRACK_SERVICE_URL;
 });
 
+// M4 ticket 04: a Round now waits for `PLAYERS_TO_START` (2) connected
+// Players before its Countdown starts, and input is locked until it is
+// RUNNING (ADR 0040). Every test below that predates M4 is about netcode —
+// input application, reconciliation, disconnects — and needs a server that is
+// simply *in* a Round with the one client it connects, so it asks for a
+// one-Player start with no Countdown to sit through. The Countdown block at
+// the bottom of this file is where the real two-Player trigger and the real
+// three-second hold are exercised.
 let server: MatchServer | undefined;
 
 afterEach(async () => {
@@ -73,7 +82,7 @@ const sendInputs = (socket: WebSocket, entries: { tick: number; input: SimInputs
 
 describe("startServer", () => {
   it("welcomes each client with a public playerId, a secret sessionToken, the spawn, and config", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port);
     const welcome = await nextMessage(socket);
 
@@ -100,7 +109,7 @@ describe("startServer", () => {
   });
 
   it("stamps every snapshot with serverTimeMs and this client's commandQueueDepth", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port);
     await nextMessage(socket); // welcome
     const snapshot = await nextMessage(socket);
@@ -111,7 +120,7 @@ describe("startServer", () => {
   });
 
   it("replies to a ping with a pong echoing the client time plus the server time", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port);
     await nextMessage(socket); // welcome
 
@@ -128,7 +137,7 @@ describe("startServer", () => {
   });
 
   it("applies a batch of inputs from one packet and dedupes repeats by tick (ADR 0021)", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port);
     const welcome = await nextMessage(socket);
     if (welcome.type !== "welcome") throw new Error("unreachable");
@@ -160,7 +169,7 @@ describe("startServer", () => {
   });
 
   it("broadcasts a snapshot every tick containing the connected client's Character", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port);
     const welcome = await nextMessage(socket);
     const id = (welcome as { playerId: string }).playerId;
@@ -173,7 +182,7 @@ describe("startServer", () => {
   });
 
   it("moves the Character in the direction of the input the client sends", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port);
     const welcome = await nextMessage(socket);
     const id = (welcome as { playerId: string }).playerId;
@@ -225,7 +234,7 @@ describe("startServer", () => {
       return realTick.apply(this, args);
     });
     try {
-      server = await startServer({ port: 0 });
+      server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
       const socket = connect(server.port);
       const welcome = await nextMessage(socket);
       const id = (welcome as { playerId: string }).playerId;
@@ -267,7 +276,7 @@ describe("startServer", () => {
   });
 
   it("puts both connected players in the snapshot, at distinct spawn points", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const a = connect(server.port);
     const aId = (await nextMessage(a) as { playerId: string }).playerId;
     const b = connect(server.port);
@@ -292,7 +301,7 @@ describe("startServer", () => {
   });
 
   it("removes a disconnected client's Character so it stops appearing in broadcasts", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const first = connect(server.port);
     const firstWelcome = await nextMessage(first);
     const firstId = (firstWelcome as { playerId: string }).playerId;
@@ -332,7 +341,7 @@ describe("startServer — disconnects (ticket 07)", () => {
   };
 
   it("survives an abrupt drop (no close frame) and keeps serving the remaining player", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const survivor = connect(server.port);
     const survivorId = (await nextMessage(survivor) as { playerId: string }).playerId;
     const leaver = connect(server.port);
@@ -368,7 +377,7 @@ describe("startServer — disconnects (ticket 07)", () => {
   });
 
   it("lets a new client connect and play normally after another has disconnected", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const a = connect(server.port);
     const aId = (await nextMessage(a) as { playerId: string }).playerId;
     a.close();
@@ -426,7 +435,7 @@ describe("startServer — track-service startup retry (ticket 12)", () => {
   it("gives up with a clear, ADR-0028-naming error once the wait budget is exhausted", async () => {
     const unreachableUrl = "http://localhost:1"; // nothing listens on port 1
     await expect(
-      startServer({ port: 0, trackServiceUrl: unreachableUrl, trackFetchMaxWaitMs: 200, trackFetchRetryDelayMs: 50 }),
+      startServer({ port: 0, playersToStart: 1, countdownMs: 0, trackServiceUrl: unreachableUrl, trackFetchMaxWaitMs: 200, trackFetchRetryDelayMs: 50 }),
     ).rejects.toThrow(/ADR 0028/);
   });
 
@@ -458,7 +467,7 @@ describe("startServer — track-service startup retry (ticket 12)", () => {
 
 describe("startServer — Track Builder Playtest override (`?track=` on the connecting client)", () => {
   it("loads the requested Track when no players are connected yet", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     // Published after the server's own boot-time fetch, so it can never have
     // been that fetch's own (random) pick — guarantees the reload path
     // actually runs, not a same-track no-op.
@@ -472,7 +481,7 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
   });
 
   it("connects normally — no reload, no refusal — when `?track=` already matches the currently-loaded Track", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const first = connect(server.port);
     const firstWelcome = await nextMessage(first);
     if (firstWelcome.type !== "welcome") throw new Error("unreachable");
@@ -487,7 +496,7 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
   });
 
   it("refuses a mismatched `?track=` while another player is already connected, instead of swapping the Track under them", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const already = connect(server.port);
     const alreadyWelcome = await nextMessage(already);
     if (alreadyWelcome.type !== "welcome") throw new Error("unreachable");
@@ -512,7 +521,7 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
     const reservedId = `playtest-${Math.random().toString(36).slice(2)}`;
     await publishTrack(M1_TRACK, reservedId); // Revision 1
 
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const first = connect(server.port, `?track=${reservedId}`);
     const firstWelcome = await nextMessage(first);
     if (firstWelcome.type !== "welcome") throw new Error("unreachable");
@@ -531,7 +540,7 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
   });
 
   it("refuses a genuinely concurrent mismatched `?track=` that arrives while another one's reload is still in flight, instead of racing it", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const altA = await publishTrack();
     const altB = await publishTrack();
 
@@ -564,7 +573,7 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
   });
 
   it("closes with a clear reason when the requested Track can't be loaded", async () => {
-    server = await startServer({ port: 0, trackFetchMaxWaitMs: 200, trackFetchRetryDelayMs: 20 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, trackFetchMaxWaitMs: 200, trackFetchRetryDelayMs: 20 });
     const socket = connect(server.port, "?track=this-track-id-does-not-exist");
     const { code, reason } = await nextClose(socket);
     expect(code).toBe(4002);
@@ -572,7 +581,7 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
   });
 
   it("a client connecting after a reload can still move — the reload must not leave serverTick permanently ahead of the new simulation's own tick", async () => {
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
 
     // Advance the server's own tick counter well past zero before anyone
     // reloads, exactly like a dev server that's been up for a while.
@@ -637,7 +646,7 @@ describe("startServer — the Round clock (M4 ticket 03, ADR 0038)", () => {
 
   it("counts down from the Revision's own authored Time Limit, not a server-wide default", async () => {
     const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port, `?track=${trackId}`);
 
     const first = await nextSnapshot(socket);
@@ -651,7 +660,7 @@ describe("startServer — the Round clock (M4 ticket 03, ADR 0038)", () => {
 
   it("gives a Revision published without one the backfill default", async () => {
     const trackId = await publishTrack();
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port, `?track=${trackId}`);
 
     const first = await nextSnapshot(socket);
@@ -663,7 +672,7 @@ describe("startServer — the Round clock (M4 ticket 03, ADR 0038)", () => {
 
   it("keeps counting down as the server Ticks", async () => {
     const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port, `?track=${trackId}`);
 
     const first = await nextSnapshot(socket);
@@ -676,7 +685,7 @@ describe("startServer — the Round clock (M4 ticket 03, ADR 0038)", () => {
 
   it("shows every client the same clock — one Round, one authority", async () => {
     const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
-    server = await startServer({ port: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     // The first connection loads the Track; the second just joins whatever is
     // already running (a `?track=` reload is refused while anyone is here).
     const a = connect(server.port, `?track=${trackId}`);
@@ -691,5 +700,147 @@ describe("startServer — the Round clock (M4 ticket 03, ADR 0038)", () => {
     expect(Math.abs(snapA.timeLeftMs - snapB.timeLeftMs)).toBeLessThan(200);
     a.close();
     b.close();
+  });
+});
+
+describe("startServer — Countdown and a shared start (M4 ticket 04, ADR 0040)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  /** Snapshots until `predicate` holds, or a bounded number of them have gone by. */
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+    max = 200,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (let i = 0; i < max; i += 1) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+    throw new Error("condition never held");
+  };
+
+  it("waits in the Lobby while only one Player is connected", async () => {
+    server = await startServer({ port: 0 });
+    const socket = connect(server.port);
+
+    const snapshot = await nextSnapshot(socket);
+
+    expect(snapshot.phase).toBe("LOBBY");
+    expect(snapshot.countdownMsLeft).toBe(0);
+    socket.close();
+  });
+
+  it("starts a Countdown once the second Player arrives", async () => {
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    await nextSnapshot(a);
+    const b = connect(server.port);
+
+    const counting = await snapshotUntil(a, (s) => s.phase === "COUNTDOWN");
+
+    expect(counting.countdownMsLeft).toBeGreaterThan(0);
+    expect(counting.countdownMsLeft).toBeLessThanOrEqual(COUNTDOWN_MS);
+    a.close();
+    b.close();
+  });
+
+  it("releases both Players into RUNNING in the same Tick", async () => {
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    await nextSnapshot(a);
+    const b = connect(server.port);
+
+    const [runA, runB] = await Promise.all([
+      snapshotUntil(a, (s) => s.phase === "RUNNING"),
+      snapshotUntil(b, (s) => s.phase === "RUNNING"),
+    ]);
+
+    // The same Tick for both, because there is one phase and one authority —
+    // not two clients each deciding when their own Countdown ran out.
+    expect(runA.state.tick).toBe(runB.state.tick);
+    expect(runA.countdownMsLeft).toBe(0);
+    a.close();
+    b.close();
+  });
+
+  it("locks input until the Round is RUNNING — a Character cannot be walked off the start", async () => {
+    server = await startServer({ port: 0, playersToStart: 2 });
+    const a = connect(server.port);
+    const welcome = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
+    const b = connect(server.port);
+
+    // Drive hard the entire time, from before the Countdown even begins.
+    let tick = 1;
+    const spam = setInterval(() => {
+      sendInput(a, tick, NORTH);
+      tick += 1;
+    }, 5);
+    const counting = await snapshotUntil(a, (s) => s.phase === "COUNTDOWN");
+    const duringCountdown = await snapshotUntil(a, (s) => s.phase === "COUNTDOWN" && s.state.tick > counting.state.tick + 20);
+    clearInterval(spam);
+
+    const moved = duringCountdown.state.characters[welcome.playerId]!.position;
+    expect(Math.abs(moved.z - welcome.spawn.z)).toBeLessThan(0.05);
+    expect(Math.abs(moved.x - welcome.spawn.x)).toBeLessThan(0.05);
+    a.close();
+    b.close();
+  });
+
+  it("spawns both Characters before the Countdown, so nothing teleports at zero", async () => {
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    const welcomeA = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
+    const b = connect(server.port);
+    const welcomeB = (await nextMessage(b)) as Extract<ServerMessage, { type: "welcome" }>;
+
+    const counting = await snapshotUntil(a, (s) => s.phase === "COUNTDOWN");
+    const running = await snapshotUntil(a, (s) => s.phase === "RUNNING");
+
+    // Both present, at their own join-order offsets, before the Countdown …
+    expect(Object.keys(counting.state.characters).sort()).toEqual([welcomeA.playerId, welcomeB.playerId].sort());
+    expect(welcomeA.spawn).not.toEqual(welcomeB.spawn);
+    // … and standing in the same place when it ends: released, not placed.
+    for (const id of [welcomeA.playerId, welcomeB.playerId]) {
+      const before = counting.state.characters[id]!.position;
+      const after = running.state.characters[id]!.position;
+      expect(Math.hypot(after.x - before.x, after.z - before.z)).toBeLessThan(0.05);
+    }
+    a.close();
+    b.close();
+  });
+
+  it("holds the Round clock at its full Time Limit until the Round is actually RUNNING", async () => {
+    const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    server = await startServer({ port: 0 });
+    const a = connect(server.port, `?track=${trackId}`);
+    await nextSnapshot(a);
+    const b = connect(server.port);
+
+    const counting = await snapshotUntil(a, (s) => s.phase === "COUNTDOWN");
+
+    // The Round has not begun, so none of its clock has been spent — ticket
+    // 03's stand-in anchor is now the RUNNING transition's job (ADR 0040).
+    expect(counting.timeLeftMs).toBe(45_000);
+    a.close();
+    b.close();
+  });
+
+  it("starts a solo Round when configured to, so a single-browser Playtest still runs", async () => {
+    server = await startServer({ port: 0, playersToStart: 1 });
+    const socket = connect(server.port);
+
+    const running = await snapshotUntil(socket, (s) => s.phase === "RUNNING");
+
+    expect(running.phase).toBe("RUNNING");
+    socket.close();
   });
 });

@@ -27,7 +27,7 @@ const welcome: WelcomeMessage = {
   spawn: { x: 0, y: 2, z: 0 },
   trackId: "track-1",
   trackRevision: 3,
-  config: { snapshotHz: 15, graceWindowMs: 10_000 },
+  config: { snapshotHz: 15, graceWindowMs: 10_000, playersToStart: 2 },
 };
 
 describe("resolveEndpoints", () => {

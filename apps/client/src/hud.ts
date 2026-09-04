@@ -14,6 +14,14 @@ export interface Hud {
   setText: (text: string) => void;
   /** Show or hide the "click to look around" prompt, following pointer-lock state. */
   setLockPromptVisible: (visible: boolean) => void;
+  /**
+   * The large centred message a Round is waiting behind — the Countdown's
+   * "3, 2, 1", or what the Lobby is waiting for (M4 ticket 04). `null` clears
+   * it. Sits above centre so it never lands on top of the pointer-lock
+   * prompt, which stays useful during the Countdown: the cameras are live
+   * before the Round is (ADR 0040).
+   */
+  setBanner: (text: string | null) => void;
   /** Remove both elements from the page (M4 ticket 01). */
   dispose: () => void;
 }
@@ -44,7 +52,22 @@ export const createHud = (mount: HTMLElement): Hud => {
     pointerEvents: "none",
   });
 
-  mount.append(text, lockPrompt);
+  const banner = document.createElement("div");
+  Object.assign(banner.style, {
+    position: "fixed",
+    top: "22%",
+    left: "0",
+    right: "0",
+    display: "none",
+    textAlign: "center",
+    font: "600 44px/1.2 ui-monospace, monospace",
+    color: "#f2f6fb",
+    textShadow: "0 2px 12px rgba(0, 0, 0, 0.65)",
+    letterSpacing: "0.04em",
+    pointerEvents: "none",
+  });
+
+  mount.append(text, lockPrompt, banner);
 
   return {
     setText: (value) => {
@@ -56,9 +79,14 @@ export const createHud = (mount: HTMLElement): Hud => {
     setLockPromptVisible: (visible) => {
       lockPrompt.style.display = visible ? "grid" : "none";
     },
+    setBanner: (value) => {
+      banner.textContent = value ?? "";
+      banner.style.display = value === null ? "none" : "block";
+    },
     dispose: () => {
       text.remove();
       lockPrompt.remove();
+      banner.remove();
     },
   };
 };

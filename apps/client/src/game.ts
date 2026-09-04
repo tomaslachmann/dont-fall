@@ -9,6 +9,7 @@ import {
   LEAD_DRAIN_FRACTION,
   MAX_BUFFERED_INPUT_TICKS,
   MAX_STEPS_PER_FRAME,
+  IDLE_INPUTS,
   MODULE_LIBRARY,
   RECONCILE_HARDSNAP_M,
   RapierSimulation,
@@ -20,11 +21,13 @@ import {
   interpolateState,
   lengthVec3,
   movementDirection,
+  phaseLocksInput,
   resolveTrack,
   subVec3,
   type CharacterMotionState,
   type CharacterSnapshot,
   type ClientMessage,
+  type MatchPhase,
   type PropSnapshot,
   type RenderCharacter,
   type ServerMessage,
@@ -42,6 +45,7 @@ import { createStage } from "./scene.js";
 import { NetMetrics } from "./netMetrics.js";
 import { PropPredictionController, graceTicksForRtt } from "./propPrediction.js";
 import { needsCorrection } from "./reconcileGate.js";
+import { matchBanner } from "./matchBanner.js";
 import { qualificationPlacement } from "./qualification.js";
 import { formatRoundClock } from "./roundTimer.js";
 import { SnapshotInterpolator } from "./snapshotInterpolation.js";
@@ -245,6 +249,13 @@ const boot = async (
   let lastSnapshotArrivedAt = 0;
   /** Latest server-reported Round clock (M4 ticket 03); `null` until the first snapshot. */
   let timeLeftMs: number | null = null;
+  /**
+   * Latest server-reported Match phase and Countdown (M4 ticket 04, ADR 0040)
+   * — rendered, never computed. Starts in LOBBY, which is where a server puts
+   * a joiner anyway, so the first frame before any snapshot is honest.
+   */
+  let phase: MatchPhase = "LOBBY";
+  let countdownMsLeft = 0;
   const netMetrics = new NetMetrics();
   // NTP-style clock sync (ADR 0019) — feeds the interpolation buffer's clock
   // and the net-graph RTT.
@@ -394,6 +405,8 @@ const boot = async (
         // rate that is a visible step of at most one tenth of a second on a
         // display that only shows whole seconds.
         timeLeftMs = message.timeLeftMs;
+        phase = message.phase;
+        countdownMsLeft = message.countdownMsLeft;
         netMetrics.commandQueueDepth = message.commandQueueDepth;
         smoothedQueueDepth += (message.commandQueueDepth - smoothedQueueDepth) * 0.2;
 
@@ -470,11 +483,20 @@ const boot = async (
       return;
     }
 
-    const sampledInput: SimInputs = {
-      moveDirection: movementDirection(keyboard.movementKeys(), look.yaw),
-      jumpHeld: keyboard.jumpHeld(),
-      dashHeld: keyboard.dashHeld(),
-    };
+    // Input is locked in every phase but RUNNING (ADR 0040), and the client
+    // applies the identical rule to its own prediction that the server
+    // applies to the authority — so the Character stops and starts being
+    // drivable on the same Tick on both sides, rather than this client
+    // predicting half an RTT of movement that the server never simulated.
+    // The camera is deliberately untouched: it stays live through the
+    // Countdown, which is what lets a player look around before the start.
+    const sampledInput: SimInputs = phaseLocksInput(phase)
+      ? IDLE_INPUTS
+      : {
+          moveDirection: movementDirection(keyboard.movementKeys(), look.yaw),
+          jumpHeld: keyboard.jumpHeld(),
+          dashHeld: keyboard.dashHeld(),
+        };
 
     // World this client doesn't predict — Props and every other player's
     // Character — comes from the render-delay interpolation buffer (ADR 0003).
@@ -698,6 +720,8 @@ const boot = async (
     // else crossed, so it fills in a moment later; until then the banner
     // stands without a number rather than guessing "#1".
     const roundClock = timeLeftMs === null ? "--:--" : formatRoundClock(timeLeftMs);
+    const connectedPlayers = latestServerSnapshot ? Object.keys(latestServerSnapshot.characters).length : 1;
+    hud.setBanner(matchBanner(phase, countdownMsLeft, connectedPlayers, welcome.config.playersToStart));
     const qualified = c.finishTick !== null;
     const placement = latestServerSnapshot ? qualificationPlacement(latestServerSnapshot.characters, myId) : null;
     const banner = qualified ? `\n${placement === null ? "QUALIFIED" : `QUALIFIED #${placement}`}` : "";
@@ -718,7 +742,7 @@ const boot = async (
 
     hud.setText(
       `DON'T FALL — M2 · predicted + reconciled\n` +
-        `time ${roundClock}\n` +
+        `time ${roundClock} · ${phase.toLowerCase()}\n` +
         `sim ${TICK_RATE_HZ} Hz · render ${fps.toFixed(0)} fps · tick ${predictionTick}\n` +
         `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · ${c.motionState}\n` +
         `checkpoint ${cp} · falls ${c.fallCount}${banner}\n` +

@@ -418,7 +418,7 @@ describe("tick-addressed server input — real server, real timers (ADR 0027)", 
   it.each(PROFILES)(
     "$name: same-tick positionError sits at the FP-residual floor almost always — the old ~0.2u systematic bias is gone, not just rarer",
     async (profile) => {
-      server = await startServer({ port: 0 });
+      server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
       const client = await runScenario(server.port, profile, 3);
       client.close();
 
