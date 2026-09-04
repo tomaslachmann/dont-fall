@@ -40,6 +40,7 @@ const SPINNER_MODULE: Module = {
   },
   speedPads: [{ trigger: { center: { x: 0, y: 0.5, z: 2 }, halfExtents: { x: 1, y: 1, z: 1 } }, capMultiplier: 2 }],
   launchPads: [{ trigger: { center: { x: 0, y: 0.5, z: -2 }, halfExtents: { x: 1, y: 1, z: 1 } }, velocity: { x: 0, y: 16, z: -6 } }],
+  volumes: [{ bounds: { center: { x: 2, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } }, force: { x: 0, y: 30, z: -5 }, maxInducedSpeed: 10, priority: 1 }],
   sockets: STRAIGHT_SOCKETS,
   footprint: FOOTPRINT,
 };
@@ -120,6 +121,10 @@ describe("resolveTrack", () => {
     expect(resolved.speedPads[0]!.trigger.center).toEqual({ x: 5, y: -0.5, z: 22 });
     expect(resolved.launchPads[0]!.trigger.center).toEqual({ x: 5, y: -0.5, z: 18 });
     expect(resolved.launchPads[0]!.velocity).toEqual({ x: 0, y: 16, z: -6 }); // untouched at 0 rad
+    expect(resolved.volumes[0]!.bounds.center).toEqual({ x: 7, y: -0.5, z: 20 });
+    expect(resolved.volumes[0]!.force).toEqual({ x: 0, y: 30, z: -5 }); // untouched at 0 rad
+    expect(resolved.volumes[0]!.maxInducedSpeed).toBe(10);
+    expect(resolved.volumes[0]!.priority).toBe(1);
   });
 
   it("rotates a launch pad's velocity by the Segment's own orientation — a direction, not a point, so it's never translated", () => {
@@ -135,6 +140,18 @@ describe("resolveTrack", () => {
     // position (5,0,5) — confirming velocity and trigger get different
     // treatment from the same `orientation`/`segment.position` inputs.
     expect(resolved.launchPads[0]!.trigger.center.x).not.toBeCloseTo(-6, 1);
+  });
+
+  it("rotates a Volume's force by the Segment's own orientation, the same treatment as a launch pad's velocity", () => {
+    const track = [{ moduleId: "spinner-module", position: { x: 5, y: 0, z: 5 }, rotation: Math.PI / 2 }];
+    const resolved = resolveTrack({ "spinner-module": SPINNER_MODULE }, track);
+    // Same 90° yaw as the launch pad test above: local (0, 30, -5) rotates to
+    // world (-5, 30, 0) — Y (vertical) untouched, X/Z swap and flip sign.
+    expect(resolved.volumes[0]!.force.x).toBeCloseTo(-5, 6);
+    expect(resolved.volumes[0]!.force.y).toBeCloseTo(30, 6);
+    expect(resolved.volumes[0]!.force.z).toBeCloseTo(0, 6);
+    // The bounds' own centre, by contrast, IS translated.
+    expect(resolved.volumes[0]!.bounds.center.x).not.toBeCloseTo(-5, 1);
   });
 
   it("never swaps a static Box's half-extents (ADR 0034) — carries its rotation instead, for a real rotated collider", () => {
@@ -189,6 +206,7 @@ describe("resolveTrack", () => {
       checkpoints: [],
       speedPads: [],
       launchPads: [],
+      volumes: [],
     });
   });
 

@@ -12,6 +12,7 @@ export * from "./simulation/SimInputs.js";
 export * from "./simulation/Checkpoint.js";
 export * from "./simulation/SpeedPad.js";
 export * from "./simulation/LaunchPad.js";
+export * from "./simulation/Volume.js";
 export * from "./simulation/CharacterStateMachine.js";
 export * from "./simulation/movementVerbs.js";
 export * from "./simulation/collisionGroups.js";

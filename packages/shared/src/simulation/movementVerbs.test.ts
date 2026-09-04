@@ -6,10 +6,12 @@ import {
   MOVE_FRICTION_FACTOR,
   MOVE_VELOCITY_CAP,
   SLOPE_SPEED_ANGLE_FACTOR,
+  TICK_DT,
   WALKABLE_SLOPE_MAX_ANGLE,
 } from "../tuning.js";
 import {
   accelerateVelocity,
+  applyVolumeForce,
   dashEnvelope,
   slopeSpeedMultiplier,
   speedPadCapMultiplier,
@@ -305,5 +307,47 @@ describe("accelerateVelocity (ticket 05, M3.6, ADR 0035 — Source's Friction()/
   it("always zeroes the result's Y component, regardless of current/wish's own Y — this is a horizontal-only pipeline (code review: not \"passed through untouched\" — vertical velocity is the caller's own responsibility entirely)", () => {
     const result = accelerateVelocity({ x: 0, y: 999, z: 0 }, { x: 6, y: -5, z: 0 }, MOVE_ACCEL_FACTOR, MOVE_FRICTION_FACTOR);
     expect(result.y).toBe(0);
+  });
+});
+
+describe("applyVolumeForce (M3.7 ticket 04, ADR 0036 — a Volume's continuous per-tick contribution)", () => {
+  it("accelerates along force's own direction by force * TICK_DT", () => {
+    const result = applyVolumeForce({ x: 0, y: 0, z: 0 }, { x: 0, y: 30, z: 0 }, 100);
+    expect(result.y).toBeCloseTo(30 * TICK_DT, 10);
+    expect(result.x).toBe(0);
+    expect(result.z).toBe(0);
+  });
+
+  it("leaves velocity components perpendicular to force untouched", () => {
+    const result = applyVolumeForce({ x: 5, y: 0, z: -3 }, { x: 0, y: 30, z: 0 }, 100);
+    expect(result.x).toBe(5);
+    expect(result.z).toBe(-3);
+  });
+
+  it("never exceeds maxInducedSpeed along force's own direction, however strong force is", () => {
+    const result = applyVolumeForce({ x: 0, y: 0, z: 0 }, { x: 0, y: 10000, z: 0 }, 8);
+    expect(result.y).toBeCloseTo(8, 10);
+  });
+
+  it("contributes nothing further once already at or beyond the cap — it never pulls the Character back down", () => {
+    const result = applyVolumeForce({ x: 0, y: 15, z: 0 }, { x: 0, y: 30, z: 0 }, 8);
+    expect(result.y).toBe(15);
+  });
+
+  it("clamps only the along-force component when starting above the cap on an unrelated axis (an updraft doesn't cap unrelated horizontal drift)", () => {
+    const result = applyVolumeForce({ x: 50, y: 0, z: 0 }, { x: 0, y: 30, z: 0 }, 8);
+    expect(result.x).toBe(50);
+    expect(result.y).toBeCloseTo(30 * TICK_DT, 10);
+  });
+
+  it("a zero force is a no-op", () => {
+    const velocity = { x: 1, y: 2, z: 3 };
+    expect(applyVolumeForce(velocity, { x: 0, y: 0, z: 0 }, 100)).toEqual(velocity);
+  });
+
+  it("works along an arbitrary (non-axis-aligned) force direction, e.g. a horizontal wind tunnel", () => {
+    const result = applyVolumeForce({ x: 0, y: 0, z: 0 }, { x: 3, y: 0, z: 4 }, 100); // magnitude 5
+    expect(lengthVec3(result)).toBeCloseTo(5 * TICK_DT, 10);
+    expect(result.x / result.z).toBeCloseTo(3 / 4, 10); // same direction as force
   });
 });

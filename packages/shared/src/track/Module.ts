@@ -5,6 +5,7 @@ import type { LaunchPadConfig } from "../simulation/LaunchPad.js";
 import type { PropConfig } from "../simulation/Prop.js";
 import type { SpeedPadConfig } from "../simulation/SpeedPad.js";
 import type { SpinnerConfig } from "../simulation/Spinner.js";
+import type { VolumeConfig } from "../simulation/Volume.js";
 import type { SurfaceId } from "./Surface.js";
 
 /**
@@ -81,6 +82,13 @@ export interface Module {
   speedPads?: SpeedPadConfig[];
   /** Launch pads this Module places (M3.7 ticket 02) — zero or more, same shape as `speedPads`. */
   launchPads?: LaunchPadConfig[];
+  /**
+   * Volumes this Module places (M3.7 ticket 04, ADR 0036) — zero or more,
+   * same shape as `speedPads`/`launchPads`. A Volume is its own entity kind,
+   * never a collider wearing a special Surface (ADR 0036) — it carries no
+   * `statics` geometry of its own, just the region and the force.
+   */
+  volumes?: VolumeConfig[];
   sockets: Socket[];
   footprint: Footprint;
   /**

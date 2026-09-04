@@ -8,6 +8,7 @@ import {
   type Segment,
   type SpeedPadConfig,
   type SpinnerConfig,
+  type VolumeConfig,
 } from "@dont-fall/shared";
 import * as THREE from "three";
 
@@ -18,6 +19,7 @@ const PROP_BALL_COLOR = 0x4aa8d9;
 const CHECKPOINT_COLOR = 0x4ade80;
 const SPEED_PAD_COLOR = 0xfacc15;
 const LAUNCH_PAD_COLOR = 0x38bdf8;
+const VOLUME_COLOR = 0xa78bfa;
 
 const addBox = (group: THREE.Group, box: Box, color: number): void => {
   const geo = new THREE.BoxGeometry(box.halfExtents.x * 2, box.halfExtents.y * 2, box.halfExtents.z * 2);
@@ -92,6 +94,31 @@ const addLaunchPad = (group: THREE.Group, launchPad: LaunchPadConfig): void => {
 };
 
 /**
+ * A Volume's `bounds`, wireframe, plus an arrow along `force` (M3.7 ticket
+ * 04) — same "the region alone doesn't say what it does" reasoning as
+ * `addLaunchPad`'s own arrow, and the same wireframe-box treatment as every
+ * other trigger marker here. A different colour from a launch pad's own
+ * arrow-bearing marker: a Volume never latches (CONTEXT.md's own avoid-list
+ * for the word "trigger"), so it reads visually distinct at a glance.
+ */
+const addVolume = (group: THREE.Group, volume: VolumeConfig): void => {
+  const { center, halfExtents } = volume.bounds;
+  const geo = new THREE.BoxGeometry(halfExtents.x * 2, halfExtents.y * 2, halfExtents.z * 2);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: VOLUME_COLOR, wireframe: true }));
+  mesh.position.set(center.x, center.y, center.z);
+  group.add(mesh);
+
+  const { x, y, z } = volume.force;
+  const length = Math.hypot(x, y, z);
+  if (length > 0) {
+    const direction = new THREE.Vector3(x, y, z).normalize();
+    const origin = new THREE.Vector3(center.x, center.y, center.z);
+    const arrow = new THREE.ArrowHelper(direction, origin, Math.min(length / 8, 4), VOLUME_COLOR, 0.5, 0.3);
+    group.add(arrow);
+  }
+};
+
+/**
  * Builds a Three.js Group from one Module's local-space geometry — the single
  * mesh-building path shared by the palette preview (ticket 04's visual-preview
  * requirement) and the whole-Track overview (one Group per placed Segment,
@@ -105,6 +132,7 @@ export const buildModuleGroup = (module: Module): THREE.Group => {
   if (module.checkpoint) addCheckpoint(group, module.checkpoint);
   for (const speedPad of module.speedPads ?? []) addSpeedPad(group, speedPad);
   for (const launchPad of module.launchPads ?? []) addLaunchPad(group, launchPad);
+  for (const volume of module.volumes ?? []) addVolume(group, volume);
   return group;
 };
 

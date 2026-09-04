@@ -24,6 +24,7 @@ import { DEFAULT_SURFACE, SURFACES } from "../track/Surface.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import { DEFAULT_CHARACTER_ID, RapierSimulation, initPhysics } from "./RapierSimulation.js";
 import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
+import type { VolumeConfig } from "./Volume.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -3004,5 +3005,140 @@ describe("RapierSimulation — launch pads (M3.7 ticket 02): one-shot full-veloc
     expect(afterReplay.position.x).toBeCloseTo(expected.position.x, 3);
     expect(afterReplay.position.y).toBeCloseTo(expected.position.y, 3);
     expect(afterReplay.position.z).toBeCloseTo(expected.position.z, 3);
+  });
+});
+
+describe("RapierSimulation — Volumes and the updraft (M3.7 ticket 04, ADR 0036): a continuous, unlatched force, unlike a one-shot pad", () => {
+  const BIG_GROUND: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 30, y: 0.5, z: 30 } };
+  const UPDRAFT_FORCE = { x: 0, y: 40, z: 0 }; // comfortably beats GRAVITY_Y (-22) — a net lift
+  const MAX_INDUCED_SPEED = 10;
+  // Tall enough to actually observe a sustained rise; centred over spawn.
+  const TALL_COLUMN: VolumeConfig = {
+    bounds: { center: { x: 0, y: 5, z: 0 }, halfExtents: { x: 2, y: 5, z: 2 } },
+    force: UPDRAFT_FORCE,
+    maxInducedSpeed: MAX_INDUCED_SPEED,
+    priority: 1,
+  };
+
+  it("lifts a Character standing inside it — no jump, no input, purely the Volume", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [BIG_GROUND], volumes: [TALL_COLUMN] });
+    const startY = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
+    tick(sim, 1.5); // one tick of lag to first resolve containment, then time to actually climb
+    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(c.position.y).toBeGreaterThan(startY + 1);
+    expect(c.grounded).toBe(false);
+  });
+
+  it("never pushes the induced vertical speed past maxInducedSpeed, however long a Character rides it", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [BIG_GROUND], volumes: [TALL_COLUMN] });
+    let peak = 0;
+    for (let i = 0; i < 200; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      peak = Math.max(peak, sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity.y);
+    }
+    // A small margin over MAX_INDUCED_SPEED, not because the cap is loose,
+    // but because gravity's own -22 accel that same tick can still land
+    // slightly below-then-over the cap on the very tick applyVolumeForce
+    // tops it back up — verified this never runs away regardless.
+    expect(peak).toBeLessThanOrEqual(MAX_INDUCED_SPEED + 0.01);
+  });
+
+  it("never forces Ragdoll or Stagger while riding it up — no flight mode, but no fall damage either", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [BIG_GROUND], volumes: [TALL_COLUMN] });
+    for (let i = 0; i < 200; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      const state = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState;
+      expect(state).not.toBe("Ragdoll");
+      expect(state).not.toBe("Stagger");
+    }
+  });
+
+  it("stops the instant a Character drifts out the side of it — no lingering effect once outside bounds", () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [BIG_GROUND], volumes: [TALL_COLUMN] });
+    tick(sim, 0.7); // rise for a bit first
+    const risingVelocityY = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity.y;
+    expect(risingVelocityY).toBeGreaterThan(0);
+
+    // Walk east, well clear of the column's own x half-extent (2) plus the
+    // capsule radius, then hold still and let gravity alone take back over.
+    const EAST = input({ moveDirection: { x: 1, y: 0, z: 0 } });
+    tick(sim, 1.5, EAST);
+    let fellBackDown = false;
+    for (let i = 0; i < 60; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      if (c.grounded && c.position.y < 2) {
+        fellBackDown = true;
+        break;
+      }
+    }
+    expect(fellBackDown).toBe(true);
+  });
+
+  it("resolves overlap by priority — the higher-priority Volume wins outright, never summed", () => {
+    const weak: VolumeConfig = { ...TALL_COLUMN, force: { x: 0, y: 25, z: 0 }, maxInducedSpeed: 4, priority: 1 };
+    const strong: VolumeConfig = { ...TALL_COLUMN, force: { x: 0, y: 100, z: 0 }, maxInducedSpeed: 20, priority: 5 };
+    // Authored in reverse-priority order in the array — priority decides,
+    // not source order — and both `bounds` fully overlap.
+    const sim = new RapierSimulation({
+      spawn: RESTING_SPAWN,
+      statics: [BIG_GROUND],
+      volumes: [weak, strong],
+    });
+    let peak = 0;
+    for (let i = 0; i < 200; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      peak = Math.max(peak, sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity.y);
+    }
+    // If the two were ever summed, the peak would exceed even `strong`'s own
+    // 20 cap (25 + 100 vastly overshoots both individually). It doesn't.
+    expect(peak).toBeGreaterThan(weak.maxInducedSpeed); // strong's cap won, not weak's
+    expect(peak).toBeLessThanOrEqual(strong.maxInducedSpeed + 0.01);
+  });
+
+  it("a lower-priority Volume still applies once the Character leaves the higher-priority one's bounds", () => {
+    const inner: VolumeConfig = {
+      bounds: { center: { x: 0, y: 5, z: 0 }, halfExtents: { x: 1, y: 5, z: 1 } },
+      force: { x: 0, y: 100, z: 0 },
+      maxInducedSpeed: 20,
+      priority: 5,
+    };
+    // Weaker than `inner` (90 < 100, cap 6 < 20) but still enough on its own
+    // to lift a Character off the ground — the ground-stick clamp resets
+    // velocity.y to -GROUND_STICK_SPEED every grounded tick, so a Volume
+    // needs to out-accelerate that reset plus gravity within a single tick
+    // to ever leave the ground unassisted, not just beat gravity alone. Tall
+    // (halfExtents.y 20) so the Character settling near its own cap doesn't
+    // punch through the ceiling and fall out the top mid-test.
+    const outer: VolumeConfig = {
+      bounds: { center: { x: 0, y: 20, z: 0 }, halfExtents: { x: 4, y: 20, z: 4 } },
+      force: { x: 0, y: 90, z: 0 },
+      maxInducedSpeed: 6,
+      priority: 1,
+    };
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [BIG_GROUND], volumes: [inner, outer] });
+    const EAST = input({ moveDirection: { x: 1, y: 0, z: 0 } });
+    // WALK_SPEED (6 units/s): clears `inner`'s x halfExtent (1) well within
+    // 0.4s, and stays inside `outer`'s (4) — 0.4s * 6 = 2.4.
+    tick(sim, 0.4, EAST);
+    const cleared = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(cleared.position.x).toBeGreaterThan(1.5); // clear of `inner`
+    expect(cleared.position.x).toBeLessThan(4); // still inside `outer`
+
+    // `inner`'s own stronger push (never pulled back down once earned — see
+    // applyVolumeForce's own doc comment) leaves velocity.y well above
+    // `outer`'s cap right after crossing over, and gravity alone only bleeds
+    // it off gradually — so rather than asserting a single settled sample
+    // (this Character keeps rising and falling for a while, an
+    // under-damped system, not a monotone decay), track the peak over a
+    // long trailing window once it's had time to actually settle.
+    tick(sim, 3, IDLE_INPUTS); // let inner's leftover speed bleed off
+    let peak = -Infinity;
+    for (let i = 0; i < 120; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      peak = Math.max(peak, sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity.y);
+    }
+    expect(peak).toBeGreaterThan(0); // outer's own weaker lift still applies
+    expect(peak).toBeLessThanOrEqual(outer.maxInducedSpeed + 0.01); // inner's cap no longer governs
   });
 });

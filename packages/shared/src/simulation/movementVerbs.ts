@@ -1,4 +1,4 @@
-import { addVec3, lengthVec3, normalizeVec3, scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
+import { addVec3, dotVec3, lengthVec3, normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
 import {
   COYOTE_TICKS,
   DASH_COOLDOWN_TICKS,
@@ -116,6 +116,34 @@ export const accelerateVelocity = (current: Vec3, wish: Vec3, accelFactor: numbe
   if (finalSpeed > MOVE_VELOCITY_CAP) velocity = scaleVec3(velocity, MOVE_VELOCITY_CAP / finalSpeed);
 
   return velocity;
+};
+
+/**
+ * A Volume's per-tick contribution to a Character's velocity (M3.7 ticket 04,
+ * ADR 0036) — an unconditional additive accelerate, unlike
+ * {@link accelerateVelocity}'s friction-then-accelerate walk model, because a
+ * Volume competes with whatever else is already acting on the Character
+ * (gravity, an in-flight Dash, another Volume's own prior tick) rather than
+ * replacing it. Adds `force * TICK_DT`, then clamps only the resulting
+ * component *along `force`'s own direction* to `maxInducedSpeed` — leaving
+ * every other component of `velocity` untouched, so an updraft caps how fast
+ * it can push a Character up without also flattening whatever horizontal
+ * drift the Character walked in with. A `force` already pushing along a
+ * direction where `velocity` is at or beyond the cap contributes nothing
+ * further that tick (never pulls the Character back down) — "never exceeded"
+ * from {@link VolumeConfig.maxInducedSpeed}'s own doc comment, not "clamped
+ * to exactly."
+ */
+export const applyVolumeForce = (velocity: Vec3, force: Vec3, maxInducedSpeed: number): Vec3 => {
+  const forceMagnitude = lengthVec3(force);
+  if (forceMagnitude === 0) return velocity;
+  const dir = scaleVec3(force, 1 / forceMagnitude);
+  const currentAlong = dotVec3(velocity, dir);
+  if (currentAlong >= maxInducedSpeed) return velocity;
+  const candidate = addVec3(velocity, scaleVec3(dir, forceMagnitude * TICK_DT));
+  const candidateAlong = dotVec3(candidate, dir);
+  if (candidateAlong <= maxInducedSpeed) return candidate;
+  return subVec3(candidate, scaleVec3(dir, candidateAlong - maxInducedSpeed));
 };
 
 /**

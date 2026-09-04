@@ -6,6 +6,7 @@ import type { LaunchPadConfig } from "../simulation/LaunchPad.js";
 import type { PropConfig } from "../simulation/Prop.js";
 import type { SpeedPadConfig } from "../simulation/SpeedPad.js";
 import type { SpinnerConfig } from "../simulation/Spinner.js";
+import type { VolumeConfig } from "../simulation/Volume.js";
 import { findSocket, type Module, type Socket } from "./Module.js";
 import { DEFAULT_SURFACE, type SurfaceId } from "./Surface.js";
 
@@ -166,6 +167,7 @@ export const resolveTrack = (
   checkpoints: Checkpoint[];
   speedPads: SpeedPadConfig[];
   launchPads: LaunchPadConfig[];
+  volumes: VolumeConfig[];
 } => {
   const statics: OrientedBox[] = [];
   const staticSurfaces: SurfaceId[] = [];
@@ -174,6 +176,7 @@ export const resolveTrack = (
   const checkpoints: Checkpoint[] = [];
   const speedPads: SpeedPadConfig[] = [];
   const launchPads: LaunchPadConfig[] = [];
+  const volumes: VolumeConfig[] = [];
 
   for (const segment of track) {
     const module = modules[segment.moduleId];
@@ -236,7 +239,13 @@ export const resolveTrack = (
       // never translated (unlike `trigger`/`respawn`, which are positions).
       launchPads.push({ trigger: placeBox(pad.trigger), velocity: rotateVec3ByQuat(pad.velocity, orientation) });
     }
+
+    for (const volume of module.volumes ?? []) {
+      // `force`, like a launch pad's `velocity`, is a direction/magnitude —
+      // rotated, never translated.
+      volumes.push({ ...volume, bounds: placeBox(volume.bounds), force: rotateVec3ByQuat(volume.force, orientation) });
+    }
   }
 
-  return { statics, staticSurfaces, props, spinners, checkpoints, speedPads, launchPads };
+  return { statics, staticSurfaces, props, spinners, checkpoints, speedPads, launchPads, volumes };
 };

@@ -109,7 +109,7 @@ const main = async () => {
     );
   }
   const { track } = (await trackRes.json()) as { track: Track };
-  const { statics, staticSurfaces, checkpoints, spinners, props, speedPads, launchPads } = resolveTrack(
+  const { statics, staticSurfaces, checkpoints, spinners, props, speedPads, launchPads, volumes } = resolveTrack(
     MODULE_LIBRARY,
     track,
   );
@@ -147,6 +147,7 @@ const main = async () => {
     props,
     speedPads,
     launchPads,
+    volumes,
     withDefaultCharacter: false,
     // Never trust this Character's own settle-check to end a knockdown —
     // only a server snapshot can (ADR 0015). Makes `reconcile`'s

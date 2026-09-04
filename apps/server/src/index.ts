@@ -135,7 +135,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     ...(config.trackFetchRetryDelayMs !== undefined ? { retryDelayMs: config.trackFetchRetryDelayMs } : {}),
     ...(config.trackFetchAttemptTimeoutMs !== undefined ? { attemptTimeoutMs: config.trackFetchAttemptTimeoutMs } : {}),
   });
-  const { statics, staticSurfaces, checkpoints, spinners, props, speedPads, launchPads } = resolveTrack(
+  const { statics, staticSurfaces, checkpoints, spinners, props, speedPads, launchPads, volumes } = resolveTrack(
     MODULE_LIBRARY,
     fetched.track,
   );
@@ -150,6 +150,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     props,
     speedPads,
     launchPads,
+    volumes,
     withDefaultCharacter: false,
   });
 

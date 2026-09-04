@@ -21,6 +21,7 @@ import { Prop, type PropConfig, type PropSnapshot } from "./Prop.js";
 import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
 import type { SpeedPadConfig } from "./SpeedPad.js";
 import { Spinner, type SpinnerConfig } from "./Spinner.js";
+import type { VolumeConfig } from "./Volume.js";
 
 /** Whether `state` is a down state — a Character in either never receives a speed/launch pad's one-shot effect (code review, M3.7 ticket 01). */
 const isDownState = (state: CharacterMotionState): boolean => state === "Ragdoll" || state === "GettingUp";
@@ -75,6 +76,8 @@ export interface SimulationConfig {
   speedPads?: SpeedPadConfig[];
   /** Launch pads the Character can cross to fire a one-shot full-velocity SET (M3.7 ticket 02). */
   launchPads?: LaunchPadConfig[];
+  /** Volumes that apply a continuous force to any Character inside them (M3.7 ticket 04, ADR 0036). */
+  volumes?: VolumeConfig[];
   /** Height below which the Character has Fallen out of the playground. */
   killPlaneY?: number;
   /** Rotating-bar Obstacles (ticket 06). */
@@ -157,6 +160,13 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   private readonly checkpoints: Checkpoint[];
   private readonly speedPads: SpeedPadConfig[];
   private readonly launchPads: LaunchPadConfig[];
+  /**
+   * Volumes, sorted highest-`priority`-first once here at construction
+   * (M3.7 ticket 04, ADR 0036) — resolving containment every tick against a
+   * pre-sorted array means "first match wins" is all `resolveActiveVolume`
+   * needs, rather than re-scanning for a max every tick.
+   */
+  private readonly volumes: VolumeConfig[];
   private readonly killPlaneY: number;
   /** See `SimulationConfig.authoritative`. */
   private readonly authoritative: boolean;
@@ -214,6 +224,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     this.checkpoints = config.checkpoints ?? [];
     this.speedPads = config.speedPads ?? [];
     this.launchPads = config.launchPads ?? [];
+    this.volumes = [...(config.volumes ?? [])].sort((a, b) => b.priority - a.priority);
     this.killPlaneY = config.killPlaneY ?? DEFAULT_KILL_PLANE_Y;
     this.authoritative = config.authoritative ?? true;
 
@@ -486,6 +497,13 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       character.setSurfaceTopSpeedMultiplier(surface.topSpeedMultiplier);
       character.setSurfaceGrip(surface.grip);
       character.setSurfaceBounce(surface.bounce);
+      // M3.7 ticket 04, ADR 0036: same one-tick lag as Surface above — this
+      // tick's now-updated position decides the Volume that pushes *next*
+      // tick. `this.volumes` is pre-sorted highest-priority-first, so the
+      // first containing entry found is the one that wins outright (never
+      // summed).
+      const volume = this.volumes.find((v) => pointInOrientedBox(character.position, v.bounds));
+      character.setActiveVolume(volume ? { force: volume.force, maxInducedSpeed: volume.maxInducedSpeed } : undefined);
     }
 
     // Client-only (ADR 0012 / 0016, ticket 06): every Prop is pinned to the

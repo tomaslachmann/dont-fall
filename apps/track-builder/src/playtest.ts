@@ -36,7 +36,10 @@ export const startPlaytest = async (
 ): Promise<Playtest> => {
   await initPhysics();
 
-  const { statics, staticSurfaces, checkpoints, spinners, props, speedPads, launchPads } = resolveTrack(modules, track);
+  const { statics, staticSurfaces, checkpoints, spinners, props, speedPads, launchPads, volumes } = resolveTrack(
+    modules,
+    track,
+  );
   const first = track[0]?.position ?? { x: 0, y: 0, z: 0 };
   const spawn: Vec3 = { x: first.x, y: first.y + 1.2, z: first.z };
   const simulation = new RapierSimulation({
@@ -47,6 +50,7 @@ export const startPlaytest = async (
     props,
     speedPads,
     launchPads,
+    volumes,
     spawn,
   });
 

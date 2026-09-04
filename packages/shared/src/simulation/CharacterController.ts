@@ -32,6 +32,7 @@ import { CharacterStateMachine, type CharacterMotionState } from "./CharacterSta
 import { CHARACTER_GROUPS, GROUP_CHARACTER } from "./collisionGroups.js";
 import {
   accelerateVelocity,
+  applyVolumeForce,
   DashController,
   JumpController,
   slopeSpeedMultiplier,
@@ -242,6 +243,17 @@ export class CharacterController {
    */
   private surfaceBounce: SurfaceBounceConfig | undefined;
   /**
+   * This tick's active Volume, if any (M3.7 ticket 04, ADR 0036) — set from
+   * outside by `RapierSimulation`, resolved from the Character's position
+   * with the same one-tick lag `surfaceBounce`/`surfaceGrip` themselves have
+   * (containment is checked *after* this tick's own move, for next tick's
+   * force). `undefined` (no Volume contains this Character) most of the
+   * time, until anything ever calls {@link setActiveVolume}. Deliberately
+   * just `{ force, maxInducedSpeed }`, not the full `VolumeConfig` — this
+   * Character never needs to know its own `bounds`/`priority` back.
+   */
+  private activeVolume: { force: Vec3; maxInducedSpeed: number } | undefined;
+  /**
    * The true peak fall speed (units/s, always ≥ 0) since velocity.y was last
    * non-negative — see the gravity-integration line in {@link beginCapsuleTick}
    * for the full reasoning. Consumed (and reset) by a genuine bounce;
@@ -349,6 +361,11 @@ export class CharacterController {
   /** Sets this tick's Surface-driven bounce config (M3.7 ticket 02) — see {@link surfaceBounce}. */
   setSurfaceBounce(bounce: SurfaceBounceConfig | undefined): void {
     this.surfaceBounce = bounce;
+  }
+
+  /** Sets this tick's active Volume, if any (M3.7 ticket 04) — see {@link activeVolume}. */
+  setActiveVolume(volume: { force: Vec3; maxInducedSpeed: number } | undefined): void {
+    this.activeVolume = volume;
   }
 
   /** The current motion state — a cheap read (no bone/pose computation), for transition detection. */
@@ -690,6 +707,17 @@ export class CharacterController {
       // where you're going, not how you got there.
       this.velocity = { ...this.pendingLaunchVelocity };
       this.pendingLaunchVelocity = undefined;
+    }
+
+    if (this.activeVolume) {
+      // M3.7 ticket 04: unconditional, on top of everything above (including
+      // a launch pad's own SET this same tick) — a Volume is a continuous
+      // force, not a one-shot effect competing for the same "what is this
+      // tick's velocity" slot the way a launch pad's SET does. No flight
+      // mode: this never touches `motionState`, controls, or the camera —
+      // the Character just gets pushed and otherwise behaves exactly as it
+      // already would (walks, staggers, ragdolls) while inside.
+      this.velocity = applyVolumeForce(this.velocity, this.activeVolume.force, this.activeVolume.maxInducedSpeed);
     }
 
     // `filterGroups: CHARACTER_GROUPS` so the sweep honours collision groups
@@ -1053,6 +1081,11 @@ export class CharacterController {
     this.surfaceTopSpeedMultiplier = 1;
     this.surfaceGrip = 1;
     this.surfaceBounce = undefined;
+    // Same reasoning, same ADR 0036 "pure function of position" — a Volume
+    // isn't in the snapshot either, so the safest fallback is "not in one"
+    // until the very next real containment check (below, same tick's own
+    // sweep already refreshed the ground handle by then) recomputes it.
+    this.activeVolume = undefined;
     // Re-derived fresh from `base.velocity` starting the very next tick's
     // own gravity-integration line — a reconciliation landing mid-fall onto
     // a bounce Surface loses whatever higher peak a mispredicting client saw

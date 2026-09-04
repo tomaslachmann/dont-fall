@@ -160,6 +160,32 @@ export const M1_MODULES: Record<string, Module> = {
     sockets: STRAIGHT_SOCKETS,
     footprint: STRAIGHT_FOOTPRINT,
   },
+  /**
+   * Updraft: the first Volume (M3.7 ticket 04, ADR 0036) — same deliberately-
+   * identical-geometry-to-`bridge` treatment as the pads/Surfaces: nothing
+   * about the floor tips a player off, only the column of air above it. The
+   * `bounds` stands well above the floor (a Character must actually walk
+   * into the column, not just cross its footprint) and wide enough to drift
+   * sideways out of before landing. `force.y` (40) comfortably beats
+   * `GRAVITY_Y` (-22) so the net effect genuinely lifts, capped by
+   * `maxInducedSpeed` — no flight mode, no new state: a Character rides it
+   * up exactly as Controlled/Stagger/whatever it already was, and simply
+   * falls again the instant it drifts out from under it.
+   */
+  updraft: {
+    id: "updraft",
+    statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
+    volumes: [
+      {
+        bounds: box({ x: 0, y: 3, z: 0 }, { x: 1.5, y: 3, z: 2 }),
+        force: { x: 0, y: 40, z: 0 },
+        maxInducedSpeed: 10,
+        priority: 1,
+      },
+    ],
+    sockets: STRAIGHT_SOCKETS,
+    footprint: STRAIGHT_FOOTPRINT,
+  },
 };
 
 /** The M1 playground, reassembled through the Module/Track system (ticket 01, re-chained via Sockets in round 2). */
