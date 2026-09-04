@@ -3142,3 +3142,35 @@ describe("RapierSimulation — Volumes and the updraft (M3.7 ticket 04, ADR 0036
     expect(peak).toBeLessThanOrEqual(outer.maxInducedSpeed + 0.01); // inner's cap no longer governs
   });
 });
+
+describe("dispose (M4 ticket 01)", () => {
+  it("frees the Rapier world so a client can start, stop and start again without leaking it", () => {
+    const sim = new RapierSimulation();
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+
+    sim.dispose();
+
+    // A freed world is WASM memory that is gone — the guard is what turns a
+    // use-after-free into a clear error instead of a crash inside Rapier.
+    expect(() => sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS })).toThrow(/disposed/);
+  });
+
+  it("is idempotent — a teardown that runs twice must not double-free", () => {
+    const sim = new RapierSimulation();
+
+    sim.dispose();
+
+    expect(() => sim.dispose()).not.toThrow();
+  });
+
+  it("leaves a fresh simulation completely unaffected", () => {
+    const first = new RapierSimulation();
+    first.dispose();
+
+    const second = new RapierSimulation();
+    second.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+
+    expect(second.snapshot().characters[DEFAULT_CHARACTER_ID]).toBeDefined();
+    second.dispose();
+  });
+});

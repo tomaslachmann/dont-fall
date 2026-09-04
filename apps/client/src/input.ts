@@ -1,6 +1,7 @@
 import type { MovementKeys } from "@dont-fall/shared";
 import { applyLook } from "./camera/lookControls.js";
 import { clampPitch } from "./camera/springArm.js";
+import { listen, type ListenerTarget } from "./listeners.js";
 
 const MOVEMENT_CODES: Record<string, keyof MovementKeys> = {
   KeyW: "forward",
@@ -21,14 +22,25 @@ const SWALLOW_DEFAULT = new Set([...Object.keys(MOVEMENT_CODES), ...JUMP_CODES])
 /** Tracks held keys and reports them as framework-agnostic input for the sim. */
 export class KeyboardInput {
   private readonly held = new Set<string>();
+  private readonly detach: () => void;
 
-  constructor(target: Window = window) {
-    target.addEventListener("keydown", (e) => {
+  constructor(target: ListenerTarget = window) {
+    const onKeyDown: EventListener = (event) => {
+      const e = event as KeyboardEvent;
       if (SWALLOW_DEFAULT.has(e.code)) e.preventDefault();
       this.held.add(e.code);
-    });
-    target.addEventListener("keyup", (e) => this.held.delete(e.code));
-    target.addEventListener("blur", () => this.held.clear());
+    };
+    const onKeyUp: EventListener = (event) => {
+      this.held.delete((event as KeyboardEvent).code);
+    };
+    const onBlur: EventListener = () => this.held.clear();
+
+    const stops = [
+      listen(target, "keydown", onKeyDown),
+      listen(target, "keyup", onKeyUp),
+      listen(target, "blur", onBlur),
+    ];
+    this.detach = () => stops.forEach((stop) => stop());
   }
 
   movementKeys(): MovementKeys {
@@ -47,6 +59,16 @@ export class KeyboardInput {
   dashHeld(): boolean {
     return DASH_CODES.some((code) => this.held.has(code));
   }
+
+  /**
+   * Stop listening and forget every held key (M4 ticket 01). A game torn down
+   * and started again in the same page session must not leave a second
+   * keyboard listener behind, or one keypress reaches the sim twice.
+   */
+  dispose(): void {
+    this.detach();
+    this.held.clear();
+  }
 }
 
 /**
@@ -64,31 +86,56 @@ export class FreeLookCamera {
   pitch = clampPitch(0.35);
 
   private isLocked = false;
+  private readonly detach: () => void;
+  private readonly doc: Document;
 
-  constructor(element: HTMLElement) {
-    element.addEventListener("click", () => {
+  constructor(element: HTMLElement, doc: Document = document) {
+    this.doc = doc;
+    const onClick: EventListener = () => {
       // Rejects if clicked during the browser's post-Esc cooldown; pointerlockerror
       // keeps isLocked correct, so we just swallow the noise.
       if (!this.isLocked) void element.requestPointerLock()?.catch(() => {});
-    });
-
-    document.addEventListener("pointerlockchange", () => {
-      this.isLocked = document.pointerLockElement === element;
-    });
-    document.addEventListener("pointerlockerror", () => {
+    };
+    const onPointerLockChange: EventListener = () => {
+      this.isLocked = doc.pointerLockElement === element;
+    };
+    const onPointerLockError: EventListener = () => {
       this.isLocked = false;
-    });
-
-    document.addEventListener("mousemove", (e) => {
+    };
+    const onMouseMove: EventListener = (event) => {
       if (!this.isLocked) return;
+      const e = event as MouseEvent;
       const next = applyLook(this, e.movementX, e.movementY);
       this.yaw = next.yaw;
       this.pitch = next.pitch;
-    });
+    };
+
+    const elementTarget: ListenerTarget = element;
+    const documentTarget: ListenerTarget = doc;
+    const stops = [
+      listen(elementTarget, "click", onClick),
+      listen(documentTarget, "pointerlockchange", onPointerLockChange),
+      listen(documentTarget, "pointerlockerror", onPointerLockError),
+      listen(documentTarget, "mousemove", onMouseMove),
+    ];
+    this.detach = () => stops.forEach((stop) => stop());
   }
 
   /** Whether the pointer is currently locked (drives the "click to look" prompt). */
   get locked(): boolean {
     return this.isLocked;
+  }
+
+  /**
+   * Stop listening and hand the pointer back (M4 ticket 01). The three
+   * document-level listeners are the ones that would otherwise pile up across
+   * a route away from the game and back; the lock itself has to be released
+   * explicitly, or the canvas that grabbed it is gone while the browser still
+   * considers the page locked.
+   */
+  dispose(): void {
+    this.detach();
+    if (this.isLocked) this.doc.exitPointerLock();
+    this.isLocked = false;
   }
 }

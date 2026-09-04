@@ -219,6 +219,14 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
 
   private tickCount = 0;
 
+  /**
+   * Set by {@link RapierSimulation.dispose}. The Rapier `World` is WASM
+   * memory: once freed, every handle into it dangles, and calling through one
+   * crashes inside the engine with no useful stack. This turns that into a
+   * plain error at the call site.
+   */
+  private disposed = false;
+
   constructor(config: SimulationConfig = {}) {
     this.statics = config.statics ?? [DEFAULT_GROUND];
     this.checkpoints = config.checkpoints ?? [];
@@ -459,6 +467,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * `CharacterController` (ticket 02) is what makes one shared step possible.
    */
   tick(inputs: Record<string, SimInputs>): void {
+    if (this.disposed) throw new Error("RapierSimulation: tick() on a disposed simulation");
     // Queue each Spinner's rotation for the tick about to run — it must be
     // queued before `world.step()` applies it, the same way each Character's
     // own `setNextKinematicTranslation` works.
@@ -709,5 +718,33 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   /** The configured Props, for the renderer to build geometry from (pose comes from `SimState.props`). */
   getProps(): PropConfig[] {
     return this.props.map((p) => clonePropConfig(p.config));
+  }
+
+  /**
+   * Release the Rapier world and everything in it (M4 ticket 01).
+   *
+   * `World.free()` frees every body, collider, joint and character controller
+   * it owns, so the per-entity `dispose` methods are deliberately not called
+   * here — they would each remove something from a world that is about to
+   * vanish anyway. What matters is that this happens *at all*: a client that
+   * routes into the game and back out repeatedly (ADR 0008) builds a
+   * prediction world each time, and WASM memory is not reclaimed by the JS
+   * garbage collector.
+   *
+   * Idempotent: teardown can run more than once, and a double `free()` is a
+   * crash inside Rapier rather than a no-op.
+   */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.world.free();
+    this.characters.clear();
+    this.mirrors.clear();
+    this.progress.clear();
+    this.spinnerByHandle.clear();
+    this.propByHandle.clear();
+    this.propIndexByHandle.clear();
+    this.characterIdByHandle.clear();
+    this.staticSurfaceByHandle.clear();
   }
 }

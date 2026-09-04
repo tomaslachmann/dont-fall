@@ -3,26 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DON'T FALL — M1 playground</title>
+    <title>DON'T FALL</title>
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e14; }
-      #hud {
-        position: fixed; top: 12px; left: 12px;
-        font: 12px/1.4 ui-monospace, monospace; color: #8ba0b8; white-space: pre;
-        pointer-events: none;
-      }
-      #lock-prompt {
-        position: fixed; inset: 0; display: grid; place-items: center;
-        font: 500 15px/1.4 ui-monospace, monospace; color: #cdd9e5;
-        background: rgba(11, 14, 20, 0.55); letter-spacing: 0.04em;
-        pointer-events: none;
-      }
-      #lock-prompt[hidden] { display: none; }
     </style>
   </head>
   <body>
-    <div id="hud"></div>
-    <div id="lock-prompt">click to look around · Esc to release</div>
+    <!--
+      The game mounts its own canvas and HUD in here and removes them again on
+      teardown (M4 ticket 01) — the page holds no game-owned markup or styling,
+      so React can take this element over as `<GameCanvas>`'s host (ADR 0008).
+    -->
+    <div id="game"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

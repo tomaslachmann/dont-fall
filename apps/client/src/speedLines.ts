@@ -86,6 +86,14 @@ export interface SpeedLines {
   /** 0 (invisible) to 1 (full intensity) — drive from current speed each frame. */
   setIntensity: (t: number) => void;
   resize: (width: number, height: number) => void;
+  /**
+   * Release the composer's two full-screen render targets and each pass's
+   * material/geometry (M4 ticket 01). These are GPU allocations, not JS
+   * objects — nothing reclaims them when the last reference drops, so a game
+   * started and stopped repeatedly (ADR 0008) would accumulate a screen-sized
+   * pair of buffers per run.
+   */
+  dispose: () => void;
 }
 
 export const createSpeedLines = (
@@ -94,7 +102,8 @@ export const createSpeedLines = (
   camera: THREE.Camera,
 ): SpeedLines => {
   const composer = new EffectComposer(renderer);
-  composer.addPass(new RenderPass(scene, camera));
+  const renderPass = new RenderPass(scene, camera);
+  composer.addPass(renderPass);
 
   const pass = new ShaderPass({
     uniforms: {
@@ -110,7 +119,8 @@ export const createSpeedLines = (
   // Required last: EffectComposer's intermediate passes render in linear
   // space — without this, the renderer's sRGB/tone-mapping output conversion
   // never happens and the whole frame comes out too dark.
-  composer.addPass(new OutputPass());
+  const outputPass = new OutputPass();
+  composer.addPass(outputPass);
 
   const clock = new THREE.Clock();
 
@@ -125,6 +135,14 @@ export const createSpeedLines = (
     resize: (width, height) => {
       composer.setSize(width, height);
       pass.uniforms.uAspect!.value = width / height;
+    },
+    dispose: () => {
+      // `EffectComposer.dispose` releases its own render targets and internal
+      // copy pass but not the passes added to it, so each is released here too.
+      composer.dispose();
+      renderPass.dispose();
+      pass.dispose();
+      outputPass.dispose();
     },
   };
 };
