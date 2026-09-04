@@ -15,8 +15,8 @@ import {
   TRACK_FETCH_MAX_WAIT_MS,
   TRACK_FETCH_RETRY_DELAY_MS,
   initPhysics,
-  playgroundSpawn,
   resolveTrack,
+  trackSpawn,
   type ClientMessage,
   type ServerMessage,
   type SimInputs,
@@ -261,12 +261,24 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
           // refusal above) clears it.
           fetched = candidate;
           simulation = new RapierSimulation({ ...resolveForSimulation(fetched.track), withDefaultCharacter: false });
+          // The new simulation's own tick counter restarts at 0 (ADR 0027) —
+          // `serverTick` must restart with it, or every subsequent input
+          // (stamped from the client's *new* `state.tick`, always small)
+          // reads as permanently stale against the old, much larger
+          // `serverTick`: every queued input gets discarded as stale before
+          // it can ever match `thisTick`, and the resulting `lastInputTick`
+          // ack — now way ahead of what the client sent — makes the client
+          // think everything it sent already got applied. No one can move,
+          // for the rest of this server process's life, not just this Track.
+          serverTick = 0;
           console.log(`DON'T FALL: reloaded Track "${fetched.id}"@${fetched.revision} for a Playtest connection`);
         }
       }
 
       const id = randomUUID();
-      const spawn = playgroundSpawn(joinCount);
+      // Spawn in the loaded Track's own start frame (free placement puts the
+      // start platform anywhere) — never M1's world coords (playtest bug, 2026-09).
+      const spawn = trackSpawn(fetched.track, joinCount);
       joinCount += 1;
       sockets.set(id, socket);
       inputQueues.set(id, []);

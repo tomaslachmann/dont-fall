@@ -21,8 +21,8 @@ _Avoid_: avatar, player (when you mean the body), pawn
 ### Match structure
 
 **Match**:
-One full session from lobby to a single winner, made of several Rounds.
-_Avoid_: game, session, lobby
+One full session from Lobby to a single winner, made of several Rounds.
+_Avoid_: game, session
 
 **Round**:
 One run through a single obstacle course within a Match. Ends by Qualification or
@@ -50,14 +50,38 @@ The condition for advancing out of a Round — reaching the Finish Zone, or bein
 among the survivors, before the Round ends.
 _Avoid_: passing, promotion
 
+**Elimination**:
+A Player who did not Qualify before the Round ended. A Fall never eliminates — it
+only costs time through Respawn with a penalty.
+_Avoid_: death, KO
+
 **Time Limit**:
 The countdown for a Round. When it hits zero, every Player not yet Qualified is
-eliminated. Preferred over a fixed "first N players" cutoff.
+eliminated. Preferred over a fixed "first N players" cutoff. Each Revision carries
+its own default Time Limit — a longer Track allows more time; the lobby shows it and
+the server enforces it.
 
 **Finish Zone**:
 The area at the end of a Race that grants Qualification on entry. Deliberately an
-area, not a line, so the end of a Round stays chaotic and contested.
+area, not a line, so the end of a Round stays chaotic and contested. A detection-only
+trigger entity on a Module — like a Checkpoint's trigger region, never a Volume;
+distinct from Checkpoint, which sets a Respawn point.
 _Avoid_: finish line, goal
+
+**Lobby**:
+The gathering before a Round — nicknames, ready toggles, Track selection, host start.
+Ends when the host starts the Countdown.
+_Avoid_: waiting room
+
+**Countdown**:
+The short delay between Start and the live Round. Characters are already spawned but
+their input is locked.
+_Avoid_: warmup
+
+**Results**:
+The Screen after a Round ends — rank with Qualified ordered by finish time and the rest
+by Track progress, and a way back to the Lobby.
+_Avoid_: scoreboard, leaderboard
 
 ### Track
 

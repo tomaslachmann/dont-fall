@@ -150,6 +150,29 @@ export const chainTrack = (
 };
 
 /**
+ * Where the `index`-th joining Character spawns: a grid laid out in the
+ * *first* Segment's own frame (position + full orientation), so the spawn
+ * follows the start platform wherever free placement puts it — independent of
+ * world x-y-z. Players are solid to each other, so joiners must never share a
+ * spot: 4 across, wrapping after 12 (the ADR 0011 player ceiling), same slots
+ * `playgroundSpawn` used when the first Segment sat at M1's origin.
+ *
+ * The local offsets are M1's own grid expressed relative to its start Segment
+ * (`chainTrack(..., { x: 0, y: 0, z: 10 })`, rotation 0): x −1.8…1.8 clear of
+ * the x = −3.2 wall, y 1.2 above the deck, z 0.5 back across the platform.
+ * For M1 itself this returns exactly `playgroundSpawn(index)`.
+ */
+export const trackSpawn = (track: Track, index: number): Vec3 => {
+  const slot = ((index % 12) + 12) % 12;
+  const col = slot % 4; // 4 across
+  const row = Math.floor(slot / 4); // up to 3 back
+  const local: Vec3 = { x: -1.8 + col * 1.2, y: 1.2, z: 0.5 - row * 1.5 };
+  const first = track[0];
+  if (!first) return { ...local, z: local.z + 10 };
+  return addVec3(first.position, rotateVec3ByQuat(local, segmentOrientation(first)));
+};
+
+/**
  * Flattens a Track into the world-space geometry `RapierSimulation`/the
  * scene consume. `staticSurfaces` is index-aligned with `statics` — entry
  * `i` is the Surface `statics[i]`'s owning FloorBox collapses to

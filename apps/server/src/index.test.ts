@@ -562,4 +562,54 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
     expect(code).toBe(4002);
     expect(reason).toMatch(/this-track-id-does-not-exist/);
   });
+
+  it("a client connecting after a reload can still move — the reload must not leave serverTick permanently ahead of the new simulation's own tick", async () => {
+    server = await startServer({ port: 0 });
+
+    // Advance the server's own tick counter well past zero before anyone
+    // reloads, exactly like a dev server that's been up for a while.
+    const first = connect(server.port);
+    const firstWelcome = await nextMessage(first);
+    if (firstWelcome.type !== "welcome") throw new Error("unreachable");
+    let tick = (await nextMessage(first) as { type: "snapshot"; state: { tick: number } }).state.tick;
+    for (let i = 0; i < 15; i += 1) {
+      sendInput(first, tick + 2, NORTH);
+      const message = await nextMessage(first);
+      if (message.type === "snapshot") tick = message.state.tick;
+    }
+    expect(tick).toBeGreaterThan(10); // serverTick is now well past zero
+
+    first.close();
+    await new Promise((resolve) => first.once("close", resolve));
+
+    // Reload — a genuinely different Track, with no one connected, so the
+    // reload path actually runs and replaces `simulation` (whose own tick
+    // counter restarts at 0) without resetting the server's `serverTick`.
+    const altTrackId = await publishTrack();
+    const second = connect(server.port, `?track=${altTrackId}`);
+    const secondWelcome = await nextMessage(second);
+    if (secondWelcome.type !== "welcome") throw new Error("unreachable");
+    const id = secondWelcome.playerId;
+
+    const postReloadFirst = await nextMessage(second);
+    if (postReloadFirst.type !== "snapshot") throw new Error("unreachable");
+    const startZ = postReloadFirst.state.characters[id]!.position.z;
+    // The new simulation's own tick counter restarted at 0 — this is exactly
+    // what the client would seed `predictionTick` from post-reload.
+    expect(postReloadFirst.state.tick).toBeLessThan(10);
+
+    let postTick = postReloadFirst.state.tick;
+    let lastZ = startZ;
+    for (let i = 0; i < 30; i += 1) {
+      sendInput(second, postTick + 2, NORTH);
+      const message = await nextMessage(second);
+      if (message.type === "snapshot") {
+        postTick = message.state.tick;
+        lastZ = message.state.characters[id]!.position.z;
+      }
+    }
+
+    expect(lastZ).toBeLessThan(startZ - 1); // NORTH must still walk the Character, post-reload
+    second.close();
+  });
 });
