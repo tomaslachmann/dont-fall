@@ -12,6 +12,8 @@ import {
   TICK_MS,
   DEFAULT_TIME_LIMIT_MS,
   COUNTDOWN_MS,
+  ROUND_END_MS,
+  allQualified,
   PLAYERS_TO_START,
   advanceMatchPhase,
   countdownMsLeft,
@@ -161,6 +163,15 @@ export interface StartServerConfig {
    * without waiting out three real seconds.
    */
   countdownMs?: number;
+  /** How long ROUND_END holds before RESULTS (M4 ticket 05). Defaults to {@link ROUND_END_MS}. Test-only, like `countdownMs`. */
+  roundEndMs?: number;
+  /**
+   * Ignore the Revision's authored Time Limit and use this instead. Test-only
+   * (ADR 0038 is explicit that the clock belongs to the Track): track-service
+   * enforces a floor of ten seconds on a published Revision, which is far too
+   * long to wait out in a test of what happens when the clock expires.
+   */
+  timeLimitMsOverride?: number;
 }
 
 /**
@@ -194,6 +205,13 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   // server ever makes — the boot-time one below, and a Playtest connection's
   // live reload (further down) — so a test can bound both the same way.
   const countdownMs = config.countdownMs ?? COUNTDOWN_MS;
+  const roundEndMs = config.roundEndMs ?? ROUND_END_MS;
+  /**
+   * This Round's Time Limit — the Revision's own (ADR 0038), unless a test
+   * has overridden it. A function, not a captured value: a Playtest reload
+   * replaces `fetched` with a different Track carrying a different clock.
+   */
+  const roundTimeLimitMs = (): number => config.timeLimitMsOverride ?? fetched.timeLimitMs;
   const envPlayersToStart = Number(process.env.PLAYERS_TO_START);
   const playersToStart =
     config.playersToStart ?? (Number.isInteger(envPlayersToStart) && envPlayersToStart > 0 ? envPlayersToStart : PLAYERS_TO_START);
@@ -234,6 +252,30 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
    * transition and clients only render what rides the snapshot.
    */
   let match: MatchState = { phase: "LOBBY", phaseStartTick: 0 };
+  /**
+   * Players who dropped while the Round was being raced (M4 ticket 05) — a
+   * DNF, distinct from being Eliminated, which is simply "still here and
+   * never Qualified" and needs no record of its own. Their Characters are
+   * gone from the world, so this is the only thing left that remembers they
+   * were in this Round at all; the Results screen (ticket 08) is who reads it.
+   * Cleared when the next Round's Countdown begins.
+   */
+  let dnf: string[] = [];
+  /**
+   * Whether this Round has met either of its endings, as of the last Tick
+   * simulated (M4 ticket 05). Read one Tick later, by the phase decision at
+   * the top of the loop — a Tick's lag on ending a Round nobody can perceive,
+   * in exchange for the phase still being decided before anything is
+   * simulated, exactly as ticket 04 left it.
+   */
+  let roundEnding = { allQualified: false, timeExpired: false };
+  /**
+   * What the Round clock read when the Round ended (M4 ticket 05) — 0 if the
+   * clock ran out, whatever was left if everyone Qualified first. Held so the
+   * clock *stops* at round end instead of either springing back to the full
+   * Limit or carrying on counting into the Results.
+   */
+  let finalTimeLeftMs = 0;
   // A short per-client queue absorbs network jitter and reordering;
   // `lastApplied` fills a tick a client's packet hasn't arrived for yet, and
   // `lastInputTick` — the server tick actually simulated, whether a real input
@@ -338,6 +380,27 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         }
       }
 
+      // No mid-Round join, and so no mid-Round *re*join (M4 ticket 05):
+      // dropping a fresh Character into a Race already in progress is neither
+      // fair to them nor to the people racing. Refused with a reason the
+      // client can show, the same way a Playtest Track clash is.
+      //
+      // Gated on someone actually being here, not on the phase alone: the
+      // return to LOBBY is decided by the tick loop, so between the last
+      // Player leaving and the next tick there is a window where the phase
+      // still reads RESULTS with nobody in it, and a Round with no Players in
+      // it is not a Round to protect.
+      //
+      // This does not (and should not) make a reload *during* a Round work:
+      // the server may not have processed the old socket's close yet, and
+      // even once it has, that is exactly the mid-Round rejoin this ticket
+      // exists to refuse. Whoever left is a DNF; they come back for the next
+      // Round.
+      if (sockets.size > 0 && match.phase !== "LOBBY" && match.phase !== "COUNTDOWN") {
+        socket.close(4002, truncateForCloseReason("a Round is already under way — wait for it to finish"));
+        return;
+      }
+
       const id = randomUUID();
       // Spawn in the loaded Track's own start frame (free placement puts the
       // start platform anywhere) — never M1's world coords (playtest bug, 2026-09).
@@ -398,6 +461,11 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       });
 
       socket.on("close", () => {
+        // Leaving *while the Round is being raced* is a DNF (M4 ticket 05).
+        // Not during the Countdown — nobody has raced yet — and not during
+        // ROUND_END/RESULTS, where this Player's result is already decided
+        // and a DNF would overwrite a Qualification they earned.
+        if (match.phase === "RUNNING" && !dnf.includes(id)) dnf.push(id);
         sockets.delete(id);
         inputQueues.delete(id);
         lastApplied.delete(id);
@@ -438,6 +506,9 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         connectedPlayers: sockets.size,
         playersToStart,
         countdownMs,
+        roundEndMs,
+        allQualified: roundEnding.allQualified,
+        timeExpired: roundEnding.timeExpired,
       });
       // Input is locked in every phase but RUNNING (ADR 0040). Enforced here
       // rather than by refusing the packet: the client runs the same rule on
@@ -472,29 +543,49 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       // The Round's clock starts the Tick the Countdown ends, not when the
       // server did (M4 ticket 03's anchor, now owned by this transition).
       if (nextMatch.phase === "RUNNING" && match.phase !== "RUNNING") roundStartTick = thisTick;
+      // A fresh Countdown is a fresh Round: last Round's DNFs are not this
+      // Round's (M4 ticket 05).
+      if (nextMatch.phase === "COUNTDOWN" && match.phase !== "COUNTDOWN") dnf = [];
       match = nextMatch;
       consecutiveTickFailures = 0;
 
-      snapshotAccumulatorMs += TICK_MS;
-      if (snapshotAccumulatorMs < SNAPSHOT_INTERVAL_MS) return;
-      snapshotAccumulatorMs -= SNAPSHOT_INTERVAL_MS;
-
+      // Built every tick, not just when a snapshot goes out: the Round's own
+      // endings are read off it, and they should not be noticed only as often
+      // as the snapshot rate happens to be (ADR 0020 decouples the two).
       const state = simulation.snapshot();
       for (const [id, character] of Object.entries(state.characters)) {
         character.lastInputTick = lastInputTicks.get(id) ?? 0;
       }
+
+      // Before the Round is RUNNING none of its clock has been spent, so it
+      // reads its full authored value rather than counting down in the Lobby.
+      const timeLimitMs = roundTimeLimitMs();
+      // Before a Round the clock reads its full authored value; during one it
+      // counts down; after one it stops where it stopped.
+      let timeLeftMs: number;
+      if (match.phase === "RUNNING") {
+        timeLeftMs = roundTimeLeftMs(timeLimitMs, serverTick - roundStartTick);
+        finalTimeLeftMs = timeLeftMs;
+      } else if (match.phase === "ROUND_END" || match.phase === "RESULTS") {
+        timeLeftMs = finalTimeLeftMs;
+      } else {
+        timeLeftMs = timeLimitMs;
+      }
+      // Both endings, decided by the server from state it already owns (ADR
+      // 0040) — whichever happens first ends the Round.
+      roundEnding = {
+        allQualified: allQualified(state.characters),
+        timeExpired: match.phase === "RUNNING" && timeLeftMs === 0,
+      };
+
+      snapshotAccumulatorMs += TICK_MS;
+      if (snapshotAccumulatorMs < SNAPSHOT_INTERVAL_MS) return;
+      snapshotAccumulatorMs -= SNAPSHOT_INTERVAL_MS;
       // Per-client payload: `serverTimeMs` is the same for all, `commandQueueDepth`
       // is this client's own un-applied input backlog (feeds its LEAD, ADR 0021).
       // One `JSON.stringify` per client — negligible at M2 scale, and the shape
       // binary + delta encoding will need anyway.
       const serverTimeMs = performance.now();
-      // Counted here, once per broadcast, so every client in this Round reads
-      // the identical clock off the identical Tick (ADR 0038 — the client
-      // never computes time remaining, it only renders this).
-      // Before the Round is RUNNING none of its clock has been spent, so it
-      // reads its full authored value rather than counting down in the Lobby.
-      const timeLeftMs =
-        match.phase === "RUNNING" ? roundTimeLeftMs(fetched.timeLimitMs, serverTick - roundStartTick) : fetched.timeLimitMs;
       const countdown = countdownMsLeft(match, serverTick, countdownMs);
       for (const [id, socket] of sockets) {
         if (socket.readyState !== socket.OPEN) continue;
@@ -508,6 +599,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
             timeLeftMs,
             phase: match.phase,
             countdownMsLeft: countdown,
+            dnf,
           } satisfies ServerMessage),
         );
       }

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { COUNTDOWN_TICKS, PLAYERS_TO_START, TICK_RATE_HZ } from "../tuning.js";
-import { advanceMatchPhase, countdownMsLeft, phaseLocksInput, type MatchState } from "./MatchPhase.js";
+import { COUNTDOWN_TICKS, PLAYERS_TO_START, ROUND_END_TICKS, TICK_RATE_HZ } from "../tuning.js";
+import {
+  advanceMatchPhase,
+  countdownMsLeft,
+  phaseLocksInput,
+  type MatchPhaseInputs,
+  type MatchState,
+} from "./MatchPhase.js";
 
 const at = (phase: MatchState["phase"], phaseStartTick = 0): MatchState => ({ phase, phaseStartTick });
 const step = (state: MatchState, tick: number, connectedPlayers: number, playersToStart = PLAYERS_TO_START) =>
@@ -45,7 +51,7 @@ describe("advanceMatchPhase", () => {
     expect(next.phaseStartTick).toBe(100 + COUNTDOWN_TICKS);
   });
 
-  it("keeps RUNNING once it has started — ending a Round is M4 ticket 05's job", () => {
+  it("keeps RUNNING while the Round is still being raced", () => {
     const running = at("RUNNING", 200);
 
     expect(step(running, 10_000, 2)).toEqual(running);
@@ -87,6 +93,73 @@ describe("advanceMatchPhase", () => {
     const state = at("LOBBY");
     expect(step(state, 100, 2)).toEqual(step(state, 100, 2));
     expect(state).toEqual(at("LOBBY")); // and never mutates what it was given
+  });
+});
+
+describe("advanceMatchPhase — ending a Round (M4 ticket 05)", () => {
+  const running = at("RUNNING", 200);
+  const ending = (extra: Partial<MatchPhaseInputs>) =>
+    advanceMatchPhase(running, { tick: 300, connectedPlayers: 2, playersToStart: 2, ...extra });
+
+  it("ends the Round the moment every connected Character has Qualified", () => {
+    const next = ending({ allQualified: true });
+
+    expect(next.phase).toBe("ROUND_END");
+    expect(next.phaseStartTick).toBe(300);
+  });
+
+  it("ends the Round when the clock runs out, however many are still running", () => {
+    expect(ending({ timeExpired: true }).phase).toBe("ROUND_END");
+  });
+
+  it("takes whichever comes first — qualifying early does not wait out the clock", () => {
+    expect(ending({ allQualified: true, timeExpired: false }).phase).toBe("ROUND_END");
+    expect(ending({ allQualified: false, timeExpired: true }).phase).toBe("ROUND_END");
+  });
+
+  it("keeps running while someone is still out there with time on the clock", () => {
+    expect(ending({ allQualified: false, timeExpired: false }).phase).toBe("RUNNING");
+  });
+
+  it("moves on to the Results after the round-end beat", () => {
+    const roundEnd = at("ROUND_END", 300);
+
+    expect(advanceMatchPhase(roundEnd, { tick: 300 + ROUND_END_TICKS - 1, connectedPlayers: 2, playersToStart: 2 }).phase).toBe(
+      "ROUND_END",
+    );
+    const next = advanceMatchPhase(roundEnd, { tick: 300 + ROUND_END_TICKS, connectedPlayers: 2, playersToStart: 2 });
+    expect(next.phase).toBe("RESULTS");
+    expect(next.phaseStartTick).toBe(300 + ROUND_END_TICKS);
+  });
+
+  it("honours a configured round-end beat, so a test needn't sit through it", () => {
+    expect(
+      advanceMatchPhase(at("ROUND_END", 300), { tick: 301, connectedPlayers: 2, playersToStart: 2, roundEndMs: 0 }).phase,
+    ).toBe("RESULTS");
+  });
+
+  it("stays on the Results — returning to the Lobby for another Round is M4 ticket 08", () => {
+    const results = at("RESULTS", 400);
+
+    expect(advanceMatchPhase(results, { tick: 99_999, connectedPlayers: 2, playersToStart: 2 })).toEqual(results);
+  });
+
+  it("still returns to the Lobby once everyone has gone, from any phase", () => {
+    for (const phase of ["ROUND_END", "RESULTS"] as const) {
+      expect(advanceMatchPhase(at(phase, 300), { tick: 400, connectedPlayers: 0, playersToStart: 2 }).phase).toBe("LOBBY");
+    }
+  });
+
+  it("never ends a Round that has not started — the Lobby ignores both endings", () => {
+    const lobby = advanceMatchPhase(at("LOBBY"), {
+      tick: 300,
+      connectedPlayers: 1,
+      playersToStart: 2,
+      allQualified: true,
+      timeExpired: true,
+    });
+
+    expect(lobby.phase).toBe("LOBBY");
   });
 });
 

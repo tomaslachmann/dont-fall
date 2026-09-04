@@ -97,6 +97,17 @@ export interface SnapshotMessage {
    * from its own Tick, never from a client's wall clock.
    */
   countdownMsLeft: number;
+  /**
+   * Players who dropped while this Round was being raced (M4 ticket 05) — a
+   * DNF. Their Characters are gone from {@link SimState}, so this is the only
+   * thing that still says they were here; the Results screen (ticket 08) is
+   * what reads it.
+   *
+   * Distinct from Elimination, which needs nothing on the wire at all: an
+   * Eliminated Player is simply one who is still here with no `finishTick`
+   * when the Round ends, which both sides can already see (`isEliminated`).
+   */
+  dnf: string[];
 }
 
 /** Server → client, reply to a {@link PingMessage} (time sync, ADR 0019). */

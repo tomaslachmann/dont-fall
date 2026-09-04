@@ -18,6 +18,7 @@ import {
   addVec3,
   decayPositionOffset,
   initPhysics,
+  isEliminated,
   interpolateState,
   lengthVec3,
   movementDirection,
@@ -720,8 +721,24 @@ const boot = async (
     // else crossed, so it fills in a moment later; until then the banner
     // stands without a number rather than guessing "#1".
     const roundClock = timeLeftMs === null ? "--:--" : formatRoundClock(timeLeftMs);
-    const connectedPlayers = latestServerSnapshot ? Object.keys(latestServerSnapshot.characters).length : 1;
-    hud.setBanner(matchBanner(phase, countdownMsLeft, connectedPlayers, welcome.config.playersToStart));
+    // Read off the authoritative snapshot, not the local prediction: this
+    // client only predicts its own Character, so it is the only side that
+    // knows how everyone else is doing (M4 ticket 05).
+    const serverCharacters = latestServerSnapshot ? Object.values(latestServerSnapshot.characters) : [];
+    const connectedPlayers = serverCharacters.length || 1;
+    const qualifiedCount = serverCharacters.filter((character) => character.finishTick !== null).length;
+    // Elimination is derived, never replicated — "the Round ended and I have
+    // no finishTick" is something both sides can already see.
+    const eliminated = isEliminated(phase, latestServerSnapshot?.characters[myId]?.finishTick ?? null);
+    hud.setBanner(
+      matchBanner({
+        phase,
+        countdownMsLeft,
+        connectedPlayers,
+        playersToStart: welcome.config.playersToStart,
+        eliminated,
+      }),
+    );
     const qualified = c.finishTick !== null;
     const placement = latestServerSnapshot ? qualificationPlacement(latestServerSnapshot.characters, myId) : null;
     const banner = qualified ? `\n${placement === null ? "QUALIFIED" : `QUALIFIED #${placement}`}` : "";
@@ -745,7 +762,7 @@ const boot = async (
         `time ${roundClock} · ${phase.toLowerCase()}\n` +
         `sim ${TICK_RATE_HZ} Hz · render ${fps.toFixed(0)} fps · tick ${predictionTick}\n` +
         `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · ${c.motionState}\n` +
-        `checkpoint ${cp} · falls ${c.fallCount}${banner}\n` +
+        `checkpoint ${cp} · falls ${c.fallCount} · qualified ${qualifiedCount}/${connectedPlayers}${banner}\n` +
         `dash [${dashBar}]${c.dashCooldownMs === 0 ? " ready" : ""}\n` +
         `WASD move · Space jump · Shift dash · mouse look\n` +
         netMetrics.format(),

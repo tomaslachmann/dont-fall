@@ -1,13 +1,11 @@
-import { COUNTDOWN_MS, TICK_MS, msToTicks } from "../tuning.js";
+import { COUNTDOWN_MS, ROUND_END_MS, TICK_MS, msToTicks } from "../tuning.js";
 
 /**
  * Where a Match currently is (CONTEXT.md, ADR 0040). The server owns every
  * transition from COUNTDOWN on; clients render this and never compute it.
  *
- * `ROUND_END` and `RESULTS` are declared here because they are the machine
- * ADR 0040 defines, and a client switching on `phase` should be exhaustive
- * from the start — but nothing produces them yet. M4 ticket 05 adds the
- * transitions into them.
+ * The full machine ADR 0040 defines. Every phase is produced: M4 ticket 04
+ * added LOBBY/COUNTDOWN/RUNNING, ticket 05 the two that end a Round.
  */
 export type MatchPhase = "LOBBY" | "COUNTDOWN" | "RUNNING" | "ROUND_END" | "RESULTS";
 
@@ -36,6 +34,15 @@ export interface MatchPhaseInputs {
    * seconds of it.
    */
   countdownMs?: number;
+  /**
+   * Whether every connected Character has Qualified (M4 ticket 05) — see
+   * `allQualified`. Ends the Round early.
+   */
+  allQualified?: boolean;
+  /** Whether the Round's Time Limit has run out (M4 ticket 05, ADR 0038). Ends the Round. */
+  timeExpired?: boolean;
+  /** How long ROUND_END holds before RESULTS. Defaults to {@link ROUND_END_MS}; a parameter for the same reason `countdownMs` is. */
+  roundEndMs?: number;
 }
 
 /**
@@ -63,14 +70,27 @@ export const phaseLocksInput = (phase: MatchPhase): boolean => phase !== "RUNNIN
  * - anything → LOBBY once the last Player leaves, so the server is ready for
  *   whoever connects next. A Round with nobody in it is over.
  *
- * A Player dropping *part way* is deliberately not a transition: whoever is
- * left still gets their Round, and recording the DNF is ticket 05's job.
- * RUNNING → ROUND_END is ticket 05's too, which is why RUNNING is terminal
- * here.
+ * And the two M4 ticket 05 adds:
+ * - RUNNING → ROUND_END the moment every connected Character has Qualified,
+ *   or the Round's clock runs out — whichever comes first.
+ * - ROUND_END → RESULTS after a short beat.
+ *
+ * A Player dropping *part way* is still deliberately not a transition:
+ * whoever is left still gets their Round, and the DNF is recorded by the
+ * server rather than changing the phase. RESULTS is terminal — returning to
+ * the Lobby for another Round is M4 ticket 08.
  */
 export const advanceMatchPhase = (
   state: MatchState,
-  { tick, connectedPlayers, playersToStart, countdownMs = COUNTDOWN_MS }: MatchPhaseInputs,
+  {
+    tick,
+    connectedPlayers,
+    playersToStart,
+    countdownMs = COUNTDOWN_MS,
+    allQualified = false,
+    timeExpired = false,
+    roundEndMs = ROUND_END_MS,
+  }: MatchPhaseInputs,
 ): MatchState => {
   if (connectedPlayers === 0) {
     return state.phase === "LOBBY" ? state : { phase: "LOBBY", phaseStartTick: tick };
@@ -80,6 +100,12 @@ export const advanceMatchPhase = (
   }
   if (state.phase === "COUNTDOWN" && tick - state.phaseStartTick >= msToTicks(countdownMs)) {
     return { phase: "RUNNING", phaseStartTick: tick };
+  }
+  if (state.phase === "RUNNING" && (allQualified || timeExpired)) {
+    return { phase: "ROUND_END", phaseStartTick: tick };
+  }
+  if (state.phase === "ROUND_END" && tick - state.phaseStartTick >= msToTicks(roundEndMs)) {
+    return { phase: "RESULTS", phaseStartTick: tick };
   }
   return state;
 };

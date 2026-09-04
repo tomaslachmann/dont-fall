@@ -691,3 +691,13 @@ export const COUNTDOWN_TICKS = msToTicks(COUNTDOWN_MS);
  * forever, with nothing in M4 yet able to press start.
  */
 export const PLAYERS_TO_START = 2;
+
+/**
+ * How long ROUND_END holds before the Results (M4 ticket 05). A beat, not a
+ * screen: long enough to see that the Round is over where you are standing,
+ * before the view changes.
+ */
+export const ROUND_END_MS = 2_500;
+
+/** {@link ROUND_END_MS} in Ticks — every Match duration is measured in Ticks (ADR 0004). */
+export const ROUND_END_TICKS = msToTicks(ROUND_END_MS);
