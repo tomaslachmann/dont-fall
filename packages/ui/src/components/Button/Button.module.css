@@ -1,0 +1,76 @@
+/* Buttons as physical blocks, not flat filled rectangles — a hard offset
+   shadow (no blur) that shrinks toward zero on press, so the button
+   visually sinks into its own shadow. See design-system.md §1.6a. */
+.btn {
+  font: inherit;
+  font-weight: 700;
+  border-radius: var(--df-radius-standard);
+  cursor: pointer;
+  transform: scale(1);
+  transition:
+    transform var(--df-motion-release-duration) var(--df-motion-ease-land),
+    box-shadow var(--df-motion-release-duration) ease-out,
+    filter 140ms ease-out;
+}
+
+.primary {
+  padding: var(--df-space-5) var(--df-space-8);
+  border: var(--df-border-width-chunk) solid var(--df-color-accent-depth);
+  background: var(--df-color-accent);
+  color: var(--df-color-ink-primary);
+  box-shadow: 5px 5px 0 0 var(--df-color-accent-depth);
+}
+.primary:hover {
+  box-shadow: 6px 6px 0 0 var(--df-color-accent-depth);
+  filter: brightness(1.1);
+}
+.primary.pressed {
+  box-shadow: 1px 1px 0 0 var(--df-color-accent-depth);
+}
+
+.secondary {
+  padding: var(--df-space-4) var(--df-space-6);
+  border: var(--df-border-width-chunk) solid var(--df-color-border-emphasis);
+  background: var(--df-color-surface-1);
+  color: var(--df-color-ink-primary);
+  box-shadow: 5px 5px 0 0 var(--df-color-shadow-neutral);
+}
+.secondary:hover {
+  box-shadow: 6px 6px 0 0 var(--df-color-shadow-neutral);
+  border-color: var(--df-color-ink-secondary);
+  transform: translateY(-1px);
+}
+.secondary.pressed {
+  box-shadow: 1px 1px 0 0 var(--df-color-shadow-neutral);
+}
+
+/* Press/release — §1.7b, transcribed exactly: squash on press
+   (scaleY(0.94) scaleX(1.03), ease-out), back-out release with a smaller
+   overshoot (peak 1.015) than the landing motion's 1.03. The shadow
+   collapse above rides the base .btn box-shadow transition, so it settles
+   slightly after the squash — trailing the impact reads as heavier. */
+.pressed {
+  transition:
+    transform var(--df-motion-press-duration) ease-out,
+    box-shadow var(--df-motion-press-duration) ease-out;
+  transform: scaleY(0.94) scaleX(1.03);
+}
+.releasing {
+  transition: transform var(--df-motion-release-duration) var(--df-motion-ease-land);
+  transform: scale(1.015);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  box-shadow: none;
+  transform: none;
+  filter: none;
+}
+
+/* A focus ring's color is chosen only for max contrast against both
+   variants, not tied to any functional role's own semantics. */
+.btn:focus-visible {
+  outline: 2px solid var(--df-color-checkpoint);
+  outline-offset: 3px;
+}

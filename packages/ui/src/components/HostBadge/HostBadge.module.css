@@ -1,0 +1,13 @@
+/* A bordered text pill beside the name, not a generic crown-icon-pack
+   glyph (§2.7). The treatment actually validated live — a diamond-shaped
+   icon marker was tried first and reverted after direct feedback
+   preferring this look. */
+.badge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--df-color-host);
+  border: var(--df-border-width) solid var(--df-color-host);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
