@@ -19,6 +19,32 @@ export const saveTrack = async (baseUrl: string, name: string, track: Track): Pr
   return (await res.json()) as { id: string };
 };
 
+/**
+ * One fixed, reserved trackId every Playtest click republishes to (ADR 0032's
+ * Revision model, "true simulation" grilling session, 2026-09) — never the
+ * user's own curated Save id/name. `GET /tracks` (Browse) only ever lists a
+ * distinct id's *latest* Revision, so however many times Playtest is
+ * clicked, the real track list never gains a second row for it.
+ */
+export const PLAYTEST_TRACK_ID = "track-builder-playtest";
+
+/**
+ * Publishes the in-progress (possibly never-`Save`d) Track under
+ * {@link PLAYTEST_TRACK_ID} so the real `apps/server` can load it by id —
+ * the Playtest button's own handoff to the real multiplayer game, replacing
+ * the old local-only `playtest.ts` scene entirely (grilling session, 2026-09:
+ * "true simulation, not some bean").
+ */
+export const publishPlaytestTrack = async (baseUrl: string, track: Track): Promise<{ id: string }> => {
+  const res = await fetch(`${baseUrl}/tracks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: PLAYTEST_TRACK_ID, name: "Track Builder Playtest", track }),
+  });
+  if (!res.ok) throw new Error(`publish failed: HTTP ${res.status}`);
+  return (await res.json()) as { id: string };
+};
+
 /** Loads a Track from track-service by id (`GET /tracks/:id`). */
 export const loadTrack = async (baseUrl: string, id: string): Promise<StoredTrackResponse> => {
   const res = await fetch(`${baseUrl}/tracks/${encodeURIComponent(id)}`);

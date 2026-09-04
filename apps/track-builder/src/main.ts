@@ -1,6 +1,5 @@
 import { MODULE_LIBRARY, type Track, type Vec3 } from "@dont-fall/shared";
-import { listTracks, loadTrack, saveTrack } from "./api.js";
-import { startPlaytest, type Playtest } from "./playtest.js";
+import { listTracks, loadTrack, publishPlaytestTrack, saveTrack } from "./api.js";
 import {
   deleteSegment,
   duplicateSegment,
@@ -57,9 +56,6 @@ const previewRenders: (() => void)[] = [];
 // synchronously during setup, before `applyEdit` existed (code review,
 // ticket 03).
 let viewport: TrackViewport;
-
-let mode: "edit" | "playtest" = "edit";
-let playtest: Playtest | undefined;
 
 const setStatus = (text: string): void => {
   statusEl.textContent = text;
@@ -139,7 +135,6 @@ const commitSegmentTransforms = (updates: { index: number; transform: SegmentTra
 };
 
 viewport = createTrackViewport(viewportContainer, commitSegmentTransforms);
-const editCanvas = viewportContainer.querySelector("canvas")!;
 
 // Module palette — one entry per Module in the library, each with its own
 // live visual preview (ticket 04). Clicking inserts it right after the
@@ -158,7 +153,6 @@ for (const [moduleId, module] of Object.entries(MODULE_LIBRARY)) {
   entry.appendChild(label);
 
   entry.addEventListener("click", () => {
-    if (mode !== "edit") return;
     const primary = primaryIndex();
     const insertAt = primary !== undefined ? primary + 1 : history.track.length;
     applyEdit(insertSegment(history.track, MODULE_LIBRARY, insertAt, moduleId), insertAt);
@@ -189,7 +183,6 @@ viewportContainer.addEventListener("pointerdown", (e) => {
   pointerDownAt = { x: e.clientX, y: e.clientY };
 });
 viewportContainer.addEventListener("click", (e) => {
-  if (mode !== "edit") return;
   // A click that starts/ends on a gizmo handle (ticket 03) must never also
   // be read as "clicked empty space" — the gizmo's own meshes live outside
   // `trackGroup`, so `pick()` (which only raycasts `trackGroup`) would
@@ -262,7 +255,7 @@ const isTypingTarget = (target: EventTarget | null): boolean =>
 // every input path).
 window.addEventListener("keydown", (e) => {
   const index = primaryIndex();
-  if (mode !== "edit" || index === undefined || isTypingTarget(e.target)) return;
+  if (index === undefined || isTypingTarget(e.target)) return;
 
   const direction = MOVE_DIRECTIONS[e.code];
   if (direction) {
@@ -351,10 +344,6 @@ $("browse-toggle").addEventListener("click", () => {
   void (async () => {
     try {
       const tracks = await listTracks(serviceUrlInput.value);
-      // A pending fetch can resolve after Playtest started (and force-closed
-      // this panel) — don't let a stale response reopen it over a running
-      // playtest (code review, ticket 09).
-      if (mode !== "edit") return;
       browseList.replaceChildren();
       for (const t of tracks) {
         const row = document.createElement("div");
@@ -383,43 +372,37 @@ $("browse-toggle").addEventListener("click", () => {
   })();
 });
 
-// Local single-player playtest (ticket 05) — the same shared Rapier sim the
-// live game runs, no networking, no auth. Toggles the viewport between the
-// edit overview and a walkable version of the in-progress Track.
+// Playtest ("true simulation, not some bean" — grilling session, 2026-09):
+// publishes the in-progress (possibly never-`Save`d) Track under a fixed
+// reserved id and opens the real `apps/client` in a new tab, which forwards
+// it on to the real `apps/server` (its own `?track=` handling) — testing
+// through the exact render/prediction/network pipeline a player uses,
+// replacing the old local-only preview scene entirely.
 playtestButton.addEventListener("click", () => {
-  if (mode === "edit") {
-    if (history.track.length === 0) {
-      setStatus("cannot playtest an empty Track — place a Module first");
-      return;
-    }
-    void (async () => {
-      editCanvas.style.display = "none";
-      inspector.hidden = true;
-      browsePanel.hidden = true;
-      mode = "playtest";
-      playtestButton.textContent = "Stop playtest";
-      setStatus("playtest — WASD move · Space jump · Shift dash");
-      playtest = await startPlaytest(viewportContainer, MODULE_LIBRARY, history.track);
-    })();
-  } else {
-    playtest?.dispose();
-    playtest = undefined;
-    editCanvas.style.display = "";
-    mode = "edit";
-    playtestButton.textContent = "Playtest";
-    rerender();
+  if (history.track.length === 0) {
+    setStatus("cannot playtest an empty Track — place a Module first");
+    return;
   }
+  void (async () => {
+    try {
+      setStatus("publishing for playtest…");
+      const { id } = await publishPlaytestTrack(serviceUrlInput.value, history.track);
+      // 5173 is apps/client's own fixed dev port (its `vite.config.ts`) — a
+      // local-dev-only detail, not a shared runtime constant the way the
+      // server/track-service ports are (ADR 0028's own network protocol).
+      window.open(`http://${location.hostname}:5173/?track=${encodeURIComponent(id)}`, "_blank");
+      setStatus(`playtest opened in a new tab (Track "${id}")`);
+    } catch (err) {
+      setStatus(`playtest failed: ${(err as Error).message}`);
+    }
+  })();
 });
 
 rerender();
 
-const frame = (nowMs: number): void => {
-  if (mode === "edit") {
-    for (const render of previewRenders) render();
-    viewport.render();
-  } else {
-    playtest?.frame(nowMs);
-  }
+const frame = (): void => {
+  for (const render of previewRenders) render();
+  viewport.render();
   requestAnimationFrame(frame);
 };
 requestAnimationFrame(frame);

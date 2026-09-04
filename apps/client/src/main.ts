@@ -59,7 +59,14 @@ const main = async () => {
   const [, characterModel] = await Promise.all([initPhysics(), loadCharacterModel()]);
   hud.textContent = "DON'T FALL — M2 · connecting to server…";
 
-  const socket = new WebSocket(`ws://${location.hostname}:${DEFAULT_SERVER_PORT}`);
+  // Track Builder's Playtest button (`?track=<id>` on this page's own URL) —
+  // forwarded onto the server connection so it can load that exact Track
+  // instead of whatever it already fetched at boot. Absent for an ordinary
+  // player, who connects exactly as before.
+  const playtestTrackId = new URLSearchParams(location.search).get("track");
+  const serverUrl = new URL(`ws://${location.hostname}:${DEFAULT_SERVER_PORT}`);
+  if (playtestTrackId) serverUrl.searchParams.set("track", playtestTrackId);
+  const socket = new WebSocket(serverUrl);
 
   // Bootstrap (ticket 11): wait for the Match server's welcome — it names the
   // exact trackId + Revision it fetched from track-service (ADR 0028/0032) —
@@ -89,9 +96,18 @@ const main = async () => {
       cleanup();
       reject(new Error("WebSocket connection failed before the server's welcome arrived"));
     };
-    const onClose = (): void => {
+    const onClose = (event: CloseEvent): void => {
       cleanup();
-      reject(new Error("WebSocket closed before the server's welcome arrived"));
+      // A Playtest connection's `?track=` can be refused outright (a clear
+      // reason string, no `welcome` ever sent — see `apps/server`'s own
+      // `?track=` handling) — surface it here rather than the generic
+      // fallback below, which would otherwise swallow exactly the message a
+      // developer needs to see.
+      reject(
+        new Error(
+          event.reason ? `WebSocket closed: ${event.reason}` : "WebSocket closed before the server's welcome arrived",
+        ),
+      );
     };
     socket.addEventListener("message", onMessage);
     socket.addEventListener("error", onError);

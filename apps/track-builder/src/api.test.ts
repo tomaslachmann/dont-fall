@@ -1,6 +1,6 @@
 import type { Track } from "@dont-fall/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { listTracks, loadTrack, saveTrack } from "./api.js";
+import { listTracks, loadTrack, PLAYTEST_TRACK_ID, publishPlaytestTrack, saveTrack } from "./api.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -61,6 +61,32 @@ describe("loadTrack", () => {
       vi.fn(async () => new Response(JSON.stringify({ error: "not found" }), { status: 404 })),
     );
     await expect(loadTrack("http://x", "ghost")).rejects.toThrow(/404/);
+  });
+});
+
+describe("publishPlaytestTrack (Track Builder Playtest — 'true simulation' grilling session, 2026-09)", () => {
+  it("POSTs to /tracks with the fixed reserved id, regardless of what the Track actually is", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: PLAYTEST_TRACK_ID }), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await publishPlaytestTrack("http://x", SAMPLE);
+
+    expect(result).toEqual({ id: PLAYTEST_TRACK_ID });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://x/tracks",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ id: PLAYTEST_TRACK_ID, name: "Track Builder Playtest", track: SAMPLE }),
+      }),
+    );
+  });
+
+  it("throws on a non-ok response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "bad" }), { status: 400 })),
+    );
+    await expect(publishPlaytestTrack("http://x", SAMPLE)).rejects.toThrow(/400/);
   });
 });
 

@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { RapierSimulation, type ClientMessage, type ServerMessage, type SimInputs } from "@dont-fall/shared";
+import { M1_TRACK, RapierSimulation, type ClientMessage, type ServerMessage, type SimInputs, type Track } from "@dont-fall/shared";
 import { startTrackService, type TrackService } from "@dont-fall/track-service";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -28,10 +28,31 @@ afterEach(async () => {
   server = undefined;
 });
 
-const connect = (port: number): WebSocket => new WebSocket(`ws://localhost:${port}`);
+/** `query` (e.g. `"?track=<id>"`) rides straight through to `req.url` on the server's own 'connection' handler. */
+const connect = (port: number, query = ""): WebSocket => new WebSocket(`ws://localhost:${port}${query}`);
 
 const nextMessage = (socket: WebSocket): Promise<ServerMessage> =>
   new Promise((resolve) => socket.once("message", (raw) => resolve(JSON.parse(raw.toString()) as ServerMessage)));
+
+/**
+ * Publishes `track` to the shared test track-service instance, returning its
+ * trackId — Track Builder Playtest's own publish step, without going through
+ * the builder itself. Passing `id` republishes that exact id as a new
+ * Revision (ADR 0032) instead of creating a fresh one — Playtest always
+ * reuses the same fixed reserved id across repeated clicks.
+ */
+const publishTrack = async (track: Track = M1_TRACK, id?: string): Promise<string> => {
+  const res = await fetch(`http://localhost:${trackService.port}/tracks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(id ? { id, track } : { track }),
+  });
+  const body = (await res.json()) as { id: string };
+  return body.id;
+};
+
+const nextClose = (socket: WebSocket): Promise<{ code: number; reason: string }> =>
+  new Promise((resolve) => socket.once("close", (code, reason) => resolve({ code, reason: reason.toString() })));
 
 const NORTH: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false };
 
@@ -424,5 +445,121 @@ describe("startServer — track-service startup retry (ticket 12)", () => {
     expect(Date.now() - start).toBeLessThan(2000);
 
     await new Promise<void>((resolve) => hangingServer.close(() => resolve()));
+  });
+});
+
+describe("startServer — Track Builder Playtest override (`?track=` on the connecting client)", () => {
+  it("loads the requested Track when no players are connected yet", async () => {
+    server = await startServer({ port: 0 });
+    // Published after the server's own boot-time fetch, so it can never have
+    // been that fetch's own (random) pick — guarantees the reload path
+    // actually runs, not a same-track no-op.
+    const altTrackId = await publishTrack();
+
+    const socket = connect(server.port, `?track=${altTrackId}`);
+    const welcome = await nextMessage(socket);
+    if (welcome.type !== "welcome") throw new Error("unreachable");
+    expect(welcome.trackId).toBe(altTrackId);
+    socket.close();
+  });
+
+  it("connects normally — no reload, no refusal — when `?track=` already matches the currently-loaded Track", async () => {
+    server = await startServer({ port: 0 });
+    const first = connect(server.port);
+    const firstWelcome = await nextMessage(first);
+    if (firstWelcome.type !== "welcome") throw new Error("unreachable");
+    first.close();
+    await new Promise((resolve) => first.once("close", resolve));
+
+    const second = connect(server.port, `?track=${firstWelcome.trackId}`);
+    const secondWelcome = await nextMessage(second);
+    if (secondWelcome.type !== "welcome") throw new Error("unreachable");
+    expect(secondWelcome.trackId).toBe(firstWelcome.trackId);
+    second.close();
+  });
+
+  it("refuses a mismatched `?track=` while another player is already connected, instead of swapping the Track under them", async () => {
+    server = await startServer({ port: 0 });
+    const already = connect(server.port);
+    const alreadyWelcome = await nextMessage(already);
+    if (alreadyWelcome.type !== "welcome") throw new Error("unreachable");
+
+    const altTrackId = await publishTrack();
+    const conflicting = connect(server.port, `?track=${altTrackId}`);
+    const { code, reason } = await nextClose(conflicting);
+    expect(code).toBe(4001);
+    expect(reason).toMatch(/player/i);
+
+    // The already-connected player is completely unaffected by the refusal.
+    const stillGoing = await nextMessage(already);
+    expect(stillGoing.type).toBe("snapshot");
+    already.close();
+  });
+
+  it("picks up a newer Revision republished under the SAME (fixed, reserved) id — never keeps serving the first Revision it ever loaded (code review)", async () => {
+    // Playtest always republishes to one fixed id across repeated clicks —
+    // comparing `requestedTrackId === fetched.id` alone (the original bug)
+    // would treat every later click as a no-op forever, since the id itself
+    // never changes.
+    const reservedId = `playtest-${Math.random().toString(36).slice(2)}`;
+    await publishTrack(M1_TRACK, reservedId); // Revision 1
+
+    server = await startServer({ port: 0 });
+    const first = connect(server.port, `?track=${reservedId}`);
+    const firstWelcome = await nextMessage(first);
+    if (firstWelcome.type !== "welcome") throw new Error("unreachable");
+    expect(firstWelcome.trackRevision).toBe(1);
+    first.close();
+    await new Promise((resolve) => first.once("close", resolve));
+
+    await publishTrack(M1_TRACK, reservedId); // Revision 2, same id
+
+    const second = connect(server.port, `?track=${reservedId}`);
+    const secondWelcome = await nextMessage(second);
+    if (secondWelcome.type !== "welcome") throw new Error("unreachable");
+    expect(secondWelcome.trackId).toBe(reservedId);
+    expect(secondWelcome.trackRevision).toBe(2);
+    second.close();
+  });
+
+  it("refuses a genuinely concurrent mismatched `?track=` that arrives while another one's reload is still in flight, instead of racing it", async () => {
+    server = await startServer({ port: 0 });
+    const altA = await publishTrack();
+    const altB = await publishTrack();
+
+    // Both requested before either has resolved — the second must see the
+    // first one's Character already registered (or vice versa) and refuse,
+    // never silently replace a `simulation` the other's Character only
+    // exists in (code review: the check-then-act race this closes reads
+    // `sockets.size` only immediately before the synchronous mutation, not
+    // before the `await` above it).
+    const connA = connect(server.port, `?track=${altA}`);
+    const connB = connect(server.port, `?track=${altB}`);
+
+    const results = await Promise.all(
+      [connA, connB].map(
+        (socket) =>
+          new Promise<{ welcome?: ServerMessage; close?: { code: number } }>((resolve) => {
+            socket.once("message", (raw) => resolve({ welcome: JSON.parse(raw.toString()) as ServerMessage }));
+            socket.once("close", (code) => resolve({ close: { code } }));
+          }),
+      ),
+    );
+
+    const welcomed = results.filter((r) => r.welcome);
+    const refused = results.filter((r) => r.close);
+    expect(welcomed.length).toBe(1);
+    expect(refused.length).toBe(1);
+    expect(refused[0]!.close!.code).toBe(4001);
+    connA.close();
+    connB.close();
+  });
+
+  it("closes with a clear reason when the requested Track can't be loaded", async () => {
+    server = await startServer({ port: 0, trackFetchMaxWaitMs: 200, trackFetchRetryDelayMs: 20 });
+    const socket = connect(server.port, "?track=this-track-id-does-not-exist");
+    const { code, reason } = await nextClose(socket);
+    expect(code).toBe(4002);
+    expect(reason).toMatch(/this-track-id-does-not-exist/);
   });
 });
