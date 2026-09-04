@@ -10,6 +10,7 @@ export * from "./timing/FixedSimulation.js";
 export * from "./timing/advanceFixed.js";
 export * from "./simulation/SimInputs.js";
 export * from "./simulation/Checkpoint.js";
+export * from "./simulation/FinishZone.js";
 export * from "./simulation/SpeedPad.js";
 export * from "./simulation/LaunchPad.js";
 export * from "./simulation/Volume.js";

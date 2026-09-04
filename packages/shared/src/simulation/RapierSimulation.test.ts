@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import type { Box, OrientedBox } from "../math/box.js";
-import { pitchQuat, yawQuat } from "../math/quat.js";
+import { orientBox, pointInOrientedBox, type Box, type OrientedBox } from "../math/box.js";
+import { IDENTITY_QUAT, pitchQuat, yawQuat } from "../math/quat.js";
 import { rotateVec3ByQuat } from "../math/vec3.js";
 import {
   CAPSULE_BOTTOM_OFFSET,
@@ -976,6 +976,7 @@ describe("RapierSimulation — dash", () => {
       dashing: midBurst.dashing,
       speedPadMsLeft: midBurst.speedPadMsLeft,
       speedPadCapMultiplier: midBurst.speedPadCapMultiplier,
+      finishTick: midBurst.finishTick,
     });
 
     const afterReconcile = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -1028,6 +1029,7 @@ describe("RapierSimulation — dash", () => {
       dashing: ackedSnapshot.dashing,
       speedPadMsLeft: ackedSnapshot.speedPadMsLeft,
       speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
+      finishTick: ackedSnapshot.finishTick,
     });
     client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unackedInputs);
 
@@ -1105,6 +1107,7 @@ describe("RapierSimulation — dash", () => {
           dashing: acked.dashing,
           speedPadMsLeft: acked.speedPadMsLeft,
           speedPadCapMultiplier: acked.speedPadCapMultiplier,
+          finishTick: acked.finishTick,
         });
         client.replayLocalCharacter(DEFAULT_CHARACTER_ID, inputHistory.slice(ackedIdx + 1));
         const afterSnap = client.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -1937,6 +1940,7 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
         dashing: false,
         speedPadMsLeft: 0,
         speedPadCapMultiplier: 1,
+        finishTick: null,
       });
       sim.reconcileCharacter(DEFAULT_CHARACTER_ID, gettingUp({ x: 5, y: RESTING_SPAWN.y, z: 5 }));
       const afterEntry = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
@@ -2011,6 +2015,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     dashing: false,
     speedPadMsLeft: 0,
     speedPadCapMultiplier: 1,
+    finishTick: null,
   });
 
   it("snaps a locally-Controlled Character into Ragdoll the client never predicted (ADR 0015)", () => {
@@ -2027,6 +2032,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       dashing: false,
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
+      finishTick: null,
     });
 
     // Immediate — the discrete state is never delayed or smoothed (ADR 0013).
@@ -2055,6 +2061,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       dashing: false,
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
+      finishTick: null,
     });
 
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
@@ -2141,6 +2148,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
         dashing: false,
         speedPadMsLeft: 0,
         speedPadCapMultiplier: 1,
+        finishTick: null,
       });
       tick(sim, 0.1); // a few local ticks between snapshots
 
@@ -2201,6 +2209,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       dashing: false,
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
+      finishTick: null,
     });
     sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Sliding");
@@ -2513,6 +2522,7 @@ describe("RapierSimulation — speed/slow pads (M3.7 ticket 01, ADR 0035): one-s
       dashing: firedSnap.dashing,
       speedPadMsLeft: firedSnap.speedPadMsLeft,
       speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
+      finishTick: firedSnap.finishTick,
     });
     sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, buffered);
 
@@ -2997,6 +3007,7 @@ describe("RapierSimulation — launch pads (M3.7 ticket 02): one-shot full-veloc
       dashing: firedSnap.dashing,
       speedPadMsLeft: firedSnap.speedPadMsLeft,
       speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
+      finishTick: firedSnap.finishTick,
     });
     sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, buffered);
 
@@ -3140,6 +3151,187 @@ describe("RapierSimulation — Volumes and the updraft (M3.7 ticket 04, ADR 0036
     }
     expect(peak).toBeGreaterThan(0); // outer's own weaker lift still applies
     expect(peak).toBeLessThanOrEqual(outer.maxInducedSpeed + 0.01); // inner's cap no longer governs
+  });
+});
+
+describe("Finish Zone — Qualification (M4 ticket 02, ADR 0039)", () => {
+  /** A zone straddling z = -4, a short walk north of `RESTING_SPAWN`. */
+  const ZONE_AHEAD = { center: { x: 0, y: 1, z: -4 }, halfExtents: { x: 3, y: 2, z: 1 } };
+
+  const raceSim = (zone = ZONE_AHEAD) =>
+    new RapierSimulation({
+      statics: [GROUND],
+      spawn: RESTING_SPAWN,
+      finishZones: [{ trigger: zone }],
+    });
+
+  const me = (sim: RapierSimulation) => sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+
+  /** Walk north until qualified, returning the tick it happened on. */
+  const walkUntilQualified = (sim: RapierSimulation, maxTicks = 200): number => {
+    for (let i = 0; i < maxTicks; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+      const finishTick = me(sim).finishTick;
+      if (finishTick !== null) return finishTick;
+    }
+    throw new Error("never reached the Finish Zone");
+  };
+
+  it("starts every Character unqualified", () => {
+    const sim = raceSim();
+
+    expect(me(sim).finishTick).toBeNull();
+
+    sim.dispose();
+  });
+
+  it("leaves a Character that never enters the zone unqualified", () => {
+    const sim = raceSim();
+
+    tick(sim, 2, SOUTH); // walk the other way
+
+    expect(me(sim).finishTick).toBeNull();
+
+    sim.dispose();
+  });
+
+  it("records the Tick the capsule centre entered the zone", () => {
+    const sim = raceSim();
+
+    const finishTick = walkUntilQualified(sim);
+
+    // The tick recorded is the sim's own tick counter at entry, not a wall
+    // clock — the Round's timeline is Ticks (ADR 0004).
+    expect(finishTick).toBeGreaterThan(0);
+    expect(finishTick).toBe(sim.snapshot().tick);
+    expect(pointInOrientedBox(me(sim).position, orientBox(ZONE_AHEAD, { x: 0, y: 0, z: 0 }, IDENTITY_QUAT))).toBe(true);
+
+    sim.dispose();
+  });
+
+  it("keeps the first Tick it recorded — staying inside never re-stamps it", () => {
+    const sim = raceSim();
+    const finishTick = walkUntilQualified(sim);
+
+    tick(sim, 3, NORTH);
+
+    expect(me(sim).finishTick).toBe(finishTick);
+
+    sim.dispose();
+  });
+
+  it("locks a qualified Character's input — it comes to rest instead of running on through", () => {
+    const sim = raceSim();
+    walkUntilQualified(sim);
+    const atFinish = me(sim).position;
+
+    tick(sim, 2, NORTH); // still holding forward
+
+    const settled = me(sim).position;
+    expect(Math.hypot(settled.x - atFinish.x, settled.z - atFinish.z)).toBeLessThan(1);
+    expect(Math.hypot(me(sim).velocity.x, me(sim).velocity.z)).toBeLessThan(0.1);
+
+    sim.dispose();
+  });
+
+  it("leaves the qualified Character standing in the zone as a spectator", () => {
+    const sim = raceSim();
+    walkUntilQualified(sim);
+
+    tick(sim, 3, NORTH);
+
+    const zone = orientBox(ZONE_AHEAD, { x: 0, y: 0, z: 0 }, IDENTITY_QUAT);
+    expect(pointInOrientedBox(me(sim).position, zone)).toBe(true);
+    expect(me(sim).motionState).toBe("Controlled");
+
+    sim.dispose();
+  });
+
+  it("qualifies a Character launched through the air into the zone — entry counts (ADR 0039)", () => {
+    // A zone floating well above head height: only reachable by being thrown
+    // into it, never by walking. The M4 rule is "entry counts", so a shortcut
+    // that skips straight to the Zone stays legal by design.
+    const sim = new RapierSimulation({
+      statics: [GROUND],
+      spawn: RESTING_SPAWN,
+      finishZones: [{ trigger: { center: { x: 0, y: 6, z: -3 }, halfExtents: { x: 4, y: 1.5, z: 4 } } }],
+      launchPads: [
+        {
+          trigger: { center: { x: 0, y: 0.5, z: -1.5 }, halfExtents: { x: 3, y: 1.5, z: 1 } },
+          velocity: { x: 0, y: 14, z: -4 },
+        },
+      ],
+    });
+
+    let qualified: number | null = null;
+    for (let i = 0; i < 200 && qualified === null; i += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+      qualified = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.finishTick;
+    }
+
+    expect(qualified).not.toBeNull();
+
+    sim.dispose();
+  });
+
+  it("detects a zone on a rotated Segment through the same oriented-box pipeline as a Checkpoint", () => {
+    // The same slab as ZONE_AHEAD, but authored long-across-Z and then yawed
+    // 90° into place — so its own half-extents are the wrong way round for
+    // the walker's approach, and only un-rotating the query point
+    // (`pointInOrientedBox`) finds him inside it. An axis-aligned
+    // approximation of this box would be 1 wide and 3 deep: the walker,
+    // coming straight up the middle, would sail through the gap either side.
+    const rotated = orientBox(
+      { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 2, z: 3 } },
+      { x: 0, y: 0, z: -4 },
+      yawQuat(Math.PI / 2),
+    );
+    expect(rotated.center).toEqual(ZONE_AHEAD.center);
+    const sim = raceSim(rotated);
+
+    expect(walkUntilQualified(sim)).toBeGreaterThan(0);
+
+    sim.dispose();
+  });
+
+  it("qualifies each Character independently, at its own Tick", () => {
+    const sim = new RapierSimulation({
+      statics: [GROUND],
+      finishZones: [{ trigger: ZONE_AHEAD }],
+      withDefaultCharacter: false,
+    });
+    sim.addCharacter("early", { x: 0, y: RESTING_SPAWN.y, z: -2.5 });
+    sim.addCharacter("late", { x: 2, y: RESTING_SPAWN.y, z: 2 });
+
+    for (let i = 0; i < 120; i += 1) sim.tick({ early: NORTH, late: NORTH });
+
+    const { early, late } = sim.snapshot().characters;
+    expect(early!.finishTick).not.toBeNull();
+    expect(late!.finishTick).not.toBeNull();
+    expect(early!.finishTick!).toBeLessThan(late!.finishTick!);
+
+    sim.dispose();
+  });
+
+  it("takes the server's answer on reconciliation — a mispredicted Qualification is not latched forever", () => {
+    // A client that wrongly predicted itself into the zone would otherwise
+    // lock its own input for the rest of the Round while the server kept
+    // running: the authoritative snapshot has to be able to clear it, the
+    // same way only the server can end a knockdown (ADR 0015).
+    const sim = new RapierSimulation({ statics: [GROUND], spawn: RESTING_SPAWN, finishZones: [{ trigger: ZONE_AHEAD }], authoritative: false });
+    walkUntilQualified(sim);
+    expect(me(sim).finishTick).not.toBeNull();
+
+    const server = me(sim);
+    sim.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+      ...server,
+      position: { x: 0, y: RESTING_SPAWN.y, z: 5 }, // nowhere near the zone
+      finishTick: null,
+    });
+
+    expect(me(sim).finishTick).toBeNull();
+
+    sim.dispose();
   });
 });
 

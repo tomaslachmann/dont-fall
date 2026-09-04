@@ -11,7 +11,6 @@ import {
   MAX_STEPS_PER_FRAME,
   MODULE_LIBRARY,
   RECONCILE_HARDSNAP_M,
-  RECONCILE_POSITION_EPSILON,
   RapierSimulation,
   TICK_MS,
   TICK_RATE_HZ,
@@ -42,6 +41,8 @@ import { listen } from "./listeners.js";
 import { createStage } from "./scene.js";
 import { NetMetrics } from "./netMetrics.js";
 import { PropPredictionController, graceTicksForRtt } from "./propPrediction.js";
+import { needsCorrection } from "./reconcileGate.js";
+import { qualificationPlacement } from "./qualification.js";
 import { SnapshotInterpolator } from "./snapshotInterpolation.js";
 import { createTeardown, type Teardown } from "./teardown.js";
 import { TimeSync } from "./timeSync.js";
@@ -142,15 +143,14 @@ const boot = async (
     );
   }
   const { track } = (await trackRes.json()) as { track: Track };
-  const { statics, staticSurfaces, checkpoints, spinners, props, speedPads, launchPads, volumes } = resolveTrack(
-    MODULE_LIBRARY,
-    track,
-  );
+  const { statics, staticSurfaces, checkpoints, finishZones, spinners, props, speedPads, launchPads, volumes } =
+    resolveTrack(MODULE_LIBRARY, track);
 
   const stage = createStage({
     mount,
     statics,
     checkpoints,
+    finishZones,
     killPlaneY: DEFAULT_KILL_PLANE_Y,
     spinners,
     props,
@@ -180,6 +180,11 @@ const boot = async (
     statics,
     staticSurfaces,
     checkpoints,
+    // Qualification is predicted locally (ADR 0039: a pure function of
+    // position), so the input lock lands on the same Tick here as on the
+    // server instead of half an RTT past the finish. A wrong prediction is
+    // corrected — `reconcileCharacter` takes the server's `finishTick`.
+    finishZones,
     spinners,
     props,
     speedPads,
@@ -306,12 +311,7 @@ const boot = async (
     // float-noise epsilon, not the old one-walk-step "correct or ignore" gate
     // that let an ordinary phase slip park exactly on the threshold. The
     // render-time offset below is what keeps that invisible.
-    const needsCorrection =
-      serverDown || // authority says down — always sync (fresh knock, phase change, or pelvis tracking)
-      localDown || // we think we're down but the authority doesn't — only the server ends a knockdown
-      motionChanged || // e.g. a Stagger we missed / are holding too long
-      positionError > RECONCILE_POSITION_EPSILON;
-    if (!needsCorrection) return;
+    if (!needsCorrection(server, localChar, positionError)) return;
 
     if (Number.isFinite(positionError)) netMetrics.recordCorrection(positionError);
     const simBefore = localChar.position;
@@ -683,6 +683,15 @@ const boot = async (
     stage.updateCamera(visualCharacter.position, look.yaw, look.pitch);
 
     const cp = c.checkpointIndex === null ? "spawn" : `#${c.checkpointIndex + 1}`;
+    // The Qualification banner (M4 ticket 02). Shown the instant the local
+    // prediction says we're in the zone — that's the same Tick the input lock
+    // is felt, so the two never disagree on screen. The *placement* can only
+    // come from the server, which is the only side that knows when anyone
+    // else crossed, so it fills in a moment later; until then the banner
+    // stands without a number rather than guessing "#1".
+    const qualified = c.finishTick !== null;
+    const placement = latestServerSnapshot ? qualificationPlacement(latestServerSnapshot.characters, myId) : null;
+    const banner = qualified ? `\n${placement === null ? "QUALIFIED" : `QUALIFIED #${placement}`}` : "";
     const dashFill = Math.max(0, Math.min(10, Math.round((1 - c.dashCooldownMs / DASH_COOLDOWN_MS) * 10)));
     const dashBar = "#".repeat(dashFill) + "-".repeat(10 - dashFill);
     netMetrics.rttMs = timeSync.rttMs;
@@ -702,7 +711,7 @@ const boot = async (
       `DON'T FALL — M2 · predicted + reconciled\n` +
         `sim ${TICK_RATE_HZ} Hz · render ${fps.toFixed(0)} fps · tick ${predictionTick}\n` +
         `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · ${c.motionState}\n` +
-        `checkpoint ${cp} · falls ${c.fallCount}\n` +
+        `checkpoint ${cp} · falls ${c.fallCount}${banner}\n` +
         `dash [${dashBar}]${c.dashCooldownMs === 0 ? " ready" : ""}\n` +
         `WASD move · Space jump · Shift dash · mouse look\n` +
         netMetrics.format(),

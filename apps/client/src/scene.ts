@@ -10,6 +10,7 @@ import {
   yawQuat,
   type CharacterMotionState,
   type Checkpoint,
+  type FinishZone,
   type OrientedBox,
   type PropConfig,
   type PropSnapshot,
@@ -71,6 +72,8 @@ export interface StageConfig {
   mount: HTMLElement;
   statics: OrientedBox[];
   checkpoints: Checkpoint[];
+  /** Finish Zones to draw (M4 ticket 02) — the Race has to be visible to be run at. */
+  finishZones: FinishZone[];
   killPlaneY: number;
   spinners: SpinnerConfig[];
   props: PropConfig[];
@@ -179,6 +182,7 @@ export const createStage = ({
   mount,
   statics,
   checkpoints,
+  finishZones,
   killPlaneY,
   spinners,
   props,
@@ -223,6 +227,26 @@ export const createStage = ({
   });
   for (const cp of checkpoints) {
     scene.add(boxMesh(cp.trigger, checkpointMaterial));
+  }
+
+  // Brighter and far more opaque than a Checkpoint's marker: a Checkpoint is
+  // ambient reassurance you can miss, a Finish Zone is the thing you are
+  // running at, and you have to be able to pick it out down the length of a
+  // Track. Both use the same box treatment so they read as the same family
+  // of "walk into this" region.
+  // Built only when there is something to draw with it: `disposeSceneGraph`
+  // reaches materials through the meshes that use them, so a material
+  // allocated for an empty list would never be released.
+  if (finishZones.length > 0) {
+    const finishZoneMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffd166,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+    });
+    for (const zone of finishZones) {
+      scene.add(boxMesh(zone.trigger, finishZoneMaterial));
+    }
   }
 
   const spinnerMaterial = new THREE.MeshStandardMaterial({ color: 0xf25c54, roughness: 0.5 });

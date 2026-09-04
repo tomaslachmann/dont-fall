@@ -78,6 +78,15 @@ export interface CharacterSnapshot {
    */
   launchPadEpoch: number;
   /**
+   * The Tick this Character entered a Finish Zone and Qualified, or `null`
+   * while it has not (M4 ticket 02, ADR 0039). A pure function of position,
+   * derived identically by the server and by a predicting client — on the
+   * wire so every client can see who has qualified and in what order, and so
+   * a mispredicting client can be corrected (see
+   * `RapierSimulation.reconcileCharacter`).
+   */
+  finishTick: number | null;
+  /**
    * The highest `InputMessage.tick` the server had applied for this Character
    * as of this snapshot — the reconciliation acknowledgement (ticket 05). 0
    * before any input has arrived. Only meaningful to the client that owns this
@@ -143,6 +152,7 @@ export interface CharacterSnapshotFields {
   ragdollCause?: RagdollCause;
   phaseStartTick?: number;
   bones?: BoneSnapshot[];
+  finishTick?: number | null;
 }
 
 /**
@@ -156,7 +166,17 @@ export interface CharacterSnapshotFields {
  */
 export type ReconcileBase = Pick<
   CharacterSnapshot,
-  "position" | "velocity" | "grounded" | "motionState" | "dashCooldownMs" | "dashing" | "speedPadMsLeft" | "speedPadCapMultiplier"
+  | "position"
+  | "velocity"
+  | "grounded"
+  | "motionState"
+  | "dashCooldownMs"
+  | "dashing"
+  | "speedPadMsLeft"
+  | "speedPadCapMultiplier"
+  // M4 ticket 02: Qualification is latched and locks input, so the client
+  // must be able to take the server's answer rather than keep its own.
+  | "finishTick"
 >;
 
 export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSnapshot => ({
@@ -179,4 +199,5 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   ragdollCause: fields.ragdollCause ?? "Fall",
   phaseStartTick: fields.phaseStartTick ?? 0,
   bones: fields.bones ?? [],
+  finishTick: fields.finishTick ?? null,
 });

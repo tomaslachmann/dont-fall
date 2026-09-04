@@ -41,6 +41,7 @@ const SPINNER_MODULE: Module = {
   speedPads: [{ trigger: { center: { x: 0, y: 0.5, z: 2 }, halfExtents: { x: 1, y: 1, z: 1 } }, capMultiplier: 2 }],
   launchPads: [{ trigger: { center: { x: 0, y: 0.5, z: -2 }, halfExtents: { x: 1, y: 1, z: 1 } }, velocity: { x: 0, y: 16, z: -6 } }],
   volumes: [{ bounds: { center: { x: 2, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } }, force: { x: 0, y: 30, z: -5 }, maxInducedSpeed: 10, priority: 1 }],
+  finishZone: { trigger: { center: { x: -2, y: 1, z: 0 }, halfExtents: { x: 1, y: 2, z: 1 } } },
   sockets: STRAIGHT_SOCKETS,
   footprint: FOOTPRINT,
 };
@@ -125,6 +126,41 @@ describe("resolveTrack", () => {
     expect(resolved.volumes[0]!.force).toEqual({ x: 0, y: 30, z: -5 }); // untouched at 0 rad
     expect(resolved.volumes[0]!.maxInducedSpeed).toBe(10);
     expect(resolved.volumes[0]!.priority).toBe(1);
+    expect(resolved.finishZones[0]!.trigger.center).toEqual({ x: 3, y: 0, z: 20 });
+    expect(resolved.finishZones[0]!.trigger.halfExtents).toEqual({ x: 1, y: 2, z: 1 });
+  });
+
+  it("places a Finish Zone through the same rotation-safe pipeline as a Checkpoint's trigger (ADR 0039)", () => {
+    const track = [{ moduleId: "spinner-module", position: { x: 0, y: 0, z: 0 }, rotation: Math.PI / 2 }];
+    const resolved = resolveTrack({ "spinner-module": SPINNER_MODULE }, track);
+
+    // A 90° yaw takes the local (-2, 1, 0) trigger centre to world (0, 1, 2) —
+    // and the box carries the Segment's rotation rather than being flattened
+    // to an axis-aligned approximation, exactly like the Checkpoint above it.
+    const zone = resolved.finishZones[0]!;
+    expect(zone.trigger.center.x).toBeCloseTo(0, 6);
+    expect(zone.trigger.center.y).toBeCloseTo(1, 6);
+    expect(zone.trigger.center.z).toBeCloseTo(2, 6);
+    expect(zone.trigger.rotation).toEqual(resolved.checkpoints[0]!.trigger.rotation);
+    // Detection-only: a Finish Zone never carries a respawn point (ADR 0039).
+    expect(zone).not.toHaveProperty("respawn");
+  });
+
+  it("resolves a Module with no Finish Zone to none — every pre-M4 Module is unchanged", () => {
+    const resolved = resolveTrack({ straight: STRAIGHT }, [{ moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 }]);
+
+    expect(resolved.finishZones).toEqual([]);
+  });
+
+  it("collects a Finish Zone from whichever Segments carry one, in Track order", () => {
+    const modules = { "spinner-module": SPINNER_MODULE, straight: STRAIGHT };
+    const resolved = resolveTrack(modules, [
+      { moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { moduleId: "spinner-module", position: { x: 0, y: 0, z: 6 }, rotation: 0 },
+    ]);
+
+    expect(resolved.finishZones).toHaveLength(1);
+    expect(resolved.finishZones[0]!.trigger.center).toEqual({ x: -2, y: 1, z: 6 });
   });
 
   it("rotates a launch pad's velocity by the Segment's own orientation — a direction, not a point, so it's never translated", () => {
@@ -204,10 +240,22 @@ describe("resolveTrack", () => {
       props: [],
       spinners: [],
       checkpoints: [],
+      finishZones: [],
       speedPads: [],
       launchPads: [],
       volumes: [],
     });
+  });
+
+  it("makes the M1 seed Track raceable — the finish is authored on its last Segment (M4 ticket 02)", () => {
+    const resolved = resolveTrack(M1_MODULES, M1_TRACK);
+
+    expect(resolved.finishZones).toHaveLength(1);
+    // On `sandbox`, the last Segment — so a Revision already published as
+    // `Segment[]` becomes raceable without being rewritten (ADR 0032).
+    const last = M1_TRACK[M1_TRACK.length - 1]!;
+    expect(last.moduleId).toBe("sandbox");
+    expect(resolved.finishZones[0]!.trigger.center.z).toBeCloseTo(last.position.z - 6, 6);
   });
 
   it("throws if a Segment references an unknown Module", () => {

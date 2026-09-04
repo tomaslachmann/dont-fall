@@ -81,9 +81,38 @@ export const M1_MODULES: Record<string, Module> = {
     sockets: STRAIGHT_SOCKETS,
     footprint: STRAIGHT_FOOTPRINT,
   },
+  /**
+   * M1's end sandbox — and, since M4 ticket 02, where a run on the seeded
+   * Track actually ends. The Finish Zone had to go on a Module the already-
+   * published Revisions use, not a new one appended to the Track: a Revision
+   * is immutable (ADR 0032), so a Track already stored as `Segment[]` can
+   * only become raceable if a Module it already places gains the Zone.
+   *
+   * Deliberately a modest region just past the entry rather than the whole
+   * 30x30 deck: stepping onto the sandbox at all shouldn't Qualify you, you
+   * should have to cross it.
+   */
   sandbox: {
     id: "sandbox",
     statics: [box({ x: 0, y: -0.1, z: 0 }, { x: 15, y: 0.5, z: 15 })],
+    finishZone: {
+      trigger: { center: { x: 0, y: 1.4, z: -6 }, halfExtents: { x: 4, y: 2, z: 2 } },
+    },
+    sockets: STRAIGHT_SOCKETS,
+    footprint: STRAIGHT_FOOTPRINT,
+  },
+  /**
+   * A dedicated finish piece for a Track author to place on a Draft (M4
+   * ticket 02) — an ordinary straight floor whose only distinguishing
+   * feature is the Finish Zone spanning it, so a builder can end a Track
+   * anywhere without also inheriting the sandbox's 30x30 deck.
+   */
+  finish: {
+    id: "finish",
+    statics: [box({ x: 0, y: -0.5, z: 0 }, { x: 4, y: 0.5, z: 4 })],
+    finishZone: {
+      trigger: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 4, y: 2, z: 2 } },
+    },
     sockets: STRAIGHT_SOCKETS,
     footprint: STRAIGHT_FOOTPRINT,
   },

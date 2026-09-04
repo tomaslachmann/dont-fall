@@ -2,6 +2,7 @@ import {
   segmentOrientation,
   type Box,
   type Checkpoint,
+  type FinishZone,
   type LaunchPadConfig,
   type Module,
   type PropConfig,
@@ -20,6 +21,7 @@ const CHECKPOINT_COLOR = 0x4ade80;
 const SPEED_PAD_COLOR = 0xfacc15;
 const LAUNCH_PAD_COLOR = 0x38bdf8;
 const VOLUME_COLOR = 0xa78bfa;
+const FINISH_ZONE_COLOR = 0xffd166;
 
 const addBox = (group: THREE.Group, box: Box, color: number): void => {
   const geo = new THREE.BoxGeometry(box.halfExtents.x * 2, box.halfExtents.y * 2, box.halfExtents.z * 2);
@@ -50,6 +52,20 @@ const addCheckpoint = (group: THREE.Group, checkpoint: Checkpoint): void => {
   const { center, halfExtents } = checkpoint.trigger;
   const geo = new THREE.BoxGeometry(halfExtents.x * 2, halfExtents.y * 2, halfExtents.z * 2);
   const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: CHECKPOINT_COLOR, wireframe: true }));
+  mesh.position.set(center.x, center.y, center.z);
+  group.add(mesh);
+};
+
+/**
+ * A Finish Zone's trigger (M4 ticket 02) — the same wireframe-box treatment
+ * every other trigger marker here gets, in the same colour the game itself
+ * draws the Zone, so what an author places in the builder is recognisably
+ * the thing players run at.
+ */
+const addFinishZone = (group: THREE.Group, finishZone: FinishZone): void => {
+  const { center, halfExtents } = finishZone.trigger;
+  const geo = new THREE.BoxGeometry(halfExtents.x * 2, halfExtents.y * 2, halfExtents.z * 2);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: FINISH_ZONE_COLOR, wireframe: true }));
   mesh.position.set(center.x, center.y, center.z);
   group.add(mesh);
 };
@@ -130,6 +146,7 @@ export const buildModuleGroup = (module: Module): THREE.Group => {
   for (const spinner of module.spinners ?? []) addSpinner(group, spinner);
   for (const prop of module.props ?? []) addProp(group, prop);
   if (module.checkpoint) addCheckpoint(group, module.checkpoint);
+  if (module.finishZone) addFinishZone(group, module.finishZone);
   for (const speedPad of module.speedPads ?? []) addSpeedPad(group, speedPad);
   for (const launchPad of module.launchPads ?? []) addLaunchPad(group, launchPad);
   for (const volume of module.volumes ?? []) addVolume(group, volume);

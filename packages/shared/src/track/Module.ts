@@ -1,6 +1,7 @@
 import type { Box } from "../math/box.js";
 import type { Vec3 } from "../math/vec3.js";
 import type { Checkpoint } from "../simulation/Checkpoint.js";
+import type { FinishZone } from "../simulation/FinishZone.js";
 import type { LaunchPadConfig } from "../simulation/LaunchPad.js";
 import type { PropConfig } from "../simulation/Prop.js";
 import type { SpeedPadConfig } from "../simulation/SpeedPad.js";
@@ -78,6 +79,14 @@ export interface Module {
   props?: PropConfig[];
   spinners?: SpinnerConfig[];
   checkpoint?: Checkpoint;
+  /**
+   * An optional Finish Zone (M4 ticket 02, ADR 0039) — singular like
+   * `checkpoint`, because a Module is one authored piece and "the finish" is
+   * one region within it. Typically authored on the last Segment of a Race
+   * Track, but nothing here requires it: "finish" is wherever the trigger is.
+   * Every Module authored before M4 simply has none, and resolves unchanged.
+   */
+  finishZone?: FinishZone;
   /** Speed/slow pads this Module places (M3.7 ticket 01) — zero or more, unlike the singular `checkpoint`. */
   speedPads?: SpeedPadConfig[];
   /** Launch pads this Module places (M3.7 ticket 02) — zero or more, same shape as `speedPads`. */
