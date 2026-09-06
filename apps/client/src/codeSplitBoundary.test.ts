@@ -60,24 +60,59 @@ const sideOf = (fileFromSrc: string): "shell" | "game" | "neither" => {
   return "neither";
 };
 
+/** The src-relative files `file` statically imports by value, extension-normalised. */
+const importsOf = (file: string): string[] => {
+  const source = readFileSync(join(SRC, file), "utf8");
+  return staticValueImports(source)
+    .filter((specifier) => specifier.startsWith("."))
+    .map((specifier) => relative(SRC, resolve(SRC, dirname(file), specifier)).split("\\").join("/"))
+    // `.js` specifiers name TypeScript sources; the extension is irrelevant here.
+    .map((target) => target.replace(/\.(js|ts|tsx)$/, ""));
+};
+
+/** Resolve an extensionless src-relative target back to the file that provides it. */
+const fileFor = (target: string): string | undefined =>
+  sourceFiles.find((f) => f.replace(/\.(ts|tsx)$/, "") === target || f.replace(/\.(ts|tsx)$/, "") === `${target}/index`);
+
 describe("the code split (ADR 0008)", () => {
   it("keeps the menu bundle free of the game module", () => {
     const violations: string[] = [];
 
-    for (const file of sourceFiles) {
-      if (sideOf(file) !== "shell") continue;
-      const source = readFileSync(join(SRC, file), "utf8");
-      for (const specifier of staticValueImports(source)) {
-        if (!specifier.startsWith(".")) continue;
-        const target = relative(SRC, resolve(SRC, dirname(file), specifier)).split("\\").join("/");
-        // `.js` specifiers name TypeScript sources; the extension is irrelevant here.
-        if (sideOf(target.replace(/\.(js|ts|tsx)$/, "")) === "game") {
-          violations.push(`${file} statically imports ${specifier}`);
+    // Followed transitively, not just one hop: a shell file importing a
+    // neutral helper that itself imports the renderer pulls the engine in
+    // just as surely, and that is the version nobody would notice.
+    for (const entry of sourceFiles.filter((f) => sideOf(f) === "shell")) {
+      const seen = new Set<string>([entry]);
+      const queue = [entry];
+      while (queue.length > 0) {
+        const file = queue.shift()!;
+        for (const target of importsOf(file)) {
+          if (sideOf(target) === "game") {
+            violations.push(
+              file === entry
+                ? `${entry} statically imports ${target}`
+                : `${entry} reaches ${target} via ${file}`,
+            );
+            continue;
+          }
+          const next = fileFor(target);
+          if (next && !seen.has(next)) {
+            seen.add(next);
+            queue.push(next);
+          }
         }
       }
     }
 
     expect(violations).toEqual([]);
+  });
+
+  it("catches the engine arriving through a neutral helper, not just directly", () => {
+    // The transitive case, proven rather than assumed: `lib/` is a leaf today,
+    // so the direct-only version of this test would pass either way.
+    expect(fileFor("lib/connection")).toBe("lib/connection.ts");
+    expect(sideOf("render/scene")).toBe("game");
+    expect(sideOf("lib/connection")).toBe("neither");
   });
 
   it("still has a shell and a game side to tell apart", () => {

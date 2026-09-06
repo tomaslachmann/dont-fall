@@ -139,7 +139,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       // WebSocket URL) — the one way this always-on dev server ever serves
       // anything other than whatever it fetched at boot. Absent for every
       // ordinary player connection, which behaves exactly as before.
-      const requestedTrackId = new URL(req.url ?? "/", "http://rt.match-server").searchParams.get("track");
+      const requestedTrackId = new URL(req.url ?? "/", "http://match-server").searchParams.get("track");
       if (requestedTrackId !== null) {
         // Always re-fetch by id rather than short-circuiting on
         // `requestedTrackId === fetched.id` (code review): Playtest
