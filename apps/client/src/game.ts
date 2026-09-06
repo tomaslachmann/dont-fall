@@ -16,6 +16,7 @@ import {
   TICK_MS,
   TICK_RATE_HZ,
   addVec3,
+  buildResults,
   decayPositionOffset,
   initPhysics,
   isEliminated,
@@ -32,6 +33,7 @@ import {
   type MatchPhase,
   type PropSnapshot,
   type RenderCharacter,
+  type ResultsRow,
   type ServerMessage,
   type SimInputs,
   type SimState,
@@ -108,11 +110,12 @@ export interface GameConfig {
   /** A specific Track to play — Track Builder's Playtest (ADR 0028). Omitted: whatever the server chose. */
   trackId?: string;
   /**
-   * Raised when the Match is over and the shell should show Results.
-   *
-   * Declared here because it is half of ADR 0008's boundary, but nothing
-   * raises it yet: there is no Match phase on the wire until M4 ticket 05
-   * (ADR 0040), which is where the producer goes.
+   * Declared because ADR 0008 names it as half of the game's boundary
+   * ("config in, `onMatchEnd`/`onExit` out"), but nothing raises it: Results
+   * (M4 ticket 08) turned out to be an overlay on this same, still-running
+   * `<GameCanvas>` — read `onResults`/`phase` below — rather than a reason to
+   * leave the Match the way `onExit` does. Reserved for an actual "leave the
+   * Match entirely" action, which nothing in the game yet offers.
    */
   onMatchEnd?: () => void;
   /**
@@ -135,6 +138,14 @@ export interface GameConfig {
    * it actually moved.
    */
   onLobbyState?: (lobby: LobbySnapshot) => void;
+  /**
+   * Raised on every snapshot whose Results content actually changed (M4
+   * ticket 08), while `phase` is RESULTS — a Results Screen renders this the
+   * same way a Lobby Screen renders `onLobbyState`: an overlay on top of the
+   * already-rendering `<GameCanvas>`, not a route the shell navigates to.
+   * Deduped the same way, against the same snapshot-rate firehose.
+   */
+  onResults?: (results: ResultsRow[]) => void;
 }
 
 export interface GameHandle {
@@ -152,6 +163,8 @@ export interface GameHandle {
   selectTrack: (trackId: string) => void;
   /** Host-only: asks the server to start the Round (M4 ticket 07). Ignored unless the server's own gate passes. */
   start: () => void;
+  /** Host-only: asks the server to return to the Lobby from Results (M4 ticket 08). Ignored outside RESULTS. */
+  returnToLobby: () => void;
 }
 
 /**
@@ -171,7 +184,7 @@ export const startGame = async (config: GameConfig): Promise<GameHandle> => {
 };
 
 const boot = async (
-  { mount, host, trackId, onExit, onLobbyState }: GameConfig,
+  { mount, host, trackId, onExit, onLobbyState, onResults }: GameConfig,
   teardown: Teardown,
 ): Promise<GameHandle> => {
   const hud = createHud(mount);
@@ -313,6 +326,8 @@ const boot = async (
   let countdownMsLeft = 0;
   /** Last `LobbySnapshot` handed to `onLobbyState`, as JSON — dedupes against the snapshot rate. */
   let lastLobbyJson: string | null = null;
+  /** Last Results rows handed to `onResults`, as JSON — same dedupe, same reason (M4 ticket 08). */
+  let lastResultsJson: string | null = null;
   const netMetrics = new NetMetrics();
   // NTP-style clock sync (ADR 0019) — feeds the interpolation buffer's clock
   // and the net-graph RTT.
@@ -554,6 +569,14 @@ const boot = async (
           if (lobbyJson !== lastLobbyJson) {
             lastLobbyJson = lobbyJson;
             onLobbyState(lobbySnapshot);
+          }
+        }
+        if (onResults && message.phase === "RESULTS") {
+          const results = buildResults(message.state.characters, message.lobby.players, message.dnf);
+          const resultsJson = JSON.stringify(results);
+          if (resultsJson !== lastResultsJson) {
+            lastResultsJson = resultsJson;
+            onResults(results);
           }
         }
         netMetrics.commandQueueDepth = message.commandQueueDepth;
@@ -957,5 +980,6 @@ const boot = async (
     setReady: (ready) => sendLobbyMessage({ type: "setReady", ready }),
     selectTrack: (trackId) => sendLobbyMessage({ type: "selectTrack", trackId }),
     start: () => sendLobbyMessage({ type: "start" }),
+    returnToLobby: () => sendLobbyMessage({ type: "returnToLobby" }),
   };
 };

@@ -100,15 +100,17 @@ export interface SnapshotMessage {
   countdownMsLeft: number;
   /**
    * Players who dropped while this Round was being raced (M4 ticket 05) — a
-   * DNF. Their Characters are gone from {@link SimState}, so this is the only
-   * thing that still says they were here; the Results screen (ticket 08) is
-   * what reads it.
+   * DNF. Their Characters are gone from {@link SimState} and their
+   * `LobbyPlayer` entry is gone too (a disconnect always removes both), so
+   * this is the only thing that still says they were here — carrying the
+   * nickname alongside the id is what lets the Results screen (ticket 08)
+   * show who they were rather than a bare id.
    *
    * Distinct from Elimination, which needs nothing on the wire at all: an
    * Eliminated Player is simply one who is still here with no `finishTick`
    * when the Round ends, which both sides can already see (`isEliminated`).
    */
-  dnf: string[];
+  dnf: { id: string; nickname: string }[];
   /**
    * The Track this server currently has loaded, and who's connected to the
    * Lobby around it (M4 ticket 07, ADR 0040). Sent every snapshot — not just
@@ -213,6 +215,16 @@ export interface StartMessage {
   type: "start";
 }
 
+/**
+ * Client → server: the host asks to go back to the Lobby from Results (M4
+ * ticket 08) — there is no auto-rematch timer, so this is the only way out
+ * of RESULTS. Host-only and RESULTS-only, enforced by the server the same
+ * way `start` is: a non-host or a premature request is simply ignored.
+ */
+export interface ReturnToLobbyMessage {
+  type: "returnToLobby";
+}
+
 export type ClientMessage =
   | InputMessage
   | PingMessage
@@ -220,7 +232,8 @@ export type ClientMessage =
   | SetNicknameMessage
   | SetReadyMessage
   | SelectTrackMessage
-  | StartMessage;
+  | StartMessage
+  | ReturnToLobbyMessage;
 
 /** A nickname longer than this is truncated (M4 ticket 07) — long enough for a real name, short enough not to blow out a Lobby row. */
 export const NICKNAME_MAX_LENGTH = 24;

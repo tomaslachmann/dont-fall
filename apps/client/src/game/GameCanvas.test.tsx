@@ -155,6 +155,51 @@ describe("GameCanvas", () => {
     vi.unstubAllGlobals();
   });
 
+  it("shows the Results overlay once the game reports it's in RESULTS, and hides it once back in the Lobby", async () => {
+    let reportLobby!: (state: unknown) => void;
+    let reportResults!: (rows: unknown) => void;
+    startGame.mockImplementationOnce(
+      async (config: { onLobbyState?: (state: unknown) => void; onResults?: (rows: unknown) => void }) => {
+        reportLobby = config.onLobbyState!;
+        reportResults = config.onResults!;
+        return {
+          stop: vi.fn(),
+          setNickname: vi.fn(),
+          setReady: vi.fn(),
+          selectTrack: vi.fn(),
+          start: vi.fn(),
+          returnToLobby: vi.fn(),
+        };
+      },
+    );
+
+    renderAtPlayRoute();
+    await waitFor(() => expect(startGame).toHaveBeenCalledTimes(1));
+
+    reportLobby({
+      myId: "me",
+      phase: "RESULTS",
+      hostId: "me",
+      players: [{ id: "me", nickname: "Player", ready: true, joinOrder: 0 }],
+      trackId: "t1",
+      trackRevision: 1,
+      timeLimitMs: 180_000,
+    });
+    reportResults([{ id: "me", nickname: "Player", qualified: true, placement: 1, checkpointIndex: 4, fallCount: 0, dnf: false }]);
+    expect(await screen.findByText("Results")).toBeInTheDocument();
+
+    reportLobby({
+      myId: "me",
+      phase: "LOBBY",
+      hostId: "me",
+      players: [{ id: "me", nickname: "Player", ready: false, joinOrder: 0 }],
+      trackId: "t1",
+      trackRevision: 1,
+      timeLimitMs: 180_000,
+    });
+    await waitFor(() => expect(screen.queryByText("Results")).not.toBeInTheDocument());
+  });
+
   it("tears down the old game and boots a new one when trackId changes", async () => {
     const stopFirst = vi.fn();
     const stopSecond = vi.fn();

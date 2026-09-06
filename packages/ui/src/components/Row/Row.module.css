@@ -29,9 +29,14 @@
 }
 /* DNF — §2.5's own anti-slop line: "not the same kind of row... shouldn't
    be styled identically with just a color swap." Dashed border, no fill —
-   a different KIND of row, same visual weight as a Qualified one. */
+   a different KIND of row, same visual weight as a Qualified one. The
+   border takes --df-color-fall (§1.1's own DNF/Fall role, "a funny failure
+   the game is built around, not a system error") rather than the neutral
+   hairline every other flat row uses — the one place color legitimately
+   marks this row, on top of (not instead of) the dashed-vs-solid shape. */
 .flat.dnf {
   border-style: dashed;
+  border-color: var(--df-color-fall);
   background: transparent;
 }
 

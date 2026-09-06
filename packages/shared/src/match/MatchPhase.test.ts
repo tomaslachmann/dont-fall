@@ -149,10 +149,29 @@ describe("advanceMatchPhase — ending a Round (M4 ticket 05)", () => {
     ).toBe("RESULTS");
   });
 
-  it("stays on the Results — returning to the Lobby for another Round is M4 ticket 08", () => {
+  it("stays on the Results however long it sits there — nothing but the host asking moves it on", () => {
     const results = at("RESULTS", 400);
 
     expect(advanceMatchPhase(results, { tick: 99_999, connectedPlayers: 2 })).toEqual(results);
+  });
+
+  it("returns to the Lobby from Results once the host asks (M4 ticket 08)", () => {
+    const next = advanceMatchPhase(at("RESULTS", 400), {
+      tick: 500,
+      connectedPlayers: 2,
+      returnToLobbyRequested: true,
+    });
+
+    expect(next.phase).toBe("LOBBY");
+    expect(next.phaseStartTick).toBe(500);
+  });
+
+  it("ignores a return-to-Lobby request from anywhere but Results — it is not a way to skip a Round", () => {
+    for (const phase of ["LOBBY", "COUNTDOWN", "RUNNING", "ROUND_END"] as const) {
+      expect(
+        advanceMatchPhase(at(phase, 100), { tick: 105, connectedPlayers: 2, returnToLobbyRequested: true }).phase,
+      ).toBe(phase);
+    }
   });
 
   it("still returns to the Lobby once everyone has gone, from any phase", () => {

@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
+import type { ResultsRow } from "@dont-fall/shared";
 import { Button } from "@dont-fall/ui";
 import type { ExitReason, GameHandle, LobbySnapshot } from "../game.js";
 import { LobbyScreen } from "../screens/LobbyScreen.js";
+import { ResultsScreen } from "../screens/ResultsScreen.js";
 import styles from "./GameCanvas.module.css";
 
 export interface GameCanvasProps {
@@ -23,6 +25,7 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
   const [bootError, setBootError] = useState<Error | null>(null);
   const [exitReason, setExitReason] = useState<ExitReason | null>(null);
   const [lobby, setLobby] = useState<LobbySnapshot | null>(null);
+  const [results, setResults] = useState<ResultsRow[] | null>(null);
   const navigate = useNavigate();
 
   // Latest-ref, not a dependency: onMatchEnd/onExit are typically a fresh
@@ -59,6 +62,9 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
           // this already-connected, already-rendering canvas, the same way
           // the Countdown overlay reads `phase` (ADR 0040).
           onLobbyState: (state) => setLobby(state),
+          // M4 ticket 08: same overlay shape as the Lobby above, shown
+          // instead of it while `phase === "RESULTS"`.
+          onResults: (rows) => setResults(rows),
         }),
       )
       .then((bootedHandle) => {
@@ -78,6 +84,7 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
       handleRef.current?.stop();
       handleRef.current = null;
       setLobby(null);
+      setResults(null);
     };
   }, [trackId]);
 
@@ -103,6 +110,13 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
           onSetReady={(ready) => handleRef.current?.setReady(ready)}
           onSelectTrack={(id) => handleRef.current?.selectTrack(id)}
           onStart={() => handleRef.current?.start()}
+        />
+      )}
+      {lobby && lobby.phase === "RESULTS" && results && (
+        <ResultsScreen
+          results={results}
+          isHost={lobby.hostId === lobby.myId}
+          onReturnToLobby={() => handleRef.current?.returnToLobby()}
         />
       )}
       {exitReason && (

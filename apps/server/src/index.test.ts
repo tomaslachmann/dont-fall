@@ -1014,7 +1014,7 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
 
     const afterDrop = await snapshotUntil(b, (s) => s.dnf.length > 0);
 
-    expect(afterDrop.dnf).toEqual([welcomeA.playerId]);
+    expect(afterDrop.dnf).toEqual([{ id: welcomeA.playerId, nickname: "Player" }]);
     // The Character is gone from the world too, not left standing.
     expect(afterDrop.state.characters[welcomeA.playerId]).toBeUndefined();
     b.close();
@@ -1287,6 +1287,135 @@ describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
     const unchanged = await nextSnapshot(socket);
     expect(unchanged.trackId).toBe(welcome.trackId);
     expect(unchanged.phase).toBe("RUNNING");
+    socket.close();
+  });
+});
+
+describe("startServer — Results, and going again (M4 ticket 08)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+    max = 400,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (let i = 0; i < max; i += 1) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+    throw new Error("condition never held");
+  };
+
+  /** A Track whose Finish Zone is right on the spawn, so a Character Qualifies as soon as it is RUNNING. */
+  const INSTANT_FINISH: Track = [{ moduleId: "finish", position: { x: 0, y: 0, z: 10 }, rotation: 0 }];
+
+  const returnToLobby = (socket: WebSocket): void =>
+    socket.send(JSON.stringify({ type: "returnToLobby" } satisfies ClientMessage));
+
+  it("ignores a return-to-Lobby request from anyone but the host", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, roundEndMs: 0 });
+    const a = connect(server.port, `?track=${trackId}`); // host
+    await nextMessage(a);
+    const b = connect(server.port);
+    await nextMessage(b);
+    await startMatch(a, b);
+    await snapshotUntil(a, (s) => s.phase === "RESULTS");
+
+    returnToLobby(b);
+
+    await new Promise((r) => setTimeout(r, 100));
+    const stillResults = await nextSnapshot(a);
+    expect(stillResults.phase).toBe("RESULTS");
+    a.close();
+    b.close();
+  });
+
+  it("ignores a return-to-Lobby request before Results — there is nothing to go back from yet", async () => {
+    server = await startServer({ port: 0, playersToStart: 1 });
+    const socket = connect(server.port);
+    await nextMessage(socket);
+    await startMatch(socket);
+    await snapshotUntil(socket, (s) => s.phase === "COUNTDOWN");
+
+    returnToLobby(socket);
+
+    await new Promise((r) => setTimeout(r, 100));
+    const stillCounting = await nextSnapshot(socket);
+    expect(stillCounting.phase).not.toBe("LOBBY");
+    socket.close();
+  });
+
+  it("returns everyone to the Lobby once the host asks, with the previous Round's DNFs cleared", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    const welcome = (await nextMessage(socket)) as Extract<ServerMessage, { type: "welcome" }>;
+    await startMatch(socket);
+    await snapshotUntil(socket, (s) => s.phase === "RESULTS");
+
+    returnToLobby(socket);
+
+    const backInLobby = await snapshotUntil(socket, (s) => s.phase === "LOBBY");
+    expect(backInLobby.dnf).toEqual([]);
+    // Re-seated, not left wherever the Round ended — the same Character is
+    // still here, ready for a fresh Countdown.
+    expect(backInLobby.state.characters[welcome.playerId]).toBeDefined();
+    // A genuinely fresh Lobby, not a resumed one — everyone left the last
+    // Round Ready (that's what let it start), so a Lobby that carried that
+    // over would let the host start the next Round with nobody having
+    // confirmed anything for it (code review).
+    expect(backInLobby.lobby.players.every((p) => !p.ready)).toBe(true);
+    socket.close();
+  });
+
+  it("does not let a stale Ready from the previous Round auto-start the next one", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, roundEndMs: 0 });
+    const a = connect(server.port, `?track=${trackId}`);
+    await nextMessage(a);
+    const b = connect(server.port);
+    await nextMessage(b);
+    await startMatch(a, b);
+    await snapshotUntil(a, (s) => s.phase === "RESULTS");
+
+    returnToLobby(a);
+    await snapshotUntil(a, (s) => s.phase === "LOBBY");
+
+    // The host asks to start again without anyone re-confirming Ready.
+    a.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
+
+    await new Promise((r) => setTimeout(r, 100));
+    const stillLobby = await nextSnapshot(a);
+    expect(stillLobby.phase).toBe("LOBBY");
+    a.close();
+    b.close();
+  });
+
+  it("lets the host start a second Round on the same Track once back in the Lobby, running exactly like the first", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket);
+    await startMatch(socket);
+    await snapshotUntil(socket, (s) => s.phase === "RESULTS");
+
+    returnToLobby(socket);
+    await snapshotUntil(socket, (s) => s.phase === "LOBBY");
+
+    await startMatch(socket);
+    const secondResults = await snapshotUntil(socket, (s) => s.phase === "RESULTS");
+
+    expect(secondResults.phase).toBe("RESULTS");
     socket.close();
   });
 });

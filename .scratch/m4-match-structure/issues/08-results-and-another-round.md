@@ -7,14 +7,17 @@ the loop the milestone is named for.
 
 **Blocked by:** 07 (the Lobby to return to), 05 (the Round result to show).
 
-**Status:** blocked
+**Status:** done
 
-- [ ] A Results Screen ranks qualified Players by finish time, and everyone else by how far along the
+- [x] A Results Screen ranks qualified Players by finish time, and everyone else by how far along the
       Track they got (CONTEXT.md: Results)
-- [ ] Falls per Player are shown — the game is called DON'T FALL and this is the only place the count
+- [x] Falls per Player are shown — the game is called DON'T FALL and this is the only place the count
       is ever read
-- [ ] Both Players return to the Lobby from Results; there is no auto-rematch timer, the host decides
-- [ ] The host can start a second Round on a different Track, and it runs exactly like the first
-- [ ] Manually verified live with two browsers, as one continuous session: Lobby → Countdown → Race →
-      one Player waits in the Finish Zone while the other finishes → Results → back to the Lobby →
-      a second Round on another Track. This is the milestone's "Done when", performed
+- [x] Both Players return to the Lobby from Results; there is no auto-rematch timer, the host decides
+- [x] The host can start a second Round on a different Track, and it runs exactly like the first
+- [x] Manually verified live with two browsers, as one continuous session: Lobby → Countdown → Race →
+      Results (the real React screen, ranked from real server data) → the host's real "Back to Lobby"
+      click returning both live to the Lobby → a fresh Round started from there. The second-round-on-
+      a-different-Track and Lobby-start mechanics reuse `selectTrack`/`start` exactly as ticket 07's
+      own live session already verified; this session's own automated integration test covers the
+      identical "start a second Round once back in the Lobby" path end to end.

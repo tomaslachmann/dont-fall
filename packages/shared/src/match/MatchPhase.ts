@@ -50,6 +50,15 @@ export interface MatchPhaseInputs {
   timeExpired?: boolean;
   /** How long ROUND_END holds before RESULTS. Defaults to {@link ROUND_END_MS}; a parameter for the same reason `countdownMs` is. */
   roundEndMs?: number;
+  /**
+   * Whether the host's request to return to the Lobby from Results has just
+   * been validated and handed in (M4 ticket 08) — host-only, RESULTS-only,
+   * checked once by the caller at the point the message arrived. Same
+   * one-shot-edge contract as `startRequested`: this function only asks
+   * "has it fired," and the caller clears it back to `false` once this
+   * returns LOBBY, the same way it clears `dnf` on a fresh Countdown.
+   */
+  returnToLobbyRequested?: boolean;
 }
 
 /**
@@ -85,8 +94,12 @@ export const phaseLocksInput = (phase: MatchPhase): boolean => phase !== "RUNNIN
  *
  * A Player dropping *part way* is still deliberately not a transition:
  * whoever is left still gets their Round, and the DNF is recorded by the
- * server rather than changing the phase. RESULTS is terminal — returning to
- * the Lobby for another Round is M4 ticket 08.
+ * server rather than changing the phase.
+ *
+ * And the one M4 ticket 08 adds:
+ * - RESULTS → LOBBY once the host's request to go again has been validated
+ *   and handed in — the same `startRequested` shape, applied to the one
+ *   remaining terminal phase.
  */
 export const advanceMatchPhase = (
   state: MatchState,
@@ -98,6 +111,7 @@ export const advanceMatchPhase = (
     allQualified = false,
     timeExpired = false,
     roundEndMs = ROUND_END_MS,
+    returnToLobbyRequested = false,
   }: MatchPhaseInputs,
 ): MatchState => {
   if (connectedPlayers === 0) {
@@ -114,6 +128,9 @@ export const advanceMatchPhase = (
   }
   if (state.phase === "ROUND_END" && tick - state.phaseStartTick >= msToTicks(roundEndMs)) {
     return { phase: "RESULTS", phaseStartTick: tick };
+  }
+  if (state.phase === "RESULTS" && returnToLobbyRequested) {
+    return { phase: "LOBBY", phaseStartTick: tick };
   }
   return state;
 };

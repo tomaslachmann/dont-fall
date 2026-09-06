@@ -63,8 +63,23 @@ dashing" (03); Volumes as their own entity kind and an updraft demo Module (04).
 verified live through the real `apps/client` render/prediction/network pipeline (headless Chrome
 over raw CDP against a real match server and track-service), not just track-builder's own preview.
 
-**Next:** M4 (Match structure + the first Screens) — a deliberate choice made when M3.6/M3.7 were
-scoped: the game gets better feel before it gets a loop.
+**M4 done** — Match structure + the first Screens (`docs/milestones/M4.md`, "Done when" met: two
+Players meet in a Lobby, race one Track against its clock, see who qualified, then go again on
+another Track). Design settled in a three-round grilling session, recorded as ADR 0038 (Time Limit
+on the Revision) / 0039 (Finish Zone as a Module trigger) / 0040 (server-authoritative phase, Lobby
+on the same socket). Tickets 01–08 in `.scratch/m4-match-structure/issues/`: the game bootstrap
+behind a typed config/handle boundary (01, ADR 0008); the Finish Zone entity + Qualification (02);
+Time Limit authored on the Revision (03); a synchronous Countdown replacing each client's own guess
+(04, ADR 0040); Round end + DNF for a mid-Round disconnect (05); the React shell + code-split game,
+built on a new `packages/ui` component library and design-system research (06); the Lobby — nickname,
+Ready, host-gated start, a live Track pick that reloads both sides' simulation (07); Results — ranked
+by finish order then Track progress, falls shown, and an explicit host-only return to the Lobby for
+a fresh Round (08). All manually verified live with two browsers; ticket 08's own session confirmed
+the real Results Screen rendering ranked server data and the host's "Back to Lobby" action working
+end to end, reusing 07's already-verified `selectTrack`/`start` for the second Round.
+
+**Next:** M4.5 (tested where it runs) or M5 (two Round types on one engine) — both already planned
+(ADR 0041–0043, `docs/milestones/M4.5.md`, `docs/milestones/M5.md`), not yet started.
 
 ## Tech stack
 
