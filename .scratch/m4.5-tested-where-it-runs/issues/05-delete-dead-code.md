@@ -11,9 +11,16 @@
 
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The dead accessors and clone helpers are gone, or a real caller is named in the commit
-- [ ] `playground.ts` is no longer public API; tests import it directly
-- [ ] `advanceFixed`/`FixedSimulation` are either used or deleted, and the commit says which and why
-- [ ] Full suite green with no changed assertions
+- [x] The dead accessors and clone helpers are gone — `getStatics`/`getCheckpoints`/`getSpinners`/
+      `getProps` and their `clone*` helpers, plus the one test that existed only to exercise them
+- [x] `playground.ts` is no longer public API — dropped from `packages/shared`'s index, given its
+      own `package.json` subpath export (`@dont-fall/shared/playground.js`, matching the
+      `./design/tokens.css` precedent) for the three test files that use it across a package boundary
+- [x] `advanceFixed`/`FixedSimulation` — kept, not deleted: `RapierSimulation` already implements
+      `FixedSimulation`, and `game.ts`'s own frame loop hand-duplicates `advanceFixed`'s exact
+      accumulator/clamp logic in its own comments ("same guard as `advanceFixed`") without calling
+      it. Ticket 02, landing next in this same session, is the real caller this was built for —
+      deleting it days before its own consumer arrives would be the opposite of progress
+- [x] Full suite green with no changed assertions

@@ -21,11 +21,6 @@ import {
   LEAD_DRAIN_FRACTION,
   MAX_BUFFERED_INPUT_TICKS,
   MAX_STEPS_PER_FRAME,
-  PLAYGROUND_CHECKPOINTS,
-  PLAYGROUND_PROPS,
-  PLAYGROUND_SPINNERS,
-  PLAYGROUND_STATIC_SURFACES,
-  PLAYGROUND_STATICS,
   RECONCILE_HARDSNAP_M,
   RECONCILE_POSITION_EPSILON,
   RapierSimulation,
@@ -38,8 +33,15 @@ import {
   type SimState,
   initPhysics,
   interpolateState,
-  playgroundSpawn,
 } from "@dont-fall/shared";
+import {
+  PLAYGROUND_CHECKPOINTS,
+  PLAYGROUND_PROPS,
+  PLAYGROUND_SPINNERS,
+  PLAYGROUND_STATIC_SURFACES,
+  PLAYGROUND_STATICS,
+  playgroundSpawn,
+} from "@dont-fall/shared/playground.js";
 
 /**
  * The pre-ADR-0026 "correct or ignore" threshold, kept here only so the

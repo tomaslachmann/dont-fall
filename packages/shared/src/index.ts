@@ -33,5 +33,4 @@ export * from "./track/Module.js";
 export * from "./track/Surface.js";
 export * from "./track/Track.js";
 export * from "./track/modules.js";
-export * from "./playground.js";
 export * from "./net/protocol.js";

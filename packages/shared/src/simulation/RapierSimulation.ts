@@ -124,26 +124,6 @@ const DEFAULT_GROUND: OrientedBox = {
   rotation: IDENTITY_QUAT,
 };
 
-const cloneOrientedBox = (box: OrientedBox): OrientedBox => ({
-  center: { ...box.center },
-  halfExtents: { ...box.halfExtents },
-  rotation: { ...(box.rotation ?? IDENTITY_QUAT) },
-});
-
-const cloneSpinnerConfig = (config: SpinnerConfig): SpinnerConfig => ({
-  ...config,
-  center: { ...config.center },
-});
-
-const clonePropConfig = (config: PropConfig): PropConfig => ({
-  ...config,
-  center: { ...config.center },
-  shape:
-    config.shape.kind === "box"
-      ? { kind: "box", halfExtents: { ...config.shape.halfExtents } }
-      : { ...config.shape },
-});
-
 let initPromise: Promise<void> | null = null;
 
 /** Load the Rapier WASM module. Idempotent; await once before constructing a simulation. */
@@ -749,33 +729,6 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       characters,
       props: this.props.map((p) => p.snapshot()),
     };
-  }
-
-  /** The resolved static geometry (including the default ground), for the renderer. */
-  getStatics(): OrientedBox[] {
-    return this.statics.map(cloneOrientedBox);
-  }
-
-  /** The configured checkpoints, for the renderer. */
-  getCheckpoints(): Checkpoint[] {
-    return this.checkpoints.map((cp) => ({
-      respawn: { ...cp.respawn },
-      trigger: cloneOrientedBox(cp.trigger),
-    }));
-  }
-
-  /**
-   * The configured Spinners, for the renderer to build geometry from. A
-   * Spinner's rotation is not part of `SimState` — it is a pure function of
-   * the tick number (`spinnerAngleAt`), so the renderer recomputes it directly.
-   */
-  getSpinners(): SpinnerConfig[] {
-    return this.spinners.map((s) => cloneSpinnerConfig(s.config));
-  }
-
-  /** The configured Props, for the renderer to build geometry from (pose comes from `SimState.props`). */
-  getProps(): PropConfig[] {
-    return this.props.map((p) => clonePropConfig(p.config));
   }
 
   /**

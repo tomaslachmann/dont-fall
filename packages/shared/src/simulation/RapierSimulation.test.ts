@@ -107,19 +107,6 @@ describe("RapierSimulation — walk", () => {
     expect(sim.snapshot().tick).toBe(2);
   });
 
-  it("exposes its resolved static geometry and checkpoints for the renderer", () => {
-    const cp: Checkpoint = {
-      respawn: { x: 1, y: 2, z: 3 },
-      trigger: { center: { x: 1, y: 2, z: 3 }, halfExtents: { x: 1, y: 1, z: 1 } },
-    };
-    const sim = new RapierSimulation({ statics: [GROUND], checkpoints: [cp] });
-    // getStatics() always fills in a concrete rotation (ADR 0034) — identity
-    // when the input Box didn't specify one, as GROUND here doesn't.
-    expect(sim.getStatics()).toEqual([{ ...GROUND, rotation: { x: 0, y: 0, z: 0, w: 1 } }]);
-    // getCheckpoints() also fills in a concrete rotation on the trigger now
-    // (ADR 0034 code review) — identity when the input didn't specify one.
-    expect(sim.getCheckpoints()).toEqual([{ ...cp, trigger: { ...cp.trigger, rotation: { x: 0, y: 0, z: 0, w: 1 } } }]);
-  });
 });
 
 describe("RapierSimulation — Surfaces (ticket 01, ADR 0036): the ground collider handle the character controller already reports, not a new scene query", () => {

@@ -3,11 +3,6 @@ import {
   INITIAL_LEAD_TICKS_MIN,
   LEAD_DRAIN_FRACTION,
   MAX_STEPS_PER_FRAME,
-  PLAYGROUND_CHECKPOINTS,
-  PLAYGROUND_PROPS,
-  PLAYGROUND_SPINNERS,
-  PLAYGROUND_STATIC_SURFACES,
-  PLAYGROUND_STATICS,
   RECONCILE_POSITION_EPSILON,
   RapierSimulation,
   TICK_MS,
@@ -17,6 +12,13 @@ import {
   type SimInputs,
   type Vec3,
 } from "@dont-fall/shared";
+import {
+  PLAYGROUND_CHECKPOINTS,
+  PLAYGROUND_PROPS,
+  PLAYGROUND_SPINNERS,
+  PLAYGROUND_STATIC_SURFACES,
+  PLAYGROUND_STATICS,
+} from "@dont-fall/shared/playground.js";
 import { startTrackService, type TrackService } from "@dont-fall/track-service";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
