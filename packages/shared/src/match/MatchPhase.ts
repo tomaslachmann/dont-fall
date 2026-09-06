@@ -25,8 +25,15 @@ export interface MatchPhaseInputs {
   /** The server Tick being decided. */
   tick: number;
   connectedPlayers: number;
-  /** How many Players a Round waits for (see `PLAYERS_TO_START`). */
-  playersToStart: number;
+  /**
+   * Whether the host's `start` has just been validated and handed in — enough
+   * Players connected, everyone Ready (M4 ticket 07, ADR 0040). Validated
+   * once, by the caller, at the point the message arrived; this pure function
+   * only ever asks "has it fired," never re-derives the gate itself. The
+   * caller is responsible for clearing it back to `false` once this returns
+   * COUNTDOWN, the same way it clears `dnf` on a fresh one.
+   */
+  startRequested?: boolean;
   /**
    * How long the Countdown holds. Defaults to {@link COUNTDOWN_MS}; a
    * parameter rather than a constant read straight from here so a test can
@@ -62,9 +69,10 @@ export const phaseLocksInput = (phase: MatchPhase): boolean => phase !== "RUNNIN
  * and keeps whatever comes back.
  *
  * The transitions M4 ticket 04 owns:
- * - LOBBY → COUNTDOWN once enough Players are connected. Ticket 07's Lobby
- *   replaces the trigger with a host pressing start; the transition itself
- *   does not change.
+ * - LOBBY → COUNTDOWN once the host's `start` has been validated and handed
+ *   in (M4 ticket 07) — replacing ticket 04's own original trigger ("enough
+ *   Players connected"), which is now `startRequested`'s job to have already
+ *   checked before this ever sees it.
  * - COUNTDOWN → RUNNING after {@link COUNTDOWN_TICKS}, on one exact Tick, for
  *   everyone at once.
  * - anything → LOBBY once the last Player leaves, so the server is ready for
@@ -85,7 +93,7 @@ export const advanceMatchPhase = (
   {
     tick,
     connectedPlayers,
-    playersToStart,
+    startRequested = false,
     countdownMs = COUNTDOWN_MS,
     allQualified = false,
     timeExpired = false,
@@ -95,7 +103,7 @@ export const advanceMatchPhase = (
   if (connectedPlayers === 0) {
     return state.phase === "LOBBY" ? state : { phase: "LOBBY", phaseStartTick: tick };
   }
-  if (state.phase === "LOBBY" && connectedPlayers >= playersToStart) {
+  if (state.phase === "LOBBY" && startRequested) {
     return { phase: "COUNTDOWN", phaseStartTick: tick };
   }
   if (state.phase === "COUNTDOWN" && tick - state.phaseStartTick >= msToTicks(countdownMs)) {

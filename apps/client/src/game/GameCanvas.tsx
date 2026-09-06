@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@dont-fall/ui";
-import type { ExitReason, GameHandle } from "../game.js";
+import type { ExitReason, GameHandle, LobbySnapshot } from "../game.js";
+import { LobbyScreen } from "../screens/LobbyScreen.js";
 import styles from "./GameCanvas.module.css";
 
 export interface GameCanvasProps {
@@ -18,8 +19,10 @@ export interface GameCanvasProps {
  */
 export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const handleRef = useRef<GameHandle | null>(null);
   const [bootError, setBootError] = useState<Error | null>(null);
   const [exitReason, setExitReason] = useState<ExitReason | null>(null);
+  const [lobby, setLobby] = useState<LobbySnapshot | null>(null);
   const navigate = useNavigate();
 
   // Latest-ref, not a dependency: onMatchEnd/onExit are typically a fresh
@@ -33,7 +36,6 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
 
   useEffect(() => {
     let cancelled = false;
-    let handle: GameHandle | null = null;
 
     // Dynamic, not static: the menu should not pay for the renderer, the
     // physics WASM, or the Character model (ticket 06's own requirement).
@@ -53,6 +55,10 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
           // this exact hand-off). The player leaves on their own click
           // instead, via the banner below.
           onExit: (reason) => setExitReason(reason),
+          // M4 ticket 07: the Lobby renders as a React overlay on top of
+          // this already-connected, already-rendering canvas, the same way
+          // the Countdown overlay reads `phase` (ADR 0040).
+          onLobbyState: (state) => setLobby(state),
         }),
       )
       .then((bootedHandle) => {
@@ -60,7 +66,7 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
           bootedHandle.stop(); // unmounted while the boot was still in flight — leave nothing behind
           return;
         }
-        handle = bootedHandle;
+        handleRef.current = bootedHandle;
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -69,7 +75,9 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
 
     return () => {
       cancelled = true;
-      handle?.stop();
+      handleRef.current?.stop();
+      handleRef.current = null;
+      setLobby(null);
     };
   }, [trackId]);
 
@@ -88,6 +96,15 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
   return (
     <>
       <div ref={mountRef} className={styles.mount} />
+      {lobby && lobby.phase === "LOBBY" && (
+        <LobbyScreen
+          lobby={lobby}
+          onSetNickname={(nickname) => handleRef.current?.setNickname(nickname)}
+          onSetReady={(ready) => handleRef.current?.setReady(ready)}
+          onSelectTrack={(id) => handleRef.current?.selectTrack(id)}
+          onStart={() => handleRef.current?.start()}
+        />
+      )}
       {exitReason && (
         <div className={styles.exitBanner}>
           <Button variant="secondary" onClick={() => onExitRef.current?.(exitReason)}>

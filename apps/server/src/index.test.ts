@@ -81,6 +81,38 @@ const sendInput = (socket: WebSocket, tick: number, input: SimInputs): void =>
 const sendInputs = (socket: WebSocket, entries: { tick: number; input: SimInputs }[]): void =>
   socket.send(JSON.stringify({ type: "input", inputs: entries } satisfies ClientMessage));
 
+/**
+ * The Lobby dance (M4 ticket 07) every pre-ticket-07 test below needs before
+ * it can reach COUNTDOWN/RUNNING, now that a Round no longer auto-starts the
+ * instant enough Players connect: everyone marks themselves Ready, then the
+ * host — `sockets[0]`, since the server resolves the host as the first
+ * joiner and these tests always connect in the order they list — asks to
+ * start. Call it right after every socket in `sockets` has its `welcome`.
+ *
+ * Waits for a snapshot confirming every Player's `ready` before sending
+ * `start`: `setReady` and `start` travel independent WebSocket connections,
+ * so nothing orders "b's setReady lands" before "a's start is processed" —
+ * sending `start` right away is a real race the server loses just as often
+ * as it wins, seen as `start` reading a stale, not-yet-Ready `b`.
+ */
+const startMatch = async (...sockets: WebSocket[]): Promise<void> => {
+  for (const socket of sockets) socket.send(JSON.stringify({ type: "setReady", ready: true } satisfies ClientMessage));
+  const host = sockets[0];
+  if (!host) return;
+  await new Promise<void>((resolve) => {
+    const onMessage = (raw: Buffer): void => {
+      const message = JSON.parse(raw.toString()) as ServerMessage;
+      if (message.type !== "snapshot") return;
+      if (message.lobby.players.length < sockets.length) return;
+      if (!message.lobby.players.every((p) => p.ready)) return;
+      host.off("message", onMessage);
+      resolve();
+    };
+    host.on("message", onMessage);
+  });
+  host.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
+};
+
 describe("startServer", () => {
   it("welcomes each client with a public playerId, a secret sessionToken, the spawn, and config", async () => {
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
@@ -142,6 +174,7 @@ describe("startServer", () => {
     const socket = connect(server.port);
     const welcome = await nextMessage(socket);
     if (welcome.type !== "welcome") throw new Error("unreachable");
+    await startMatch(socket);
     const first = await nextMessage(socket);
     if (first.type !== "snapshot") throw new Error("unreachable");
     const startZ = first.state.characters[welcome.playerId]!.position.z;
@@ -187,6 +220,7 @@ describe("startServer", () => {
     const socket = connect(server.port);
     const welcome = await nextMessage(socket);
     const id = (welcome as { playerId: string }).playerId;
+    await startMatch(socket);
 
     const first = await nextMessage(socket);
     if (first.type !== "snapshot") throw new Error("unreachable");
@@ -239,6 +273,7 @@ describe("startServer", () => {
       const socket = connect(server.port);
       const welcome = await nextMessage(socket);
       const id = (welcome as { playerId: string }).playerId;
+      await startMatch(socket);
 
       const first = await nextMessage(socket);
       if (first.type !== "snapshot") throw new Error("unreachable");
@@ -349,6 +384,7 @@ describe("startServer — disconnects (ticket 07)", () => {
     const leaverId = (await nextMessage(leaver) as { playerId: string }).playerId;
 
     await drainUntil(survivor, (m) => leaverId in m.state.characters); // both present
+    await startMatch(survivor, leaver);
 
     leaver.terminate(); // hard TCP drop, no WebSocket close handshake
 
@@ -388,6 +424,7 @@ describe("startServer — disconnects (ticket 07)", () => {
     const bWelcome = await nextMessage(b);
     if (bWelcome.type !== "welcome") throw new Error("unreachable");
     expect(bWelcome.playerId).not.toBe(aId);
+    await startMatch(b);
 
     const first = await nextMessage(b);
     if (first.type !== "snapshot") throw new Error("unreachable");
@@ -589,6 +626,7 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
     const first = connect(server.port);
     const firstWelcome = await nextMessage(first);
     if (firstWelcome.type !== "welcome") throw new Error("unreachable");
+    await startMatch(first);
     let tick = (await nextMessage(first) as { type: "snapshot"; state: { tick: number } }).state.tick;
     for (let i = 0; i < 15; i += 1) {
       sendInput(first, tick + 2, NORTH);
@@ -608,6 +646,7 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
     const secondWelcome = await nextMessage(second);
     if (secondWelcome.type !== "welcome") throw new Error("unreachable");
     const id = secondWelcome.playerId;
+    await startMatch(second);
 
     const postReloadFirst = await nextMessage(second);
     if (postReloadFirst.type !== "snapshot") throw new Error("unreachable");
@@ -675,6 +714,8 @@ describe("startServer — the Round clock (M4 ticket 03, ADR 0038)", () => {
     const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket); // welcome — the socket has to be open before startMatch can send on it
+    await startMatch(socket);
 
     const first = await nextSnapshot(socket);
     let later = first;
@@ -740,12 +781,19 @@ describe("startServer — Countdown and a shared start (M4 ticket 04, ADR 0040)"
     socket.close();
   });
 
-  it("starts a Countdown once the second Player arrives", async () => {
+  it("starts a Countdown once the host starts, once everyone connected is Ready (M4 ticket 07)", async () => {
     server = await startServer({ port: 0 });
     const a = connect(server.port);
-    await nextSnapshot(a);
+    await nextMessage(a); // welcome
     const b = connect(server.port);
+    await nextMessage(b); // welcome
 
+    // Two connected Players alone does nothing — M4 ticket 04's own original
+    // auto-trigger, replaced by an explicit host start (ticket 07).
+    const stillLobby = await nextSnapshot(a);
+    expect(stillLobby.phase).toBe("LOBBY");
+
+    await startMatch(a, b); // a is host — the first joiner
     const counting = await snapshotUntil(a, (s) => s.phase === "COUNTDOWN");
 
     expect(counting.countdownMsLeft).toBeGreaterThan(0);
@@ -757,8 +805,10 @@ describe("startServer — Countdown and a shared start (M4 ticket 04, ADR 0040)"
   it("releases both Players into RUNNING in the same Tick", async () => {
     server = await startServer({ port: 0 });
     const a = connect(server.port);
-    await nextSnapshot(a);
+    await nextMessage(a); // welcome
     const b = connect(server.port);
+    await nextMessage(b); // welcome
+    await startMatch(a, b);
 
     const [runA, runB] = await Promise.all([
       snapshotUntil(a, (s) => s.phase === "RUNNING"),
@@ -778,6 +828,8 @@ describe("startServer — Countdown and a shared start (M4 ticket 04, ADR 0040)"
     const a = connect(server.port);
     const welcome = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
     const b = connect(server.port);
+    await nextMessage(b); // welcome
+    await startMatch(a, b);
 
     // Drive hard the entire time, from before the Countdown even begins.
     let tick = 1;
@@ -802,6 +854,7 @@ describe("startServer — Countdown and a shared start (M4 ticket 04, ADR 0040)"
     const welcomeA = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
     const b = connect(server.port);
     const welcomeB = (await nextMessage(b)) as Extract<ServerMessage, { type: "welcome" }>;
+    await startMatch(a, b);
 
     const counting = await snapshotUntil(a, (s) => s.phase === "COUNTDOWN");
     const running = await snapshotUntil(a, (s) => s.phase === "RUNNING");
@@ -825,6 +878,8 @@ describe("startServer — Countdown and a shared start (M4 ticket 04, ADR 0040)"
     const a = connect(server.port, `?track=${trackId}`);
     await nextSnapshot(a);
     const b = connect(server.port);
+    await nextMessage(b); // welcome
+    await startMatch(a, b);
 
     const counting = await snapshotUntil(a, (s) => s.phase === "COUNTDOWN");
 
@@ -835,9 +890,11 @@ describe("startServer — Countdown and a shared start (M4 ticket 04, ADR 0040)"
     b.close();
   });
 
-  it("starts a solo Round when configured to, so a single-browser Playtest still runs", async () => {
+  it("starts a solo Round when configured to, once its one Player Readies up and starts — a single-browser Playtest still runs (M4 ticket 07)", async () => {
     server = await startServer({ port: 0, playersToStart: 1 });
     const socket = connect(server.port);
+    await nextMessage(socket); // welcome
+    await startMatch(socket);
 
     const running = await snapshotUntil(socket, (s) => s.phase === "RUNNING");
 
@@ -877,6 +934,8 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     const trackId = await publishTrack(INSTANT_FINISH);
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0 });
     const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket); // welcome
+    await startMatch(socket);
 
     const ended = await snapshotUntil(socket, (s) => s.phase === "ROUND_END" || s.phase === "RESULTS");
 
@@ -892,6 +951,8 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     const trackId = await publishTrack(M1_TRACK, undefined, MIN_TIME_LIMIT_MS);
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0, timeLimitMsOverride: 300 });
     const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket); // welcome
+    await startMatch(socket);
 
     const ended = await snapshotUntil(socket, (s) => s.phase === "ROUND_END" || s.phase === "RESULTS");
 
@@ -907,6 +968,8 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     const trackId = await publishTrack(INSTANT_FINISH);
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket); // welcome
+    await startMatch(socket);
 
     await snapshotUntil(socket, (s) => s.phase === "ROUND_END");
     const results = await snapshotUntil(socket, (s) => s.phase === "RESULTS");
@@ -920,6 +983,7 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0 });
     const socket = connect(server.port, `?track=${trackId}`);
     const welcome = (await nextMessage(socket)) as Extract<ServerMessage, { type: "welcome" }>;
+    await startMatch(socket);
 
     const results = await snapshotUntil(socket, (s) => s.phase === "RESULTS");
     const settled = results.state.characters[welcome.playerId]!.position;
@@ -943,6 +1007,7 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     const welcomeA = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
     const b = connect(server.port);
     await nextMessage(b);
+    await startMatch(a, b);
     await snapshotUntil(b, (s) => s.phase === "RUNNING");
 
     a.close();
@@ -961,6 +1026,7 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     await nextMessage(a);
     const b = connect(server.port);
     await nextMessage(b);
+    await startMatch(a, b);
     const counting = await snapshotUntil(b, (s) => s.phase === "COUNTDOWN");
 
     a.close();
@@ -973,6 +1039,8 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
   it("refuses a joiner while a Round is under way — there is no mid-Round rejoin", async () => {
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const playing = connect(server.port);
+    await nextMessage(playing); // welcome
+    await startMatch(playing);
     await snapshotUntil(playing, (s) => s.phase === "RUNNING");
 
     const latecomer = connect(server.port);
@@ -985,6 +1053,8 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
   it("lets someone join again once the server is back in the Lobby", async () => {
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const first = connect(server.port);
+    await nextMessage(first); // welcome
+    await startMatch(first);
     await snapshotUntil(first, (s) => s.phase === "RUNNING");
     first.close();
 
@@ -1003,6 +1073,7 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     await nextMessage(a);
     const b = connect(server.port);
     await nextMessage(b);
+    await startMatch(a, b);
     await snapshotUntil(b, (s) => s.phase === "RUNNING");
     a.close();
     await snapshotUntil(b, (s) => s.dnf.length === 1);
@@ -1014,11 +1085,209 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     await nextMessage(c);
     const d = connect(server.port);
     await nextMessage(d);
+    await startMatch(c, d);
 
     const running = await snapshotUntil(c, (s) => s.phase === "RUNNING");
     expect(running.dnf).toEqual([]);
     c.close();
     d.close();
+  });
+});
+
+describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (;;) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+  };
+
+  it("truncates and trims a nickname, and leaves it alone when the trimmed result is empty", async () => {
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    await nextMessage(a); // welcome
+
+    a.send(JSON.stringify({ type: "setNickname", nickname: "  " } satisfies ClientMessage));
+    const untouched = await snapshotUntil(a, (s) => s.lobby.players.length === 1);
+    expect(untouched.lobby.players[0]!.nickname).toBe("Player"); // the default, unblanked
+
+    a.send(JSON.stringify({ type: "setNickname", nickname: "  Speedy Gonzalez the Third  " } satisfies ClientMessage));
+    const renamed = await snapshotUntil(a, (s) => s.lobby.players[0]!.nickname !== "Player");
+    expect(renamed.lobby.players[0]!.nickname).toBe("Speedy Gonzalez the Thir"); // trimmed, then capped to NICKNAME_MAX_LENGTH (24)
+    a.close();
+  });
+
+  it("broadcasts a Ready toggle to every connected Player, not just the one who sent it", async () => {
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    await nextMessage(a);
+    const b = connect(server.port);
+    await nextMessage(b);
+
+    b.send(JSON.stringify({ type: "setReady", ready: true } satisfies ClientMessage));
+    const seenByA = await snapshotUntil(a, (s) => s.lobby.players.some((p) => p.ready));
+    const bEntry = seenByA.lobby.players.find((p) => p.nickname === "Player" && p.ready);
+    expect(bEntry).toBeDefined();
+    a.close();
+    b.close();
+  });
+
+  it("resolves the host as whoever has been connected longest, and reassigns the instant they leave", async () => {
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    const welcomeA = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
+    const b = connect(server.port);
+    const welcomeB = (await nextMessage(b)) as Extract<ServerMessage, { type: "welcome" }>;
+
+    const initial = await snapshotUntil(b, (s) => s.lobby.players.length === 2);
+    expect(initial.lobby.hostId).toBe(welcomeA.playerId);
+
+    a.close();
+    const reassigned = await snapshotUntil(b, (s) => s.lobby.hostId === welcomeB.playerId);
+    expect(reassigned.lobby.players.map((p) => p.id)).toEqual([welcomeB.playerId]);
+    b.close();
+  });
+
+  it("ignores a start from anyone but the host", async () => {
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    await nextMessage(a); // welcome, host
+    const b = connect(server.port);
+    await nextMessage(b); // welcome, not host
+
+    for (const socket of [a, b]) socket.send(JSON.stringify({ type: "setReady", ready: true } satisfies ClientMessage));
+    await snapshotUntil(a, (s) => s.lobby.players.every((p) => p.ready));
+    b.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
+
+    // Give the (wrongly) requested start a real chance to land before asserting it didn't.
+    await new Promise((r) => setTimeout(r, 100));
+    const stillLobby = await nextSnapshot(a);
+    expect(stillLobby.phase).toBe("LOBBY");
+    a.close();
+    b.close();
+  });
+
+  it("ignores a start until everyone connected is Ready", async () => {
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    await nextMessage(a); // welcome, host
+    const b = connect(server.port);
+    await nextMessage(b); // welcome, never readies up
+
+    a.send(JSON.stringify({ type: "setReady", ready: true } satisfies ClientMessage));
+    await snapshotUntil(a, (s) => s.lobby.players.some((p) => p.ready));
+    a.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
+
+    await new Promise((r) => setTimeout(r, 100));
+    const stillLobby = await nextSnapshot(a);
+    expect(stillLobby.phase).toBe("LOBBY");
+    a.close();
+    b.close();
+  });
+
+  it("ignores a start below the configured Player threshold, even from an otherwise-valid host", async () => {
+    server = await startServer({ port: 0, playersToStart: 2 });
+    const a = connect(server.port);
+    await nextMessage(a); // welcome — alone, host, Ready, but only one Player
+
+    a.send(JSON.stringify({ type: "setReady", ready: true } satisfies ClientMessage));
+    await snapshotUntil(a, (s) => s.lobby.players.some((p) => p.ready));
+    a.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
+
+    await new Promise((r) => setTimeout(r, 100));
+    const stillLobby = await nextSnapshot(a);
+    expect(stillLobby.phase).toBe("LOBBY");
+    a.close();
+  });
+
+  it("ignores a start once the Round is already under way — there is no re-triggering it", async () => {
+    // A known, non-trivial Track — `/tracks/any` can otherwise hand back one
+    // of this file's own INSTANT_FINISH fixtures and end the Round before
+    // this test gets to assert it stayed RUNNING.
+    const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket); // welcome
+    await startMatch(socket);
+    await snapshotUntil(socket, (s) => s.phase === "RUNNING");
+
+    socket.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
+    await new Promise((r) => setTimeout(r, 100));
+    const stillRunning = await nextSnapshot(socket);
+    expect(stillRunning.phase).toBe("RUNNING");
+    socket.close();
+  });
+
+  it("ignores a Track pick from anyone but the host", async () => {
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    const welcomeA = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
+    const b = connect(server.port);
+    await nextMessage(b); // not host
+
+    const altTrackId = await publishTrack();
+    b.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
+
+    await new Promise((r) => setTimeout(r, 200));
+    const unchanged = await nextSnapshot(a);
+    expect(unchanged.trackId).toBe(welcomeA.trackId);
+    a.close();
+    b.close();
+  });
+
+  it("lets the host pick a different Track live, re-seating everyone already connected rather than losing them", async () => {
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    const welcomeA = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
+    const b = connect(server.port);
+    const welcomeB = (await nextMessage(b)) as Extract<ServerMessage, { type: "welcome" }>;
+
+    const altTrackId = await publishTrack();
+    a.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
+
+    const reloaded = await snapshotUntil(a, (s) => s.trackId === altTrackId);
+    expect(reloaded.phase).toBe("LOBBY");
+    // Both Players who were already in the Lobby are still here, not lost —
+    // the point of doing this live instead of just reusing the connect-time
+    // `?track=` reload, which only ever runs with nobody connected.
+    expect(Object.keys(reloaded.state.characters).sort()).toEqual([welcomeA.playerId, welcomeB.playerId].sort());
+    expect(reloaded.lobby.players.map((p) => p.id).sort()).toEqual([welcomeA.playerId, welcomeB.playerId].sort());
+    a.close();
+    b.close();
+  });
+
+  it("ignores a Track pick once the Round has left the Lobby", async () => {
+    // Same reasoning as above: a known Track, not whatever `/tracks/any`
+    // hands back, so the Round is still RUNNING when the pick is checked.
+    const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    const welcome = (await nextMessage(socket)) as Extract<ServerMessage, { type: "welcome" }>;
+    await startMatch(socket);
+    await snapshotUntil(socket, (s) => s.phase === "RUNNING");
+
+    const altTrackId = await publishTrack();
+    socket.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
+
+    await new Promise((r) => setTimeout(r, 200));
+    const unchanged = await nextSnapshot(socket);
+    expect(unchanged.trackId).toBe(welcome.trackId);
+    expect(unchanged.phase).toBe("RUNNING");
+    socket.close();
   });
 });
 

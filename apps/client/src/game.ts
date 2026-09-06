@@ -28,6 +28,7 @@ import {
   type CharacterMotionState,
   type CharacterSnapshot,
   type ClientMessage,
+  type LobbyPlayer,
   type MatchPhase,
   type PropSnapshot,
   type RenderCharacter,
@@ -65,6 +66,35 @@ const MAX_ANIMATION_DELTA_MS = 100;
 export type ExitReason = "disconnected";
 
 /**
+ * The Lobby as this client currently sees it (M4 ticket 07, ADR 0040) — a
+ * read of the snapshot's own `lobby`/`trackId`/`trackRevision` fields, plus
+ * `myId` so a Lobby Screen can tell "you" apart without threading the
+ * `WelcomeMessage` through separately. Rendered, never computed: `hostId`
+ * reassigns itself the instant the server sees the original host disconnect.
+ *
+ * Carries `phase` too, not just while it's LOBBY: a Lobby Screen overlaying
+ * `<GameCanvas>` needs to know the instant the Match leaves LOBBY so it can
+ * unmount itself, same as the Countdown overlay's own read of `phase`
+ * (ADR 0040) — folding it in here means one dedupe against the snapshot
+ * rate covers both "the roster changed" and "the phase changed."
+ */
+export interface LobbySnapshot {
+  myId: string;
+  phase: MatchPhase;
+  hostId: string | undefined;
+  players: LobbyPlayer[];
+  trackId: string;
+  trackRevision: number;
+  /**
+   * The currently-loaded Track's Time Limit (ADR 0038: "the Lobby only ever
+   * reads" it) — this IS `SnapshotMessage.timeLeftMs`, which already holds at
+   * the full clock until the Round is RUNNING, so it needs no separate
+   * "authored Time Limit" field of its own.
+   */
+  timeLimitMs: number;
+}
+
+/**
  * Everything the shell tells the game, and everything the game tells the shell
  * back — the "small typed boundary (config in, `onMatchEnd`/`onExit` out)" ADR
  * 0008 requires. Nothing is shared mutable state: the fixed-timestep loop
@@ -94,6 +124,17 @@ export interface GameConfig {
    * and the shell is what calls {@link GameHandle.stop}.
    */
   onExit?: (reason: ExitReason) => void;
+  /**
+   * Raised on every snapshot whose Lobby content actually changed (M4 ticket
+   * 07) — a Lobby Screen renders this as an overlay on top of the already-
+   * connected, already-rendering `<GameCanvas>` while `phase === "LOBBY"`,
+   * the same way the Countdown overlay reads `phase`/`countdownMsLeft`
+   * (ADR 0040). Never fired for a no-op update (nickname/ready/host all
+   * unchanged): the snapshot arrives at up to `snapshotHz`, far too often to
+   * hand React a fresh object every time regardless of whether anything in
+   * it actually moved.
+   */
+  onLobbyState?: (lobby: LobbySnapshot) => void;
 }
 
 export interface GameHandle {
@@ -103,6 +144,14 @@ export interface GameHandle {
    * starting again in the same page session leaves nothing behind (M4 ticket 01).
    */
   stop: () => void;
+  /** Sets this connection's own nickname (M4 ticket 07). Cosmetic — never a start gate. */
+  setNickname: (nickname: string) => void;
+  /** Sets this connection's own Ready state (M4 ticket 07). Only meaningful in LOBBY. */
+  setReady: (ready: boolean) => void;
+  /** Host-only: picks a different Track for this Lobby (M4 ticket 07). Ignored if not host or not in LOBBY. */
+  selectTrack: (trackId: string) => void;
+  /** Host-only: asks the server to start the Round (M4 ticket 07). Ignored unless the server's own gate passes. */
+  start: () => void;
 }
 
 /**
@@ -122,7 +171,7 @@ export const startGame = async (config: GameConfig): Promise<GameHandle> => {
 };
 
 const boot = async (
-  { mount, host, trackId, onExit }: GameConfig,
+  { mount, host, trackId, onExit, onLobbyState }: GameConfig,
   teardown: Teardown,
 ): Promise<GameHandle> => {
   const hud = createHud(mount);
@@ -137,22 +186,23 @@ const boot = async (
 
   const welcome = await awaitWelcome(socket);
 
-  const serverInterp = new SnapshotInterpolator();
+  let serverInterp = new SnapshotInterpolator();
   serverInterp.setSnapshotHz(welcome.config.snapshotHz);
 
-  const trackRes = await fetch(
-    `${endpoints.trackServiceUrl}/tracks/${welcome.trackId}?revision=${welcome.trackRevision}`,
-  );
-  if (!trackRes.ok) {
-    throw new Error(
-      `could not fetch Track ${welcome.trackId}@${welcome.trackRevision} from track-service: HTTP ${trackRes.status}`,
-    );
-  }
-  const { track } = (await trackRes.json()) as { track: Track };
+  const fetchTrack = async (trackId: string, trackRevision: number): Promise<Track> => {
+    const res = await fetch(`${endpoints.trackServiceUrl}/tracks/${trackId}?revision=${trackRevision}`);
+    if (!res.ok) {
+      throw new Error(`could not fetch Track ${trackId}@${trackRevision} from track-service: HTTP ${res.status}`);
+    }
+    const { track: fetched } = (await res.json()) as { track: Track };
+    return fetched;
+  };
+
+  const track = await fetchTrack(welcome.trackId, welcome.trackRevision);
   const { statics, staticSurfaces, checkpoints, finishZones, spinners, props, speedPads, launchPads, volumes } =
     resolveTrack(MODULE_LIBRARY, track);
 
-  const stage = createStage({
+  let stage = createStage({
     mount,
     statics,
     checkpoints,
@@ -162,10 +212,14 @@ const boot = async (
     props,
     characterModel,
   });
+  // These two close over the `let stage`/`let localSim` below and are
+  // registered exactly once — a live Lobby Track pick (M4 ticket 07)
+  // reassigns those bindings rather than rebuilding this teardown, so the
+  // single registration keeps disposing whatever they currently point at.
   teardown.add(() => stage.dispose());
   const keyboard = new KeyboardInput();
   teardown.add(() => keyboard.dispose());
-  const look = new FreeLookCamera(stage.domElement);
+  let look = new FreeLookCamera(stage.domElement);
   teardown.add(() => look.dispose());
 
   const myId: string = welcome.playerId;
@@ -182,7 +236,7 @@ const boot = async (
   // simulation step the server uses (ticket 03) — its own RapierSimulation,
   // stepped once per fixed sim tick from local input, seeded from the same
   // resolved Track (ticket 11) the stage above was built from.
-  const localSim: RapierSimulation = new RapierSimulation({
+  let localSim: RapierSimulation = new RapierSimulation({
     statics,
     staticSurfaces,
     checkpoints,
@@ -244,7 +298,7 @@ const boot = async (
   // Character is contacting is simulated locally for a short grace after last
   // contact and rendered through a decaying error offset; every other Prop is
   // interpolation-only.
-  const propPrediction = new PropPredictionController();
+  let propPrediction = new PropPredictionController();
   // The raw latest snapshot, kept only for `reconcile` (tick-aligned replay).
   let latestServerSnapshot: SimState | null = null;
   let lastSnapshotArrivedAt = 0;
@@ -257,6 +311,8 @@ const boot = async (
    */
   let phase: MatchPhase = "LOBBY";
   let countdownMsLeft = 0;
+  /** Last `LobbySnapshot` handed to `onLobbyState`, as JSON — dedupes against the snapshot rate. */
+  let lastLobbyJson: string | null = null;
   const netMetrics = new NetMetrics();
   // NTP-style clock sync (ADR 0019) — feeds the interpolation buffer's clock
   // and the net-graph RTT.
@@ -389,6 +445,82 @@ const boot = async (
     renderPreviousSnapshot = afterCorrection;
   };
 
+  // The Track this client currently has loaded — compared against every
+  // snapshot's own `trackId`/`trackRevision` (M4 ticket 07) to notice the
+  // Lobby host picking a different one live. Only ever changes in LOBBY
+  // (the server rejects `selectTrack` everywhere else), so there is nothing
+  // to reconcile input-wise: input is already locked for the whole phase.
+  let loadedTrackId = welcome.trackId;
+  let loadedTrackRevision = welcome.trackRevision;
+  // Set for the async gap between noticing a Track change and finishing the
+  // rebuild below — `reconcile` is skipped meanwhile (guarded at the call
+  // site) since `localSim` still holds the *old* Track's geometry while the
+  // server has already moved the Lobby's Characters onto the new one.
+  let trackReloadInFlight = false;
+
+  /**
+   * Rebuilds everything derived from the active Track — the mirror of the
+   * server's own `rebuildSimulationFor` for a live Lobby Track pick (M4
+   * ticket 07). `look` is rebuilt too: it holds a reference to `stage`'s own
+   * canvas, which `stage.dispose()` removes from the DOM, so a `look` still
+   * bound to the old one would never see another mouse event.
+   *
+   * The tick-space state below is reset, not carried over: the server
+   * restarts this Track's `serverTick` at 0 on the same pick (ADR 0027's own
+   * "one Tick, one authority" discipline applied to a fresh Lobby), so every
+   * prediction/interpolation structure keyed by tick number would otherwise
+   * compare the new low ticks against the old high ones forever.
+   */
+  const loadTrack = async (trackId: string, trackRevision: number, spawn: Vec3): Promise<void> => {
+    const nextTrack = await fetchTrack(trackId, trackRevision);
+    const resolved = resolveTrack(MODULE_LIBRARY, nextTrack);
+
+    look.dispose();
+    stage.dispose();
+    stage = createStage({
+      mount,
+      statics: resolved.statics,
+      checkpoints: resolved.checkpoints,
+      finishZones: resolved.finishZones,
+      killPlaneY: DEFAULT_KILL_PLANE_Y,
+      spinners: resolved.spinners,
+      props: resolved.props,
+      characterModel,
+    });
+    look = new FreeLookCamera(stage.domElement);
+
+    localSim.dispose();
+    localSim = new RapierSimulation({
+      statics: resolved.statics,
+      staticSurfaces: resolved.staticSurfaces,
+      checkpoints: resolved.checkpoints,
+      finishZones: resolved.finishZones,
+      spinners: resolved.spinners,
+      props: resolved.props,
+      speedPads: resolved.speedPads,
+      launchPads: resolved.launchPads,
+      volumes: resolved.volumes,
+      withDefaultCharacter: false,
+      authoritative: false,
+    });
+    localSim.addCharacter(myId, spawn);
+
+    serverInterp = new SnapshotInterpolator();
+    serverInterp.setSnapshotHz(welcome.config.snapshotHz);
+    propPrediction = new PropPredictionController();
+    predictionTick = 0;
+    predictionTickSeeded = false;
+    predictionAccumulatorMs = 0;
+    renderPreviousSnapshot = undefined;
+    inputBuffer.length = 0;
+    positionHistory.clear();
+    capsuleErrorOffset = { x: 0, y: 0, z: 0 };
+    offsetMotionState = "Controlled";
+
+    loadedTrackId = trackId;
+    loadedTrackRevision = trackRevision;
+  };
+
   // `awaitWelcome` above already consumed the one-time `welcome` — a Match
   // server sends exactly one per connection (ADR 0024) — so this handler only
   // ever sees `pong`/`snapshot` from here on.
@@ -408,11 +540,50 @@ const boot = async (
         timeLeftMs = message.timeLeftMs;
         phase = message.phase;
         countdownMsLeft = message.countdownMsLeft;
+        if (onLobbyState) {
+          const lobbySnapshot: LobbySnapshot = {
+            myId,
+            phase: message.phase,
+            hostId: message.lobby.hostId,
+            players: message.lobby.players,
+            trackId: message.trackId,
+            trackRevision: message.trackRevision,
+            timeLimitMs: message.timeLeftMs,
+          };
+          const lobbyJson = JSON.stringify(lobbySnapshot);
+          if (lobbyJson !== lastLobbyJson) {
+            lastLobbyJson = lobbyJson;
+            onLobbyState(lobbySnapshot);
+          }
+        }
         netMetrics.commandQueueDepth = message.commandQueueDepth;
         smoothedQueueDepth += (message.commandQueueDepth - smoothedQueueDepth) * 0.2;
 
-        const serverCharacter = message.state.characters[myId];
-        if (serverCharacter) {
+        // The Lobby host picked a different Track (M4 ticket 07) — the server
+        // already re-seated every connected Character onto it (this
+        // snapshot's `state` reflects that), so `localSim` must follow before
+        // anything else here trusts it. Only relevant in LOBBY: the server
+        // never lets `trackId`/`trackRevision` change anywhere else.
+        if (
+          message.phase === "LOBBY" &&
+          !trackReloadInFlight &&
+          (message.trackId !== loadedTrackId || message.trackRevision !== loadedTrackRevision)
+        ) {
+          trackReloadInFlight = true;
+          // The server already placed this Character at its spawn slot on
+          // the new Track (`trackSpawn`, mirrored by `rebuildSimulationFor`)
+          // — read straight off this very snapshot rather than recomputing
+          // it, so there is exactly one source for "where do I start."
+          const spawn = message.state.characters[myId]?.position ?? welcome.spawn;
+          loadTrack(message.trackId, message.trackRevision, spawn)
+            .catch((err: unknown) => console.error("DON'T FALL: failed to load the Lobby's newly picked Track", err))
+            .finally(() => {
+              trackReloadInFlight = false;
+            });
+        }
+
+        const character = message.state.characters[myId];
+        if (character && !trackReloadInFlight) {
           // `reconcile` pins Props to `message.state.props` itself before its
           // replay, so replayed ticks slide against Props where the server has
           // them (ADR 0016 — Props are never predicted). The live prediction's
@@ -421,7 +592,7 @@ const boot = async (
           // obstacle sits exactly where it's drawn and advances smoothly
           // between snapshots rather than jumping once per snapshot (which,
           // for a Prop you're pushing, read as a per-snapshot sawtooth / lag).
-          reconcile(localSim, myId, serverCharacter, message.state.tick, message.state.props);
+          reconcile(localSim, myId, character, message.state.tick, message.state.props);
         }
       }
     }),
@@ -776,5 +947,15 @@ const boot = async (
 
   frameHandle = requestAnimationFrame(frame);
 
-  return { stop: () => teardown.run() };
+  const sendLobbyMessage = (message: ClientMessage): void => {
+    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+  };
+
+  return {
+    stop: () => teardown.run(),
+    setNickname: (nickname) => sendLobbyMessage({ type: "setNickname", nickname }),
+    setReady: (ready) => sendLobbyMessage({ type: "setReady", ready }),
+    selectTrack: (trackId) => sendLobbyMessage({ type: "selectTrack", trackId }),
+    start: () => sendLobbyMessage({ type: "start" }),
+  };
 };

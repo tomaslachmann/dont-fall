@@ -239,6 +239,12 @@ class FaithfulClient {
     if (message.type === "welcome") {
       this.myId = message.playerId;
       this.sim.addCharacter(this.myId, message.spawn);
+      // M4 ticket 07: LOBBY no longer auto-starts once enough Players are
+      // connected — this solo client has to ask, same as a real Playtest
+      // would. Same socket as `welcome` arrived on, so no cross-connection
+      // ordering race: the server sees `setReady` before `start`.
+      this.send({ type: "setReady", ready: true });
+      this.send({ type: "start" });
     } else if (message.type === "pong") {
       const nowMs = performance.now();
       const rttMs = nowMs - message.clientTimeMs;

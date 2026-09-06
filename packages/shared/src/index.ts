@@ -9,6 +9,7 @@ export * from "./input/movementDirection.js";
 export * from "./timing/FixedSimulation.js";
 export * from "./timing/advanceFixed.js";
 export * from "./timing/roundClock.js";
+export * from "./match/Lobby.js";
 export * from "./match/MatchPhase.js";
 export * from "./match/Qualification.js";
 export * from "./simulation/SimInputs.js";

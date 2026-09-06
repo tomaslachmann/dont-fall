@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COUNTDOWN_TICKS, PLAYERS_TO_START, ROUND_END_TICKS, TICK_RATE_HZ } from "../tuning.js";
+import { COUNTDOWN_TICKS, ROUND_END_TICKS, TICK_RATE_HZ } from "../tuning.js";
 import {
   advanceMatchPhase,
   countdownMsLeft,
@@ -9,8 +9,8 @@ import {
 } from "./MatchPhase.js";
 
 const at = (phase: MatchState["phase"], phaseStartTick = 0): MatchState => ({ phase, phaseStartTick });
-const step = (state: MatchState, tick: number, connectedPlayers: number, playersToStart = PLAYERS_TO_START) =>
-  advanceMatchPhase(state, { tick, connectedPlayers, playersToStart });
+const step = (state: MatchState, tick: number, connectedPlayers: number, startRequested = false) =>
+  advanceMatchPhase(state, { tick, connectedPlayers, startRequested });
 
 describe("phaseLocksInput", () => {
   it("locks every phase but RUNNING — a Round is the only time a Character is yours to drive", () => {
@@ -23,18 +23,28 @@ describe("phaseLocksInput", () => {
 });
 
 describe("advanceMatchPhase", () => {
-  it("waits in LOBBY until enough Players are connected", () => {
+  it("waits in LOBBY, however many Players connect, until the host's start is handed in", () => {
+    // M4 ticket 07 replaced "enough Players connected" with an explicit
+    // start — connecting alone no longer moves the Match anywhere.
     expect(step(at("LOBBY"), 100, 0).phase).toBe("LOBBY");
-    expect(step(at("LOBBY"), 100, PLAYERS_TO_START - 1).phase).toBe("LOBBY");
+    expect(step(at("LOBBY"), 100, 1).phase).toBe("LOBBY");
+    expect(step(at("LOBBY"), 100, 2).phase).toBe("LOBBY");
   });
 
-  it("starts the Countdown the Tick the last needed Player arrives", () => {
-    const next = step(at("LOBBY"), 100, PLAYERS_TO_START);
+  it("starts the Countdown the Tick the host's start is handed in", () => {
+    const next = step(at("LOBBY"), 100, 2, true);
 
     expect(next.phase).toBe("COUNTDOWN");
     // Anchored to the Tick it began, so the countdown a client renders is
     // derived from the server's own Tick and not from any wall clock.
     expect(next.phaseStartTick).toBe(100);
+  });
+
+  it("does not start on its own just because everyone happens to be Ready — the host still has to press start", () => {
+    // This function only ever asks "has startRequested fired" — validating
+    // "enough Players, everyone Ready" is the caller's job, done once at the
+    // point a `start` message actually arrives (M4 ticket 07).
+    expect(step(at("LOBBY"), 100, 2, false).phase).toBe("LOBBY");
   });
 
   it("holds the Countdown for its full three seconds of Ticks", () => {
@@ -75,18 +85,19 @@ describe("advanceMatchPhase", () => {
     expect(step(at("RUNNING", 100), 105, 0).phaseStartTick).toBe(105);
   });
 
-  it("honours a configured Player threshold — one Player can start a solo Round", () => {
-    expect(step(at("LOBBY"), 100, 1, 1).phase).toBe("COUNTDOWN");
+  it("does not require a minimum headcount of its own — one Player can start a solo Round once they say so", () => {
+    // The threshold ("enough Players") is validated by the caller before it
+    // ever sets startRequested (M4 ticket 07) — this function only asks
+    // whether that already-validated signal fired.
+    expect(step(at("LOBBY"), 100, 1, true).phase).toBe("COUNTDOWN");
   });
 
   it("honours a configured Countdown length, so a test needn't sit through three real seconds", () => {
-    const zeroCountdown = { tick: 101, connectedPlayers: 2, playersToStart: 2, countdownMs: 0 };
+    const zeroCountdown = { tick: 101, connectedPlayers: 2, countdownMs: 0 };
 
     expect(advanceMatchPhase(at("COUNTDOWN", 100), zeroCountdown).phase).toBe("RUNNING");
     // …and the default is still the real three seconds when nothing is passed.
-    expect(advanceMatchPhase(at("COUNTDOWN", 100), { tick: 101, connectedPlayers: 2, playersToStart: 2 }).phase).toBe(
-      "COUNTDOWN",
-    );
+    expect(advanceMatchPhase(at("COUNTDOWN", 100), { tick: 101, connectedPlayers: 2 }).phase).toBe("COUNTDOWN");
   });
 
   it("is a pure function of its inputs — the same state and Tick always give the same answer", () => {
@@ -99,7 +110,7 @@ describe("advanceMatchPhase", () => {
 describe("advanceMatchPhase — ending a Round (M4 ticket 05)", () => {
   const running = at("RUNNING", 200);
   const ending = (extra: Partial<MatchPhaseInputs>) =>
-    advanceMatchPhase(running, { tick: 300, connectedPlayers: 2, playersToStart: 2, ...extra });
+    advanceMatchPhase(running, { tick: 300, connectedPlayers: 2, ...extra });
 
   it("ends the Round the moment every connected Character has Qualified", () => {
     const next = ending({ allQualified: true });
@@ -124,29 +135,29 @@ describe("advanceMatchPhase — ending a Round (M4 ticket 05)", () => {
   it("moves on to the Results after the round-end beat", () => {
     const roundEnd = at("ROUND_END", 300);
 
-    expect(advanceMatchPhase(roundEnd, { tick: 300 + ROUND_END_TICKS - 1, connectedPlayers: 2, playersToStart: 2 }).phase).toBe(
+    expect(advanceMatchPhase(roundEnd, { tick: 300 + ROUND_END_TICKS - 1, connectedPlayers: 2 }).phase).toBe(
       "ROUND_END",
     );
-    const next = advanceMatchPhase(roundEnd, { tick: 300 + ROUND_END_TICKS, connectedPlayers: 2, playersToStart: 2 });
+    const next = advanceMatchPhase(roundEnd, { tick: 300 + ROUND_END_TICKS, connectedPlayers: 2 });
     expect(next.phase).toBe("RESULTS");
     expect(next.phaseStartTick).toBe(300 + ROUND_END_TICKS);
   });
 
   it("honours a configured round-end beat, so a test needn't sit through it", () => {
     expect(
-      advanceMatchPhase(at("ROUND_END", 300), { tick: 301, connectedPlayers: 2, playersToStart: 2, roundEndMs: 0 }).phase,
+      advanceMatchPhase(at("ROUND_END", 300), { tick: 301, connectedPlayers: 2, roundEndMs: 0 }).phase,
     ).toBe("RESULTS");
   });
 
   it("stays on the Results — returning to the Lobby for another Round is M4 ticket 08", () => {
     const results = at("RESULTS", 400);
 
-    expect(advanceMatchPhase(results, { tick: 99_999, connectedPlayers: 2, playersToStart: 2 })).toEqual(results);
+    expect(advanceMatchPhase(results, { tick: 99_999, connectedPlayers: 2 })).toEqual(results);
   });
 
   it("still returns to the Lobby once everyone has gone, from any phase", () => {
     for (const phase of ["ROUND_END", "RESULTS"] as const) {
-      expect(advanceMatchPhase(at(phase, 300), { tick: 400, connectedPlayers: 0, playersToStart: 2 }).phase).toBe("LOBBY");
+      expect(advanceMatchPhase(at(phase, 300), { tick: 400, connectedPlayers: 0 }).phase).toBe("LOBBY");
     }
   });
 
@@ -154,7 +165,6 @@ describe("advanceMatchPhase — ending a Round (M4 ticket 05)", () => {
     const lobby = advanceMatchPhase(at("LOBBY"), {
       tick: 300,
       connectedPlayers: 1,
-      playersToStart: 2,
       allQualified: true,
       timeExpired: true,
     });

@@ -118,6 +118,43 @@ describe("GameCanvas", () => {
     expect(stop).not.toHaveBeenCalled();
   });
 
+  it("shows the Lobby overlay once the game reports it's in LOBBY, and hides it once the phase moves on", async () => {
+    // This Player is the host — LobbyScreen's own effect fetches
+    // track-service's Track list on mount, which needs stubbing here too.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: () => Promise.resolve([]) }));
+    let reportLobby!: (state: unknown) => void;
+    startGame.mockImplementationOnce(async (config: { onLobbyState?: (state: unknown) => void }) => {
+      reportLobby = config.onLobbyState!;
+      return { stop: vi.fn(), setNickname: vi.fn(), setReady: vi.fn(), selectTrack: vi.fn(), start: vi.fn() };
+    });
+
+    renderAtPlayRoute();
+    await waitFor(() => expect(startGame).toHaveBeenCalledTimes(1));
+
+    reportLobby({
+      myId: "me",
+      phase: "LOBBY",
+      hostId: "me",
+      players: [{ id: "me", nickname: "Player", ready: false, joinOrder: 0 }],
+      trackId: "t1",
+      trackRevision: 1,
+      timeLimitMs: 180_000,
+    });
+    expect(await screen.findByText("Lobby")).toBeInTheDocument();
+
+    reportLobby({
+      myId: "me",
+      phase: "COUNTDOWN",
+      hostId: "me",
+      players: [{ id: "me", nickname: "Player", ready: true, joinOrder: 0 }],
+      trackId: "t1",
+      trackRevision: 1,
+      timeLimitMs: 180_000,
+    });
+    await waitFor(() => expect(screen.queryByText("Lobby")).not.toBeInTheDocument());
+    vi.unstubAllGlobals();
+  });
+
   it("tears down the old game and boots a new one when trackId changes", async () => {
     const stopFirst = vi.fn();
     const stopSecond = vi.fn();

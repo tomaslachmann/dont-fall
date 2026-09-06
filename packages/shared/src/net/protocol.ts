@@ -1,5 +1,6 @@
 import type { Vec3 } from "../math/vec3.js";
 import type { SimInputs } from "../simulation/SimInputs.js";
+import type { LobbyPlayer } from "../match/Lobby.js";
 import type { MatchPhase } from "../match/MatchPhase.js";
 import type { SimState } from "../state/SimState.js";
 
@@ -108,6 +109,25 @@ export interface SnapshotMessage {
    * when the Round ends, which both sides can already see (`isEliminated`).
    */
   dnf: string[];
+  /**
+   * The Track this server currently has loaded, and who's connected to the
+   * Lobby around it (M4 ticket 07, ADR 0040). Sent every snapshot — not just
+   * once at `welcome` — because both can change live during LOBBY: the host
+   * picking a different Track (`trackId`/`trackRevision`), or anyone's
+   * nickname/ready state changing. `hostId` is recomputed by the server on
+   * every read (see `resolveHostId`), never stored, so it reassigns itself
+   * the instant the original host disconnects.
+   *
+   * `timeLeftMs` above already *is* this Track's Time Limit while still in
+   * LOBBY (ADR 0038: "the Lobby only ever reads" it) — there is deliberately
+   * no second field repeating that value.
+   */
+  trackId: string;
+  trackRevision: number;
+  lobby: {
+    hostId: string | undefined;
+    players: LobbyPlayer[];
+  };
 }
 
 /** Server → client, reply to a {@link PingMessage} (time sync, ADR 0019). */
@@ -149,7 +169,61 @@ export interface ReclaimMessage {
   sessionToken: string;
 }
 
-export type ClientMessage = InputMessage | PingMessage | ReclaimMessage;
+/**
+ * Client → server: sets this connection's own nickname (M4 ticket 07). Any
+ * connected Player may send this at any time — a nickname is cosmetic, never
+ * a start gate. The server trims/caps it ({@link NICKNAME_MAX_LENGTH}); an
+ * empty result is left as whatever it was.
+ */
+export interface SetNicknameMessage {
+  type: "setNickname";
+  nickname: string;
+}
+
+/**
+ * Client → server: sets this connection's own Ready state (M4 ticket 07,
+ * ADR 0040). Only meaningful in LOBBY; the server ignores it in every other
+ * phase — there is no "getting un-ready" mid-Round.
+ */
+export interface SetReadyMessage {
+  type: "setReady";
+  ready: boolean;
+}
+
+/**
+ * Client → server: the host picks a different Track for this Lobby (M4
+ * ticket 07). Host-only and LOBBY-only, both enforced by the server, not by
+ * which client happens to send it — the same reload machinery Track
+ * Builder's own Playtest `?track=` already uses, just triggered from inside
+ * an already-open Lobby instead of at connection time.
+ */
+export interface SelectTrackMessage {
+  type: "selectTrack";
+  trackId: string;
+}
+
+/**
+ * Client → server: the host asks to start the Round (M4 ticket 07, ADR
+ * 0040). The server is the only thing that decides whether this actually
+ * moves the Match out of LOBBY — enough Players connected and everyone
+ * Ready — never the sender's own belief that it's time; a non-host or a
+ * premature `start` is simply ignored.
+ */
+export interface StartMessage {
+  type: "start";
+}
+
+export type ClientMessage =
+  | InputMessage
+  | PingMessage
+  | ReclaimMessage
+  | SetNicknameMessage
+  | SetReadyMessage
+  | SelectTrackMessage
+  | StartMessage;
+
+/** A nickname longer than this is truncated (M4 ticket 07) — long enough for a real name, short enough not to blow out a Lobby row. */
+export const NICKNAME_MAX_LENGTH = 24;
 
 /** Default port the server listens on and the client connects to when nothing else is configured. */
 export const DEFAULT_SERVER_PORT = 8080;
