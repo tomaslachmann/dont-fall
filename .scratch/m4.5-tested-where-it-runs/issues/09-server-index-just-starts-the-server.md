@@ -11,18 +11,34 @@ entry point should start the server. This splits it by concern.
 
 ## The split
 
+Folders by kind, the same principle ticket 08 applies to the client — seven modules loose in
+`src/` would only be a smaller version of the problem.
+
 ```
-index.ts        the entry point: read config, call startServer, the isMain guard. Nothing else
-matchServer.ts  startServer — composition and the WebSocket server's lifecycle
-trackSource.ts  fetchTrack, FetchedTrack, and the reload path selectTrack and `?track=` share
-inputRouter.ts  the per-client input queue: dedupe by tick, lastApplied, the lastInputTick ack
-matchLoop.ts    the tick loop — phase advancement, the sim step, snapshot build and broadcast
-lobby.ts        the Lobby handlers: setNickname, setReady, selectTrack, start
-wire.ts         send, trySend, truncateForCloseReason
+src/
+  index.ts              the entry point: read config, call startServer, the isMain guard. Nothing else
+  matchServer.ts        the composition root — startServer wires the three concerns below together
+                        and owns the WebSocket server's lifecycle
+  match/
+    matchLoop.ts        the tick loop: phase advancement, the sim step, snapshot build and broadcast
+    lobby.ts            the Lobby handlers: setNickname, setReady, selectTrack, start
+  net/
+    inputRouter.ts      the per-client input queue: dedupe by tick, lastApplied, the lastInputTick ack
+    wire.ts             send, trySend, truncateForCloseReason
+  track/
+    trackSource.ts      fetchTrack, FetchedTrack, and the reload path selectTrack and `?track=` share
 ```
 
+`matchServer.ts` sits above the folders rather than inside `match/`: it composes all three, and a
+composition root that lives inside one of the things it composes invites the other two to reach
+through it. `net/` deliberately matches the client's own `net/` — both sides of the same wire.
+
+Tests move next to what they test. `index.test.ts` is the black-box suite over real sockets and
+belongs with `matchServer.ts`; `tickAddressedInput.integration.test.ts` belongs with `net/`.
+
 - [ ] `index.ts` does nothing but start the server
-- [ ] Each module above owns one concern, and nothing imports another to reach through it
+- [ ] The folders above exist and each module owns one concern; nothing imports a module to reach
+      through it to another
 - [ ] Pure moves — `git mv`-equivalent plus imports. **No logic changes, no renamed exports, no
       signature changes.** A diff with behaviour in it is the wrong diff
 - [ ] `startServer`'s public shape is untouched: the tests construct it exactly as they do now
