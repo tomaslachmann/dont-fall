@@ -118,7 +118,9 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 | **M3.6** | Ground and the movement model — ramps, `Sliding`, persistent-velocity movement, Surface grip. |
 | **M3.7** | Impulses and air — speed/slow pads, bounce and launch pads, updraft Volumes. |
 | **M4** | Match structure — Rounds, Qualification, Time Limit. First Screens: React shell + lobby/results (ADR 0008). |
-| later | Power-ups, Grab, Betting/Spectator, level themes, the Skyfall final. |
+| **M4.5** | Tested where it runs — the client's prediction loop gains a seam so its regression suite stops testing a copy. |
+| **M5** | Two Round types on one engine — a Round type becomes shared data (ADR 0041/0042/0043), proven by building Survival. |
+| later | Multi-Round advancement, collapsing terrain, Power-ups, Grab, Betting/Spectator, level themes, the Skyfall final. |
 
 ## Working agreements
 
