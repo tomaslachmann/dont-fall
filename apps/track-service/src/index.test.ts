@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_TIME_LIMIT_MS,
+  M1_TRACK,
   MAX_TIME_LIMIT_MS,
   MIN_TIME_LIMIT_MS,
   type Track,
@@ -363,5 +364,66 @@ describe("Time Limit on publish (M4 ticket 03, ADR 0038)", () => {
 
     expect((await publish(service.port, { track: SAMPLE_TRACK, timeLimitMs: MIN_TIME_LIMIT_MS })).status).toBe(201);
     expect((await publish(service.port, { track: SAMPLE_TRACK, timeLimitMs: MAX_TIME_LIMIT_MS })).status).toBe(201);
+  });
+});
+
+describe("publish validation — a Segment must actually be a Segment", () => {
+  const publish = async (port: number, track: unknown) =>
+    fetch(`http://localhost:${port}/tracks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ track }),
+    });
+
+  it("rejects a null position rather than storing a Track that cannot be resolved", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    // `typeof null === "object"`, so a null position used to pass the shape
+    // check, get stored in an immutable Revision (ADR 0032), and only surface
+    // later as a NaN quaternion inside `segmentOrientation`.
+    const res = await publish(service.port, [{ moduleId: "start", position: null, rotation: 0 }]);
+
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a missing rotation — an absent one reaches segmentOrientation as undefined", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    expect((await publish(service.port, [{ moduleId: "start", position: { x: 0, y: 0, z: 0 } }])).status).toBe(400);
+  });
+
+  it("rejects non-numeric coordinates", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    expect(
+      (await publish(service.port, [{ moduleId: "start", position: { x: "0", y: 0, z: 0 }, rotation: 0 }])).status,
+    ).toBe(400);
+    expect(
+      (await publish(service.port, [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: "0" }])).status,
+    ).toBe(400);
+  });
+
+  it("rejects a non-finite coordinate — NaN survives JSON as null, Infinity does not survive at all", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    expect(
+      (await publish(service.port, [{ moduleId: "start", position: { x: 0, y: null, z: 0 }, rotation: 0 }])).status,
+    ).toBe(400);
+  });
+
+  it("rejects a bad optional pitch/roll while still accepting their absence", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const at = (extra: Record<string, unknown>) => [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0, ...extra }];
+
+    expect((await publish(service.port, at({ pitch: "up" }))).status).toBe(400);
+    expect((await publish(service.port, at({}))).status).toBe(201); // absent is valid (ADR 0034)
+    expect((await publish(service.port, at({ pitch: 0.5, roll: -0.5 }))).status).toBe(201);
+  });
+
+  it("still accepts every Track shape published before this check existed", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    expect((await publish(service.port, SAMPLE_TRACK)).status).toBe(201);
+    expect((await publish(service.port, M1_TRACK)).status).toBe(201);
   });
 });
