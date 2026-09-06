@@ -12,7 +12,7 @@ import {
 } from "../tuning.js";
 import { DEFAULT_SURFACE, surfaceConfig, type SurfaceId } from "../track/Surface.js";
 import { CharacterController, type CollisionListener } from "./CharacterController.js";
-import type { CharacterMotionState } from "./CharacterStateMachine.js";
+import { isDownMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import type { FinishZone } from "./FinishZone.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
@@ -23,9 +23,6 @@ import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
 import type { SpeedPadConfig } from "./SpeedPad.js";
 import { Spinner, type SpinnerConfig } from "./Spinner.js";
 import type { VolumeConfig } from "./Volume.js";
-
-/** Whether `state` is a down state — a Character in either never receives a speed/launch pad's one-shot effect (code review, M3.7 ticket 01). */
-const isDownState = (state: CharacterMotionState): boolean => state === "Ragdoll" || state === "GettingUp";
 
 /**
  * ID of the Character `SimulationConfig.spawn` auto-creates — the only
@@ -698,7 +695,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    */
   private updateSpeedPad(id: string): void {
     const character = this.character(id);
-    if (isDownState(character.motionState)) return;
+    if (isDownMotionState(character.motionState)) return;
     const progress = this.progress.get(id)!;
     const touched = this.findTriggerIndex(this.speedPads, character.position);
     if (touched !== undefined && touched !== progress.touchedSpeedPadIndex) {
@@ -717,7 +714,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    */
   private updateLaunchPad(id: string): void {
     const character = this.character(id);
-    if (isDownState(character.motionState)) return;
+    if (isDownMotionState(character.motionState)) return;
     const progress = this.progress.get(id)!;
     const touched = this.findTriggerIndex(this.launchPads, character.position);
     if (touched !== undefined && touched !== progress.touchedLaunchPadIndex) {

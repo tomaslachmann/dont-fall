@@ -6,6 +6,7 @@ import {
   GETUP_MS,
   RAGDOLL_BONES,
   IDENTITY_QUAT,
+  isDownMotionState,
   spinnerAngleAt,
   yawQuat,
   type CharacterMotionState,
@@ -378,7 +379,7 @@ export const createStage = ({
       // GettingUp frame entirely) — either way the model needs the same
       // hand-back to locomotion, or the Death clip is left stuck mid-pose
       // with no `activeAction` to fade it out from (ticket 08 follow-up).
-      const wasDown = visualState === "Ragdoll" || visualState === "GettingUp";
+      const wasDown = isDownMotionState(visualState);
       const leavingDown = !fallingRagdoll && !gettingUp && wasDown;
       visualState = motionState;
 
@@ -441,7 +442,7 @@ export const createStage = ({
           scene.add(mesh);
           remoteMeshes.set(id, mesh);
         }
-        const down = rc.motionState === "Ragdoll" || rc.motionState === "GettingUp";
+        const down = isDownMotionState(rc.motionState);
         // `position` is the capsule centre while upright and the ragdoll pelvis
         // (near the ground) while down — so tipping the capsule flat and
         // dropping it to that lower point reads correctly as a floored body.
@@ -495,7 +496,7 @@ export const createStage = ({
 
       // Ragdoll (forward Death) and GettingUp (reverse Death) are both driven
       // from applyRenderState and fully own the model's pose while they hold.
-      if (visualState === "Ragdoll" || visualState === "GettingUp") {
+      if (isDownMotionState(visualState)) {
         mixer.update(deltaSeconds);
         return;
       }

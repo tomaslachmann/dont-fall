@@ -1,10 +1,9 @@
-import { RECONCILE_POSITION_EPSILON, type CharacterSnapshot } from "@dont-fall/shared";
+import type { CharacterSnapshot } from "../state/SimState.js";
+import { RECONCILE_POSITION_EPSILON } from "../tuning.js";
+import { isDownMotionState } from "./CharacterStateMachine.js";
 
 /** The slice of a Character this gate compares — the server's report and our own prediction. */
 type Compared = Pick<CharacterSnapshot, "motionState" | "finishTick">;
-
-const isDown = (state: CharacterSnapshot["motionState"]): boolean =>
-  state === "Ragdoll" || state === "GettingUp";
 
 /**
  * Whether the server's report for our own Character disagrees with what we
@@ -33,8 +32,8 @@ const isDown = (state: CharacterSnapshot["motionState"]): boolean =>
  * offset is what keeps that invisible.
  */
 export const needsCorrection = (server: Compared, local: Compared, positionError: number): boolean =>
-  isDown(server.motionState) || // authority says down — always sync (fresh knock, phase change, or pelvis tracking)
-  isDown(local.motionState) || // we think we're down but the authority doesn't — only the server ends a knockdown
+  isDownMotionState(server.motionState) || // authority says down — always sync (fresh knock, phase change, or pelvis tracking)
+  isDownMotionState(local.motionState) || // we think we're down but the authority doesn't — only the server ends a knockdown
   server.motionState !== local.motionState || // e.g. a Stagger we missed / are holding too long
   server.finishTick !== local.finishTick || // only the server decides who Qualified
   positionError > RECONCILE_POSITION_EPSILON;

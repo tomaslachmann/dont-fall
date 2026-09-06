@@ -28,7 +28,7 @@ import {
 } from "../tuning.js";
 import type { ReconcileBase, RagdollCause } from "../state/SimState.js";
 import type { SurfaceBounceConfig } from "../track/Surface.js";
-import { CharacterStateMachine, type CharacterMotionState } from "./CharacterStateMachine.js";
+import { CharacterStateMachine, isDownMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
 import { CHARACTER_GROUPS, GROUP_CHARACTER } from "./collisionGroups.js";
 import {
   accelerateVelocity,
@@ -41,8 +41,6 @@ import {
 import { Ragdoll } from "./Ragdoll.js";
 import { blendGettingUpBones, type BoneSnapshot } from "./ragdollSkeleton.js";
 import type { SimInputs } from "./SimInputs.js";
-
-const isDown = (state: CharacterMotionState): boolean => state === "Ragdoll" || state === "GettingUp";
 
 /** A ground normal's Y component below this is steeper than {@link WALKABLE_SLOPE_MAX_ANGLE} — the walkable/Sliding boundary, ticket 03. */
 const WALKABLE_NORMAL_MIN_Y = Math.cos(WALKABLE_SLOPE_MAX_ANGLE);
@@ -1023,11 +1021,11 @@ export class CharacterController {
    *   write, only the decay curve.
    */
   reconcileTo(base: ReconcileBase): void {
-    const serverDown = isDown(base.motionState);
+    const serverDown = isDownMotionState(base.motionState);
 
     if (serverDown) {
       if (this.machine.state !== base.motionState) {
-        if (!isDown(this.machine.state)) {
+        if (!isDownMotionState(this.machine.state)) {
           // A knockdown the client never predicted at all (or already wrongly
           // recovered from — which can't happen once `authoritative` is
           // false, but stays correct either way): flop now, at the server's
@@ -1046,7 +1044,7 @@ export class CharacterController {
       return;
     }
 
-    if (isDown(this.machine.state)) this.returnToControlled();
+    if (isDownMotionState(this.machine.state)) this.returnToControlled();
     this.body.setTranslation({ ...base.position }, false);
     this.velocity = { ...base.velocity };
     this.grounded = base.grounded;

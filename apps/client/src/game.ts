@@ -19,10 +19,12 @@ import {
   buildResults,
   decayPositionOffset,
   initPhysics,
+  isDownMotionState,
   isEliminated,
   interpolateState,
   lengthVec3,
   movementDirection,
+  needsCorrection,
   phaseLocksInput,
   resolveTrack,
   subVec3,
@@ -48,7 +50,6 @@ import { listen } from "./listeners.js";
 import { createStage } from "./scene.js";
 import { NetMetrics } from "./netMetrics.js";
 import { PropPredictionController, graceTicksForRtt } from "./propPrediction.js";
-import { needsCorrection } from "./reconcileGate.js";
 import { matchBanner } from "./matchBanner.js";
 import { qualificationPlacement } from "./qualification.js";
 import { formatRoundClock } from "./roundTimer.js";
@@ -348,8 +349,6 @@ const boot = async (
   let framesSinceLeadAdjust = LEAD_ADJUST_FRAMES;
 
   const distance = (a: Vec3, b: Vec3): number => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-  const isDown = (state: CharacterSnapshot["motionState"]): boolean =>
-    state === "Ragdoll" || state === "GettingUp";
 
   /**
    * Reconcile the local prediction against the server's authoritative snapshot
@@ -379,8 +378,8 @@ const boot = async (
     inputBuffer.splice(0, inputBuffer.length, ...unacked);
 
     const localChar = sim.snapshot().characters[id]!;
-    const serverDown = isDown(server.motionState);
-    const localDown = isDown(localChar.motionState);
+    const serverDown = isDownMotionState(server.motionState);
+    const localDown = isDownMotionState(localChar.motionState);
 
     // Prediction-tick guard (ADR 0023): the server can't have seen a knockdown
     // it hasn't yet processed the input for. A "not down" report for an input
@@ -724,7 +723,7 @@ const boot = async (
     if (serverRender) {
       const others: Record<string, Vec3> = {};
       for (const [id, character] of Object.entries(serverRender.characters)) {
-        const down = character.motionState === "Ragdoll" || character.motionState === "GettingUp";
+        const down = isDownMotionState(character.motionState);
         // A player who is down gets no mirror at all — you run through a
         // floored body rather than snag on a half-buried pelvis-height
         // capsule (the M2 simplification, made explicit).
@@ -781,7 +780,7 @@ const boot = async (
       const predicted = localSim.snapshot().characters[myId]!;
       positionHistory.set(predictionTick, predicted.position);
       // Track the tick we first predicted going down, for the reconcile guard.
-      predictedDownAtTick = isDown(predicted.motionState)
+      predictedDownAtTick = isDownMotionState(predicted.motionState)
         ? (predictedDownAtTick ?? predictionTick)
         : null;
 
@@ -837,7 +836,7 @@ const boot = async (
     // a real reported glitch (an off-centre wall hit settles differently on
     // each side, then pops straight when `Controlled` resumes). There is
     // exactly one down-state position/pose on screen, and it's the server's.
-    const localDown = c.motionState === "Ragdoll" || c.motionState === "GettingUp";
+    const localDown = isDownMotionState(c.motionState);
     const serverOwnCharacter = serverRender?.characters[myId];
     const renderCharacter =
       localDown && serverOwnCharacter && serverOwnCharacter.bones.length > 0

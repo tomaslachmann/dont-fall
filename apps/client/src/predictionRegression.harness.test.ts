@@ -31,6 +31,7 @@ import {
   RapierSimulation,
   TICK_MS,
   decayPositionOffset,
+  isDownMotionState,
   type CharacterSnapshot,
   type PropSnapshot,
   type SimInputs,
@@ -336,10 +337,6 @@ class Harness {
   }
 
   // ---- client ---------------------------------------------------------------
-  private isDown(s: CharacterSnapshot["motionState"]): boolean {
-    return s === "Ragdoll" || s === "GettingUp";
-  }
-
   private reconcile(server: CharacterSnapshot, serverTick: number, serverProps: readonly PropSnapshot[]): void {
     const acked = server.lastInputTick;
     for (const t of [...this.positionHistory.keys()]) if (t < acked) this.positionHistory.delete(t);
@@ -347,8 +344,8 @@ class Harness {
     this.inputBuffer.splice(0, this.inputBuffer.length, ...unacked);
 
     const localChar = this.client.snapshot().characters[this.myId]!;
-    const serverDown = this.isDown(server.motionState);
-    const localDown = this.isDown(localChar.motionState);
+    const serverDown = isDownMotionState(server.motionState);
+    const localDown = isDownMotionState(localChar.motionState);
     if (localDown && !serverDown && this.predictedDownAtTick !== null && acked < this.predictedDownAtTick) return;
 
     const predictedAtAck = this.positionHistory.get(acked);
@@ -356,18 +353,30 @@ class Harness {
       Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
     const positionError = predictedAtAck ? dist(predictedAtAck, server.position) : Infinity;
     if (predictedAtAck && !serverDown && !localDown) this.observedErrors.push(positionError);
+    // M4.5 ticket 01: the real `needsCorrection` gate also forces a
+    // correction on a Qualification disagreement (M4 ticket 02, ADR 0039) —
+    // added here as its own reason rather than folded into `needsCorrection`
+    // itself, since this harness's `reconcileEpsilon`/`hardSnapM` are a
+    // deliberate research knob (comparing the retired 0.2 "correct or
+    // ignore" threshold against the real `RECONCILE_POSITION_EPSILON`, per
+    // `docs/research/m2-prediction-reconciliation-loop.md` §5d) that the
+    // shared gate doesn't parameterize and never should. This harness's own
+    // scenarios never exercise a Finish Zone, so the branch is exercised by
+    // `reconcileGate.test.ts` (`packages/shared`) rather than here.
     const reason =
       serverDown || localDown
         ? "down"
         : server.motionState !== localChar.motionState
           ? `motion:${localChar.motionState}->${server.motionState}`
-          : !predictedAtAck
-            ? "no-history-for-acked"
-            : positionError > this.o.hardSnapM
-              ? "hard-snap"
-              : positionError > this.o.reconcileEpsilon
-                ? "pos-error"
-                : "";
+          : server.finishTick !== localChar.finishTick
+            ? "qualification"
+            : !predictedAtAck
+              ? "no-history-for-acked"
+              : positionError > this.o.hardSnapM
+                ? "hard-snap"
+                : positionError > this.o.reconcileEpsilon
+                  ? "pos-error"
+                  : "";
     const needsCorrection = reason !== "";
     if (!needsCorrection) return;
 
@@ -540,7 +549,7 @@ class Harness {
         this.client.tick({ [this.myId]: input });
         const predicted = this.client.snapshot().characters[this.myId]!;
         this.positionHistory.set(this.predictionTick, { ...predicted.position });
-        this.predictedDownAtTick = this.isDown(predicted.motionState)
+        this.predictedDownAtTick = isDownMotionState(predicted.motionState)
           ? (this.predictedDownAtTick ?? this.predictionTick)
           : null;
         n += 1;
@@ -596,7 +605,7 @@ class Harness {
       this.client.tick({ [this.myId]: input });
       const predicted = this.client.snapshot().characters[this.myId]!;
       this.positionHistory.set(this.predictionTick, { ...predicted.position });
-      this.predictedDownAtTick = this.isDown(predicted.motionState)
+      this.predictedDownAtTick = isDownMotionState(predicted.motionState)
         ? (this.predictedDownAtTick ?? this.predictionTick)
         : null;
       this.predictionAccumulatorMs -= TICK_MS;
@@ -640,7 +649,7 @@ class Harness {
     const localAlpha = Math.max(0, Math.min(1, this.renderAlpha));
     const render = interpolateState(previous, snapshot, localAlpha);
     const c = snapshot.characters[this.myId]!;
-    const localDown = this.isDown(c.motionState);
+    const localDown = isDownMotionState(c.motionState);
     const serverOwn = serverRender?.characters[this.myId];
 
     // 5e: decay the capsule error offset, and never carry it across a motionState change.

@@ -22,7 +22,9 @@ import {
 } from "../tuning.js";
 import { DEFAULT_SURFACE, SURFACES } from "../track/Surface.js";
 import type { Checkpoint } from "./Checkpoint.js";
+import { isDownMotionState } from "./CharacterStateMachine.js";
 import { DEFAULT_CHARACTER_ID, RapierSimulation, initPhysics } from "./RapierSimulation.js";
+import { needsCorrection } from "./reconcileGate.js";
 import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
 import type { VolumeConfig } from "./Volume.js";
 
@@ -1786,7 +1788,6 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
   const WALL: Box = { center: { x: 3, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 5 } };
   const EAST = input({ moveDirection: { x: 1, y: 0, z: 0 } });
   const DASH_EAST = input({ moveDirection: { x: 1, y: 0, z: 0 }, dashHeld: true });
-  const isDownState = (m: string) => m === "Ragdoll" || m === "GettingUp";
   const dist = (a: { x: number; y: number; z: number }, b: typeof a) =>
     Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 
@@ -1843,17 +1844,11 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
 
       // ---- main.ts's reconcile(), post-ADR-0015 ----
       const c = client.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-      const serverDown = isDownState(s.motionState);
-      const localDown = isDownState(c.motionState);
+      const serverDown = isDownMotionState(s.motionState);
       const predictedAtAck = positionHistory.get(acked);
       const positionError = predictedAtAck ? dist(predictedAtAck, s.position) : Infinity;
-      const needsCorrection =
-        serverDown || // authority says down — always sync (ADR 0015)
-        localDown || // we think we're down but the authority doesn't — always resync
-        s.motionState !== c.motionState ||
-        positionError > 0.2;
 
-      if (needsCorrection) {
+      if (needsCorrection(s, c, positionError)) {
         client.reconcileCharacter(DEFAULT_CHARACTER_ID, s);
         if (!serverDown) {
           const unacked = clientInputs.filter((e) => e.tick > acked);
