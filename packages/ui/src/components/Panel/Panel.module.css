@@ -1,0 +1,21 @@
+/* Panels as chunky furniture, not flat SaaS cards — a hard offset shadow
+   instead of a soft blurred one. See design-system.md §1.6a. */
+.panel {
+  background: var(--df-color-surface-1);
+  border: var(--df-border-width-emphasis) solid var(--df-color-border-emphasis);
+  border-radius: var(--df-radius-card);
+  box-shadow: 6px 6px 0 0 var(--df-color-shadow-neutral);
+  padding: var(--df-space-5);
+}
+
+/* A colored top edge tied to something the panel already means — not
+   decoration for its own sake. See design-system.md §2 (Lobby panels). */
+.accentTop {
+  border-top-width: var(--df-border-width-chunk);
+}
+.accentPresence {
+  border-top-color: var(--df-color-checkpoint);
+}
+.accentGo {
+  border-top-color: var(--df-color-go);
+}

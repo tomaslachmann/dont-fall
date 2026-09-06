@@ -7,17 +7,31 @@ import {
   GRACE_WINDOW_MS,
   IDLE_INPUTS,
   MODULE_LIBRARY,
+  NICKNAME_MAX_LENGTH,
   RapierSimulation,
   SNAPSHOT_HZ,
   TICK_MS,
+  DEFAULT_TIME_LIMIT_MS,
+  COUNTDOWN_MS,
+  ROUND_END_MS,
+  allQualified,
+  allReady,
+  resolveHostId,
+  PLAYERS_TO_START,
+  advanceMatchPhase,
+  countdownMsLeft,
+  phaseLocksInput,
   TICK_RATE_HZ,
   TRACK_FETCH_ATTEMPT_TIMEOUT_MS,
   TRACK_FETCH_MAX_WAIT_MS,
   TRACK_FETCH_RETRY_DELAY_MS,
   initPhysics,
   resolveTrack,
+  roundTimeLeftMs,
   trackSpawn,
   type ClientMessage,
+  type LobbyPlayer,
+  type MatchState,
   type ServerMessage,
   type SimInputs,
   type Track,
@@ -28,6 +42,8 @@ export interface FetchedTrack {
   id: string;
   revision: number;
   track: Track;
+  /** The Time Limit published with this Revision (M4 ticket 03, ADR 0038). */
+  timeLimitMs: number;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -73,9 +89,17 @@ const fetchTrack = async (
     try {
       const res = await fetch(`${trackServiceUrl}${path}`, { signal: AbortSignal.timeout(attemptTimeoutMs) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = (await res.json()) as { id: string; revision: number; track: Track };
+      const body = (await res.json()) as { id: string; revision: number; track: Track; timeLimitMs?: number };
       if (attempt > 1) console.log(`DON'T FALL: track-service reachable after ${attempt} attempts`);
-      return { id: body.id, revision: body.revision, track: body.track };
+      return {
+        id: body.id,
+        revision: body.revision,
+        track: body.track,
+        // Defaulted rather than required, so a track-service that predates
+        // the column (ADR 0038's own backfill hasn't run yet) still yields a
+        // playable Round rather than a Match server that won't start.
+        timeLimitMs: body.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS,
+      };
     } catch (err) {
       lastError = err;
       console.warn(`DON'T FALL: track-service fetch attempt ${attempt} failed, retrying: ${(err as Error).message}`);
@@ -126,6 +150,32 @@ export interface StartServerConfig {
   trackFetchMaxWaitMs?: number;
   trackFetchRetryDelayMs?: number;
   trackFetchAttemptTimeoutMs?: number;
+  /**
+   * How many connected Players a Round waits for before its Countdown starts
+   * (M4 ticket 04, ADR 0040). Defaults to `PLAYERS_TO_START` env, then
+   * {@link PLAYERS_TO_START}.
+   *
+   * Configurable so a developer working alone can set it to 1: until ticket
+   * 07's Lobby there is nothing in the game able to press start, so a
+   * single-browser Playtest would otherwise sit in LOBBY forever.
+   */
+  playersToStart?: number;
+  /**
+   * How long the Countdown holds before a Round is released (M4 ticket 04).
+   * Defaults to {@link COUNTDOWN_MS}. A test-only knob, like the track-fetch
+   * timings above — it lets a test put this server into a running Round
+   * without waiting out three real seconds.
+   */
+  countdownMs?: number;
+  /** How long ROUND_END holds before RESULTS (M4 ticket 05). Defaults to {@link ROUND_END_MS}. Test-only, like `countdownMs`. */
+  roundEndMs?: number;
+  /**
+   * Ignore the Revision's authored Time Limit and use this instead. Test-only
+   * (ADR 0038 is explicit that the clock belongs to the Track): track-service
+   * enforces a floor of ten seconds on a published Revision, which is far too
+   * long to wait out in a test of what happens when the clock expires.
+   */
+  timeLimitMsOverride?: number;
 }
 
 /**
@@ -158,6 +208,17 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   // Ticket 12's test-only knobs, shared by every `fetchTrack` call this
   // server ever makes — the boot-time one below, and a Playtest connection's
   // live reload (further down) — so a test can bound both the same way.
+  const countdownMs = config.countdownMs ?? COUNTDOWN_MS;
+  const roundEndMs = config.roundEndMs ?? ROUND_END_MS;
+  /**
+   * This Round's Time Limit — the Revision's own (ADR 0038), unless a test
+   * has overridden it. A function, not a captured value: a Playtest reload
+   * replaces `fetched` with a different Track carrying a different clock.
+   */
+  const roundTimeLimitMs = (): number => config.timeLimitMsOverride ?? fetched.timeLimitMs;
+  const envPlayersToStart = Number(process.env.PLAYERS_TO_START);
+  const playersToStart =
+    config.playersToStart ?? (Number.isInteger(envPlayersToStart) && envPlayersToStart > 0 ? envPlayersToStart : PLAYERS_TO_START);
   const trackFetchRetryOptions = {
     ...(config.trackFetchMaxWaitMs !== undefined ? { maxWaitMs: config.trackFetchMaxWaitMs } : {}),
     ...(config.trackFetchRetryDelayMs !== undefined ? { retryDelayMs: config.trackFetchRetryDelayMs } : {}),
@@ -169,9 +230,67 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   let fetched = await fetchTrack(trackServiceUrl, trackFetchRetryOptions);
   const resolveForSimulation = (track: Track) => resolveTrack(MODULE_LIBRARY, track);
 
+  /**
+   * Every connected Player as the Lobby sees them (M4 ticket 07, ADR 0040) —
+   * nickname, Ready, and the join order that decides who the host is
+   * (`resolveHostId`, recomputed, never stored). Kept in step with `sockets`
+   * one-for-one: populated in the same place a connection registers itself,
+   * deleted in the same place `'close'` cleans everything else up.
+   */
+  const lobbyPlayers = new Map<string, LobbyPlayer>();
+
+  /**
+   * Builds a fresh simulation for `track` and re-seats every currently
+   * connected Player into it at a spawn for their own join order (M4 ticket
+   * 07) — the one thing the original boot-time-only reload (below, and
+   * Track Builder's own Playtest `?track=`) never had to do, since it only
+   * ever ran with `sockets.size === 0`. A Lobby's host picking a different
+   * Track can do this with others already sitting in it; nobody's
+   * Character should vanish just because the world under it changed.
+   */
+  const rebuildSimulationFor = (track: Track): RapierSimulation => {
+    const next = new RapierSimulation({ ...resolveForSimulation(track), withDefaultCharacter: false });
+    for (const [playerId, player] of lobbyPlayers) {
+      next.addCharacter(playerId, trackSpawn(track, player.joinOrder));
+    }
+    return next;
+  };
+
+  /**
+   * The one reset every "start a fresh Round on `track`" transition shares —
+   * the connect-time `?track=` reload, a live Lobby `selectTrack`, and M4
+   * ticket 08's return from Results: swap in a freshly-built simulation and
+   * restart the tick/phase bookkeeping it depends on.
+   *
+   * Built before the old world is discarded, and only swapped in once it
+   * exists (`rebuildSimulationFor` can throw — an unknown Module id in a
+   * Track published against a newer library) — disposing first would leave
+   * this server holding a freed Rapier world for every subsequent tick.
+   *
+   * `serverTick` restarts with the new simulation's own tick counter (ADR
+   * 0027), or every subsequent input — stamped from the client's *new*
+   * `state.tick`, always small — reads as permanently stale against the old,
+   * much larger `serverTick`: every queued input discarded before it can
+   * ever match `thisTick`, and the resulting `lastInputTick` ack (now way
+   * ahead of what the client sent) makes the client think everything it sent
+   * already got applied. No one can move, for the rest of this process's
+   * life, not just this Track.
+   *
+   * Callers still own anything specific to their own trigger — which Track
+   * `fetched` now points at, clearing `dnf`, resetting Ready.
+   */
+  const resetToFreshLobby = (track: Track): void => {
+    const nextSimulation = rebuildSimulationFor(track);
+    simulation.dispose();
+    simulation = nextSimulation;
+    serverTick = 0;
+    roundStartTick = 0;
+    match = { phase: "LOBBY", phaseStartTick: 0 };
+  };
+
   // The Match starts with no players; ticket 01's single-player default
   // Character is opted out here rather than added and immediately disposed.
-  let simulation = new RapierSimulation({ ...resolveForSimulation(fetched.track), withDefaultCharacter: false });
+  let simulation = rebuildSimulationFor(fetched.track);
 
   const sockets = new Map<string, WebSocket>();
   // The server's own monotonic tick — advances by exactly one every interval,
@@ -183,6 +302,66 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   // stepping physics every interval regardless, so its position for tick N
   // used to run ahead of what the client had actually predicted for N).
   let serverTick = 0;
+  /**
+   * The Tick this Round's clock counts from (M4 ticket 03, ADR 0038) — set by
+   * the COUNTDOWN → RUNNING transition and nothing else (M4 ticket 04), so a
+   * Round's Time Limit starts when the Round does rather than when the server
+   * did. Until then the clock reads its full authored value.
+   */
+  let roundStartTick = 0;
+  /**
+   * The authoritative Match phase (ADR 0040) — the server owns every
+   * transition and clients only render what rides the snapshot.
+   */
+  let match: MatchState = { phase: "LOBBY", phaseStartTick: 0 };
+  /**
+   * Players who dropped while the Round was being raced (M4 ticket 05) — a
+   * DNF, distinct from being Eliminated, which is simply "still here and
+   * never Qualified" and needs no record of its own. Their Characters are
+   * gone from the world, so this is the only thing left that remembers they
+   * were in this Round at all; the Results screen (ticket 08) is who reads it.
+   * Cleared when the next Round's Countdown begins.
+   */
+  let dnf: { id: string; nickname: string }[] = [];
+  /**
+   * Whether the host's `start` has been validated (enough Players connected,
+   * everyone Ready) and is waiting for the tick loop to hand it to
+   * `advanceMatchPhase` (M4 ticket 07). Validated once, at the message
+   * handler, not re-checked here — this is a one-shot edge, spent on the
+   * very next tick whether or not it actually caused a transition (e.g. if
+   * every Player left in the same instant it was set), so a stale request
+   * can never cause a spurious Countdown for whoever connects next.
+   */
+  let startRequested = false;
+  /**
+   * Bumped on every `selectTrack` request, so a stale one resolving after a
+   * newer one (ordinary network jitter — the host clicked twice in quick
+   * succession) can tell it's been superseded and applies nothing, instead
+   * of two requests racing to be the one that "wins" by finishing last.
+   */
+  let selectTrackSeq = 0;
+  /**
+   * Whether the host's request to return to the Lobby from Results has been
+   * validated and is waiting for the tick loop to hand it to
+   * `advanceMatchPhase` (M4 ticket 08) — same one-shot-edge contract as
+   * `startRequested`.
+   */
+  let returnToLobbyRequested = false;
+  /**
+   * Whether this Round has met either of its endings, as of the last Tick
+   * simulated (M4 ticket 05). Read one Tick later, by the phase decision at
+   * the top of the loop — a Tick's lag on ending a Round nobody can perceive,
+   * in exchange for the phase still being decided before anything is
+   * simulated, exactly as ticket 04 left it.
+   */
+  let roundEnding = { allQualified: false, timeExpired: false };
+  /**
+   * What the Round clock read when the Round ended (M4 ticket 05) — 0 if the
+   * clock ran out, whatever was left if everyone Qualified first. Held so the
+   * clock *stops* at round end instead of either springing back to the full
+   * Limit or carrying on counting into the Results.
+   */
+  let finalTimeLeftMs = 0;
   // A short per-client queue absorbs network jitter and reordering;
   // `lastApplied` fills a tick a client's packet hasn't arrived for yet, and
   // `lastInputTick` — the server tick actually simulated, whether a real input
@@ -247,43 +426,51 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
           // Everything from here to the end of this `if` is synchronous (no
           // `await`) — the event loop cannot run another 'connection' handler
           // in between, so this whole reload is effectively atomic with
-          // respect to the `sockets.size` check just above.
-          //
-          // Known, accepted limitation (code review): the discarded
-          // `simulation` below is never disposed — `RapierSimulation` has no
-          // `dispose()`/`free()` of its own, so its Rapier WASM `World`'s
-          // native memory leaks on every reload. Giving the whole class a
-          // real disposal lifecycle is a bigger, cross-cutting change this
-          // local-only dev tool doesn't warrant on its own; a developer
-          // hitting this in practice would need many edit→Playtest cycles in
-          // one long-lived server process before it mattered, and
-          // restarting the dev server (already the fix for the "occupied"
-          // refusal above) clears it.
+          // respect to the `sockets.size` check just above. `sockets.size
+          // === 0` was just checked above, so `resetToFreshLobby`'s own
+          // re-seating of every connected Player is a no-op here — this path
+          // only ever reloads with nobody in it yet.
           fetched = candidate;
-          simulation = new RapierSimulation({ ...resolveForSimulation(fetched.track), withDefaultCharacter: false });
-          // The new simulation's own tick counter restarts at 0 (ADR 0027) —
-          // `serverTick` must restart with it, or every subsequent input
-          // (stamped from the client's *new* `state.tick`, always small)
-          // reads as permanently stale against the old, much larger
-          // `serverTick`: every queued input gets discarded as stale before
-          // it can ever match `thisTick`, and the resulting `lastInputTick`
-          // ack — now way ahead of what the client sent — makes the client
-          // think everything it sent already got applied. No one can move,
-          // for the rest of this server process's life, not just this Track.
-          serverTick = 0;
+          resetToFreshLobby(candidate.track);
           console.log(`DON'T FALL: reloaded Track "${fetched.id}"@${fetched.revision} for a Playtest connection`);
         }
+      }
+
+      // No mid-Round join, and so no mid-Round *re*join (M4 ticket 05):
+      // dropping a fresh Character into a Race already in progress is neither
+      // fair to them nor to the people racing. Refused with a reason the
+      // client can show, the same way a Playtest Track clash is.
+      //
+      // Gated on someone actually being here, not on the phase alone: the
+      // return to LOBBY is decided by the tick loop, so between the last
+      // Player leaving and the next tick there is a window where the phase
+      // still reads RESULTS with nobody in it, and a Round with no Players in
+      // it is not a Round to protect.
+      //
+      // This does not (and should not) make a reload *during* a Round work:
+      // the server may not have processed the old socket's close yet, and
+      // even once it has, that is exactly the mid-Round rejoin this ticket
+      // exists to refuse. Whoever left is a DNF; they come back for the next
+      // Round.
+      if (sockets.size > 0 && match.phase !== "LOBBY" && match.phase !== "COUNTDOWN") {
+        socket.close(4002, truncateForCloseReason("a Round is already under way — wait for it to finish"));
+        return;
       }
 
       const id = randomUUID();
       // Spawn in the loaded Track's own start frame (free placement puts the
       // start platform anywhere) — never M1's world coords (playtest bug, 2026-09).
       const spawn = trackSpawn(fetched.track, joinCount);
+      const joinOrder = joinCount;
       joinCount += 1;
       sockets.set(id, socket);
       inputQueues.set(id, []);
       lastApplied.set(id, IDLE_INPUTS);
       lastInputTicks.set(id, 0);
+      // The host is the first joiner (M4 ticket 07, ADR 0040) — `joinOrder`
+      // is what `resolveHostId` reads to decide that, recomputed from
+      // whoever is still connected rather than stored.
+      lobbyPlayers.set(id, { id, nickname: "Player", ready: false, joinOrder });
       simulation.addCharacter(id, spawn);
 
       send(socket, {
@@ -295,7 +482,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         spawn,
         trackId: fetched.id,
         trackRevision: fetched.revision,
-        config: { snapshotHz: SNAPSHOT_HZ, graceWindowMs: GRACE_WINDOW_MS },
+        config: { snapshotHz: SNAPSHOT_HZ, graceWindowMs: GRACE_WINDOW_MS, playersToStart },
       });
 
       // A single client's socket erroring (an abrupt reset, a write to a
@@ -331,14 +518,111 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
           }
           queue.sort((a, b) => a.tick - b.tick);
           while (queue.length > MAX_QUEUED_INPUTS) queue.shift();
+          return;
+        }
+
+        // Lobby interactions (M4 ticket 07, ADR 0040) — nickname/ready/Track
+        // pick/start, all travelling this same socket, no second transport.
+
+        if (message.type === "setNickname" && typeof message.nickname === "string") {
+          // A nickname is cosmetic, never a start gate — any connected Player
+          // may send this at any time, in any phase. An empty result after
+          // trimming leaves the existing nickname alone rather than blanking it.
+          const trimmed = message.nickname.trim().slice(0, NICKNAME_MAX_LENGTH);
+          const player = lobbyPlayers.get(id);
+          if (player && trimmed.length > 0) player.nickname = trimmed;
+          return;
+        }
+
+        if (message.type === "setReady" && typeof message.ready === "boolean") {
+          // Only meaningful in LOBBY — there is no "getting un-ready" mid-Round,
+          // and honoring it there would just be silently ignored by the start
+          // gate anyway, so it's simplest to only apply it here at all.
+          if (match.phase !== "LOBBY") return;
+          const player = lobbyPlayers.get(id);
+          if (player) player.ready = message.ready;
+          return;
+        }
+
+        if (message.type === "selectTrack" && typeof message.trackId === "string") {
+          // Host-only and LOBBY-only, enforced by the server, not by which
+          // client happens to send it (ADR 0040). Checked again after the
+          // `await` below, for the identical reason the connect-time reload
+          // re-checks `sockets.size` after its own fetch: the world can move
+          // on while this is in flight.
+          if (match.phase !== "LOBBY" || resolveHostId([...lobbyPlayers.values()]) !== id) return;
+          const requestedTrackId = message.trackId;
+          const seq = ++selectTrackSeq;
+          void (async () => {
+            let candidate: FetchedTrack;
+            try {
+              candidate = await fetchTrack(trackServiceUrl, { ...trackFetchRetryOptions, trackId: requestedTrackId });
+            } catch (err) {
+              console.warn(`DON'T FALL: Lobby selectTrack failed to load Track "${requestedTrackId}": ${(err as Error).message}`);
+              return;
+            }
+            if (
+              seq !== selectTrackSeq ||
+              match.phase !== "LOBBY" ||
+              !sockets.has(id) ||
+              resolveHostId([...lobbyPlayers.values()]) !== id
+            ) {
+              // Superseded by a newer pick, or the Lobby moved on (Round
+              // started, this sender left, host changed) while the fetch
+              // was in flight.
+              return;
+            }
+            const alreadyLoaded = candidate.id === fetched.id && candidate.revision === fetched.revision;
+            if (alreadyLoaded) return;
+            fetched = candidate;
+            resetToFreshLobby(candidate.track);
+            console.log(`DON'T FALL: Lobby selected Track "${fetched.id}"@${fetched.revision}`);
+          })();
+          return;
+        }
+
+        if (message.type === "start") {
+          // Enforced here, not by whichever client happens to click: host
+          // only, LOBBY only, enough Players, everyone Ready (ADR 0040). A
+          // request that fails any of these is simply ignored — the host's
+          // own UI is what keeps a non-host from ever sending this for real,
+          // so a client that sends it anyway gets no error, just silence.
+          if (match.phase !== "LOBBY") return;
+          const players = [...lobbyPlayers.values()];
+          if (resolveHostId(players) !== id) return;
+          if (sockets.size < playersToStart) return;
+          if (!allReady(players)) return;
+          startRequested = true;
+          return;
+        }
+
+        if (message.type === "returnToLobby") {
+          // Host-only, RESULTS-only, same discipline as `start` (M4 ticket
+          // 08): there is no auto-rematch timer, so nothing else is allowed
+          // to move the Match out of RESULTS.
+          if (match.phase !== "RESULTS") return;
+          if (resolveHostId([...lobbyPlayers.values()]) !== id) return;
+          returnToLobbyRequested = true;
+          return;
         }
       });
 
       socket.on("close", () => {
+        // Leaving *while the Round is being raced* is a DNF (M4 ticket 05).
+        // Not during the Countdown — nobody has raced yet — and not during
+        // ROUND_END/RESULTS, where this Player's result is already decided
+        // and a DNF would overwrite a Qualification they earned. Captured
+        // before `lobbyPlayers.delete` below removes the only place this
+        // nickname lives — the Results screen (ticket 08) has nothing else
+        // to call this Player once their Character is gone.
+        if (match.phase === "RUNNING" && !dnf.some((entry) => entry.id === id)) {
+          dnf.push({ id, nickname: lobbyPlayers.get(id)?.nickname ?? "Player" });
+        }
         sockets.delete(id);
         inputQueues.delete(id);
         lastApplied.delete(id);
         lastInputTicks.delete(id);
+        lobbyPlayers.delete(id);
         simulation.removeCharacter(id);
       });
     })();
@@ -366,6 +650,32 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     // number" (ADR 0027) for the rest of the Match.
     const thisTick = serverTick + 1;
     try {
+      // Decided before anything is simulated, and committed below only once
+      // the tick has actually succeeded — the same discipline `serverTick`
+      // itself follows, so a failed tick retries this exact decision rather
+      // than advancing the Match past a Tick that never ran.
+      const nextMatch = advanceMatchPhase(match, {
+        tick: thisTick,
+        connectedPlayers: sockets.size,
+        startRequested,
+        countdownMs,
+        roundEndMs,
+        allQualified: roundEnding.allQualified,
+        timeExpired: roundEnding.timeExpired,
+        returnToLobbyRequested,
+      });
+      // A one-shot edge, spent the instant this tick reads it whether or not
+      // it actually caused a transition — otherwise a request left stale by
+      // (say) everyone leaving in the same instant it fired could cause a
+      // spurious Countdown the moment anyone next connects.
+      startRequested = false;
+      returnToLobbyRequested = false;
+      // Input is locked in every phase but RUNNING (ADR 0040). Enforced here
+      // rather than by refusing the packet: the client runs the same rule on
+      // its own prediction, so both sides stop and start driving the
+      // Character on the identical Tick, and a client that ignores the rule
+      // simply has its input replaced.
+      const inputLocked = phaseLocksInput(nextMatch.phase);
       const tickInputs: Record<string, SimInputs> = {};
       for (const id of sockets.keys()) {
         const queue = inputQueues.get(id);
@@ -382,26 +692,79 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         // real input matched it or `lastApplied` repeated — never left behind
         // at the last tick a *distinct* input happened to land on.
         lastInputTicks.set(id, thisTick);
-        tickInputs[id] = lastApplied.get(id) ?? IDLE_INPUTS;
+        // The ack bookkeeping above stays honest whatever the phase — the
+        // client is still reconciling against these Ticks — only the input
+        // actually simulated is replaced.
+        tickInputs[id] = inputLocked ? IDLE_INPUTS : (lastApplied.get(id) ?? IDLE_INPUTS);
       }
 
       simulation.tick(tickInputs);
       serverTick = thisTick;
+      // The Round's clock starts the Tick the Countdown ends, not when the
+      // server did (M4 ticket 03's anchor, now owned by this transition).
+      if (nextMatch.phase === "RUNNING" && match.phase !== "RUNNING") roundStartTick = thisTick;
+      // A fresh Countdown is a fresh Round: last Round's DNFs are not this
+      // Round's (M4 ticket 05).
+      if (nextMatch.phase === "COUNTDOWN" && match.phase !== "COUNTDOWN") dnf = [];
+      if (nextMatch.phase === "LOBBY" && match.phase === "RESULTS") {
+        // Going again (M4 ticket 08): everyone still connected gets a fresh
+        // Round on the same Track, re-seated at their spawn slot. A genuinely
+        // fresh Lobby, not a resumed one: last Round's DNFs are not this
+        // Round's (same reasoning as the Countdown-triggered clear above),
+        // and everyone's Ready goes back to false — otherwise a Lobby the
+        // host returns to would start itself the instant it existed, since
+        // both Players necessarily left the last Round Ready.
+        resetToFreshLobby(fetched.track);
+        dnf = [];
+        for (const player of lobbyPlayers.values()) player.ready = false;
+      } else {
+        match = nextMatch;
+      }
       consecutiveTickFailures = 0;
 
-      snapshotAccumulatorMs += TICK_MS;
-      if (snapshotAccumulatorMs < SNAPSHOT_INTERVAL_MS) return;
-      snapshotAccumulatorMs -= SNAPSHOT_INTERVAL_MS;
-
+      // Built every tick, not just when a snapshot goes out: the Round's own
+      // endings are read off it, and they should not be noticed only as often
+      // as the snapshot rate happens to be (ADR 0020 decouples the two).
       const state = simulation.snapshot();
       for (const [id, character] of Object.entries(state.characters)) {
         character.lastInputTick = lastInputTicks.get(id) ?? 0;
       }
+
+      // Before the Round is RUNNING none of its clock has been spent, so it
+      // reads its full authored value rather than counting down in the Lobby.
+      const timeLimitMs = roundTimeLimitMs();
+      // Before a Round the clock reads its full authored value; during one it
+      // counts down; after one it stops where it stopped.
+      let timeLeftMs: number;
+      if (match.phase === "RUNNING") {
+        timeLeftMs = roundTimeLeftMs(timeLimitMs, serverTick - roundStartTick);
+        finalTimeLeftMs = timeLeftMs;
+      } else if (match.phase === "ROUND_END" || match.phase === "RESULTS") {
+        timeLeftMs = finalTimeLeftMs;
+      } else {
+        timeLeftMs = timeLimitMs;
+      }
+      // Both endings, decided by the server from state it already owns (ADR
+      // 0040) — whichever happens first ends the Round.
+      roundEnding = {
+        allQualified: allQualified(state.characters),
+        timeExpired: match.phase === "RUNNING" && timeLeftMs === 0,
+      };
+
+      snapshotAccumulatorMs += TICK_MS;
+      if (snapshotAccumulatorMs < SNAPSHOT_INTERVAL_MS) return;
+      snapshotAccumulatorMs -= SNAPSHOT_INTERVAL_MS;
       // Per-client payload: `serverTimeMs` is the same for all, `commandQueueDepth`
       // is this client's own un-applied input backlog (feeds its LEAD, ADR 0021).
       // One `JSON.stringify` per client — negligible at M2 scale, and the shape
       // binary + delta encoding will need anyway.
       const serverTimeMs = performance.now();
+      const countdown = countdownMsLeft(match, serverTick, countdownMs);
+      // Built once per snapshot, not once per client — every connected
+      // client sees the identical Lobby (M4 ticket 07), and `hostId` is
+      // recomputed from who's here now rather than stored anywhere.
+      const lobbyPlayerList = [...lobbyPlayers.values()];
+      const lobbySnapshot = { hostId: resolveHostId(lobbyPlayerList), players: lobbyPlayerList };
       for (const [id, socket] of sockets) {
         if (socket.readyState !== socket.OPEN) continue;
         trySend(
@@ -411,6 +774,13 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
             state,
             serverTimeMs,
             commandQueueDepth: inputQueues.get(id)?.length ?? 0,
+            timeLeftMs,
+            phase: match.phase,
+            countdownMsLeft: countdown,
+            dnf,
+            trackId: fetched.id,
+            trackRevision: fetched.revision,
+            lobby: lobbySnapshot,
           } satisfies ServerMessage),
         );
       }

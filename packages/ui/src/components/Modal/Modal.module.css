@@ -1,0 +1,37 @@
+/* Modal takeover — design-system.md §1.7d: the one motion primitive that's
+   fast and decisive by requirement, not playful. No back-out overshoot
+   anywhere in this construction — an overshooting modal would undercut the
+   urgency a takeover needs. Opaque scrim + opaque panel, never a blurred
+   glass panel (§1.6). */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--df-space-6);
+  z-index: 10;
+  animation: fadeIn var(--df-motion-modal-takeover-duration) ease-out both;
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .overlay {
+    animation: none;
+  }
+}
+
+.dialog {
+  background: var(--df-color-surface-1);
+  border: var(--df-border-width-emphasis) solid var(--df-color-border-emphasis);
+  border-radius: var(--df-radius-card);
+  box-shadow: 8px 8px 0 0 var(--df-color-shadow-neutral);
+  padding: var(--df-space-5);
+}

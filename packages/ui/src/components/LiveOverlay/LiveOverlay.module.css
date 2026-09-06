@@ -1,0 +1,53 @@
+/* Live overlay — design-system.md §2.6, one of "two constructions, not
+   one": <CountdownOverlay>, <BetOverlay>, <SpectateOverlay> share this
+   shape. Content-only entrance (the caller's own content typically uses
+   ExtrudedText/Panel/Row, each carrying its own weight); the backdrop
+   stays clear or receives only a light, flat (non-blurred, §1.6) scrim —
+   fading the already-live scene IN rather than dimming it heavily. */
+.stage {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* An honest placeholder for the real live scene (same convention as a
+   Track thumbnail's own "no live preview yet") — never a claim this IS
+   the real <GameCanvas> render. */
+.scene {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    135deg,
+    var(--df-color-surface-1),
+    var(--df-color-surface-1) 16px,
+    var(--df-color-surface-0) 16px,
+    var(--df-color-surface-0) 32px
+  );
+  opacity: 0;
+  transition: opacity 900ms ease-out;
+}
+.scene.isLive {
+  opacity: 0.55;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scene {
+    transition: none;
+  }
+}
+
+.sceneLabel {
+  position: absolute;
+  top: var(--df-space-6);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: var(--df-type-micro);
+  color: var(--df-color-ink-secondary);
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+}

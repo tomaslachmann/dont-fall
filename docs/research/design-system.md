@@ -64,14 +64,15 @@ default": every functional color has a reason before any color exists for pure b
 
 | Role | Token | Derivation | Value |
 |---|---|---|---|
-| Surface (base) | `--df-color-surface-0/1/2` | A layered-depth scale for background → panel → raised element, needed because §1.2 rejects glass/blur as the way to show depth ("panels and buttons that behave like the game's own physical vocabulary" — wireframes §1.2) — depth must come from *opaque* layering + elevation (§1.3), not translucency. | **[proposal, open slot]** — exact neutrals not sourced; must not default to the dev-scaffold's `#0b0e14` blue-black (dropped per §0), and must clear real contrast, not "barely passing" (wireframes §1.1's own phrase for the tell to avoid). |
-| Ink (text) | `--df-color-ink-primary/secondary` | Same contrast requirement as above. | **[proposal, open slot]**, contrast target below. |
-| Qualify / Ready | `--df-color-go` | CONTEXT.md "Qualification"; wireframes §3.2 Ready toggle, §3.5 Results ranking. A "go" signal — the one role every reference-game precedent needs regardless of brand (green-family is the near-universal "positive/advance" convention, not itself a slop tell since it's functional, not decorative). | **[proposal, open slot]** for exact hue; must read as clearly distinct from `--df-color-host` (below) since both can appear on the same Lobby row. |
-| Fall / DNF | `--df-color-fall` | CONTEXT.md "Fall"; wireframes §3.5 anti-slop note: DNF rows are "a real opportunity to lean into 'hilarious when you fail'... instead of the generic pattern of quietly graying out losers." A pure alarm-red (the generic "error" default) would fight that framing — Fall is a *funny* failure the game is built around, not a system error. | **[proposal]** — direction: a warm, saturated amber/orange rather than blood-red; a "cartoon uh-oh" register, not a "your card was declined" register. Exact hue is an open slot. |
-| Host authority | `--df-color-host` | wireframes §3.2, quoted above. | **[proposal, open slot]** — must be visually distinct from `--df-color-go`, since a host is also shown as Ready. |
-| Checkpoint | `--df-color-checkpoint` | CONTEXT.md "Checkpoint"; used only where a Checkpoint concept surfaces in Screen UI (e.g. a Results DNF row annotated with "fell after Checkpoint 3", per the DNF anti-slop point above). | **[proposal, open slot]**. |
-| Accent (decorative) | `--df-color-accent` | The one role with no mechanical grounding — pure brand decoration (primary CTA fill on Main menu, etc.). | **Left open deliberately** — see §6. Not filled with a placeholder, unlike the roles above, because inventing one here would recreate exactly the "chosen because it was available, not because of something about this game" failure §1.1 names. |
-| Border / hairline | `--df-color-border` | §1.4 (borders). | **[proposal, open slot]** — a neutral, not a hue; never a decorative accent color per §1.4. |
+| Surface (base) | `--df-color-surface-0/1/2` | A layered-depth scale for background → panel → raised element, needed because §1.2 rejects glass/blur as the way to show depth ("panels and buttons that behave like the game's own physical vocabulary" — wireframes §1.2) — depth must come from *opaque* layering + elevation (§1.3), not translucency. | **Adopted, tested live** across 6 Screens/overlays in the artifact prototype (`main-menu-motion-test.html`): `#14161c` / `#1c1f28` / `#262a36`. Dark, per the resolution of open-slot 4 below. |
+| Ink (text) | `--df-color-ink-primary/secondary` | Same contrast requirement as above. | **Adopted**: `#f5f2ea` (warm near-white, not pure `#fff`) / `#9a9fb0`. Clears the AAA target against `surface-0/1` in practice; not independently re-measured against every surface combination. |
+| Qualify / Ready | `--df-color-go` | CONTEXT.md "Qualification"; wireframes §3.2 Ready toggle, §3.5 Results ranking. A "go" signal — the one role every reference-game precedent needs regardless of brand (green-family is the near-universal "positive/advance" convention, not itself a slop tell since it's functional, not decorative). | **Adopted**: `#6bdc5a`. Clearly distinct from `--df-color-host` in practice (tested side by side on the same Lobby row). |
+| Fall / DNF | `--df-color-fall` | CONTEXT.md "Fall"; wireframes §3.5 anti-slop note: DNF rows are "a real opportunity to lean into 'hilarious when you fail'... instead of the generic pattern of quietly graying out losers." A pure alarm-red (the generic "error" default) would fight that framing — Fall is a *funny* failure the game is built around, not a system error. | **Adopted**: `#ff8a3d` — a warm cartoon orange, not blood-red, per the direction already specified. |
+| Host authority | `--df-color-host` | wireframes §3.2, quoted above. | **Adopted**: `#ffc93c` (gold). Reused (not duplicated) for 1st-place on the Results podium — "host authority" and "1st place" never appear on the same screen, so one gold token serves both meanings rather than inventing a second near-identical gold. |
+| Checkpoint | `--df-color-checkpoint` | CONTEXT.md "Checkpoint"; used only where a Checkpoint concept surfaces in Screen UI (e.g. a Results DNF row annotated with "fell after Checkpoint 3", per the DNF anti-slop point above). | **Adopted**: `#37d6e0` (cyan). Also doing double duty as this system's focus-ring color (§2.1) and as a general "presence/connected" hue (Lobby avatar rings, chat speaker names) — chosen for contrast against both button variants, not because Checkpoint-the-mechanic is present on those screens. |
+| Ranking (medal) | `--df-color-medal-silver` / `--df-color-medal-silver-depth`, `--df-color-medal-bronze` / `--df-color-medal-bronze-depth` | **New role, not in this document's original table.** Added for the Results podium (wireframes §3.5's own ranked-list treatment, extended with a 3-pad podium — see §2.2a below): a distinct, well-established convention (gold/silver/bronze) separate from the functional roles above. Gold reuses `--df-color-host` (see above); silver/bronze are new since nothing else in this table means "2nd" or "3rd." | **Adopted**: `#cdd6e0` / `#6b7580` (silver + its shaded depth), `#d98a4f` / `#7a4520` (bronze + its shaded depth). |
+| Accent (decorative) | `--df-color-accent` / `--df-color-accent-depth` | The one role with no mechanical grounding — pure brand decoration (primary CTA fill on Main menu, etc.). | **Provisionally adopted**: `#ff2e55` (a hot rose-red, deliberately not pink-violet) with `#8f0f2c` as its depth shade for the wordmark/button extrusion (§1.6a). Tested across all 6 Screens/overlays without further objection after one open question ("nevím jestli se mi líbí to logo v té barvě") that was never explicitly re-resolved — a 4-way comparison (rose-red / pure red / cobalt blue / no logo color) was built and shown, but no option was picked. Treat as adopted-by-sustained-use, not a confirmed final decision; worth a explicit sign-off before this is treated as permanent. |
+| Border / hairline | `--df-color-border` / `--df-color-border-emphasis` | §1.4 (borders). | **Adopted**: `rgba(245, 242, 234, 0.14)` / `rgba(245, 242, 234, 0.32)` — a translucent mix of `--df-color-ink-primary` rather than an independent grey, so it always reads correctly against any surface step. |
 
 **Contrast rule (grounded, not a placeholder).** Krebs' audit names "permanent dark mode with
 barely-passing-contrast grey body text" as one of the 16 concrete tells (wireframes §1.1). The
@@ -196,12 +197,16 @@ screen-space metaphor that has zero connection to a game about solid bodies coll
 constructive alternative wireframes §1.2 proposes directly: "a card that visibly 'lands' with a
 little overshoot-then-settle."
 
-Concretely, elevation here means **contact shadows, not ambient glow**: small blur radius, a defined
-offset implying one consistent light direction (top-left, arbitrary but fixed system-wide), moderate
-opacity — the opposite construction from a glassmorphism panel's large, soft, low-opacity blur.
-**[proposal]** for the exact numbers:
+Concretely, elevation here means **contact shadows, not ambient glow**: a defined offset implying
+one consistent light direction, no ambient blur-glow — the opposite construction from a glassmorphism
+panel's large, soft, low-opacity blur. The *first* pass at the exact numbers (below, kept for the
+record) used a small blur radius and low opacity; live testing across 6 Screens/overlays in the
+artifact prototype got direct feedback that this first pass — thin 1px borders, softly blurred
+shadows, one uniform radius — still read as "generic AI design," a dashboard wearing this game's
+colors rather than an actual game. §1.6a below is the superseding, tested construction; the original
+table stays only as the historical starting point (§5).
 
-| Token | box-shadow (light-mode direction, top-left light) | Role |
+| Token | box-shadow (original proposal, superseded by §1.6a) | Role |
 |---|---|---|
 | `--df-elevation-0` | none | Flush with the background — HUD-adjacent overlays, resting text. |
 | `--df-elevation-1` | `0 1px 2px rgba(ink, 0.28)` | Resting card/button — a `<TrackCard>` at rest, a `<StatTile>`. |
@@ -213,6 +218,34 @@ never frosted, per the glassmorphism critique above. If a future Screen genuinel
 translucent panel over the live 3D scene (Countdown, Bet, Spectate all render over a live game view
 per wireframes §3.3/§3.8/§3.20), the panel content itself stays opaque; only its *backdrop dimming*
 (a flat, non-blurred scrim) may use transparency — never a blurred glass panel for the content itself.
+
+### 1.6a Elevation, revised — "chunky block" depth (adopted, supersedes the table above)
+
+**Adopted**, after direct "generic AI design" feedback on the pass above. Every panel, button, and
+card now uses a **hard offset shadow** (no blur) instead of a blurred ambient one — a fixed light
+direction (bottom-right on this dark palette, arbitrary but fixed system-wide, same idea as the
+original proposal's "top-left" just flipped for this ground), sized to read as a physical block
+sitting slightly off the surface behind it, not a card with a hairline border. This reuses the exact
+depth logic already adopted for the wordmark's own text extrusion (§2.1a below): a shadow is a
+*darker shade of the same hue* on colored fills (the primary button, the Results podium's medal
+pads), and a shared neutral (`--df-color-shadow-neutral`) everywhere else.
+
+| Token | Value | Role |
+|---|---|---|
+| `--df-color-shadow-neutral` | `rgba(0, 0, 0, 0.5)` | The shadow color for any surface with no functional hue of its own (panels, secondary buttons, cards). |
+| `--df-border-width-chunk` | `3px` | The border weight paired with this shadow system — thicker than `--df-border-width-emphasis` (§1.5), since a chunky block needs a visible edge, not a hairline. |
+| Panel shadow | `6px 6px 0 0 <shadow color>` | Static furniture (Settings/Lobby/Results panels, the Browse modal) — offset, no blur, no hover response. |
+| Button shadow (resting) | `5px 5px 0 0 <shadow color>` | `<PrimaryButton>`/`<SecondaryButton>` at rest. |
+| Button shadow (hover) | `6px 6px 0 0 <shadow color>` | Offset grows slightly — the block lifts toward the viewer. |
+| Button shadow (pressed) | `1px 1px 0 0 <shadow color>` | Offset collapses toward zero in sync with the press squash (§1.7b) — the button visually sinks into its own shadow, not just scales down. |
+| Card shadow (resting → hover) | `3px 3px 0 0 <shadow color>` → `5px 5px 0 0 <shadow color>`, plus `translate(-2px, -2px)` on hover | `<TrackBrowserModal>` cards, `<TrackPicker>`'s own card — a bigger offset *and* a lift, not just a border-color change. |
+
+Panels also gained a bigger, friendlier corner radius (10px, matching `--df-radius-card` rather than
+`--df-radius-standard`) as part of this same pass — furniture reads as a "block," not dense chrome.
+Background surfaces gained a subtle fixed-light vignette (`radial-gradient` mixing 6% of
+`--df-color-accent` into `--df-color-surface-1`, from the top-left of the viewport, over
+`--df-color-surface-0`) instead of one flat fill — the one place the accent hue touches the whole
+screen, atmosphere rather than a third reserved use of that color.
 
 ### 1.7 Motion and timing
 
@@ -589,29 +622,30 @@ Per the task constraint this file is written under: where nothing in `screens-in
 `screens-wireframes-and-components.md`, `CLAUDE.md`, or `CONTEXT.md` determines a specific value, that
 value is listed here as open rather than invented and presented as settled.
 
-1. **Every color hex value** (§1.1) — `--df-color-surface-*`, `--df-color-ink-*`,
-   `--df-color-go`, `--df-color-fall`, `--df-color-host`, `--df-color-checkpoint`,
-   `--df-color-border`. This document fixes their *roles* and *relationships* (which must be
-   distinguishable from which, what register each implies — "cartoon uh-oh" not "system error" for
-   Fall) but not their numbers.
-2. **`--df-color-accent`** specifically — left open on principle, not just for lack of data (§1.1):
-   filling it without a reason would be the single clearest way this document could itself become
-   the thing §1.1 critiques.
-3. **`--df-font-display` and `--df-font-body`** — no typeface is named anywhere in this document,
-   matching wireframes §1.2's own explicit deferral of this exact decision to "its own short
-   spike/ADR."
-4. **Light vs. dark vs. themeable** — not decided by any sourced document; flagged rather than
-   defaulted, since an undefended "permanent dark mode" is itself one of §1.1's four sources' named
-   tells.
-5. **The exact pixel values in the type scale (§1.2), spacing scale (§1.3), radius scale (§1.4), and
-   shadow/elevation table (§1.6)** — the *shape* of each system (a deliberate, role-varying, single
-   scale; contact shadows, not glow) is grounded in the sources cited inline; the specific numbers
-   are this document's own construction, offered as a workable starting point for implementation
-   rather than a value anyone has reviewed pixel-by-pixel.
+1. ~~Every color hex value~~ **Resolved via testing** — §1.1's table now records adopted values for
+   `--df-color-surface-*`, `--df-color-ink-*`, `--df-color-go`, `--df-color-fall`,
+   `--df-color-host`, `--df-color-checkpoint`, `--df-color-border`, and the new medal/ranking role,
+   all exercised live across 6 Screens/overlays in the artifact prototype (`main-menu-motion-test.html`).
+2. **`--df-color-accent`** — **provisionally resolved**, not fully closed. `#ff2e55` was tested across
+   every screen built and never rejected outright, but the one direct question raised about it
+   ("nevím jestli se mi líbí to logo v té barvě") was never explicitly answered — a 4-way comparison
+   was built and shown, no option was picked. Treat §1.1's value as adopted-by-use, and get an
+   explicit sign-off before code treats it as permanent/hard to change later.
+3. **`--df-font-display` and `--df-font-body`** — still fully open. No typeface is named anywhere in
+   this document or tested in the artifact prototype, matching wireframes §1.2's own explicit
+   deferral of this exact decision to "its own short spike/ADR." The artifact used `system-ui`
+   throughout as an explicit stand-in, never as a pick.
+4. ~~Light vs. dark vs. themeable~~ **Resolved in practice**: dark, tested across every Screen built.
+   No explicit "we are choosing dark mode" conversation happened — this is a resolution by
+   consistent, unobjected-to implementation, the same status as item 2 above, not a documented
+   decision with its own reasoning captured anywhere.
+5. **The exact pixel values in the type scale (§1.2) and spacing scale (§1.3)** remain this
+   document's own construction, not independently tested — the artifact prototype used its own
+   simplified scale (not the full 9-step type scale above) and never exercised every spacing rung.
+   Radius (§1.4) and shadow/elevation (§1.6/§1.6a) **are** now tested — see those sections directly.
 
-Resolving 1–4 is naturally the next `/grilling`-session-shaped decision, the same way
-`screens-inventory.md` §6 already frames its own prioritized shortlist as "raw material," not a
-decision.
+Item 3 (typeface) is the one genuinely unresolved item left; 2 and 4 want an explicit confirmation
+rather than more implementation before they're truly settled.
 
 ## 7. Sources consulted (by path)
 

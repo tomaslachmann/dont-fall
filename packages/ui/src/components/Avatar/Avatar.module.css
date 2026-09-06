@@ -1,0 +1,29 @@
+/* Avatar ring carries the same identity color as its row's own accent —
+   host's ring is gold, everyone else's is checkpoint-cyan (the same hue
+   already doing "presence" duty on the dot). Lobby/Bet chat reuse these
+   same two colors on speaker names, so one color thread runs
+   avatar -> row -> chat, not unrelated coats of paint. */
+.avatar {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--df-color-surface-0);
+  border: 2px solid var(--df-color-checkpoint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--df-color-ink-primary);
+  flex-shrink: 0;
+}
+.isHost {
+  border-color: var(--df-color-host);
+}
+.dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  border: 2px solid var(--df-color-surface-2);
+}

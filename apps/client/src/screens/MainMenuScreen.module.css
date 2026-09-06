@@ -1,0 +1,53 @@
+.stage {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: var(--df-space-9) var(--df-space-8);
+}
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--df-space-6);
+  max-width: 44rem;
+}
+
+/* Deliberately beyond the documented type scale (--df-type-hero tops out
+   at 64px, sized for a Countdown numeral, not a full identity moment) — a
+   full-bleed game screen read from across a room needs more presence than
+   a web page's own largest heading. */
+.wordmark {
+  margin: 0;
+  font-weight: 800;
+  font-size: clamp(4.5rem, 11vw, 9rem);
+  line-height: 0.92;
+  letter-spacing: -0.015em;
+  transform-origin: 15% 75%;
+  animation: wobble calc(var(--df-motion-wobble-half-cycle) * 2) ease-in-out infinite;
+}
+/* Wobble — §1.7e, one of its two named uses (the other is the Countdown
+   numeral). Idle-only, not a general-purpose animation. */
+@keyframes wobble {
+  0%,
+  100% {
+    transform: rotate(-1.5deg);
+  }
+  50% {
+    transform: rotate(1.5deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wordmark {
+    animation: none;
+  }
+}
+
+.tagline {
+  margin: 0;
+  max-width: 40ch;
+  color: var(--df-color-ink-secondary);
+  font-size: var(--df-type-heading);
+  line-height: 1.5;
+}

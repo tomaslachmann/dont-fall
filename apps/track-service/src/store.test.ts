@@ -2,7 +2,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Track } from "@dont-fall/shared";
+import Database from "better-sqlite3";
+import { eq } from "drizzle-orm";
+import { DEFAULT_TIME_LIMIT_MS, type Track } from "@dont-fall/shared";
 import { openDb, type TrackDb } from "./db.js";
 import { getTrackById, listTracks, saveTrack } from "./store.js";
 import { tracks } from "./schema.js";
@@ -77,5 +79,71 @@ describe("listTracks — latest-per-trackId ordering (code review, ticket 10)", 
     const list = listTracks(db);
     expect(list).toHaveLength(2);
     expect(list.find((t) => t.id === idA)?.name).toBe("a3");
+  });
+});
+
+describe("Time Limit per Revision (M4 ticket 03, ADR 0038)", () => {
+  it("defaults a Revision published without one to the backfill default", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK });
+
+    expect(getTrackById(db, id)!.timeLimitMs).toBe(DEFAULT_TIME_LIMIT_MS);
+  });
+
+  it("stores an authored Time Limit and reads it back", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK, timeLimitMs: 45_000 });
+
+    expect(getTrackById(db, id)!.timeLimitMs).toBe(45_000);
+  });
+
+  it("keys it per Revision — republishing changes the clock only for the new one", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK, timeLimitMs: 45_000 });
+    saveTrack(db, { id, track: SAMPLE_TRACK, timeLimitMs: 90_000 });
+
+    expect(getTrackById(db, id, 1)!.timeLimitMs).toBe(45_000);
+    expect(getTrackById(db, id, 2)!.timeLimitMs).toBe(90_000);
+    expect(getTrackById(db, id)!.timeLimitMs).toBe(90_000); // latest
+  });
+
+  it("leaves the published Segment[] contract untouched — the clock is a row attribute", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK, timeLimitMs: 45_000 });
+
+    // ADR 0038's whole point: `data` is still exactly the Segment[] every
+    // existing consumer parses, with nothing wrapped around it.
+    const row = db.select().from(tracks).where(eq(tracks.trackId, id)).get()!;
+    expect(JSON.parse(row.data)).toEqual(SAMPLE_TRACK);
+  });
+
+  it("hashes content independently of the Time Limit — the same Segments are the same content", () => {
+    const { id: a } = saveTrack(db, { track: SAMPLE_TRACK, timeLimitMs: 45_000 });
+    const { id: b } = saveTrack(db, { track: SAMPLE_TRACK, timeLimitMs: 90_000 });
+
+    expect(getTrackById(db, a)!.contentHash).toBe(getTrackById(db, b)!.contentHash);
+  });
+});
+
+describe("migration onto a pre-M4 database (ADR 0038)", () => {
+  it("backfills the default Time Limit onto Revisions published before the column existed", () => {
+    // Rebuild the exact pre-M4 table and put a row in it, then reopen: an
+    // already-published Revision has to keep loading and playing unchanged,
+    // which for M4 means arriving with a clock it never authored.
+    const legacyPath = join(dir, "legacy.sqlite");
+    const legacy = new Database(legacyPath);
+    legacy.exec(`
+      CREATE TABLE tracks (
+        track_id TEXT NOT NULL, revision INTEGER NOT NULL, name TEXT,
+        author_id TEXT NOT NULL, content_hash TEXT NOT NULL, data TEXT NOT NULL,
+        created_at INTEGER NOT NULL, PRIMARY KEY (track_id, revision)
+      )
+    `);
+    legacy
+      .prepare("INSERT INTO tracks VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run("old-track", 1, "pre-M4", "local-author", "hash", JSON.stringify(SAMPLE_TRACK), Date.now());
+    legacy.close();
+
+    const migrated = openDb(legacyPath);
+
+    const stored = getTrackById(migrated, "old-track")!;
+    expect(stored.timeLimitMs).toBe(DEFAULT_TIME_LIMIT_MS);
+    expect(stored.track).toEqual(SAMPLE_TRACK); // and the Track itself is untouched
   });
 });

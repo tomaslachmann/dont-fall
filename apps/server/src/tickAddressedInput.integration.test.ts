@@ -239,6 +239,12 @@ class FaithfulClient {
     if (message.type === "welcome") {
       this.myId = message.playerId;
       this.sim.addCharacter(this.myId, message.spawn);
+      // M4 ticket 07: LOBBY no longer auto-starts once enough Players are
+      // connected — this solo client has to ask, same as a real Playtest
+      // would. Same socket as `welcome` arrived on, so no cross-connection
+      // ordering race: the server sees `setReady` before `start`.
+      this.send({ type: "setReady", ready: true });
+      this.send({ type: "start" });
     } else if (message.type === "pong") {
       const nowMs = performance.now();
       const rttMs = nowMs - message.clientTimeMs;
@@ -291,6 +297,7 @@ class FaithfulClient {
       dashing: false, // this client never dashes — walks only (north/south)
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
+      finishTick: null, // this harness's Track has no Finish Zone
     });
     this.sim.syncTick(serverTick);
     const replayed = this.sim.replayLocalCharacter(
@@ -417,7 +424,7 @@ describe("tick-addressed server input — real server, real timers (ADR 0027)", 
   it.each(PROFILES)(
     "$name: same-tick positionError sits at the FP-residual floor almost always — the old ~0.2u systematic bias is gone, not just rarer",
     async (profile) => {
-      server = await startServer({ port: 0 });
+      server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
       const client = await runScenario(server.port, profile, 3);
       client.close();
 

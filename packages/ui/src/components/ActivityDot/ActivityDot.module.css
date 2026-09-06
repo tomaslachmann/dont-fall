@@ -1,0 +1,16 @@
+/* An honest substitute for "speaking" — this project has no voice-chat
+   concept anywhere in its docs. What IS grounded is text-chat activity, so
+   a small dot (filled = recently active) rides on a row/avatar/chip
+   instead of inventing a voice feature nobody has decided on. */
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--df-color-border-emphasis);
+  background: transparent;
+  flex-shrink: 0;
+}
+.active {
+  background: var(--df-color-checkpoint);
+  border-color: var(--df-color-checkpoint);
+}

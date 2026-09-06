@@ -2,6 +2,7 @@ import { orientBox, type Box, type OrientedBox } from "../math/box.js";
 import { conjugateQuat, eulerQuat, mulQuat, quatToEuler, yawQuat, type Quat } from "../math/quat.js";
 import { addVec3, rotateVec3ByQuat, subVec3, type Vec3 } from "../math/vec3.js";
 import type { Checkpoint } from "../simulation/Checkpoint.js";
+import type { FinishZone } from "../simulation/FinishZone.js";
 import type { LaunchPadConfig } from "../simulation/LaunchPad.js";
 import type { PropConfig } from "../simulation/Prop.js";
 import type { SpeedPadConfig } from "../simulation/SpeedPad.js";
@@ -188,6 +189,14 @@ export const resolveTrack = (
   props: PropConfig[];
   spinners: SpinnerConfig[];
   checkpoints: Checkpoint[];
+  /**
+   * Every Finish Zone the Track's Segments carry, in Track order (M4 ticket
+   * 02, ADR 0039) — plural here and singular on the Module for exactly the
+   * same reason `checkpoints`/`checkpoint` are: a Module authors at most one,
+   * a Track can place several Modules that each have one. Empty for a Track
+   * that has no Finish Zone at all, which is simply not raceable yet.
+   */
+  finishZones: FinishZone[];
   speedPads: SpeedPadConfig[];
   launchPads: LaunchPadConfig[];
   volumes: VolumeConfig[];
@@ -197,6 +206,7 @@ export const resolveTrack = (
   const props: PropConfig[] = [];
   const spinners: SpinnerConfig[] = [];
   const checkpoints: Checkpoint[] = [];
+  const finishZones: FinishZone[] = [];
   const speedPads: SpeedPadConfig[] = [];
   const launchPads: LaunchPadConfig[] = [];
   const volumes: VolumeConfig[] = [];
@@ -252,6 +262,13 @@ export const resolveTrack = (
       });
     }
 
+    if (module.finishZone) {
+      // Placed exactly like a Checkpoint's trigger and nothing else — a
+      // Finish Zone is detection-only (ADR 0039), so there is no respawn
+      // point to translate alongside it and no direction to rotate.
+      finishZones.push({ trigger: placeBox(module.finishZone.trigger) });
+    }
+
     for (const pad of module.speedPads ?? []) {
       speedPads.push({ capMultiplier: pad.capMultiplier, trigger: placeBox(pad.trigger) });
     }
@@ -270,5 +287,5 @@ export const resolveTrack = (
     }
   }
 
-  return { statics, staticSurfaces, props, spinners, checkpoints, speedPads, launchPads, volumes };
+  return { statics, staticSurfaces, props, spinners, checkpoints, finishZones, speedPads, launchPads, volumes };
 };

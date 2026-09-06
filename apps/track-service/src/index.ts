@@ -5,7 +5,7 @@ import { DEFAULT_TRACK_SERVICE_PORT, MODULE_LIBRARY, M1_TRACK } from "@dont-fall
 import { openDb, type TrackDb } from "./db.js";
 import { generateRandomTrack } from "./generate.js";
 import { getAnyTrack, getTrackById, listTracks, saveTrack, seedIfEmpty } from "./store.js";
-import { unknownModuleIds } from "./validate.js";
+import { invalidTimeLimitReason, unknownModuleIds } from "./validate.js";
 
 /**
  * track-service (ADR 0028): the single source of truth for Tracks, separate
@@ -55,15 +55,43 @@ const json = (res: ServerResponse, status: number, payload: unknown): void => {
   res.end(body);
 };
 
-const isTrack = (value: unknown): value is Track =>
-  Array.isArray(value) &&
-  value.every(
-    (s) =>
-      typeof s === "object" &&
-      s !== null &&
-      typeof (s as { moduleId?: unknown }).moduleId === "string" &&
-      typeof (s as { position?: unknown }).position === "object",
+/** A finite number — rejects NaN and Infinity, neither of which may reach `segmentOrientation`. */
+const isFiniteNumber = (value: unknown): boolean => typeof value === "number" && Number.isFinite(value);
+
+/** Present-and-finite, or absent. `pitch`/`roll` are optional and default to 0 (ADR 0034). */
+const isOptionalFiniteNumber = (value: unknown): boolean => value === undefined || isFiniteNumber(value);
+
+const isVec3 = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null) return false;
+  const { x, y, z } = value as { x?: unknown; y?: unknown; z?: unknown };
+  return isFiniteNumber(x) && isFiniteNumber(y) && isFiniteNumber(z);
+};
+
+/**
+ * Validates the published `Segment[]` contract (ADR 0038 keeps `data` exactly
+ * this shape) against `Track.ts`'s `Segment`.
+ *
+ * Checked properly rather than loosely, because a Revision is immutable
+ * (ADR 0032): anything that gets past here is stored forever and only fails
+ * much later, somewhere far away. The two holes this closes were both of that
+ * kind — `typeof null === "object"` let a null `position` through, and
+ * `rotation` was not checked at all, so an absent one reached
+ * `segmentOrientation` (`Track.ts`) as `undefined` and produced a NaN
+ * quaternion instead of a 400 here.
+ */
+const isSegment = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null) return false;
+  const segment = value as { moduleId?: unknown; position?: unknown; rotation?: unknown; pitch?: unknown; roll?: unknown };
+  return (
+    typeof segment.moduleId === "string" &&
+    isVec3(segment.position) &&
+    isFiniteNumber(segment.rotation) &&
+    isOptionalFiniteNumber(segment.pitch) &&
+    isOptionalFiniteNumber(segment.roll)
   );
+};
+
+const isTrack = (value: unknown): value is Track => Array.isArray(value) && value.every(isSegment);
 
 const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): Promise<void> => {
   if (req.method === "OPTIONS") {
@@ -87,14 +115,23 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
       json(res, 400, { error: "invalid JSON body" });
       return;
     }
-    const body = parsed as { id?: unknown; name?: unknown; track?: unknown };
+    const body = parsed as { id?: unknown; name?: unknown; track?: unknown; timeLimitMs?: unknown };
     if (!isTrack(body.track)) {
-      json(res, 400, { error: "body.track must be a Segment[] (moduleId, position, rotation)" });
+      json(res, 400, {
+        error:
+          "body.track must be a Segment[]: each entry needs a string moduleId, a position with finite x/y/z, " +
+          "a finite rotation, and finite pitch/roll if present",
+      });
       return;
     }
     const unknown = unknownModuleIds(body.track, MODULE_LIBRARY);
     if (unknown.length > 0) {
       json(res, 400, { error: `unknown Module id(s): ${unknown.join(", ")}` });
+      return;
+    }
+    const badTimeLimit = invalidTimeLimitReason(body.timeLimitMs);
+    if (badTimeLimit) {
+      json(res, 400, { error: badTimeLimit });
       return;
     }
     // An explicit body.id republishes that same trackId as a new Revision
@@ -103,6 +140,9 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
       track: body.track,
       ...(typeof body.id === "string" ? { id: body.id } : {}),
       ...(typeof body.name === "string" ? { name: body.name } : {}),
+      // Absent is valid and means "the default" (ADR 0038) — already
+      // validated above, so anything still here is a real integer.
+      ...(typeof body.timeLimitMs === "number" ? { timeLimitMs: body.timeLimitMs } : {}),
     });
     json(res, 201, saved);
     return;

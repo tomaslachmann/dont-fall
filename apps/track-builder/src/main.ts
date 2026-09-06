@@ -1,5 +1,6 @@
 import { MODULE_LIBRARY, type Track, type Vec3 } from "@dont-fall/shared";
 import { listTracks, loadTrack, publishPlaytestTrack, saveTrack } from "./api.js";
+import { parseDraftTimeLimitMs } from "./timeLimitField.js";
 import {
   deleteSegment,
   duplicateSegment,
@@ -23,8 +24,12 @@ const paletteList = $("palette-list");
 const serviceUrlInput = $<HTMLInputElement>("service-url");
 const trackNameInput = $<HTMLInputElement>("track-name");
 const trackIdInput = $<HTMLInputElement>("track-id");
+const timeLimitInput = $<HTMLInputElement>("time-limit");
 const statusEl = $("status");
 const playtestButton = $("playtest");
+
+/** The Draft's Time Limit in ms, as the field currently reads (M4 ticket 03). */
+const draftTimeLimitMs = (): number => parseDraftTimeLimitMs(timeLimitInput.value);
 const viewportContainer = $("viewport");
 const undoButton = $<HTMLButtonElement>("undo");
 const redoButton = $<HTMLButtonElement>("redo");
@@ -306,7 +311,7 @@ redoButton.addEventListener("click", () => {
 $("save").addEventListener("click", () => {
   void (async () => {
     try {
-      const { id } = await saveTrack(serviceUrlInput.value, trackNameInput.value.trim(), history.track);
+      const { id } = await saveTrack(serviceUrlInput.value, trackNameInput.value.trim(), history.track, draftTimeLimitMs());
       trackIdInput.value = id;
       setStatus(`saved as "${id}"`);
     } catch (err) {
@@ -321,6 +326,9 @@ const loadById = async (id: string): Promise<void> => {
     history.reset(stored.track);
     trackNameInput.value = stored.name ?? "";
     trackIdInput.value = stored.id;
+    // The loaded Revision's own clock, so editing and republishing keeps it
+    // rather than silently resetting every Track to the default.
+    timeLimitInput.value = String(Math.round(stored.timeLimitMs / 1000));
     rerender();
     select(undefined);
     setStatus(`loaded "${stored.id}" (${history.track.length} Segment(s))`);
@@ -386,11 +394,14 @@ playtestButton.addEventListener("click", () => {
   void (async () => {
     try {
       setStatus("publishing for playtest…");
-      const { id } = await publishPlaytestTrack(serviceUrlInput.value, history.track);
+      const { id } = await publishPlaytestTrack(serviceUrlInput.value, history.track, draftTimeLimitMs());
       // 5173 is apps/client's own fixed dev port (its `vite.config.ts`) — a
       // local-dev-only detail, not a shared runtime constant the way the
       // server/track-service ports are (ADR 0028's own network protocol).
-      window.open(`http://${location.hostname}:5173/?track=${encodeURIComponent(id)}`, "_blank");
+      // `/play` (M4 ticket 06): opening straight into a running game is the
+      // whole point of Playtest, so this targets the game route directly
+      // rather than the Main Menu now sitting at `/`.
+      window.open(`http://${location.hostname}:5173/play?track=${encodeURIComponent(id)}`, "_blank");
       setStatus(`playtest opened in a new tab (Track "${id}")`);
     } catch (err) {
       setStatus(`playtest failed: ${(err as Error).message}`);

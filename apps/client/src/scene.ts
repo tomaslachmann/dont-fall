@@ -10,6 +10,7 @@ import {
   yawQuat,
   type CharacterMotionState,
   type Checkpoint,
+  type FinishZone,
   type OrientedBox,
   type PropConfig,
   type PropSnapshot,
@@ -26,6 +27,7 @@ import {
   resolveArm,
   springArmPosition,
 } from "./camera/springArm.js";
+import { listen } from "./listeners.js";
 import { createSpeedLines } from "./speedLines.js";
 import { initialWobbleState, stepWobble } from "./wobble.js";
 
@@ -61,8 +63,17 @@ const WOBBLE_ENABLED = false;
 const RAGDOLL_PELVIS_TO_FEET = CAPSULE_BOTTOM_OFFSET + RAGDOLL_BONES.find((b) => b.name === "pelvis")!.restCenter.y;
 
 export interface StageConfig {
+  /**
+   * Element the renderer's canvas is appended to. The game owns the canvas
+   * for exactly as long as it runs and removes it again on `dispose`
+   * (M4 ticket 01) — the shell around it (`<GameCanvas>`, ADR 0008) owns the
+   * element it goes into.
+   */
+  mount: HTMLElement;
   statics: OrientedBox[];
   checkpoints: Checkpoint[];
+  /** Finish Zones to draw (M4 ticket 02) — the Race has to be visible to be run at. */
+  finishZones: FinishZone[];
   killPlaneY: number;
   spinners: SpinnerConfig[];
   props: PropConfig[];
@@ -117,6 +128,17 @@ export interface Stage {
     dashing: boolean,
     dashSpeed: number,
   ) => void;
+  /**
+   * Give back everything this Stage took: the canvas, its WebGL context, every
+   * geometry/material/texture it uploaded, and the window resize listener
+   * (M4 ticket 01).
+   *
+   * Browsers cap how many live WebGL contexts a page may hold (~16) and drop
+   * the oldest when that is exceeded, so a game mounted and unmounted across
+   * routes must hand its context back rather than wait for the garbage
+   * collector — which never runs `dispose` on GPU resources anyway.
+   */
+  dispose: () => void;
 }
 
 const boxMesh = (box: OrientedBox, material: THREE.Material): THREE.Mesh => {
@@ -133,9 +155,34 @@ const boxMesh = (box: OrientedBox, material: THREE.Material): THREE.Mesh => {
   return mesh;
 };
 
+/**
+ * Release every GPU resource reachable from `root`. Three.js uploads
+ * geometries, materials and textures to the GPU and holds them there until
+ * `dispose` is called explicitly — dropping the JS reference frees nothing.
+ */
+const disposeSceneGraph = (root: THREE.Object3D): void => {
+  root.traverse((object) => {
+    const mesh = object as Partial<THREE.Mesh> & Partial<THREE.SkinnedMesh>;
+    mesh.geometry?.dispose();
+    mesh.skeleton?.dispose();
+    const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+    for (const material of materials) {
+      // A material's textures hang off it under names that vary by material
+      // type (`map`, `normalMap`, `emissiveMap`, …) — walking its own values
+      // catches them all without enumerating each type's slots.
+      for (const value of Object.values(material)) {
+        if (value instanceof THREE.Texture) value.dispose();
+      }
+      material.dispose();
+    }
+  });
+};
+
 export const createStage = ({
+  mount,
   statics,
   checkpoints,
+  finishZones,
   killPlaneY,
   spinners,
   props,
@@ -144,7 +191,7 @@ export const createStage = ({
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  document.body.appendChild(renderer.domElement);
+  mount.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(BACKGROUND_COLOR);
@@ -180,6 +227,26 @@ export const createStage = ({
   });
   for (const cp of checkpoints) {
     scene.add(boxMesh(cp.trigger, checkpointMaterial));
+  }
+
+  // Brighter and far more opaque than a Checkpoint's marker: a Checkpoint is
+  // ambient reassurance you can miss, a Finish Zone is the thing you are
+  // running at, and you have to be able to pick it out down the length of a
+  // Track. Both use the same box treatment so they read as the same family
+  // of "walk into this" region.
+  // Built only when there is something to draw with it: `disposeSceneGraph`
+  // reaches materials through the meshes that use them, so a material
+  // allocated for an empty list would never be released.
+  if (finishZones.length > 0) {
+    const finishZoneMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffd166,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+    });
+    for (const zone of finishZones) {
+      scene.add(boxMesh(zone.trigger, finishZoneMaterial));
+    }
   }
 
   const spinnerMaterial = new THREE.MeshStandardMaterial({ color: 0xf25c54, roughness: 0.5 });
@@ -289,7 +356,7 @@ export const createStage = ({
     return hit ? hit.distance : null;
   };
 
-  window.addEventListener("resize", () => {
+  const stopResizing = listen(window, "resize", () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -472,6 +539,27 @@ export const createStage = ({
         // be perturbed by a reconciliation correction.
         speedLines.setIntensity(dashSpeed / DASH_SPEED);
       }
+    },
+    dispose: () => {
+      stopResizing();
+      // Stop the mixer before the rig it animates is disposed, and drop the
+      // clips it cached against that rig — the mixer keeps them keyed by root
+      // object, so a second game booting with a freshly loaded model would
+      // otherwise leave the first run's action cache alive.
+      mixer.stopAllAction();
+      mixer.uncacheRoot(characterModel.scene);
+      speedLines.dispose();
+      disposeSceneGraph(scene);
+      remoteGeometry.dispose();
+      remoteMaterial.dispose();
+      scene.clear();
+      remoteMeshes.clear();
+      collidables.length = 0;
+      renderer.domElement.remove();
+      renderer.dispose();
+      // `dispose` releases the renderer's own resources but leaves the WebGL
+      // context itself live and counting against the browser's per-page limit.
+      renderer.forceContextLoss();
     },
   };
 };

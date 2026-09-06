@@ -1,0 +1,112 @@
+/* <ReadyToggle> / Settings switches — design-system.md §2.3, transcribed:
+   a pill-free rectangle track (this system varies radius by role) and a
+   square-ish thumb, not a circle-on-a-pill — the single most
+   template-shaped control named in this project's own anti-slop research.
+   Widened to fit the on/off state label beside the thumb, so state is
+   readable without relying on color alone. */
+.toggle {
+  position: relative;
+  width: 72px;
+  height: 28px;
+  border-radius: var(--df-radius-standard);
+  background: var(--df-color-surface-0);
+  border: var(--df-border-width) solid var(--df-color-border-emphasis);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background 140ms ease-out,
+    border-color 140ms ease-out;
+}
+.thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--df-color-ink-secondary);
+  box-shadow: 3px 3px 0 0 var(--df-color-shadow-neutral);
+  z-index: 1;
+}
+.thumbLabel {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--df-color-ink-secondary);
+  right: 8px;
+}
+.checked {
+  background: color-mix(in srgb, var(--df-color-go) 30%, var(--df-color-surface-0));
+  border-color: var(--df-color-go);
+}
+.checked .thumb {
+  background: var(--df-color-go);
+  transform: translateX(44px);
+}
+.checked .thumbLabel {
+  color: var(--df-color-go);
+  right: auto;
+  left: 8px;
+}
+.toggle:hover .thumb {
+  box-shadow: 4px 4px 0 0 var(--df-color-shadow-neutral);
+}
+
+/* Toggle-snap — §1.7c, transcribed exactly: 140ms back-out, thumb
+   overshoots ~8% of travel before settling. A one-shot keyframe per
+   direction (not a plain transition — a transition can't express a
+   directional overshoot), dropped on animationend by the component. */
+.snapOn .thumb {
+  animation: toggleOn var(--df-motion-toggle-snap-duration) var(--df-motion-ease-land) both;
+}
+.snapOff .thumb {
+  animation: toggleOff var(--df-motion-toggle-snap-duration) var(--df-motion-ease-land) both;
+}
+@keyframes toggleOn {
+  0% {
+    transform: translateX(0);
+  }
+  70% {
+    transform: translateX(46px);
+  }
+  100% {
+    transform: translateX(44px);
+  }
+}
+@keyframes toggleOff {
+  0% {
+    transform: translateX(44px);
+  }
+  70% {
+    transform: translateX(-2px);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .snapOn .thumb,
+  .snapOff .thumb {
+    animation: none;
+  }
+}
+
+/* Remote/read-only — §2.3: another Player's own Ready state is not
+   interactive for anyone but its owner, and must look that way: flatter,
+   no hover, no cursor affordance — not just logically disabled. */
+.readOnly {
+  cursor: default;
+  pointer-events: none;
+}
+.readOnly .thumb {
+  box-shadow: none;
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--df-color-checkpoint);
+  outline-offset: 3px;
+}

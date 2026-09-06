@@ -1,0 +1,23 @@
+/* <TrackBrowserModal> cards, <TrackPicker>'s own card — a bigger shadow
+   offset AND a lift on hover/focus, not just a border-color change. */
+.card {
+  border: var(--df-border-width-emphasis) solid var(--df-color-border-emphasis);
+  border-radius: var(--df-radius-card);
+  background: var(--df-color-surface-2);
+  box-shadow: 3px 3px 0 0 var(--df-color-shadow-neutral);
+  padding: var(--df-space-3);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition:
+    border-color 140ms ease-out,
+    transform 160ms var(--df-motion-ease-land),
+    box-shadow 140ms ease-out;
+}
+.card:hover,
+.card:focus-visible {
+  border-color: var(--df-color-go);
+  transform: translate(-2px, -2px);
+  box-shadow: 5px 5px 0 0 var(--df-color-shadow-neutral);
+}

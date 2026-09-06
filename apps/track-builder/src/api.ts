@@ -6,14 +6,25 @@ export interface StoredTrackResponse {
   id: string;
   name: string | null;
   track: Track;
+  /** The Time Limit this Revision was published with (M4 ticket 03, ADR 0038). */
+  timeLimitMs: number;
 }
 
-/** Saves a Track to track-service (ticket 02's `POST /tracks`). */
-export const saveTrack = async (baseUrl: string, name: string, track: Track): Promise<{ id: string }> => {
+/**
+ * Saves a Track to track-service (ticket 02's `POST /tracks`). `timeLimitMs`
+ * is written with the new Revision (M4 ticket 03, ADR 0038) — each publish
+ * carries whatever the Draft's Time Limit says at that moment.
+ */
+export const saveTrack = async (
+  baseUrl: string,
+  name: string,
+  track: Track,
+  timeLimitMs: number,
+): Promise<{ id: string }> => {
   const res = await fetch(`${baseUrl}/tracks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(name ? { name, track } : { track }),
+    body: JSON.stringify(name ? { name, track, timeLimitMs } : { track, timeLimitMs }),
   });
   if (!res.ok) throw new Error(`save failed: HTTP ${res.status}`);
   return (await res.json()) as { id: string };
@@ -35,11 +46,15 @@ export const PLAYTEST_TRACK_ID = "track-builder-playtest";
  * the old local-only `playtest.ts` scene entirely (grilling session, 2026-09:
  * "true simulation, not some bean").
  */
-export const publishPlaytestTrack = async (baseUrl: string, track: Track): Promise<{ id: string }> => {
+export const publishPlaytestTrack = async (
+  baseUrl: string,
+  track: Track,
+  timeLimitMs: number,
+): Promise<{ id: string }> => {
   const res = await fetch(`${baseUrl}/tracks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: PLAYTEST_TRACK_ID, name: "Track Builder Playtest", track }),
+    body: JSON.stringify({ id: PLAYTEST_TRACK_ID, name: "Track Builder Playtest", track, timeLimitMs }),
   });
   if (!res.ok) throw new Error(`publish failed: HTTP ${res.status}`);
   return (await res.json()) as { id: string };

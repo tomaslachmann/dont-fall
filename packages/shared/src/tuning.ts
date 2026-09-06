@@ -648,3 +648,56 @@ export const TRACK_FETCH_RETRY_DELAY_MS = 1_000;
  * budget on one stuck attempt instead of retrying.
  */
 export const TRACK_FETCH_ATTEMPT_TIMEOUT_MS = 5_000;
+
+// --- Round clock (M4 ticket 03, ADR 0038) -----------------------------------
+
+/**
+ * The Time Limit a Revision published before M4 — the M1 seed included —
+ * backfills to (ADR 0038), and what the Track builder offers as the default
+ * for a new one. Three minutes: comfortably more than any current Track needs,
+ * so backfilling it can't make an existing Track unraceable.
+ */
+export const DEFAULT_TIME_LIMIT_MS = 180_000;
+
+/**
+ * Bounds on an authored Time Limit. Not balance values — a floor low enough
+ * to be worth authoring at all and a ceiling that keeps a typo (a stray zero)
+ * from producing a Round nobody can wait out. Enforced by track-service on
+ * publish, so a Revision can never carry a nonsense clock.
+ */
+export const MIN_TIME_LIMIT_MS = 10_000;
+export const MAX_TIME_LIMIT_MS = 30 * 60_000;
+
+// --- Match phase (M4 ticket 04, ADR 0040) -----------------------------------
+
+/**
+ * How long the Countdown holds before a Round is released (ADR 0040). Long
+ * enough to read "3, 2, 1" and get your hands on the keys; short enough that
+ * it isn't the part of the Match you remember.
+ */
+export const COUNTDOWN_MS = 3_000;
+
+/** {@link COUNTDOWN_MS} in Ticks — the Countdown is derived from the server Tick, never a wall clock. */
+export const COUNTDOWN_TICKS = msToTicks(COUNTDOWN_MS);
+
+/**
+ * How many connected Players it takes to start a Round while there is no
+ * Lobby to press start in (M4 ticket 04; the Lobby itself is ticket 07).
+ * M4 is a two-player slice (ADR 0011's "validated at 2, shaped for 12"), so
+ * two is what a Round waits for.
+ *
+ * The Match server takes this as config, so a developer working alone can run
+ * with one — otherwise a single-browser Playtest would sit in the Lobby
+ * forever, with nothing in M4 yet able to press start.
+ */
+export const PLAYERS_TO_START = 2;
+
+/**
+ * How long ROUND_END holds before the Results (M4 ticket 05). A beat, not a
+ * screen: long enough to see that the Round is over where you are standing,
+ * before the view changes.
+ */
+export const ROUND_END_MS = 2_500;
+
+/** {@link ROUND_END_MS} in Ticks — every Match duration is measured in Ticks (ADR 0004). */
+export const ROUND_END_TICKS = msToTicks(ROUND_END_MS);

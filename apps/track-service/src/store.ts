@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
-import type { Track, TrackListing } from "@dont-fall/shared";
+import { DEFAULT_TIME_LIMIT_MS, type Track, type TrackListing } from "@dont-fall/shared";
 import type { TrackDb } from "./db.js";
 import { tracks } from "./schema.js";
 
@@ -21,6 +21,8 @@ export interface StoredTrack {
   revision: number;
   authorId: string;
   contentHash: string;
+  /** How long a Round on this Revision gets, in ms (M4 ticket 03, ADR 0038). */
+  timeLimitMs: number;
 }
 
 const toStored = (row: typeof tracks.$inferSelect): StoredTrack => ({
@@ -30,6 +32,7 @@ const toStored = (row: typeof tracks.$inferSelect): StoredTrack => ({
   revision: row.revision,
   authorId: row.authorId,
   contentHash: row.contentHash,
+  timeLimitMs: row.timeLimitMs,
 });
 
 /**
@@ -59,7 +62,10 @@ const hashTrack = (track: Track): string => createHash("sha256").update(canonica
  * indistinguishable at this layer. Never mutates an existing Revision
  * (ADR 0032): publishing the same `trackId` again inserts Revision N+1.
  */
-export const saveTrack = (db: TrackDb, input: { id?: string; name?: string; track: Track }): { id: string } => {
+export const saveTrack = (
+  db: TrackDb,
+  input: { id?: string; name?: string; track: Track; timeLimitMs?: number },
+): { id: string } => {
   // An empty string is treated the same as absent (code review, ticket 10) —
   // otherwise it becomes a real, permanently unfetchable trackId (the
   // `GET /tracks/:id` route requires at least one non-slash character).
@@ -79,9 +85,13 @@ export const saveTrack = (db: TrackDb, input: { id?: string; name?: string; trac
       revision,
       name: input.name ?? null,
       authorId: DEFAULT_AUTHOR_ID,
+      // Deliberately not part of the content hash (ADR 0038): the hash answers
+      // "are these the same Segments?", and two Revisions differing only in
+      // their clock are the same Track content by any useful definition.
       contentHash: hashTrack(input.track),
       data: JSON.stringify(input.track),
       createdAt: Date.now(),
+      timeLimitMs: input.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS,
     })
     .run();
   return { id: trackId };

@@ -13,12 +13,15 @@ describe("saveTrack", () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "abc" }), { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await saveTrack("http://x", "my track", SAMPLE);
+    const result = await saveTrack("http://x", "my track", SAMPLE, 45_000);
 
     expect(result).toEqual({ id: "abc" });
     expect(fetchMock).toHaveBeenCalledWith(
       "http://x/tracks",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "my track", track: SAMPLE }) }),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ name: "my track", track: SAMPLE, timeLimitMs: 45_000 }),
+      }),
     );
   });
 
@@ -26,11 +29,11 @@ describe("saveTrack", () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "abc" }), { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await saveTrack("http://x", "", SAMPLE);
+    await saveTrack("http://x", "", SAMPLE, 45_000);
 
     expect(fetchMock).toHaveBeenCalledWith(
       "http://x/tracks",
-      expect.objectContaining({ body: JSON.stringify({ track: SAMPLE }) }),
+      expect.objectContaining({ body: JSON.stringify({ track: SAMPLE, timeLimitMs: 45_000 }) }),
     );
   });
 
@@ -39,7 +42,7 @@ describe("saveTrack", () => {
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ error: "bad" }), { status: 400 })),
     );
-    await expect(saveTrack("http://x", "", SAMPLE)).rejects.toThrow(/400/);
+    await expect(saveTrack("http://x", "", SAMPLE, 45_000)).rejects.toThrow(/400/);
   });
 });
 
@@ -69,14 +72,19 @@ describe("publishPlaytestTrack (Track Builder Playtest — 'true simulation' gri
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: PLAYTEST_TRACK_ID }), { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await publishPlaytestTrack("http://x", SAMPLE);
+    const result = await publishPlaytestTrack("http://x", SAMPLE, 45_000);
 
     expect(result).toEqual({ id: PLAYTEST_TRACK_ID });
     expect(fetchMock).toHaveBeenCalledWith(
       "http://x/tracks",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ id: PLAYTEST_TRACK_ID, name: "Track Builder Playtest", track: SAMPLE }),
+        body: JSON.stringify({
+          id: PLAYTEST_TRACK_ID,
+          name: "Track Builder Playtest",
+          track: SAMPLE,
+          timeLimitMs: 45_000,
+        }),
       }),
     );
   });
@@ -86,7 +94,7 @@ describe("publishPlaytestTrack (Track Builder Playtest — 'true simulation' gri
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ error: "bad" }), { status: 400 })),
     );
-    await expect(publishPlaytestTrack("http://x", SAMPLE)).rejects.toThrow(/400/);
+    await expect(publishPlaytestTrack("http://x", SAMPLE, 45_000)).rejects.toThrow(/400/);
   });
 });
 

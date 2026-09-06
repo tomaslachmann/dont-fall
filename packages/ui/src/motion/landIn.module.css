@@ -1,0 +1,30 @@
+/* Landing — design-system.md §1.7a, transcribed exactly: 320ms, back-out
+   curve, translateY(12px) scale(0.96) -> overshoot scale(1.03) at ~65% ->
+   settle scale(1). Applied to the Card primitive and, staggered ~40ms per
+   row (see staggerDelay below), to list rows — §2.5's own entrance spec.
+   A plain CSS animation is enough here (unlike the vanilla-artifact
+   prototype this library is built from): React mounts each row fresh when
+   its Screen becomes active, so there is no need to manually replay the
+   animation on a persisted DOM node the way that prototype had to. */
+.landIn {
+  animation: land var(--df-motion-land-duration) var(--df-motion-ease-land) both;
+}
+@keyframes land {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+  65% {
+    opacity: 1;
+    transform: translateY(0) scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .landIn {
+    animation: none;
+  }
+}

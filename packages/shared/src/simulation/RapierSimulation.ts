@@ -14,6 +14,7 @@ import { DEFAULT_SURFACE, surfaceConfig, type SurfaceId } from "../track/Surface
 import { CharacterController, type CollisionListener } from "./CharacterController.js";
 import type { CharacterMotionState } from "./CharacterStateMachine.js";
 import type { Checkpoint } from "./Checkpoint.js";
+import type { FinishZone } from "./FinishZone.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
 import type { LaunchPadConfig } from "./LaunchPad.js";
 import { MirrorCharacter } from "./MirrorCharacter.js";
@@ -55,6 +56,13 @@ interface CharacterProgress {
   touchedSpeedPadIndex: number | undefined;
   /** Same idea as {@link touchedSpeedPadIndex}, for launch pads (M3.7 ticket 02) — see `updateLaunchPad`. */
   touchedLaunchPadIndex: number | undefined;
+  /**
+   * The Tick this Character entered a Finish Zone and Qualified, or `null`
+   * while it has not (M4 ticket 02, ADR 0039). Latched on the first entry and
+   * never re-stamped: Qualification is granted once, and a Character shoved
+   * back out of the zone afterwards keeps it.
+   */
+  finishTick: number | null;
 }
 
 export interface SimulationConfig {
@@ -78,6 +86,13 @@ export interface SimulationConfig {
   launchPads?: LaunchPadConfig[];
   /** Volumes that apply a continuous force to any Character inside them (M3.7 ticket 04, ADR 0036). */
   volumes?: VolumeConfig[];
+  /**
+   * Finish Zones a Character Qualifies by entering (M4 ticket 02, ADR 0039).
+   * Empty (the default) means the Track has no finish authored and is simply
+   * not raceable — every Character stays unqualified forever, which is
+   * exactly how every pre-M4 Track behaves.
+   */
+  finishZones?: FinishZone[];
   /** Height below which the Character has Fallen out of the playground. */
   killPlaneY?: number;
   /** Rotating-bar Obstacles (ticket 06). */
@@ -158,6 +173,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   private readonly progress = new Map<string, CharacterProgress>();
   private readonly statics: OrientedBox[];
   private readonly checkpoints: Checkpoint[];
+  private readonly finishZones: FinishZone[];
   private readonly speedPads: SpeedPadConfig[];
   private readonly launchPads: LaunchPadConfig[];
   /**
@@ -219,9 +235,18 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
 
   private tickCount = 0;
 
+  /**
+   * Set by {@link RapierSimulation.dispose}. The Rapier `World` is WASM
+   * memory: once freed, every handle into it dangles, and calling through one
+   * crashes inside the engine with no useful stack. This turns that into a
+   * plain error at the call site.
+   */
+  private disposed = false;
+
   constructor(config: SimulationConfig = {}) {
     this.statics = config.statics ?? [DEFAULT_GROUND];
     this.checkpoints = config.checkpoints ?? [];
+    this.finishZones = config.finishZones ?? [];
     this.speedPads = config.speedPads ?? [];
     this.launchPads = config.launchPads ?? [];
     this.volumes = [...(config.volumes ?? [])].sort((a, b) => b.priority - a.priority);
@@ -305,6 +330,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       lastMotionState: "Controlled",
       touchedSpeedPadIndex: undefined,
       touchedLaunchPadIndex: undefined,
+      finishTick: null,
     });
   }
 
@@ -414,6 +440,15 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       // touch index still needs to be right before the next replayed tick's
       // own rising-edge check runs.
       progress.touchedLaunchPadIndex = this.findTriggerIndex(this.launchPads, base.position);
+      // Qualification is synced from the authority outright, never merged
+      // (M4 ticket 02) — the same reasoning as ADR 0015's unconditional
+      // down-state sync. The client predicts entering the zone so its input
+      // locks at the right Tick, but a prediction that was wrong (a capsule
+      // that grazed the boundary here and not on the server) would otherwise
+      // stay locked for the rest of the Round, sending nothing but idle
+      // input while the server kept expecting it to run. The server's answer
+      // wins in both directions.
+      progress.finishTick = base.finishTick;
     }
   }
 
@@ -459,6 +494,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * `CharacterController` (ticket 02) is what makes one shared step possible.
    */
   tick(inputs: Record<string, SimInputs>): void {
+    if (this.disposed) throw new Error("RapierSimulation: tick() on a disposed simulation");
     // Queue each Spinner's rotation for the tick about to run — it must be
     // queued before `world.step()` applies it, the same way each Character's
     // own `setNextKinematicTranslation` works.
@@ -467,7 +503,17 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     // snapshot pose every tick — they never move under their own physics.
     for (const mirror of this.mirrors.values()) mirror.step();
 
-    for (const [id, character] of this.characters) character.beginTick(inputs[id] ?? IDLE_INPUTS);
+    // A Qualified Character's input is locked (M4 ticket 02, ADR 0039): it
+    // stops where it stands and spectates the rest of the Round from inside
+    // the zone. Applied here, in the shared step, rather than by the server
+    // dropping the packet — that is what makes a client's own prediction lock
+    // at the same Tick, so it never runs half an RTT past the finish before
+    // being yanked back. Everything else still acts on the body: gravity,
+    // collision, and another Character shoving it are all unchanged.
+    for (const [id, character] of this.characters) {
+      const qualified = this.progress.get(id)!.finishTick !== null;
+      character.beginTick(qualified ? IDLE_INPUTS : (inputs[id] ?? IDLE_INPUTS));
+    }
     this.world.step();
     this.tickCount += 1;
 
@@ -476,6 +522,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     for (const [id, character] of this.characters) {
       character.endTick();
       this.updateCheckpoint(id);
+      this.updateFinishZone(id);
       this.updateSpeedPad(id);
       this.updateLaunchPad(id);
       this.detectFall(id);
@@ -611,6 +658,28 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   }
 
   /**
+   * Qualification (M4 ticket 02, ADR 0039): the Tick this Character's
+   * capsule centre first lies inside any Finish Zone. A pure function of
+   * position, so the client's own prediction derives it identically — nothing
+   * about it depends on being the server.
+   *
+   * Latched, not rising-edge: unlike a pad, a Finish Zone fires once per
+   * Round and never re-arms, so there is no `touched…Index` to track and
+   * leaving the zone changes nothing.
+   *
+   * Deliberately *not* skipped while down, unlike {@link updateSpeedPad} —
+   * a Character shoved into the zone mid-ragdoll has still entered it, and
+   * "entry counts" is the whole M4 rule (ADR 0039). That a launch pad or a
+   * Bump can put you there is the design, not a hole in it.
+   */
+  private updateFinishZone(id: string): void {
+    const progress = this.progress.get(id)!;
+    if (progress.finishTick !== null) return;
+    if (this.findTriggerIndex(this.finishZones, this.character(id).position) === undefined) return;
+    progress.finishTick = this.tickCount;
+  }
+
+  /**
    * Rising-edge pad detection (M3.7 ticket 01, ADR 0035) — fires
    * {@link CharacterController.triggerSpeedPad} exactly once per crossing:
    * the tick this Character's (just-updated) position enters a pad's
@@ -675,6 +744,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
         checkpointIndex: progress.checkpointIndex,
         fallCount: progress.fallCount,
         phaseStartTick: progress.phaseStartTick,
+        finishTick: progress.finishTick,
       });
     }
     return {
@@ -709,5 +779,33 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   /** The configured Props, for the renderer to build geometry from (pose comes from `SimState.props`). */
   getProps(): PropConfig[] {
     return this.props.map((p) => clonePropConfig(p.config));
+  }
+
+  /**
+   * Release the Rapier world and everything in it (M4 ticket 01).
+   *
+   * `World.free()` frees every body, collider, joint and character controller
+   * it owns, so the per-entity `dispose` methods are deliberately not called
+   * here — they would each remove something from a world that is about to
+   * vanish anyway. What matters is that this happens *at all*: a client that
+   * routes into the game and back out repeatedly (ADR 0008) builds a
+   * prediction world each time, and WASM memory is not reclaimed by the JS
+   * garbage collector.
+   *
+   * Idempotent: teardown can run more than once, and a double `free()` is a
+   * crash inside Rapier rather than a no-op.
+   */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.world.free();
+    this.characters.clear();
+    this.mirrors.clear();
+    this.progress.clear();
+    this.spinnerByHandle.clear();
+    this.propByHandle.clear();
+    this.propIndexByHandle.clear();
+    this.characterIdByHandle.clear();
+    this.staticSurfaceByHandle.clear();
   }
 }

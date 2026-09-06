@@ -1,0 +1,63 @@
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-6);
+  width: min(40rem, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  align-items: center;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--df-type-title);
+  font-weight: 800;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: var(--df-space-5);
+}
+
+.placement {
+  min-width: 2.5em;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--df-color-ink-secondary);
+}
+/* Gold reuses --df-color-host (design-system.md §1.1: "host authority" and
+   "1st place" never appear on the same screen, so one token serves both). */
+.gold {
+  color: var(--df-color-host);
+}
+.silver {
+  color: var(--df-color-medal-silver);
+}
+.bronze {
+  color: var(--df-color-medal-bronze);
+}
+
+.stats {
+  display: flex;
+  align-items: baseline;
+  gap: var(--df-space-4);
+  font-size: var(--df-type-body);
+  color: var(--df-color-ink-secondary);
+}
+
+.progress {
+  color: var(--df-color-checkpoint);
+}
+
+.falls {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.hint {
+  margin: 0;
+  color: var(--df-color-ink-secondary);
+  font-size: var(--df-type-body);
+}

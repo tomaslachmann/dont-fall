@@ -1,0 +1,55 @@
+/* <SensitivitySlider> — design-system.md §2.4, transcribed: a sharp
+   (not standard) radius track — "functional/dense chrome," not a card
+   being picked up — Go-green fill from origin to thumb, thumb shares the
+   toggle's own raised-block treatment rather than a circle. */
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-3);
+}
+.track {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  background: var(--df-color-surface-0);
+  border-radius: var(--df-radius-sharp);
+  border: var(--df-border-width) solid var(--df-color-border-emphasis);
+  cursor: pointer;
+}
+.fill {
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  bottom: -1px;
+  background: var(--df-color-go);
+  border-radius: var(--df-radius-sharp);
+}
+.thumb {
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  transform: translateY(-50%);
+  border-radius: 4px;
+  background: var(--df-color-ink-primary);
+  box-shadow: 3px 3px 0 0 var(--df-color-shadow-neutral);
+  transition: box-shadow 140ms ease-out;
+}
+/* Dragging takes a bigger offset for the duration of the drag, per §2.4 —
+   same hard-offset construction as the toggle thumb (§1.6a), not the
+   blurred elevation-2 the doc's original proposal used. */
+.dragging .thumb {
+  box-shadow: 4px 4px 0 0 var(--df-color-shadow-neutral);
+}
+.value {
+  width: 3ch;
+  text-align: right;
+  font-size: var(--df-type-label);
+  color: var(--df-color-ink-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.track:focus-visible {
+  outline: 2px solid var(--df-color-checkpoint);
+  outline-offset: 3px;
+}

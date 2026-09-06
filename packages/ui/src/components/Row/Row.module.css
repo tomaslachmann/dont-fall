@@ -1,0 +1,78 @@
+/* Row primitive — design-system.md §2.5: <ResultsRow>, <LeaderboardRow>,
+   <MatchHistoryRow>, <StatTile> ("the single most-reused non-button
+   primitive in the catalog"). Two container treatments share the same
+   host/own-row/interactive logic:
+   - `flat` (§2.5's own spec): no per-row card chrome, a hairline divider
+     between rows — a list, not a stack of individually-elevated cards.
+   - `card` (validated separately for <LobbyPlayerList>/<CharacterPickList>
+     — an avatar-led row, not a ranked-stat row, so §2.5's "no card chrome"
+     doesn't apply the same way): a bordered, surface-2-filled row. */
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-3) var(--df-space-4);
+}
+
+.flat {
+  border-bottom: var(--df-border-width) solid var(--df-color-border);
+}
+.flat:last-child {
+  border-bottom: none;
+}
+/* Host-row asymmetry, §2.3: a heavier divider, not a color-only badge. */
+.flat.isHost {
+  border-bottom-width: var(--df-border-width-emphasis);
+  border-bottom-color: var(--df-color-host);
+  padding-bottom: var(--df-space-4);
+  margin-bottom: var(--df-space-2);
+}
+/* DNF — §2.5's own anti-slop line: "not the same kind of row... shouldn't
+   be styled identically with just a color swap." Dashed border, no fill —
+   a different KIND of row, same visual weight as a Qualified one. The
+   border takes --df-color-fall (§1.1's own DNF/Fall role, "a funny failure
+   the game is built around, not a system error") rather than the neutral
+   hairline every other flat row uses — the one place color legitimately
+   marks this row, on top of (not instead of) the dashed-vs-solid shape. */
+.flat.dnf {
+  border-style: dashed;
+  border-color: var(--df-color-fall);
+  background: transparent;
+}
+
+.card {
+  border-radius: var(--df-radius-standard);
+  border: var(--df-border-width) solid var(--df-color-border);
+  background: var(--df-color-surface-2);
+}
+.card.isHost {
+  border-color: var(--df-color-host);
+  box-shadow: inset 0 0 0 1px var(--df-color-host);
+}
+
+/* Own-row highlight — §2.5: a neutral-weight left edge, not a decorative
+   colored stripe (§1.5 explicitly bans that exact tell). */
+.isOwnRow {
+  border-left: var(--df-border-width-emphasis) solid var(--df-color-ink-primary);
+  padding-left: calc(var(--df-space-4) - var(--df-border-width-emphasis));
+}
+
+.interactive {
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+}
+.interactive:hover {
+  background: var(--df-color-surface-2);
+}
+.card.interactive:hover {
+  border-color: var(--df-color-border-emphasis);
+}
+
+.label {
+  flex: 1;
+  font-weight: 600;
+  font-size: var(--df-type-emphasis);
+}

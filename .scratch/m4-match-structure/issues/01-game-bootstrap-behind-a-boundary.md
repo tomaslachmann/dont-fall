@@ -11,16 +11,16 @@ introducing a framework *and* untangling a bootstrap at the same time.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The client's game bootstrap is reachable as one call taking a config in and reporting
+- [x] The client's game bootstrap is reachable as one call taking a config in and reporting
       match-end / exit out, with a way to tear the game down cleanly (renderer, listeners, socket,
       pointer lock)
-- [ ] Starting and stopping twice in a row leaves nothing behind — no duplicated listeners, no
+- [x] Starting and stopping twice in a row leaves nothing behind — no duplicated listeners, no
       orphaned animation frame, no leaked WebGL context. This is what makes routing away from the
       game and back again survivable later
-- [ ] No change to the simulation, prediction, interpolation or HUD — this ticket is invisible from
+- [x] No change to the simulation, prediction, interpolation or HUD — this ticket is invisible from
       the outside
-- [ ] `predictionRegression` and the rest of the suite stay green
-- [ ] Manually verified live: the game plays exactly as before, and a full teardown/restart in the
+- [x] `predictionRegression` and the rest of the suite stay green
+- [x] Manually verified live: the game plays exactly as before, and a full teardown/restart in the
       same page session works
