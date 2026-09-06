@@ -1289,6 +1289,71 @@ describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
     expect(unchanged.phase).toBe("RUNNING");
     socket.close();
   });
+
+  it("supersedes a still-in-flight selectTrack with whichever pick was requested last", async () => {
+    // Both fetches are genuinely concurrent — sent back to back, in the same
+    // synchronous burst, with neither awaited by the handler in between — so
+    // this can resolve either order in reality. `selectTrackSeq` (ticket 07)
+    // exists exactly so the outcome is deterministic regardless: only the
+    // request that was still the latest one when its own fetch resolves ever
+    // applies.
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    await nextMessage(a); // welcome, host
+    const [trackA, trackB] = await Promise.all([publishTrack(), publishTrack()]);
+
+    a.send(JSON.stringify({ type: "selectTrack", trackId: trackA } satisfies ClientMessage));
+    a.send(JSON.stringify({ type: "selectTrack", trackId: trackB } satisfies ClientMessage));
+
+    const landed = await snapshotUntil(a, (s) => s.trackId === trackA || s.trackId === trackB);
+    expect(landed.trackId).toBe(trackB);
+
+    // Give trackA's own fetch every chance to resolve late and clobber it.
+    await new Promise((r) => setTimeout(r, 200));
+    const settled = await nextSnapshot(a);
+    expect(settled.trackId).toBe(trackB);
+    a.close();
+  });
+
+  it("drops a start queued right behind a still-in-flight selectTrack, rather than starting the wrong Track", async () => {
+    // The interesting race ticket 07 calls out: the pre-check passes (LOBBY,
+    // host) and the fetch begins, then — before it resolves — the same host's
+    // `start` (queued right behind it, same burst) is validated and queued
+    // against the *old* Lobby. A same-process fetch to track-service settles
+    // well inside one 30 Hz tick, so in practice it always resolves before
+    // the tick loop gets a chance to spend that queued start: without the
+    // post-`await` reset also clearing it, the tick loop would spend it right
+    // after, starting a Round on the just-swapped-to alt Track the host never
+    // actually asked to start.
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+    await nextMessage(socket); // welcome, host
+    socket.send(JSON.stringify({ type: "setReady", ready: true } satisfies ClientMessage));
+    await snapshotUntil(socket, (s) => s.lobby.players.every((p) => p.ready));
+
+    const altTrackId = await publishTrack();
+    socket.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
+
+    const reloaded = await snapshotUntil(socket, (s) => s.trackId === altTrackId);
+    // The stale start never got to run — still in the Lobby on the alt Track,
+    // not RUNNING on it (which would mean the reset let it through) and not
+    // RUNNING on the original Track either (which would mean the reset lost
+    // the race the other way).
+    expect(reloaded.phase).toBe("LOBBY");
+
+    // Confirm it isn't just late — nothing spontaneously starts it, and
+    // Ready survives the reset, so the host only needs to ask again.
+    await new Promise((r) => setTimeout(r, 200));
+    const stillLobby = await nextSnapshot(socket);
+    expect(stillLobby.phase).toBe("LOBBY");
+    expect(stillLobby.lobby.players[0]!.ready).toBe(true);
+
+    socket.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
+    const running = await snapshotUntil(socket, (s) => s.phase === "RUNNING");
+    expect(running.trackId).toBe(altTrackId);
+    socket.close();
+  });
 });
 
 describe("startServer — Results, and going again (M4 ticket 08)", () => {

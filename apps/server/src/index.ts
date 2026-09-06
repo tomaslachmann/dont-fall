@@ -278,6 +278,12 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
    *
    * Callers still own anything specific to their own trigger — which Track
    * `fetched` now points at, clearing `dnf`, resetting Ready.
+   *
+   * Also clears `startRequested` — a live `selectTrack`'s own `await` leaves
+   * a window where a `start` sent right behind it can be validated and
+   * queued against the *old* Lobby before this reset lands, then get spent
+   * by the tick loop right after, starting a Round on the just-swapped-away
+   * Track instead of the one the request actually named.
    */
   const resetToFreshLobby = (track: Track): void => {
     const nextSimulation = rebuildSimulationFor(track);
@@ -286,6 +292,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     serverTick = 0;
     roundStartTick = 0;
     match = { phase: "LOBBY", phaseStartTick: 0 };
+    startRequested = false;
   };
 
   // The Match starts with no players; ticket 01's single-player default
