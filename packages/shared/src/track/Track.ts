@@ -57,6 +57,25 @@ export interface TrackListing {
   createdAt: number;
 }
 
+/**
+ * One stored Track Revision, in full — track-service's own `GET /tracks/:id`
+ * response shape (M4.5 ticket 04). Shared for the same reason as
+ * `TrackListing`: track-service (the producer) and the Track builder (the
+ * consumer, previously `StoredTrackResponse` — a hand-written subset that
+ * silently dropped `revision`/`authorId`/`contentHash`, which the wire
+ * always carried) must agree on this without a second declaration to drift.
+ */
+export interface StoredTrack {
+  id: string;
+  name: string | null;
+  track: Track;
+  revision: number;
+  authorId: string;
+  contentHash: string;
+  /** How long a Round on this Revision gets, in ms (M4 ticket 03, ADR 0038). */
+  timeLimitMs: number;
+}
+
 /** A Segment's full 3D orientation as one quaternion (ADR 0034) — composes its yaw/pitch/roll fields. */
 export const segmentOrientation = (segment: Pick<Segment, "rotation" | "pitch" | "roll">): Quat =>
   eulerQuat(segment.rotation, segment.pitch ?? 0, segment.roll ?? 0);

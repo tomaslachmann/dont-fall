@@ -25,6 +25,7 @@ import {
   movementDirection,
   needsCorrection,
   phaseLocksInput,
+  qualificationPlacement,
   resolveTrack,
   subVec3,
   type CharacterMotionState,
@@ -51,7 +52,6 @@ import { createStage } from "./scene.js";
 import { NetMetrics } from "./netMetrics.js";
 import { PropPredictionController, graceTicksForRtt } from "./propPrediction.js";
 import { matchBanner } from "./matchBanner.js";
-import { qualificationPlacement } from "./qualification.js";
 import { formatRoundClock } from "./roundTimer.js";
 import { SnapshotInterpolator } from "./snapshotInterpolation.js";
 import { createTeardown, type Teardown } from "./teardown.js";
