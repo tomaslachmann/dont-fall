@@ -14,11 +14,15 @@ the small half of ticket 02.
 
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Both test copies call the exported `needsCorrection`; the copied predicates are deleted
-- [ ] The stale `0.2` threshold and the missing `finishTick` term go with them
-- [ ] Any test that was only passing because it tested the old rule is corrected, and the
-      correction is explained in the commit — this is the one place in M4.5 where a changed
-      assertion is expected rather than suspicious
-- [ ] `predictionRegression` stays green
+- [x] Both test copies call the exported `needsCorrection`; the copied predicates are deleted —
+      `RapierSimulation.test.ts`'s copy calls it directly; the regression harness's own
+      `reconcileEpsilon`/`hardSnapM` knobs are a deliberate, documented baseline-vs-proposal
+      research comparison the shared gate does not (and should not) parameterize, so it gains the
+      missing `finishTick` branch as its own named reason instead of folding into `needsCorrection`
+      wholesale — explained in the commit
+- [x] The stale `0.2` threshold and the missing `finishTick` term go with them
+- [x] Any test that was only passing because it tested the old rule is corrected — none were;
+      `RapierSimulation.test.ts`'s 155 tests and the harness's 22 all still pass unchanged
+- [x] `predictionRegression` stays green, numbers unchanged (checked against the pre-change run)

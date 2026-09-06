@@ -8,8 +8,11 @@ state lands — which M5's eliminated-and-spectating state is likely to be.
 
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] One exported predicate in `packages/shared`, beside the motion state it tests
-- [ ] All six call sites use it; the inline copies are gone
-- [ ] No behaviour change — it is the same boolean
+- [x] One exported predicate in `packages/shared`, beside the motion state it tests —
+      `isDownMotionState` in `CharacterStateMachine.ts`
+- [x] All six call sites use it; the inline copies are gone — `CharacterController`,
+      `RapierSimulation`, `reconcileGate`, `game.ts` (three separate inline copies), and `scene.ts`
+      (three more)
+- [x] No behaviour change — it is the same boolean
