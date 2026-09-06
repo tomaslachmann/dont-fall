@@ -25,15 +25,27 @@ One full session from Lobby to a single winner, made of several Rounds.
 _Avoid_: game, session
 
 **Round**:
-One run through a single obstacle course within a Match. Ends by Qualification or
-Time Limit; survivors advance to the next Round.
+One run through a single obstacle course within a Match, played by one Round type.
+Ends when that Round type's condition is met or the Time Limit expires; whoever
+Qualified advances to the next Round.
 _Avoid_: level, stage, kolo, heat
+
+**Round type**:
+The rules a Round runs by: what Qualifies you, what eliminates you, and what ends
+it. Race and Survival are Round types. A Round type is chosen independently of the
+Track it runs on.
+_Avoid_: game mode, minigame, mini-game
 
 **Race**:
 A Round type. Get to the Finish Zone before the Time Limit. The primary Round type.
 
 **Survival**:
-A Round type. Stay alive / on the course; the last players standing advance.
+A Round type. Stay on the course while others are shoved off it; a Fall eliminates.
+Ends when the Survivor Target is reached or the Time Limit expires, and everyone
+still standing Qualifies. The Final Race form runs down to a single Survivor.
+
+**Survivor Target**:
+How many Players a Survival Round leaves standing before it ends.
 
 **Collect Round**:
 A Round type. Gather objects scattered on the course; a threshold advances you.
@@ -51,8 +63,9 @@ among the survivors, before the Round ends.
 _Avoid_: passing, promotion
 
 **Elimination**:
-A Player who did not Qualify before the Round ended. A Fall never eliminates — it
-only costs time through Respawn with a penalty.
+A Player who did not Qualify before the Round ended. What eliminates you is the
+Round type's rule: in a Race a Fall never eliminates, it only costs time through
+Respawn with a penalty; in Survival it is exactly what does.
 _Avoid_: death, KO
 
 **Time Limit**:
@@ -208,13 +221,14 @@ The visible response to an Impact (flinch, spin, knockdown).
 
 **Fall**:
 The core failure. A Character leaves the play volume (drops below the kill-plane).
-Triggers a Respawn at the last Checkpoint with a time penalty. "Don't fall" is
-this.
+What follows is the Round type's rule: a Race Respawns it at the last Checkpoint
+with a time penalty, Survival eliminates it. "Don't fall" is this.
 _Avoid_: death, out of bounds, KO
 
 **Respawn**:
 Returning a fallen Character to its last Checkpoint, with a short time penalty so
-a Fall always costs something.
+a Fall always costs something. Not every Round type has one — where a Fall
+eliminates, nothing comes back.
 
 **Knockback**:
 Momentum transferred to a Character by another Character or an Obstacle. Allowed
