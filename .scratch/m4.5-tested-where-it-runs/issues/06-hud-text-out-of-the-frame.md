@@ -10,8 +10,10 @@ review.
 
 **Blocked by:** None, but land it before 02 if 02 has not started.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] HUD text is a pure function from the values it displays to a string, with tests
-- [ ] The frame loop calls it and sets it; the format is byte-identical to today's
-- [ ] ADR 0008 holds — the HUD stays plain DOM, drawn by the game
+- [x] HUD text is a pure function from the values it displays to a string, with tests — `hudText.ts`,
+      `formatHudText`
+- [x] The frame loop calls it and sets it; the format is byte-identical to today's — the exact
+      template string moved verbatim, pinned by a byte-for-byte test
+- [x] ADR 0008 holds — the HUD stays plain DOM, drawn by the game

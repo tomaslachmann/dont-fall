@@ -1,7 +1,6 @@
 import {
   CAPSULE_ERR_FLAT_EPSILON_M,
   CAPSULE_ERR_HALFLIFE_MS,
-  DASH_COOLDOWN_MS,
   DEFAULT_KILL_PLANE_Y,
   INITIAL_LEAD_TICKS_MAX,
   INITIAL_LEAD_TICKS_MIN,
@@ -45,6 +44,7 @@ import {
 import { loadCharacterModel } from "./characterModel.js";
 import { awaitWelcome, resolveEndpoints } from "./connection.js";
 import { createHud } from "./hud.js";
+import { formatHudText } from "./hudText.js";
 import { FreeLookCamera, KeyboardInput } from "./input.js";
 import { listen } from "./listeners.js";
 import { createStage } from "./scene.js";
@@ -906,7 +906,6 @@ const boot = async (
     stage.updateSpinners(snapshot.tick - 1 + localAlpha);
     stage.updateCamera(visualCharacter.position, look.yaw, look.pitch);
 
-    const cp = c.checkpointIndex === null ? "spawn" : `#${c.checkpointIndex + 1}`;
     // The Qualification banner (M4 ticket 02). Shown the instant the local
     // prediction says we're in the zone — that's the same Tick the input lock
     // is felt, so the two never disagree on screen. The *placement* can only
@@ -934,9 +933,6 @@ const boot = async (
     );
     const qualified = c.finishTick !== null;
     const placement = latestServerSnapshot ? qualificationPlacement(latestServerSnapshot.characters, myId) : null;
-    const banner = qualified ? `\n${placement === null ? "QUALIFIED" : `QUALIFIED #${placement}`}` : "";
-    const dashFill = Math.max(0, Math.min(10, Math.round((1 - c.dashCooldownMs / DASH_COOLDOWN_MS) * 10)));
-    const dashBar = "#".repeat(dashFill) + "-".repeat(10 - dashFill);
     netMetrics.rttMs = timeSync.rttMs;
     netMetrics.clockOffsetMs = timeSync.serverClockOffsetMs;
     netMetrics.snapshotAgeMs = now - lastSnapshotArrivedAt;
@@ -951,14 +947,23 @@ const boot = async (
     netMetrics.capsuleOffsetM = lengthVec3(capsuleErrorOffset);
 
     hud.setText(
-      `DON'T FALL — M2 · predicted + reconciled\n` +
-        `time ${roundClock} · ${phase.toLowerCase()}\n` +
-        `sim ${TICK_RATE_HZ} Hz · render ${fps.toFixed(0)} fps · tick ${predictionTick}\n` +
-        `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · ${c.motionState}\n` +
-        `checkpoint ${cp} · falls ${c.fallCount} · qualified ${qualifiedCount}/${connectedPlayers}${banner}\n` +
-        `dash [${dashBar}]${c.dashCooldownMs === 0 ? " ready" : ""}\n` +
-        `WASD move · Space jump · Shift dash · mouse look\n` +
-        netMetrics.format(),
+      formatHudText({
+        roundClock,
+        phase,
+        tickRateHz: TICK_RATE_HZ,
+        fps,
+        predictionTick,
+        position: c.position,
+        motionState: c.motionState,
+        checkpointIndex: c.checkpointIndex,
+        fallCount: c.fallCount,
+        qualifiedCount,
+        connectedPlayers,
+        qualified,
+        placement,
+        dashCooldownMs: c.dashCooldownMs,
+        netMetricsText: netMetrics.format(),
+      }),
     );
 
     stage.render();
