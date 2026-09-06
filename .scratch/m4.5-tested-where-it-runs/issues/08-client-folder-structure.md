@@ -12,7 +12,7 @@ bundle, while the file is the game module that must not.
 **Blocked by:** M4.5 tickets 01–07, all done. In practice it is blocked on a **clean working tree**
 — see the sequencing note below, which matters more than the ordering.
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## The layout
 
@@ -40,17 +40,17 @@ so the test below stops being a nicety and becomes the only thing holding it. A 
 a Screen into the renderer would pull the whole engine into the menu bundle, fail nothing, break no
 feature, and be noticed by nobody until someone measures a cold load.
 
-- [ ] Files move as above; `game.ts` becomes `game/index.ts`; `GameCanvas.tsx` moves to
+- [x] Files move as above; `game.ts` becomes `game/index.ts`; `GameCanvas.tsx` moves to
       `components/`, since it is React and it is what *performs* the split rather than living
       behind it
-- [ ] A test asserts that nothing in the shell set (`screens/`, `components/`, `App.tsx`,
+- [x] A test asserts that nothing in the shell set (`screens/`, `components/`, `App.tsx`,
       `main.tsx`) statically imports anything in the game set (`game/`, `render/`, `net/`, `hud/`,
       `input/`). The two sets are named in **one** place, so adding a directory forces a decision
       about which side it is on
-- [ ] The dynamic `import()` in `GameCanvas` still resolves, and the game still loads on demand
-- [ ] Pure moves. `git mv` plus import paths and nothing else — **no renames of exports, no
+- [x] The dynamic `import()` in `GameCanvas` still resolves, and the game still loads on demand
+- [x] Pure moves. `git mv` plus import paths and nothing else — **no renames of exports, no
       signature changes, no "while I'm here"**. A diff with logic in it is the wrong diff
-- [ ] Full suite green with no changed assertions (M4.5's standing rule; import paths may change)
+- [x] Full suite green with no changed assertions (M4.5's standing rule; import paths may change)
 
 ## Sequencing — read before starting
 
@@ -58,5 +58,5 @@ Another session commits to this repo continuously. A thirty-six file move confli
 uncommitted edit in the tree, and a conflict in a pure-move commit is miserable to resolve because
 every hunk looks identical.
 
-- [ ] Start only with a clean `git status`, and land it as **one commit**
-- [ ] If it must be split, split **by destination directory** — never leave a concern half-moved
+- [x] Start only with a clean `git status`, and land it as **one commit**
+- [x] If it must be split, split **by destination directory** — never leave a concern half-moved

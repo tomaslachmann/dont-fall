@@ -32,21 +32,21 @@ import {
   type Track,
   type Vec3,
 } from "@dont-fall/shared";
-import { loadCharacterModel } from "./characterModel.js";
-import { awaitWelcome, resolveEndpoints } from "./connection.js";
-import { createHud } from "./hud.js";
-import { formatHudText } from "./hudText.js";
-import { FreeLookCamera, KeyboardInput } from "./input.js";
-import { listen } from "./listeners.js";
-import { createStage } from "./scene.js";
-import { NetMetrics } from "./netMetrics.js";
-import { PropPredictionController, graceTicksForRtt } from "./propPrediction.js";
-import { matchBanner } from "./matchBanner.js";
-import { PredictionLoop } from "./predictionLoop.js";
-import { formatRoundClock } from "./roundTimer.js";
-import { SnapshotInterpolator } from "./snapshotInterpolation.js";
-import { createTeardown, type Teardown } from "./teardown.js";
-import { TimeSync } from "./timeSync.js";
+import { loadCharacterModel } from "../render/characterModel.js";
+import { awaitWelcome, resolveEndpoints } from "../lib/connection.js";
+import { createHud } from "../hud/hud.js";
+import { formatHudText } from "../hud/hudText.js";
+import { FreeLookCamera, KeyboardInput } from "../input/input.js";
+import { listen } from "../lib/listeners.js";
+import { createStage } from "../render/scene.js";
+import { NetMetrics } from "../net/netMetrics.js";
+import { PropPredictionController, graceTicksForRtt } from "../net/propPrediction.js";
+import { matchBanner } from "../hud/matchBanner.js";
+import { PredictionLoop } from "../net/predictionLoop.js";
+import { formatRoundClock } from "../lib/roundTimer.js";
+import { SnapshotInterpolator } from "../net/snapshotInterpolation.js";
+import { createTeardown, type Teardown } from "../lib/teardown.js";
+import { TimeSync } from "../net/timeSync.js";
 
 /**
  * Cap on the per-frame delta fed to the Character model's animation/facing

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { ResultsRow } from "@dont-fall/shared";
 import { Button } from "@dont-fall/ui";
-import type { ExitReason, GameHandle, LobbySnapshot } from "../game.js";
+import type { ExitReason, GameHandle, LobbySnapshot } from "../game/index.js";
 import { LobbyScreen } from "../screens/LobbyScreen.js";
 import { ResultsScreen } from "../screens/ResultsScreen.js";
 import styles from "./GameCanvas.module.css";
@@ -42,7 +42,7 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
 
     // Dynamic, not static: the menu should not pay for the renderer, the
     // physics WASM, or the Character model (ticket 06's own requirement).
-    import("../game.js")
+    import("../game/index.js")
       .then(({ startGame }) =>
         startGame({
           mount: mountRef.current!,

@@ -1,6 +1,6 @@
 import { Route, Routes, useNavigate, useSearchParams } from "react-router";
 import { MainMenuScreen } from "./screens/MainMenuScreen";
-import { GameCanvas } from "./game/GameCanvas";
+import { GameCanvas } from "./components/GameCanvas";
 
 /**
  * `/play` — the only place `<GameCanvas>` mounts, so leaving it always

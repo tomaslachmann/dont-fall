@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router";
 import { App } from "./App";
 
 const { startGame } = vi.hoisted(() => ({ startGame: vi.fn() }));
-vi.mock("./game.js", () => ({ startGame }));
+vi.mock("./game/index.js", () => ({ startGame }));
 
 describe("App", () => {
   it("opens on the Main Menu, not straight into a running game", () => {

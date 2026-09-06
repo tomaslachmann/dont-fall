@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { allReady, NICKNAME_MAX_LENGTH } from "@dont-fall/shared";
 import { Avatar, Button, Card, HostBadge, LiveOverlay, Panel, Row, Toggle } from "@dont-fall/ui";
-import type { LobbySnapshot } from "../game.js";
-import { formatRoundClock } from "../roundTimer.js";
-import { resolveEndpoints } from "../connection.js";
+import type { LobbySnapshot } from "../game/index.js";
+import { formatRoundClock } from "../lib/roundTimer.js";
+import { resolveEndpoints } from "../lib/connection.js";
 import styles from "./LobbyScreen.module.css";
 
 export interface LobbyScreenProps {

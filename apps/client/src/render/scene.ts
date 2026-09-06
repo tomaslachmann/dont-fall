@@ -27,8 +27,8 @@ import {
   CAMERA_SKIN,
   resolveArm,
   springArmPosition,
-} from "./camera/springArm.js";
-import { listen } from "./listeners.js";
+} from "../input/camera/springArm.js";
+import { listen } from "../lib/listeners.js";
 import { createSpeedLines } from "./speedLines.js";
 import { initialWobbleState, stepWobble } from "./wobble.js";
 

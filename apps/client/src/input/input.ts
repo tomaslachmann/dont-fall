@@ -1,7 +1,7 @@
 import type { MovementKeys } from "@dont-fall/shared";
 import { applyLook } from "./camera/lookControls.js";
 import { clampPitch } from "./camera/springArm.js";
-import { listen, type ListenerTarget } from "./listeners.js";
+import { listen, type ListenerTarget } from "../lib/listeners.js";
 
 const MOVEMENT_CODES: Record<string, keyof MovementKeys> = {
   KeyW: "forward",
