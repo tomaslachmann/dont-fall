@@ -7,7 +7,7 @@ entry point should start the server. This splits it by concern.
 
 **Blocked by:** Nothing. Independent of ticket 08 (different app, no shared files).
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## The split
 
@@ -36,14 +36,14 @@ through it. `net/` deliberately matches the client's own `net/` — both sides o
 Tests move next to what they test. `index.test.ts` is the black-box suite over real sockets and
 belongs with `matchServer.ts`; `tickAddressedInput.integration.test.ts` belongs with `net/`.
 
-- [ ] `index.ts` does nothing but start the server
-- [ ] The folders above exist and each module owns one concern; nothing imports a module to reach
+- [x] `index.ts` does nothing but start the server
+- [x] The folders above exist and each module owns one concern; nothing imports a module to reach
       through it to another
-- [ ] Pure moves — `git mv`-equivalent plus imports. **No logic changes, no renamed exports, no
+- [x] Pure moves — `git mv`-equivalent plus imports. **No logic changes, no renamed exports, no
       signature changes.** A diff with behaviour in it is the wrong diff
-- [ ] `startServer`'s public shape is untouched: the tests construct it exactly as they do now
-- [ ] Full suite green with no changed assertions (M4.5's standing rule)
-- [ ] Land on a clean tree, in one commit, for the same reason ticket 08 says so
+- [x] `startServer`'s public shape is untouched: the tests construct it exactly as they do now
+- [x] Full suite green with no changed assertions (M4.5's standing rule)
+- [x] Land on a clean tree, in one commit, for the same reason ticket 08 says so
 
 ## What M5 will do to this, and why that is fine
 

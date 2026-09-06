@@ -13,7 +13,7 @@ import {
 import { startTrackService, type TrackService } from "@dont-fall/track-service";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import { startServer, type MatchServer } from "./index.js";
+import { startServer, type MatchServer } from "./matchServer.js";
 
 // ADR 0028: the Match server now has a hard runtime dependency on track-service.
 // One shared instance for this whole file, pointed to by TRACK_SERVICE_URL, so

@@ -22,7 +22,7 @@ import {
 import { startTrackService, type TrackService } from "@dont-fall/track-service";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { startServer, type MatchServer } from "./index.js";
+import { startServer, type MatchServer } from "../matchServer.js";
 
 /**
  * Ticket 13 / ADR 0027 — the real integration test the ticket says implementation
