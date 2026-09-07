@@ -231,7 +231,11 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         spawn,
         trackId: rt.fetched.id,
         trackRevision: rt.fetched.revision,
-        config: { snapshotHz: SNAPSHOT_HZ, graceWindowMs: GRACE_WINDOW_MS, playersToStart },
+        // Read off the runtime, not the local that seeded it: one name for
+        // the threshold at the point it goes on the wire, so a future
+        // runtime-adjustable value cannot leave the welcome advertising a
+        // number the tick loop no longer uses.
+        config: { snapshotHz: SNAPSHOT_HZ, graceWindowMs: GRACE_WINDOW_MS, playersToStart: rt.config.playersToStart },
       });
 
       // A single client's socket erroring (an abrupt reset, a write to a

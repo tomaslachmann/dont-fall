@@ -5,6 +5,7 @@ import {
   M1_TRACK,
   MIN_TIME_LIMIT_MS,
   RapierSimulation,
+  TICK_MS,
   type ClientMessage,
   type ServerMessage,
   type SimInputs,
@@ -1485,3 +1486,72 @@ describe("startServer — Results, and going again (M4 ticket 08)", () => {
   });
 });
 
+
+describe("startServer — a failed tick must not swallow the host's start (M4.5 review)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+    max = 400,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (let i = 0; i < max; i += 1) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+    throw new Error("condition never held");
+  };
+
+  it("still starts the Round when the tick that would have consumed it throws", async () => {
+    // `startRequested` is a one-shot edge, and `simulation.tick()` is exactly
+    // what the loop's try/catch exists to survive — it deliberately leaves
+    // `serverTick` and `match` uncommitted so the same tick retries. If the
+    // edge is spent before that step rather than with `serverTick` after it, a
+    // single failed tick swallows the host's click: the retry reads
+    // `startRequested: false`, the Match sits in LOBBY, and nothing says why.
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+    await nextMessage(socket); // welcome
+    await snapshotUntil(socket, (s) => s.phase === "LOBBY");
+
+    // Throw for a window that is guaranteed to contain the tick which first
+    // reads the request — message handling is independent of the tick loop and
+    // lands within a millisecond, so the consuming tick is certainly inside it.
+    let throwsLeft = 0;
+    const realTick = RapierSimulation.prototype.tick;
+    const patched = vi.spyOn(RapierSimulation.prototype, "tick").mockImplementation(function (
+      this: RapierSimulation,
+      ...args: Parameters<typeof realTick>
+    ) {
+      if (throwsLeft > 0) {
+        throwsLeft -= 1;
+        throw new Error("injected physics failure");
+      }
+      return realTick.apply(this, args);
+    });
+
+    try {
+      await startMatch(socket);
+      throwsLeft = 5;
+      // The window has to actually elapse before we look, or we would be
+      // asserting against ticks that never had the chance to fail.
+      await new Promise((r) => setTimeout(r, 6 * TICK_MS));
+      expect(throwsLeft).toBe(0); // the injected failures really happened
+
+      const started = await snapshotUntil(socket, (s) => s.phase !== "LOBBY");
+      expect(["COUNTDOWN", "RUNNING"]).toContain(started.phase);
+    } finally {
+      patched.mockRestore();
+      socket.close();
+    }
+  });
+});

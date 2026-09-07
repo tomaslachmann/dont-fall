@@ -64,12 +64,6 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
         timeExpired: rt.roundEnding.timeExpired,
         returnToLobbyRequested: rt.returnToLobbyRequested,
       });
-      // A one-shot edge, spent the instant this tick reads it whether or not
-      // it actually caused a transition — otherwise a request left stale by
-      // (say) everyone leaving in the same instant it fired could cause a
-      // spurious Countdown the moment anyone next connects.
-      rt.startRequested = false;
-      rt.returnToLobbyRequested = false;
       // Input is locked in every phase but RUNNING (ADR 0040). Enforced here
       // rather than by refusing the packet: the client runs the same rule on
       // its own prediction, so both sides stop and start driving the
@@ -87,6 +81,20 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
 
       rt.simulation.tick(tickInputs);
       rt.serverTick = thisTick;
+      // A one-shot edge, spent the instant a tick reads it whether or not it
+      // actually caused a transition — otherwise a request left stale by (say)
+      // everyone leaving in the same instant it fired could cause a spurious
+      // Countdown the moment anyone next connects.
+      //
+      // Spent *here*, with `serverTick`, and not before the step above: that
+      // step is exactly what the surrounding try/catch exists to survive, and
+      // it deliberately leaves `serverTick` and `match` uncommitted so the
+      // same tick retries. Clearing the flags earlier would let a single
+      // failed tick swallow the host's start — the retry would read
+      // `startRequested: false`, the Match would sit in LOBBY, and the click
+      // would have done nothing with no indication why.
+      rt.startRequested = false;
+      rt.returnToLobbyRequested = false;
       // The Round's clock starts the Tick the Countdown ends, not when the
       // server did (M4 ticket 03's anchor, now owned by this transition).
       if (nextMatch.phase === "RUNNING" && rt.match.phase !== "RUNNING") rt.roundStartTick = thisTick;

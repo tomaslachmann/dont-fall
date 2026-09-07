@@ -8,7 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./design/tokens.css": "./src/design/tokens.css",
-    "./playground.js": "./src/playground.js"
+    "./playground.js": "./src/playground.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

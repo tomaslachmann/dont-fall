@@ -29,11 +29,19 @@ type Compared = Pick<CharacterSnapshot, "motionState" | "finishTick">;
  *
  * The epsilon itself is float noise, not a tolerance (ADR 0026): the
  * simulation corrects on any real disagreement, and the decaying render-time
- * offset is what keeps that invisible.
+ * offset is what keeps that invisible. It is a parameter only so a harness can
+ * compare against a *different* threshold (the retired 0.2, say) without
+ * re-implementing the four conditions above — which is exactly how this gate
+ * came to have three copies, two of them stale, before M4.5 ticket 01.
  */
-export const needsCorrection = (server: Compared, local: Compared, positionError: number): boolean =>
+export const needsCorrection = (
+  server: Compared,
+  local: Compared,
+  positionError: number,
+  epsilon: number = RECONCILE_POSITION_EPSILON,
+): boolean =>
   isDownMotionState(server.motionState) || // authority says down — always sync (fresh knock, phase change, or pelvis tracking)
   isDownMotionState(local.motionState) || // we think we're down but the authority doesn't — only the server ends a knockdown
   server.motionState !== local.motionState || // e.g. a Stagger we missed / are holding too long
   server.finishTick !== local.finishTick || // only the server decides who Qualified
-  positionError > RECONCILE_POSITION_EPSILON;
+  positionError > epsilon;

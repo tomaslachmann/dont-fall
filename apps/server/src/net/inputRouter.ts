@@ -1,4 +1,4 @@
-import { IDLE_INPUTS, type SimInputs } from "@dont-fall/shared";
+import { IDLE_INPUTS, MAX_QUEUED_INPUTS, type SimInputs } from "@dont-fall/shared";
 
 /**
  * The per-client input queue between the socket and the tick loop (ADR 0021,
@@ -19,13 +19,6 @@ export class InputRouter {
   private readonly queues = new Map<string, { tick: number; input: SimInputs }[]>();
   private readonly lastApplied = new Map<string, SimInputs>();
   private readonly lastInputTicks = new Map<string, number>();
-
-  /**
-   * A fast/hitching client can briefly outrun the tick rate; keep only the
-   * newest few so the server never falls a growing number of ticks behind a
-   * client's intent.
-   */
-  private static readonly MAX_QUEUED_INPUTS = 6;
 
   add(id: string): void {
     this.queues.set(id, []);
@@ -55,7 +48,7 @@ export class InputRouter {
       queue.push({ tick: entry.tick, input: entry.input });
     }
     queue.sort((a, b) => a.tick - b.tick);
-    while (queue.length > InputRouter.MAX_QUEUED_INPUTS) queue.shift();
+    while (queue.length > MAX_QUEUED_INPUTS) queue.shift();
   }
 
   /**

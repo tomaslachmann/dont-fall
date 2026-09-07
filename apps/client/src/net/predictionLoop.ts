@@ -10,6 +10,7 @@ import {
   addVec3,
   decayPositionOffset,
   isDownMotionState,
+  lengthVec3,
   needsCorrection,
   subVec3,
   type CharacterMotionState,
@@ -160,7 +161,9 @@ export class PredictionLoop {
       steps += 1;
     }
     if (this.accumulatorMs < 0) this.accumulatorMs = 0;
-    this.trimBuffers();
+    // No trim here: `recordTick` trims after every tick it runs, and nothing
+    // else grows the buffers, so a second pass over up to 120 history keys
+    // per frame would only ever be a no-op repeat.
   }
 
   /**
@@ -198,36 +201,6 @@ export class PredictionLoop {
     for (const t of [...this.positionHistory.keys()]) {
       if (t <= this.tick - MAX_BUFFERED_INPUT_TICKS) this.positionHistory.delete(t);
     }
-  }
-
-  private static distance(a: Vec3, b: Vec3): number {
-    return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-  }
-
-  /**
-   * The correction gate — `needsCorrection` itself whenever `reconcileEpsilon`
-   * is the real default, which is always true in production (`game.ts` never
-   * overrides it): there is exactly one gate shipping. A non-default epsilon
-   * means this instance was constructed for a scenario deliberately comparing
-   * against a *different* threshold than what `needsCorrection` hardcodes
-   * (`predictionRegression.harness.test.ts`'s own reason for
-   * {@link PredictionLoopConfig.reconcileEpsilon} existing) — `needsCorrection`
-   * structurally cannot express that, so this falls back to the same
-   * conditions with the configured epsilon in its place.
-   */
-  private needsCorrectionFor(
-    server: Pick<CharacterSnapshot, "motionState" | "finishTick">,
-    local: Pick<CharacterSnapshot, "motionState" | "finishTick">,
-    positionError: number,
-  ): boolean {
-    if (this.reconcileEpsilon === RECONCILE_POSITION_EPSILON) return needsCorrection(server, local, positionError);
-    return (
-      isDownMotionState(server.motionState) ||
-      isDownMotionState(local.motionState) ||
-      server.motionState !== local.motionState ||
-      server.finishTick !== local.finishTick ||
-      positionError > this.reconcileEpsilon
-    );
   }
 
   /**
@@ -274,14 +247,20 @@ export class PredictionLoop {
     }
 
     const predictedAtAck = this.positionHistory.get(acked);
-    const positionError = predictedAtAck ? PredictionLoop.distance(predictedAtAck, server.position) : Infinity;
+    const positionError = predictedAtAck ? lengthVec3(subVec3(predictedAtAck, server.position)) : Infinity;
     const motionChanged = server.motionState !== localChar.motionState;
 
     // ADR 0026: the *simulation* reconciles on any real disagreement — a
     // float-noise epsilon, not the old one-walk-step "correct or ignore" gate
     // that let an ordinary phase slip park exactly on the threshold. The
     // render-time offset below is what keeps that invisible.
-    if (!this.needsCorrectionFor(server, localChar, positionError)) return { corrected: false, positionError: null };
+    // One gate, shared with the server's own understanding of it. The epsilon
+    // is passed rather than branched on: production always supplies the real
+    // default, and the harness's threshold comparisons get the same four
+    // conditions instead of a second copy that could drift from them.
+    if (!needsCorrection(server, localChar, positionError, this.reconcileEpsilon)) {
+      return { corrected: false, positionError: null };
+    }
 
     const simBefore = localChar.position;
     this.sim.reconcileCharacter(this.myId, server);
@@ -330,7 +309,7 @@ export class PredictionLoop {
         } else {
           const after = afterCorrection.characters[this.myId]!.position;
           this.capsuleErrorOffset = addVec3(this.capsuleErrorOffset, subVec3(simBefore, after));
-          if (Math.hypot(this.capsuleErrorOffset.x, this.capsuleErrorOffset.y, this.capsuleErrorOffset.z) > this.hardSnapM) {
+          if (lengthVec3(this.capsuleErrorOffset) > this.hardSnapM) {
             this.capsuleErrorOffset = { x: 0, y: 0, z: 0 };
           }
         }
