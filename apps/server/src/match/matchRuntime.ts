@@ -118,6 +118,11 @@ export class MatchRuntime {
    * ticket has a source for; a real per-Round choice (a future Lobby control)
    * is more overrides added to the same call, not a new mechanism.
    *
+   * `fallBehavior`'s own "Track default" is always the constant `"respawn"`
+   * (M5 ticket 03, ADR 0041) — no Track carries a Round-type opinion, so
+   * every Round is a Race until a real override exists to say otherwise
+   * (M5 ticket 07's Lobby Round-type picker adds one to this same call).
+   *
    * Returns both rather than assigning `this.roundRules` as a side effect:
    * `new RapierSimulation` can throw (an unknown Module id), and only the
    * caller (`resetToFreshLobby`) knows it is safe to commit either field —
@@ -126,7 +131,7 @@ export class MatchRuntime {
    */
   buildSimulationFor(track: Track): { simulation: RapierSimulation; roundRules: RoundRules } {
     const roundRules = resolveRoundRules(
-      { timeLimitMs: this.fetched.timeLimitMs },
+      { timeLimitMs: this.fetched.timeLimitMs, fallBehavior: "respawn" },
       { timeLimitMs: this.config.timeLimitMsOverride },
     );
     const simulation = new RapierSimulation({

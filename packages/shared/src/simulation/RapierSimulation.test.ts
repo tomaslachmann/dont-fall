@@ -698,6 +698,90 @@ describe("RapierSimulation — Fall & Respawn", () => {
   });
 });
 
+describe("RapierSimulation — what a Fall does is a RoundRules field (M5 ticket 03, ADR 0042)", () => {
+  const PLATFORM: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 4, y: 0.5, z: 4 } };
+  const eliminatingSim = () =>
+    new RapierSimulation({
+      spawn: { x: 0, y: 1.5, z: 0 },
+      statics: [PLATFORM],
+      killPlaneY: -8,
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate" },
+    });
+
+  it("still loses control on a Fall — the Fall itself never varies", () => {
+    const sim = eliminatingSim();
+    tick(sim, 0.5);
+    tickUntilFall(sim);
+    sim.tick({}); // the forced Ragdoll transition lands the tick after the Fall is detected
+
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.ragdollCause).toBe("Fall");
+  });
+
+  it("queues no Respawn — the Character keeps falling through the void instead of returning", () => {
+    const sim = eliminatingSim();
+    tick(sim, 0.5);
+    tickUntilFall(sim);
+    const atFall = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
+
+    tick(sim, 1); // a full second of continuing to fall
+
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
+    expect(after).toBeLessThan(atFall); // still falling, never lifted back above the kill plane
+  });
+
+  it("does not re-trigger every tick while already down — fallCount stays exactly 1", () => {
+    const sim = eliminatingSim();
+    tick(sim, 0.5);
+    tickUntilFall(sim);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.fallCount).toBe(1);
+
+    tick(sim, 1); // well inside RAGDOLL_MAX_MS (4s) — no forced recovery to race this
+
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.fallCount).toBe(1);
+  });
+
+  it("ignores Checkpoints crossed before the Fall — a Round with no Respawn never reads respawnPoint", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: 1.5, z: 6 },
+      statics: [{ center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 12 } }],
+      checkpoints: [{ respawn: { x: -8, y: 1.5, z: 4 }, trigger: { center: { x: 0, y: 0.5, z: 4 }, halfExtents: { x: 3, y: 2, z: 1.5 } } }],
+      killPlaneY: -8,
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate" },
+    });
+    tick(sim, 0.5);
+    tick(sim, 1, NORTH); // walk through the Checkpoint
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.checkpointIndex).toBe(0); // reached, tracked as ever
+
+    tickUntilFall(sim);
+    tick(sim, 1);
+
+    // Never teleported to the Checkpoint's respawn point (x = -8) — ignored, not rejected.
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x).toBeCloseTo(0, 0);
+  });
+
+  it("a Race (fallBehavior: respawn) resolves to exactly today's behaviour, pinned by the existing suite", () => {
+    // The existing "Fall & Respawn" describe block above already covers this
+    // exhaustively against the RoundRules-less default; this is the one
+    // targeted check that an *explicit* respawn RoundRules resolves
+    // identically to no RoundRules opinion at all.
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: 1.5, z: 0 },
+      statics: [PLATFORM],
+      killPlaneY: -8,
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "respawn" },
+    });
+    tick(sim, 0.5);
+    tickUntilFall(sim);
+    tickUntilControlled(sim);
+
+    const character = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(character.fallCount).toBe(1);
+    expect(character.position.y).toBeGreaterThan(-8);
+    expect(Math.hypot(character.position.x, character.position.z)).toBeLessThan(3);
+  });
+});
+
 describe("RapierSimulation — jump", () => {
   const settled = () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
@@ -3401,14 +3485,15 @@ describe("RapierSimulation — RoundRules (M5 ticket 02, ADR 0041/0043)", () => 
   const me = (sim: RapierSimulation) => sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
 
   it("accepts a Round's own RoundRules at construction — a Race resolves to today's behaviour exactly", () => {
-    // Nothing in the step reads a field of RoundRules yet (that starts at
-    // ticket 03), so a Race on any RoundRules must move identically to one
-    // constructed with no RoundRules opinion at all.
+    // `timeLimitMs` is never read by the step at all (a Match-authority
+    // concern, `matchLoop.ts`), and `fallBehavior: "respawn"` here on both
+    // is exactly today's Race — so movement must be identical regardless of
+    // the RoundRules opinion, right down to a different Time Limit.
     const plain = new RapierSimulation({ statics: [GROUND], spawn: RESTING_SPAWN });
     const withRules = new RapierSimulation({
       statics: [GROUND],
       spawn: RESTING_SPAWN,
-      roundRules: { timeLimitMs: 5_000 },
+      roundRules: { timeLimitMs: 5_000, fallBehavior: "respawn" },
     });
 
     tick(plain, 1, NORTH);
@@ -3423,7 +3508,7 @@ describe("RapierSimulation — RoundRules (M5 ticket 02, ADR 0041/0043)", () => 
     const sim = new RapierSimulation({ statics: [GROUND], spawn: RESTING_SPAWN });
     const before = me(sim).position;
 
-    sim.syncRoundRules({ timeLimitMs: 30_000 });
+    sim.syncRoundRules({ timeLimitMs: 30_000, fallBehavior: "respawn" });
 
     expect(me(sim).position).toEqual(before);
     tick(sim, 1, NORTH); // still simulates normally afterward

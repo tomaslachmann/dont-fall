@@ -764,13 +764,30 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     progress.touchedLaunchPadIndex = touched;
   }
 
+  /**
+   * What follows a Fall is read from `RoundRules.fallBehavior`, not
+   * hardcoded (M5 ticket 03, ADR 0042) — a Race passes this Character's own
+   * `respawnPoint` (unchanged), an eliminating Round type passes `null`, and
+   * `CharacterController.fall` decides what that means. The Fall itself —
+   * a Character's centre crossing the kill plane — is unchanged either way.
+   */
   private detectFall(id: string): void {
     const character = this.character(id);
     const progress = this.progress.get(id)!;
+    const eliminates = this.roundRules.fallBehavior === "eliminate";
     if (character.hasPendingRespawn || character.position.y >= this.killPlaneY) return;
+    // An eliminating Round type queues no respawn, so nothing else stops
+    // this from re-triggering every tick while the Character keeps falling
+    // through the void below the kill plane — already having lost control
+    // is the guard instead. Race is untouched: `hasPendingRespawn` already
+    // covers it for exactly one tick, until the queued Respawn lifts the
+    // Character back above the kill plane. Ticket 04 gives an eliminated
+    // Character its permanent answer (marked, not stepped at all); this is
+    // only what keeps it sane in the meantime.
+    if (eliminates && isDownMotionState(character.motionState)) return;
 
     progress.fallCount += 1;
-    character.fall(progress.respawnPoint, progress.fallCount);
+    character.fall(eliminates ? null : progress.respawnPoint, progress.fallCount);
   }
 
   snapshot(): SimState {

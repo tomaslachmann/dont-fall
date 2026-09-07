@@ -422,12 +422,21 @@ export class CharacterController {
     if (this.machine.state === "Ragdoll") this.ragdoll.applyImpulse(impulse);
   }
 
-  /** Queue a Fall respawn at `point`, applied at the top of the next {@link tick}. */
-  fall(point: Vec3, fallCount: number): void {
+  /**
+   * React to a Fall (M5 ticket 03, ADR 0042): losing control always happens
+   * — a Fall never varies, only what follows it does. `respawnPoint` is
+   * `null` for a Round type with no Respawn (Survival): the Character still
+   * goes Ragdoll here, exactly as a respawning one does, but nothing is
+   * queued to bring it back — "you are out of this Round" is match
+   * authority, not this class's concern (RapierSimulation's own `detectFall`
+   * decides which to pass, from `RoundRules.fallBehavior`). A Respawn is
+   * queued for `point`, applied at the top of the next {@link beginTick}.
+   */
+  fall(respawnPoint: Vec3 | null, fallCount: number): void {
     this.resetMovementControllers();
     this.pendingCause = "Fall";
     this.machine.forceRagdoll();
-    this.pendingRespawn = { point: { ...point }, fallCount };
+    if (respawnPoint) this.pendingRespawn = { point: { ...respawnPoint }, fallCount };
   }
 
   /**
