@@ -112,6 +112,38 @@ const settleOne = (fn: string, track: Track, modules: Record<string, Module>, in
 };
 
 /** Inserts `moduleId` at `index` (pushing anything already there later) and re-chains from it onward. */
+/**
+ * Where a newly inserted Segment starts out, before {@link rechainFrom} gets a
+ * say. For anything chainable this is thrown away immediately, so it matters
+ * only for a Module that cannot be chained (ADR 0034 free placement — the
+ * Survival arena is the first): that one keeps this position, and the world
+ * origin would drop it on top of whatever is already there, invisible, with
+ * nothing but the Segment count to say it arrived.
+ *
+ * So: clear of the Segment it follows, along +X, by both footprints plus the
+ * predecessor's clearance. Not an attempt to place it *well* — the author
+ * drags it where they want it, which is the whole point of a Module with no
+ * Sockets — only to place it somewhere they can see.
+ */
+const beside = (
+  previous: Segment | undefined,
+  modules: Record<string, Module>,
+  moduleId: string,
+): Vec3 => {
+  const previousModule = previous ? modules[previous.moduleId] : undefined;
+  const inserted = modules[moduleId];
+  if (!previous || !previousModule || !inserted) return { x: 0, y: 0, z: 0 };
+  return {
+    x:
+      previous.position.x +
+      previousModule.footprint.bounds.halfExtents.x +
+      inserted.footprint.bounds.halfExtents.x +
+      previousModule.footprint.clearance,
+    y: previous.position.y,
+    z: previous.position.z,
+  };
+};
+
 export const insertSegment = (
   track: Track,
   modules: Record<string, Module>,
@@ -119,7 +151,7 @@ export const insertSegment = (
   moduleId: string,
 ): Track => {
   assertInsertIndexInRange("insertSegment", track, index);
-  const placeholder: Segment = { moduleId, position: { x: 0, y: 0, z: 0 }, rotation: 0 };
+  const placeholder: Segment = { moduleId, position: beside(track[index - 1], modules, moduleId), rotation: 0 };
   const withPlaceholder = [...track.slice(0, index), placeholder, ...track.slice(index)];
   return rechainFrom(withPlaceholder, modules, index);
 };

@@ -526,13 +526,33 @@ describe("Modules without Sockets (M5 ticket 06 — the Survival arena)", () => 
     expect(() => deleteSegment(track, MODULE_LIBRARY, 1)).not.toThrow();
   });
 
-  it("keeps its own position instead of being chained — free placement is the point", () => {
+  it("lands beside what it follows, not on top of it", () => {
     const track = appendModule([], "start", MODULE_LIBRARY);
     const withArena = appendModule(track, "arena", MODULE_LIBRARY);
 
-    // The placeholder position `insertSegment` gives it, untouched: the author
-    // drags it where they want it rather than the builder guessing.
-    expect(withArena[1]!.position).toEqual({ x: 0, y: 0, z: 0 });
+    // It keeps its own position rather than being chained — free placement is
+    // the point — but that position must be somewhere the author can see it.
+    // At the world origin it would be buried inside whatever is already there,
+    // with only the Segment count to say it arrived.
+    expect(withArena[1]!.position).not.toEqual(withArena[0]!.position);
+    expect(withArena[1]!.position.x).toBeGreaterThan(
+      withArena[0]!.position.x + MODULE_LIBRARY.start!.footprint.bounds.halfExtents.x,
+    );
+    expect(
+      segmentOverlapsAnyOther(withArena, MODULE_LIBRARY, 1, withArena[1]!.position, segmentOrientation(withArena[1]!)),
+    ).toBe(false);
+  });
+
+  it("keeps clear of an unchainable predecessor too", () => {
+    let track = appendModule([], "start", MODULE_LIBRARY);
+    track = appendModule(track, "arena", MODULE_LIBRARY);
+    track = appendModule(track, "bridge", MODULE_LIBRARY);
+
+    // A Module following the arena cannot chain either (the arena has no exit
+    // Socket), so it takes the same treatment rather than stacking at origin.
+    expect(
+      segmentOverlapsAnyOther(track, MODULE_LIBRARY, 2, track[2]!.position, segmentOrientation(track[2]!)),
+    ).toBe(false);
   });
 
   it("still chains every Module that does have Sockets, exactly as before", () => {
