@@ -93,6 +93,10 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       // The Round's clock starts the Tick the Countdown ends, not when the
       // server did (M4 ticket 03's anchor, now owned by this transition).
       if (nextMatch.phase === "RUNNING" && rt.match.phase !== "RUNNING") rt.roundStartTick = thisTick;
+      // Read once and reused below (code review, ticket 05) — the same
+      // immutable value for the whole tick, so "which Round type is this"
+      // can never silently disagree between the two places that ask it.
+      const isSurvival = rt.roundRules.fallBehavior === "eliminate";
       // A Survival Round's own ending Qualifies whoever it left standing,
       // all at once — the Race-shaped sibling already stamps `finishTick`
       // continuously, per-Character, from inside the shared step itself
@@ -100,7 +104,7 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       // 05, ADR 0042). Exactly once, the Tick the transition actually
       // happens — before `state` is built below, so this same snapshot
       // already shows survivors Qualified.
-      if (nextMatch.phase === "ROUND_END" && rt.match.phase === "RUNNING" && rt.roundRules.fallBehavior === "eliminate") {
+      if (nextMatch.phase === "ROUND_END" && rt.match.phase === "RUNNING" && isSurvival) {
         rt.simulation.qualifySurvivors(thisTick);
       }
       // A fresh Countdown is a fresh Round: last Round's DNFs are not this
@@ -154,10 +158,7 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       // just fed a different Round type's own answer to "has this Round's
       // condition been met," never a third mechanism alongside it.
       rt.roundEnding = {
-        allQualified:
-          rt.roundRules.fallBehavior === "eliminate"
-            ? survivorTargetReached(state.characters, rt.roundRules.survivorTarget)
-            : allQualified(state.characters),
+        allQualified: isSurvival ? survivorTargetReached(state.characters, rt.roundRules.survivorTarget) : allQualified(state.characters),
         timeExpired: rt.match.phase === "RUNNING" && timeLeftMs === 0,
       };
 

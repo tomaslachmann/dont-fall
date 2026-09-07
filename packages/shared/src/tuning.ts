@@ -685,11 +685,18 @@ export const MAX_TIME_LIMIT_MS = 30 * 60_000;
 /**
  * The Survivor Target (CONTEXT.md) a Track backfills to when it carries no
  * default of its own, and what the Track builder offers for a new one
- * (ticket 07) — the same "backfill, never leave a value that means nothing"
- * discipline `DEFAULT_TIME_LIMIT_MS` follows. 1: winner-takes-all, last one
- * standing — the Final Race form's own target (CONTEXT.md), and the
- * smallest number that still means something (0 would end every Survival
- * Round before it could start). A Race never reads this field at all.
+ * (ticket 07). 1: winner-takes-all, last one standing — the Final Race
+ * form's own target (CONTEXT.md), and the smallest number that still means
+ * something (0 would end every Survival Round before it could start). A
+ * Race never reads this field at all.
+ *
+ * Unlike `DEFAULT_TIME_LIMIT_MS`, this has no `MIN_`/`MAX_` sibling or any
+ * enforcement yet (code review, ticket 05) — nothing before ticket 07 gives
+ * this a real input to validate (today it is reachable only through the
+ * test-only `survivorTargetOverride`). Bounds — and whether they should be
+ * absolute or relative to how many Players actually joined — are ticket
+ * 07's own design question, alongside "the server refuses to start a Round
+ * whose Track cannot support it."
  */
 export const DEFAULT_SURVIVOR_TARGET = 1;
 

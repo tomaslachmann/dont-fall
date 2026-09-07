@@ -37,3 +37,25 @@ default under the Round's override.
       test-only `fallBehaviorOverride`/`survivorTargetOverride` server config knobs (mirroring
       `timeLimitMsOverride`'s own existing precedent) so this ticket's own server-level tests can
       exercise a real Survival Round without waiting on ticket 07
+- [x] (Found by code review, `high` effort) A Character already Qualified by `qualifySurvivors`
+      could be retroactively marked eliminated too if residual ragdoll momentum (or, in the added
+      test, a reconciled position) carried it below the kill plane afterward — `detectFall` never
+      checked `finishTick`. Fixed: `detectFall` now returns immediately once `finishTick !== null`
+      — an already-Qualified Character has nothing left for a Fall to change, in either Round type
+- [x] (Found by code review) `roundRules.fallBehavior === "eliminate"` was checked independently
+      at two call sites in `matchLoop.ts`'s own tick handler; consolidated into one `isSurvival`
+      read so the two can never silently disagree
+- [x] (Found by code review) `DEFAULT_SURVIVOR_TARGET`'s own doc comment overclaimed parity with
+      `DEFAULT_TIME_LIMIT_MS`'s bounds enforcement (`MIN_`/`MAX_TIME_LIMIT_MS`, checked by
+      track-service on publish) when no such bounds exist yet for `survivorTarget` — corrected to
+      say so plainly; real bounds are ticket 07's own design question once it gives this field a
+      real input to validate
+- [x] (Found while chasing a flaky server test the review also flagged) `updateFinishZone` — the
+      Race-only mechanism for granting Qualification — ran unconditionally, with no Round-type
+      gate at all. Since Survival currently has to run on an ordinary, possibly Finish-Zone-
+      carrying Track (ticket 06's dedicated arena doesn't exist yet), a Character could Qualify by
+      simply walking to the finish line, bypassing `qualifySurvivors`/the Survivor Target entirely
+      — exactly what made one of this ticket's own server tests intermittently fail depending on
+      which Track track-service's shared `/tracks/any` happened to hand back. Fixed: skipped
+      outright when `fallBehavior === "eliminate"`, pinned by a new unit test walking straight
+      through a Finish Zone under Survival rules and confirming it never Qualifies that way

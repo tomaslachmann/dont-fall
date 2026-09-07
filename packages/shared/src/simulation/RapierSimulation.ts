@@ -778,8 +778,19 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * a Character shoved into the zone mid-ragdoll has still entered it, and
    * "entry counts" is the whole M4 rule (ADR 0039). That a launch pad or a
    * Bump can put you there is the design, not a hole in it.
+   *
+   * Skipped outright for an eliminating Round type (M5 ticket 05, ADR
+   * 0041/0043, found by code review): what grants Qualification is the
+   * Round type's own rule, same as what a Fall does — a Survival Round's
+   * arena (ticket 06) authors no Finish Zone of its own, but nothing before
+   * ticket 07 lets the Lobby run Survival on anything *but* an ordinary,
+   * possibly-Finish-Zone-carrying Track (the test-only `fallBehaviorOverride`
+   * this ticket's own tests use is exactly that case). Without this, two
+   * Characters could Qualify by simply crossing a leftover Finish Zone,
+   * bypassing `qualifySurvivors`/the Survivor Target entirely.
    */
   private updateFinishZone(id: string): void {
+    if (this.roundRules.fallBehavior === "eliminate") return;
     const progress = this.progress.get(id)!;
     if (progress.finishTick !== null) return;
     if (this.findTriggerIndex(this.finishZones, this.character(id).position) === undefined) return;
@@ -844,6 +855,14 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     const character = this.character(id);
     const progress = this.progress.get(id)!;
     if (character.hasPendingRespawn || character.position.y >= this.killPlaneY) return;
+    // Already resolved — Qualified, spectating (code review, ticket 05):
+    // without this, residual ragdoll momentum from an unrelated Impact
+    // could carry an already-Qualified Survival Character across the kill
+    // plane one or more ticks later, marking it eliminated too and
+    // contradicting `finishTick !== null` on the very same snapshot. A
+    // Character that has already Qualified has nothing left for a Fall to
+    // change, in either Round type.
+    if (progress.finishTick !== null) return;
 
     progress.fallCount += 1;
     const eliminates = this.roundRules.fallBehavior === "eliminate";

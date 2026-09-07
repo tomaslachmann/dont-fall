@@ -977,6 +977,35 @@ describe("RapierSimulation — qualifySurvivors (M5 ticket 05, ADR 0042)", () =>
 
     expect(sim.snapshot().characters[MOVER]!.finishTick).toBe(5);
   });
+
+  it("a Fall after already Qualifying never marks the Character eliminated too (code review)", () => {
+    // A real, if narrow, contradiction the review caught: residual ragdoll
+    // momentum from an unrelated, earlier Impact can keep carrying an
+    // already-Qualified Character (input-locked, so it can't walk itself
+    // anywhere new) downward — simulated here directly via `reconcileCharacter`
+    // rather than choreographing a real Impact's own physics, since the
+    // point is purely "does `detectFall` still react," not how the
+    // Character got below the kill plane. `eliminated` and `Qualified`
+    // (`finishTick`) can never both be true at once.
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: 1.5, z: 0 },
+      statics: [GROUND],
+      killPlaneY: -8,
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
+    });
+    tick(sim, 0.3);
+    sim.qualifySurvivors(sim.snapshot().tick);
+    const qualified = sim.snapshot().characters[MOVER]!;
+    expect(qualified.finishTick).not.toBeNull();
+
+    sim.reconcileCharacter(MOVER, { ...qualified, position: { x: 0, y: -9, z: 0 } }); // below the kill plane
+    sim.tick({}); // the only tick detectFall could react on
+
+    const after = sim.snapshot().characters[MOVER]!;
+    expect(after.finishTick).not.toBeNull(); // still Qualified
+    expect(after.eliminated).toBe(false); // never flipped
+    expect(after.fallCount).toBe(0); // the Fall reaction never ran at all
+  });
 });
 
 describe("RapierSimulation — jump", () => {
@@ -3602,6 +3631,26 @@ describe("Finish Zone — Qualification (M4 ticket 02, ADR 0039)", () => {
       position: { x: 0, y: RESTING_SPAWN.y, z: 5 }, // nowhere near the zone
       finishTick: null,
     });
+
+    expect(me(sim).finishTick).toBeNull();
+
+    sim.dispose();
+  });
+
+  it("never Qualifies through the Finish Zone in an eliminating Round type — that grants Qualification a different way (M5 ticket 05, code review)", () => {
+    // The exact bug a flaky server test caught: a Survival Round run (as it
+    // must be, until ticket 06's arena exists) on an ordinary, possibly
+    // Finish-Zone-carrying Track let a Character Qualify by simply walking
+    // to the finish line, bypassing qualifySurvivors/the Survivor Target
+    // entirely.
+    const sim = new RapierSimulation({
+      statics: [GROUND],
+      spawn: RESTING_SPAWN,
+      finishZones: [{ trigger: ZONE_AHEAD }],
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
+    });
+
+    tick(sim, 5, NORTH); // walks straight through where the zone would qualify a Race
 
     expect(me(sim).finishTick).toBeNull();
 
