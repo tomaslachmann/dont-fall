@@ -215,6 +215,26 @@ export const M1_MODULES: Record<string, Module> = {
     sockets: STRAIGHT_SOCKETS,
     footprint: STRAIGHT_FOOTPRINT,
   },
+  /**
+   * Arena: the one piece of content M5 adds (ticket 06) — an open platform
+   * over the void, no walls, no bridges, nothing to hide behind. What makes
+   * a Track a Survival Track is only that you can fall off it in every
+   * direction; the shoving is Bump, which has worked since M2 and needs
+   * nothing new. Deliberately no Checkpoint and no Finish Zone — Survival's
+   * own Qualification is `qualifySurvivors` (ticket 05), never a zone to
+   * reach, and Checkpoints mean nothing where a Fall eliminates instead of
+   * respawning (ADR 0042); the arena resolves cleanly with neither.
+   *
+   * `sockets: []` on purpose — meant to be dropped alone via free placement
+   * (ADR 0034), not auto-chained onto anything (`chainTrack`'s own docs:
+   * nothing requires a Module to have sockets at all).
+   */
+  arena: {
+    id: "arena",
+    statics: [box({ x: 0, y: -0.5, z: 0 }, { x: 6, y: 0.5, z: 6 })],
+    sockets: [],
+    footprint: { bounds: box({ x: 0, y: -0.5, z: 0 }, { x: 6, y: 2, z: 6 }), clearance: 0.5 },
+  },
 };
 
 /** The M1 playground, reassembled through the Module/Track system (ticket 01, re-chained via Sockets in round 2). */

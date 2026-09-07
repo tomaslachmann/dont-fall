@@ -1,4 +1,4 @@
-import type { Module } from "@dont-fall/shared";
+import { MODULE_LIBRARY, hasSocket, type Module } from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
 import { generateRandomTrack } from "./generate.js";
 
@@ -40,5 +40,34 @@ describe("generateRandomTrack", () => {
     const modules = { a: straightModule("a") };
     const track = generateRandomTrack(modules);
     expect(track.length).toBeGreaterThan(1);
+  });
+});
+
+describe("Modules that cannot be chained (M5 ticket 06 — the Survival arena)", () => {
+  it("never picks a Module without Sockets, however many Tracks it generates", () => {
+    // The arena carries `sockets: []` on purpose — it is dropped on its own by
+    // free placement (ADR 0034). `chainTrack` cannot chain it, so before this
+    // the generator threw whenever it happened to pick one: roughly a quarter
+    // of calls against the real library, i.e. a flaky 500 on POST
+    // /tracks/generate that would only show up in production every fourth try.
+    for (let i = 0; i < 100; i += 1) {
+      expect(() => generateRandomTrack(MODULE_LIBRARY)).not.toThrow();
+    }
+  });
+
+  it("chains only from the Modules that can actually chain", () => {
+    const generated = generateRandomTrack(MODULE_LIBRARY, 8);
+
+    for (const segment of generated) {
+      const module = MODULE_LIBRARY[segment.moduleId]!;
+      expect(hasSocket(module, "entry"), `${segment.moduleId} was chained without an entry Socket`).toBe(true);
+      expect(hasSocket(module, "exit"), `${segment.moduleId} was chained without an exit Socket`).toBe(true);
+    }
+  });
+
+  it("says so plainly when nothing in the library can be chained", () => {
+    const unchainableOnly = { arena: MODULE_LIBRARY.arena! };
+
+    expect(() => generateRandomTrack(unchainableOnly)).toThrow(/Socket/i);
   });
 });

@@ -5,6 +5,7 @@ import {
   lengthVec3,
   obbsOverlap,
   orientBox,
+  hasSocket,
   placeAfter,
   rotateVec3ByQuat,
   segmentOrientation,
@@ -61,13 +62,25 @@ export const rechainFrom = (track: Track, modules: Record<string, Module>, fromI
     const module = modules[moduleId];
     if (!module) throw new Error(`rechainFrom: unknown Module "${moduleId}"`);
 
-    if (i === 0 || segment.manuallyPlaced) {
+    const prevSegment = i === 0 ? undefined : result[i - 1]!;
+    const prevModule = prevSegment ? modules[prevSegment.moduleId] : undefined;
+    if (prevSegment && !prevModule) throw new Error(`rechainFrom: unknown Module "${prevSegment.moduleId}"`);
+
+    // A pair that cannot be chained keeps whatever position it already has,
+    // exactly like one the author placed by hand. Not every Module has
+    // Sockets (ADR 0034 free placement — the Survival arena is the first),
+    // and `placeAfter` would otherwise throw straight out of a palette click,
+    // taking the builder down for a Module the palette openly offers.
+    const chainable =
+      prevSegment !== undefined &&
+      prevModule !== undefined &&
+      hasSocket(prevModule, "exit") &&
+      hasSocket(module, "entry");
+
+    if (!chainable || segment.manuallyPlaced) {
       result.push({ ...segment });
     } else {
-      const prevSegment = result[i - 1]!;
-      const prevModule = modules[prevSegment.moduleId];
-      if (!prevModule) throw new Error(`rechainFrom: unknown Module "${prevSegment.moduleId}"`);
-      result.push(placeAfter(prevSegment, prevModule, moduleId, module));
+      result.push(placeAfter(prevSegment!, prevModule!, moduleId, module));
     }
   }
   return result;
