@@ -125,6 +125,8 @@ export interface CharacterState {
   speedPadCapMultiplier: number;
   /** Rises every time a launch pad fires (M3.7 ticket 02). */
   launchPadEpoch: number;
+  /** World-space yaw in radians this Character is currently facing (M6, ADR 0045). */
+  facing: number;
   bones: BoneSnapshot[];
 }
 
@@ -273,6 +275,14 @@ export class CharacterController {
   private pendingLaunchVelocity: Vec3 | undefined;
   private jumpHeldLastTick = false;
   private dashHeldLastTick = false;
+  /**
+   * This Character's last known facing, world-space yaw in radians (M6, ADR
+   * 0045) — mirrored straight from `input.facing` every {@link beginTick},
+   * the same way `moveDirection` is, never restored on {@link reconcileTo}
+   * (it's an input mirror, not simulation-owned state; a correction's own
+   * replay re-derives it from the replayed inputs' own facing).
+   */
+  private facing = 0;
 
   /** Strongest Impact queued since the last tick, with the shove to apply if it ragdolls. */
   private pendingImpact: PendingImpact | null = null;
@@ -506,6 +516,7 @@ export class CharacterController {
     const dashPressed = input.dashHeld && !this.dashHeldLastTick;
     this.jumpHeldLastTick = input.jumpHeld;
     this.dashHeldLastTick = input.dashHeld;
+    this.facing = input.facing;
 
     // Order matters: read prevState before the machine ticks; compute `settled`
     // from last tick's physics before this tick's world.step().
@@ -1049,6 +1060,7 @@ export class CharacterController {
       speedPadMsLeft: this.speedPad.msLeft,
       speedPadCapMultiplier: this.speedPad.peak,
       launchPadEpoch: this.launchPadEpoch,
+      facing: this.facing,
       bones,
     };
   }

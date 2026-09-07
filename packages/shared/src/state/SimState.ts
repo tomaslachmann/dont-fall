@@ -79,6 +79,16 @@ export interface CharacterSnapshot {
    */
   launchPadEpoch: number;
   /**
+   * World-space yaw in radians this Character is currently facing (M6, ADR
+   * 0045) — sent from the owning client's own camera every Tick, mirrored
+   * onto the Snapshot so every other client can orient its rendered model
+   * and Hit/Grab can target "the Character just ahead of you." Not restored
+   * during reconciliation (see `ReconcileBase`): it's an input mirror, not
+   * simulation-owned state, so a correction's own replay re-derives it from
+   * the replayed inputs' own facing.
+   */
+  facing: number;
+  /**
    * The Tick this Character entered a Finish Zone and Qualified, or `null`
    * while it has not (M4 ticket 02, ADR 0039). A pure function of position,
    * derived identically by the server and by a predicting client — on the
@@ -160,6 +170,7 @@ export interface CharacterSnapshotFields {
   speedPadMsLeft?: number;
   speedPadCapMultiplier?: number;
   launchPadEpoch?: number;
+  facing?: number;
   lastInputTick?: number;
   ragdollEpoch?: number;
   ragdollCause?: RagdollCause;
@@ -213,6 +224,7 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   speedPadMsLeft: fields.speedPadMsLeft ?? 0,
   speedPadCapMultiplier: fields.speedPadCapMultiplier ?? 1,
   launchPadEpoch: fields.launchPadEpoch ?? 0,
+  facing: fields.facing ?? 0,
   lastInputTick: fields.lastInputTick ?? 0,
   ragdollEpoch: fields.ragdollEpoch ?? 0,
   ragdollCause: fields.ragdollCause ?? "Fall",

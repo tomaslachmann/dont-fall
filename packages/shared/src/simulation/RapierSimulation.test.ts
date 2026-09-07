@@ -3836,3 +3836,73 @@ describe("dispose (M4 ticket 01)", () => {
     second.dispose();
   });
 });
+
+describe("RapierSimulation — Character facing (M6 ticket 01, ADR 0045)", () => {
+  const settled = () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
+    tick(sim, 0.5);
+    return sim;
+  };
+
+  it("reports back whatever facing this tick's input carried", () => {
+    const sim = settled();
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ facing: Math.PI / 2 }) });
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.facing).toBeCloseTo(Math.PI / 2, 10);
+  });
+
+  it("defaults to 0 — IDLE_INPUTS carries no facing opinion", () => {
+    const sim = settled();
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.facing).toBe(0);
+  });
+
+  it("resets to 0 on a tick with no input entry, exactly like moveDirection does — holding the last real input across a gap is the server's own queue behavior, not this layer's", () => {
+    const sim = settled();
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ facing: 1.23 }) });
+    sim.tick({}); // no entry for this Character this tick — idles on IDLE_INPUTS
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.facing).toBe(0);
+  });
+
+  it("survives a reconcile-then-replay untouched — it is re-derived from the replayed inputs' own facing, never reset by the correction (regression)", () => {
+    // Mirrors the dash suite's own "reconcile-then-replay" shape above: `truth`
+    // plays out uninterrupted, `client` predicts the same ticks, gets
+    // reconciled to `truth`'s OLDER snapshot (ReconcileBase deliberately
+    // excludes facing — it's an input mirror, not simulation-owned state to
+    // restore) and replays the unacked inputs forward. If facing were
+    // accidentally zeroed or frozen by reconcileTo instead of left for replay
+    // to re-derive, this would catch it.
+    const truth = settled();
+    const client = settled();
+    const K = 10;
+    const ACKED_LAG = 4;
+
+    let ackedSnapshot: ReturnType<typeof truth.snapshot>["characters"][string] | null = null;
+    const unackedInputs: SimInputs[] = [];
+    for (let t = 1; t <= K; t += 1) {
+      const facingInput = input({ facing: t * 0.1 });
+      truth.tick({ [DEFAULT_CHARACTER_ID]: facingInput });
+      client.tick({ [DEFAULT_CHARACTER_ID]: facingInput });
+      if (t === K - ACKED_LAG) ackedSnapshot = truth.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      if (t > K - ACKED_LAG) unackedInputs.push(facingInput);
+    }
+    if (!ackedSnapshot) throw new Error("unreachable");
+
+    client.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+      position: { ...ackedSnapshot.position },
+      velocity: { ...ackedSnapshot.velocity },
+      grounded: ackedSnapshot.grounded,
+      motionState: ackedSnapshot.motionState,
+      dashCooldownMs: ackedSnapshot.dashCooldownMs,
+      dashing: ackedSnapshot.dashing,
+      speedPadMsLeft: ackedSnapshot.speedPadMsLeft,
+      speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
+      finishTick: ackedSnapshot.finishTick,
+      eliminated: ackedSnapshot.eliminated,
+    });
+    client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unackedInputs);
+
+    const truthNow = truth.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    const clientNow = client.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(clientNow.facing).toBeCloseTo(truthNow.facing, 10);
+    expect(clientNow.facing).toBeCloseTo(K * 0.1, 10);
+  });
+});

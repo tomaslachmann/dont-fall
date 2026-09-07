@@ -101,8 +101,8 @@ afterEach(async () => {
   server = undefined;
 });
 
-const NORTH: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false };
-const SOUTH: SimInputs = { moveDirection: { x: 0, y: 0, z: 1 }, jumpHeld: false, dashHeld: false };
+const NORTH: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false, facing: 0 };
+const SOUTH: SimInputs = { moveDirection: { x: 0, y: 0, z: 1 }, jumpHeld: false, dashHeld: false, facing: 0 };
 /** Ticks between direction flips — keeps the oscillation well within the ~4-unit clearance to the first narrow bridge. */
 const OSCILLATE_TICKS = 10;
 const simConfig = {

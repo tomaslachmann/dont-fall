@@ -585,6 +585,10 @@ const boot = async (
       moveDirection: movementDirection(keyboard.movementKeys(), look.yaw),
       jumpHeld: keyboard.jumpHeld(),
       dashHeld: keyboard.dashHeld(),
+      // M6, ADR 0045: the plain angle the camera already resolved to, not the
+      // camera itself — the simulation stays exactly as camera-agnostic as
+      // moveDirection already keeps it (ADR 0009).
+      facing: look.yaw,
     };
 
     // World this client doesn't predict — Props and every other player's
