@@ -326,7 +326,7 @@ const boot = async (
 
   /**
    * Rebuilds everything derived from the active Track — the mirror of the
-   * server's own `rebuildSimulationFor` for a live Lobby Track pick (M4
+   * server's own `buildSimulationFor` for a live Lobby Track pick (M4
    * ticket 07). `look` is rebuilt too: it holds a reference to `stage`'s own
    * canvas, which `stage.dispose()` removes from the DOM, so a `look` still
    * bound to the old one would never see another mouse event.
@@ -447,7 +447,7 @@ const boot = async (
         ) {
           trackReloadInFlight = true;
           // The server already placed this Character at its spawn slot on
-          // the new Track (`trackSpawn`, mirrored by `rebuildSimulationFor`)
+          // the new Track (`trackSpawn`, mirrored by `buildSimulationFor`)
           // — read straight off this very snapshot rather than recomputing
           // it, so there is exactly one source for "where do I start."
           const spawn = message.state.characters[myId]?.position ?? welcome.spawn;

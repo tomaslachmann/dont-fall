@@ -56,7 +56,7 @@ export class MatchRuntime {
   /**
    * This Round's rules (M5 ticket 02, ADR 0041/0043) — the Track's own
    * defaults under this Match's overrides, resolved once by
-   * {@link rebuildSimulationFor} every time `simulation`/`fetched` are, and
+   * {@link buildSimulationFor} every time `simulation`/`fetched` are, and
    * fixed in between. Replicated on the snapshot beside `phase`
    * (`matchLoop.ts`) so the client predicts against the identical record.
    */
