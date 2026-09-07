@@ -100,8 +100,29 @@ regression from this milestone, left as a follow-up. Live-verified with two brow
 Lobby join, Ready, host start, a real Countdown into RUNNING, and a real wall Impact into `Ragdoll`
 correctly replicated to the other client.
 
-**Next:** M5 (two Round types on one engine) — already planned (ADR 0041–0043,
-`docs/milestones/M5.md`), not yet started.
+**M5 done** — Two Round types on one engine (`docs/milestones/M5.md`, "Done when" met: a Match runs a
+Race or a Survival Round on the same simulation, with the rules that differ carried as data). Design
+settled in a grilling session backed by two research passes and recorded as ADR 0041 (Round configuration:
+Track defaults under Round overrides) / 0042 (what a Fall does is the Round type's rule) / 0043 (a Round
+type is data in the shared step, never a branch on the mode) / 0044 (one input lock inside the shared
+step). Tickets 01–08 in `.scratch/m5-two-round-types/issues/`: one input lock replacing the two mechanisms
+at two layers (01); `RoundRules` — a data record the step reads *fields* of, resolved once before COUNTDOWN
+and replicated on the snapshot (02); what follows a Fall becomes a rule, not a constant (03); an eliminated
+Character is marked, not removed — its body stays in the world with its collider disabled (04); a Survival
+Round ends on the Survivor Target or the Time Limit, and everyone still standing Qualifies (05); the arena
+Module, one flat platform over a void (06); the Track builder authors a default Survivor Target and the
+Lobby picks the Round type, with a Race on a Finish-Zone-less Track refused with a readable reason and no
+Track ever tagged with the types it allows (07); live verification (08).
+
+The point was never the abstraction — it was the *second* implementation, which is the only thing that
+proves the seam is in the right place. Ticket 08 ran both Round types in two real browsers against one
+never-restarted server and found three bugs vitest had not, all in the seam between "marked, not removed"
+and machinery written when a departing Character simply vanished: ghost Characters left behind when the
+last Player dropped mid-Round (which also meant no later Race could end by everyone Qualifying), a Track
+pick freezing everyone already in the Lobby by restarting the Tick epoch under their already-seeded
+prediction tick (ADR 0027), and a DNF'd Player listed twice on the Results Screen.
+
+**Next:** multi-Round advancement — chaining Rounds now that two Round types exist to chain.
 
 ## Tech stack
 

@@ -219,6 +219,11 @@ export class MatchRuntime {
       withDefaultCharacter: false,
       roundRules,
     });
+    // Onto the Tick the server is already on, before anyone is seated in it
+    // (M5 ticket 08) — a Character added at tick 0 and only then jumped
+    // forward would carry a `phaseStartTick` thousands of Ticks in its own
+    // past. No-op at construction, where `serverTick` is 0.
+    simulation.syncTick(this.serverTick);
     for (const [playerId, player] of this.lobbyPlayers) {
       simulation.addCharacter(playerId, trackSpawn(track, player.joinOrder));
     }
@@ -236,13 +241,23 @@ export class MatchRuntime {
    * published against a newer library); disposing first would leave this
    * server holding a freed Rapier world for every subsequent tick.
    *
-   * `serverTick` restarts with the new simulation's own tick counter (ADR
-   * 0027), or every subsequent input — stamped from the client's *new*
-   * `state.tick`, always small — reads as permanently stale against the old,
-   * much larger `serverTick`: every queued input discarded before it can ever
-   * match `thisTick`, and the resulting `lastInputTick` ack (now way ahead of
-   * what the client sent) makes the client think everything it sent already
-   * got applied. No one can move, for the rest of this process's life.
+   * The Match's Tick epoch is *not* restarted (M5 ticket 08, found live).
+   * `state.tick` and `serverTick` must keep agreeing (ADR 0027 addresses
+   * every input by Tick number), and the way to keep them agreeing across a
+   * rebuild is to hand the new simulation the Tick the server is already on
+   * — `syncTick` — not to send both back to zero.
+   *
+   * Sending both to zero looks equivalent and is not, because a *connected*
+   * client's own prediction tick is seeded into the server's Tick space
+   * exactly once, at join (ADR 0027, `PredictionLoop.seed`), and never
+   * re-seeded. Restarting the epoch under it left every client already in
+   * the Lobby stamping inputs from an epoch the server no longer used: the
+   * server's `takeFor(id, thisTick)` never found them, `lastInputTick` ran
+   * away ahead of what the client had sent, and nobody who was already
+   * connected could move again for the rest of the Match. Live, that meant
+   * the host picking a different Track — or anyone going again from Results
+   * — froze everyone who was already there, on a Track they could see and
+   * not walk on.
    *
    * Callers still own anything specific to their own trigger — which Track
    * `fetched` now points at, clearing `dnf`, resetting Ready.
@@ -258,9 +273,8 @@ export class MatchRuntime {
     this.simulation = built.simulation;
     this.roundRules = built.roundRules;
     this.trackHasFinishZone = built.trackHasFinishZone;
-    this.serverTick = 0;
-    this.roundStartTick = 0;
-    this.match = { phase: "LOBBY", phaseStartTick: 0 };
+    this.roundStartTick = this.serverTick;
+    this.match = { phase: "LOBBY", phaseStartTick: this.serverTick };
     this.startRequested = false;
   }
 }

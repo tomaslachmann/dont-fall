@@ -110,10 +110,25 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       // A fresh Countdown is a fresh Round: last Round's DNFs are not this
       // Round's (M4 ticket 05).
       if (nextMatch.phase === "COUNTDOWN" && rt.match.phase !== "COUNTDOWN") rt.dnf = [];
-      if (nextMatch.phase === "LOBBY" && rt.match.phase === "RESULTS") {
-        // Going again (M4 ticket 08): everyone still connected gets a fresh
-        // Round on the same Track, re-seated at their spawn slot. A genuinely
-        // fresh Lobby, not a resumed one: last Round's DNFs are not this
+      if (nextMatch.phase === "LOBBY" && rt.match.phase !== "LOBBY") {
+        // Every way back to a Lobby gets a genuinely fresh one, never a
+        // resumed one: the host going again from Results (M4 ticket 08), and
+        // the last Player leaving mid-Round (`advanceMatchPhase`'s "a Round
+        // with nobody in it is over").
+        //
+        // Both need the world rebuilt, not just the phase reset (M5 ticket
+        // 08, found live). Since ticket 04 a Character that drops mid-Round
+        // is *marked* eliminated rather than removed (ADR 0042) — right for
+        // the Round it was racing, and wrong forever after: if that drop was
+        // the last one, the phase snapped back to LOBBY around a world still
+        // holding its body. Those ghosts then counted as connected Players on
+        // every client's HUD, and — because `allQualified` needs a
+        // `finishTick` from *every* Character and a ghost can never earn one
+        // — no Race on that server could ever again end by everyone
+        // Qualifying, only by running out its clock.
+        //
+        // Everyone still connected gets a fresh Round on the same Track,
+        // re-seated at their spawn slot. Last Round's DNFs are not this
         // Round's (same reasoning as the Countdown-triggered clear above),
         // and everyone's Ready goes back to false — otherwise a Lobby the
         // host returns to would start itself the instant it existed, since

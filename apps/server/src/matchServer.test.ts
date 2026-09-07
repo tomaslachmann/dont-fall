@@ -662,8 +662,7 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
     await new Promise((resolve) => first.once("close", resolve));
 
     // Reload — a genuinely different Track, with no one connected, so the
-    // reload path actually runs and replaces `simulation` (whose own tick
-    // counter restarts at 0) without resetting the server's `serverTick`.
+    // reload path actually runs and replaces `simulation`.
     const altTrackId = await publishTrack();
     const second = connect(server.port, `?track=${altTrackId}`);
     const secondWelcome = await nextMessage(second);
@@ -674,9 +673,13 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
     const postReloadFirst = await nextMessage(second);
     if (postReloadFirst.type !== "snapshot") throw new Error("unreachable");
     const startZ = postReloadFirst.state.characters[id]!.position.z;
-    // The new simulation's own tick counter restarted at 0 — this is exactly
-    // what the client would seed `predictionTick` from post-reload.
-    expect(postReloadFirst.state.tick).toBeLessThan(10);
+    // The rebuilt simulation carries on from the Tick the server is already
+    // on rather than restarting the epoch (M5 ticket 08): `state.tick` — what
+    // a client seeds `predictionTick` from — and `serverTick` still agree,
+    // which is the whole of ADR 0027's addressing. Restarting it instead
+    // froze every client that was *already* connected, since a prediction
+    // tick is seeded once and never re-seeded.
+    expect(postReloadFirst.state.tick).toBeGreaterThan(tick);
 
     let postTick = postReloadFirst.state.tick;
     let lastZ = startZ;
@@ -1907,3 +1910,125 @@ describe("startServer — the Lobby picks a Round type (M5 ticket 07, ADR 0041/0
     socket.close();
   });
 });
+
+describe("startServer — the last Player leaving leaves no ghosts behind (M5 ticket 08, found live)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (;;) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+  };
+
+  it("rebuilds the world, so a mid-Round drop that empties the server doesn't haunt the next Lobby", async () => {
+    // Since M5 ticket 04 a mid-Round drop is *marked* eliminated rather than
+    // removed (ADR 0042). If that drop is the last one, the phase snaps back
+    // to LOBBY — and used to do it around a world still holding the body.
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0 });
+    const first = connect(server.port);
+    await nextMessage(first); // welcome
+    await startMatch(first);
+    await snapshotUntil(first, (s) => s.phase === "RUNNING");
+    first.close();
+    // Let the server actually tick with nobody connected — that is the
+    // transition under test, and reconnecting inside the same 33 ms would
+    // race past it.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // Nobody left: `advanceMatchPhase` puts the Match back in LOBBY.
+    const second = connect(server.port);
+    const welcome = (await nextMessage(second)) as Extract<ServerMessage, { type: "welcome" }>;
+    const snapshot = await snapshotUntil(second, (s) => s.lobby.players.length === 1);
+
+    expect(snapshot.phase).toBe("LOBBY");
+    // Exactly one Character — the joiner's own, no ghost from the abandoned Round.
+    expect(Object.keys(snapshot.state.characters)).toEqual([welcome.playerId]);
+    second.close();
+  });
+});
+
+describe("startServer — a Track pick must not freeze the Players already in the Lobby (M5 ticket 08, found live)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (;;) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+  };
+
+  it("keeps the Tick epoch running across the rebuild, so an already-seeded prediction tick stays valid", async () => {
+    // A client seeds its own prediction tick into the server's Tick space
+    // once, at join (ADR 0027) — never again. Restarting `serverTick` under
+    // it meant every input it sent afterward addressed a Tick the server had
+    // already passed, so nothing it sent was ever applied again.
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+    await nextMessage(socket); // welcome
+    const before = await snapshotUntil(socket, (s) => s.state.tick > 10);
+
+    const altTrackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    socket.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
+    const reloaded = await snapshotUntil(socket, (s) => s.trackId === altTrackId);
+
+    expect(reloaded.state.tick).toBeGreaterThanOrEqual(before.state.tick);
+    socket.close();
+  });
+
+  it("still applies that client's own input after the Track changes under it", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+    const welcome = (await nextMessage(socket)) as Extract<ServerMessage, { type: "welcome" }>;
+    const id = welcome.playerId;
+
+    const altTrackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    socket.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
+    await snapshotUntil(socket, (s) => s.trackId === altTrackId);
+    await startMatch(socket);
+    const running = await snapshotUntil(socket, (s) => s.phase === "RUNNING");
+
+    // Stamp each input a little ahead of the latest snapshot's Tick. Note
+    // this re-reads the Tick every iteration, so it would recover from a
+    // broken epoch on its own where a real client cannot — the epoch itself
+    // is what the test above pins. This one is the end-to-end sanity check
+    // that a Track pick leaves a Player able to walk at all.
+    let tick = running.state.tick;
+    const startZ = running.state.characters[id]!.position.z;
+    let z = startZ;
+    for (let i = 0; i < 40; i += 1) {
+      sendInput(socket, tick + 2, NORTH);
+      const snapshot = await nextSnapshot(socket);
+      tick = snapshot.state.tick;
+      z = snapshot.state.characters[id]!.position.z;
+    }
+
+    expect(z).toBeLessThan(startZ - 1); // it walked — the Track pick did not freeze it
+    socket.close();
+  });
+});
+

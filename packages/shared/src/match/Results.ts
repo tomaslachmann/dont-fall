@@ -23,7 +23,15 @@ export interface ResultsCharacter {
   fallCount: number;
 }
 
-/** A Player who dropped mid-Round (M4 ticket 05) — their Character is gone, so only this survives to say who they were. */
+/**
+ * A Player who dropped mid-Round (M4 ticket 05) — their `LobbyPlayer` entry
+ * is deleted with their socket, so this is what still says who they were.
+ *
+ * Their Character may or may not still be in `characters`: since M5 ticket 04
+ * a drop *during* a Round marks it eliminated and leaves it in the world (ADR
+ * 0042), while a drop outside one still removes it. {@link buildResults}
+ * handles both, and never lists the same Player twice.
+ */
 export interface DnfEntry {
   id: string;
   nickname: string;
@@ -41,8 +49,15 @@ export interface DnfEntry {
  *    (a Finish Zone is an area, not a line).
  * 2. Everyone still connected but not Qualified, furthest Checkpoint
  *    progress first.
- * 3. Everyone who DNF'd (M4 ticket 05) — always last: their Character is
- *    long gone, so there is no progress left to rank them by.
+ * 3. Everyone who DNF'd (M4 ticket 05) — always last, and unranked: leaving
+ *    is not a result to place among the ones that were played out. Where
+ *    their Character is still in the world (M5 ticket 04), the row carries
+ *    the progress it actually made rather than blanks.
+ *
+ * A Player appears exactly once. A drop mid-Round now leaves an eliminated
+ * Character behind (M5 ticket 04) as well as a DNF entry, and the DNF row is
+ * the truthful one — except where they had already Qualified before dropping,
+ * which is a result they earned and keep.
  *
  * A pure projection of state both sides already have on the wire (ADR
  * 0040): nothing new rides the snapshot for this, the same discipline
@@ -78,8 +93,11 @@ export const buildResults = (
     };
   });
 
+  const dnfIds = new Set(dnfEntries.map((entry) => entry.id));
+  const qualifiedIds = new Set(qualifiedRows.map((row) => row.id));
+
   const eliminatedRows: ResultsRow[] = Object.entries(characters)
-    .filter(([, c]) => c.finishTick === null)
+    .filter(([id, c]) => c.finishTick === null && !dnfIds.has(id))
     .sort(([, a], [, b]) => (b.checkpointIndex ?? -1) - (a.checkpointIndex ?? -1))
     .map(([id, c]) => ({
       id,
@@ -91,15 +109,20 @@ export const buildResults = (
       dnf: false,
     }));
 
-  const dnfRows: ResultsRow[] = dnfEntries.map((entry) => ({
-    id: entry.id,
-    nickname: entry.nickname,
-    qualified: false,
-    placement: null,
-    checkpointIndex: null,
-    fallCount: 0,
-    dnf: true,
-  }));
+  const dnfRows: ResultsRow[] = dnfEntries
+    .filter((entry) => !qualifiedIds.has(entry.id))
+    .map((entry) => {
+      const character = characters[entry.id];
+      return {
+        id: entry.id,
+        nickname: entry.nickname,
+        qualified: false,
+        placement: null,
+        checkpointIndex: character?.checkpointIndex ?? null,
+        fallCount: character?.fallCount ?? 0,
+        dnf: true,
+      };
+    });
 
   return [...qualifiedRows, ...eliminatedRows, ...dnfRows];
 };

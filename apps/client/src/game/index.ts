@@ -352,11 +352,20 @@ const boot = async (
    * canvas, which `stage.dispose()` removes from the DOM, so a `look` still
    * bound to the old one would never see another mouse event.
    *
-   * The tick-space state below is reset, not carried over: the server
-   * restarts this Track's `serverTick` at 0 on the same pick (ADR 0027's own
-   * "one Tick, one authority" discipline applied to a fresh Lobby), so every
-   * prediction/interpolation structure keyed by tick number would otherwise
-   * compare the new low ticks against the old high ones forever.
+   * The tick-space state below is replaced rather than carried over, but not
+   * because the Tick epoch moves: it does not (M5 ticket 08 — the server
+   * hands the rebuilt simulation the Tick it is already on, so a client's
+   * once-seeded prediction tick stays valid, which is what keeps everyone
+   * already in the Lobby able to move). It is replaced because every one of
+   * these structures is keyed by tick *and* describes the old Track: a
+   * position history, an interpolation buffer and a replay base recorded
+   * against geometry that no longer exists. A fresh `PredictionLoop` re-seeds
+   * itself into the same, still-running epoch on the next frame.
+   *
+   * Note this only runs when the Track actually *changes*. Going again from
+   * Results keeps the same Track, so nothing here re-seeds anything — which
+   * is exactly why the epoch has to stay continuous rather than being reset
+   * and re-seeded around.
    */
   const loadTrack = async (trackId: string, trackRevision: number, spawn: Vec3): Promise<void> => {
     const nextTrack = await fetchTrack(trackId, trackRevision);
