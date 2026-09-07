@@ -121,7 +121,9 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
 
       // Before the Round is RUNNING none of its clock has been spent, so it
       // reads its full authored value rather than counting down in the Lobby.
-      const timeLimitMs = rt.roundTimeLimitMs();
+      // `rt.roundRules` is resolved once, before COUNTDOWN (ADR 0041) —
+      // nothing here re-resolves it or reads Track/override separately.
+      const timeLimitMs = rt.roundRules.timeLimitMs;
       // Before a Round the clock reads its full authored value; during one it
       // counts down; after one it stops where it stopped.
       let timeLeftMs: number;
@@ -165,6 +167,7 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
             commandQueueDepth: rt.inputs.depth(id),
             timeLeftMs,
             phase: rt.match.phase,
+            roundRules: rt.roundRules,
             countdownMsLeft: countdown,
             dnf: rt.dnf,
             trackId: rt.fetched.id,

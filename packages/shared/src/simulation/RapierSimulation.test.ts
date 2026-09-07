@@ -3397,6 +3397,42 @@ describe("RapierSimulation — input lock is one rule at one layer (M5 ticket 01
   });
 });
 
+describe("RapierSimulation — RoundRules (M5 ticket 02, ADR 0041/0043)", () => {
+  const me = (sim: RapierSimulation) => sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+
+  it("accepts a Round's own RoundRules at construction — a Race resolves to today's behaviour exactly", () => {
+    // Nothing in the step reads a field of RoundRules yet (that starts at
+    // ticket 03), so a Race on any RoundRules must move identically to one
+    // constructed with no RoundRules opinion at all.
+    const plain = new RapierSimulation({ statics: [GROUND], spawn: RESTING_SPAWN });
+    const withRules = new RapierSimulation({
+      statics: [GROUND],
+      spawn: RESTING_SPAWN,
+      roundRules: { timeLimitMs: 5_000 },
+    });
+
+    tick(plain, 1, NORTH);
+    tick(withRules, 1, NORTH);
+
+    expect(me(withRules).position).toEqual(me(plain).position);
+    plain.dispose();
+    withRules.dispose();
+  });
+
+  it("syncRoundRules adopts a new record without disturbing anything already simulated", () => {
+    const sim = new RapierSimulation({ statics: [GROUND], spawn: RESTING_SPAWN });
+    const before = me(sim).position;
+
+    sim.syncRoundRules({ timeLimitMs: 30_000 });
+
+    expect(me(sim).position).toEqual(before);
+    tick(sim, 1, NORTH); // still simulates normally afterward
+    expect(me(sim).position.z).toBeLessThan(before.z);
+
+    sim.dispose();
+  });
+});
+
 describe("dispose (M4 ticket 01)", () => {
   it("frees the Rapier world so a client can start, stop and start again without leaking it", () => {
     const sim = new RapierSimulation();

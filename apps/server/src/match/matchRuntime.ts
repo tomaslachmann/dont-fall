@@ -1,10 +1,12 @@
 import {
   MODULE_LIBRARY,
   RapierSimulation,
+  resolveRoundRules,
   resolveTrack,
   trackSpawn,
   type LobbyPlayer,
   type MatchState,
+  type RoundRules,
   type Track,
 } from "@dont-fall/shared";
 import type { WebSocket } from "ws";
@@ -51,6 +53,14 @@ export class MatchRuntime {
   /** The world. Replaced wholesale by a Playtest reload or a Lobby Track pick. */
   simulation: RapierSimulation;
   fetched: FetchedTrack;
+  /**
+   * This Round's rules (M5 ticket 02, ADR 0041/0043) — the Track's own
+   * defaults under this Match's overrides, resolved once by
+   * {@link rebuildSimulationFor} every time `simulation`/`fetched` are, and
+   * fixed in between. Replicated on the snapshot beside `phase`
+   * (`matchLoop.ts`) so the client predicts against the identical record.
+   */
+  roundRules: RoundRules;
 
   /**
    * The server's own monotonic tick — advances by exactly one every interval,
@@ -85,16 +95,9 @@ export class MatchRuntime {
     this.fetched = fetched;
     // The Match starts with no players; ticket 01's single-player default
     // Character is opted out here rather than added and immediately disposed.
-    this.simulation = this.rebuildSimulationFor(fetched.track);
-  }
-
-  /**
-   * This Round's Time Limit — the Revision's own (ADR 0038), unless a test has
-   * overridden it. A method, not a captured value: a reload replaces `fetched`
-   * with a different Track carrying a different clock.
-   */
-  roundTimeLimitMs(): number {
-    return this.config.timeLimitMsOverride ?? this.fetched.timeLimitMs;
+    const built = this.buildSimulationFor(fetched.track);
+    this.simulation = built.simulation;
+    this.roundRules = built.roundRules;
   }
 
   /**
@@ -105,16 +108,36 @@ export class MatchRuntime {
    * `sockets.size === 0`. A Lobby's host picking a different Track can do this
    * with others already sitting in it; nobody's Character should vanish just
    * because the world under it changed.
+   *
+   * Also resolves `roundRules` (M5 ticket 02, ADR 0041/0043) — `this.fetched`
+   * is always updated by the caller before this runs (`selectTrack`, the
+   * connect-time reload, going again), so its Time Limit is the fresh Track's
+   * own. `timeLimitMsOverride` is this Match's own Round-level override,
+   * folded through the same mechanism as everything else rather than staying
+   * a special case (ticket 02's own requirement) — the only override this
+   * ticket has a source for; a real per-Round choice (a future Lobby control)
+   * is more overrides added to the same call, not a new mechanism.
+   *
+   * Returns both rather than assigning `this.roundRules` as a side effect:
+   * `new RapierSimulation` can throw (an unknown Module id), and only the
+   * caller (`resetToFreshLobby`) knows it is safe to commit either field —
+   * the same "build before discarding the old one" discipline it already
+   * follows for `simulation` itself.
    */
-  rebuildSimulationFor(track: Track): RapierSimulation {
-    const next = new RapierSimulation({
+  buildSimulationFor(track: Track): { simulation: RapierSimulation; roundRules: RoundRules } {
+    const roundRules = resolveRoundRules(
+      { timeLimitMs: this.fetched.timeLimitMs },
+      { timeLimitMs: this.config.timeLimitMsOverride },
+    );
+    const simulation = new RapierSimulation({
       ...resolveTrack(MODULE_LIBRARY, track),
       withDefaultCharacter: false,
+      roundRules,
     });
     for (const [playerId, player] of this.lobbyPlayers) {
-      next.addCharacter(playerId, trackSpawn(track, player.joinOrder));
+      simulation.addCharacter(playerId, trackSpawn(track, player.joinOrder));
     }
-    return next;
+    return { simulation, roundRules };
   }
 
   /**
@@ -124,7 +147,7 @@ export class MatchRuntime {
    * restart the tick/phase bookkeeping it depends on.
    *
    * The replacement is built before the old one is disposed
-   * (`rebuildSimulationFor` can throw — an unknown Module id in a Track
+   * (`buildSimulationFor` can throw — an unknown Module id in a Track
    * published against a newer library); disposing first would leave this
    * server holding a freed Rapier world for every subsequent tick.
    *
@@ -145,9 +168,10 @@ export class MatchRuntime {
    * tick loop right after, starting a Round on the just-swapped-away Track.
    */
   resetToFreshLobby(track: Track): void {
-    const nextSimulation = this.rebuildSimulationFor(track);
+    const built = this.buildSimulationFor(track);
     this.simulation.dispose();
-    this.simulation = nextSimulation;
+    this.simulation = built.simulation;
+    this.roundRules = built.roundRules;
     this.serverTick = 0;
     this.roundStartTick = 0;
     this.match = { phase: "LOBBY", phaseStartTick: 0 };

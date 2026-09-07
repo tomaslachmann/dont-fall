@@ -3,6 +3,7 @@ import { pointInOrientedBox, type OrientedBox } from "../math/box.js";
 import { IDENTITY_QUAT } from "../math/quat.js";
 import { normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
 import { phaseLocksInput, type MatchPhase } from "../match/MatchPhase.js";
+import { DEFAULT_ROUND_RULES, type RoundRules } from "../match/RoundRules.js";
 import { characterSnapshot, type CharacterSnapshot, type ReconcileBase, type SimState } from "../state/SimState.js";
 import type { FixedSimulation } from "../timing/FixedSimulation.js";
 import {
@@ -116,6 +117,20 @@ export interface SimulationConfig {
    * state unconditional and safe (no more stale-vs-live ambiguity).
    */
   authoritative?: boolean;
+  /**
+   * The Round this simulation runs by (M5 ticket 02, ADR 0041/0043) —
+   * resolved once by the caller (Track defaults under Round overrides,
+   * `resolveRoundRules`) before this simulation exists, and fixed for its
+   * whole life: a Round's rules never change mid-Round, so a rules change
+   * means a fresh simulation, the same way a Track reload already gets one.
+   * Defaults to {@link DEFAULT_ROUND_RULES} — a Race, on a Track authored
+   * with no other opinion — so every existing caller with no Round concept
+   * (most of this file's own tests among them) is unaffected. Nothing in
+   * this ticket reads it yet; ticket 03 is the first Round-type rule that
+   * does (what a Fall does), read where the per-Character loop already
+   * reads `qualified`, right beside it.
+   */
+  roundRules?: RoundRules;
 }
 
 const DEFAULT_SPAWN = vec3(0, 2, 0);
@@ -164,6 +179,8 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   private readonly killPlaneY: number;
   /** See `SimulationConfig.authoritative`. */
   private readonly authoritative: boolean;
+  /** See `SimulationConfig.roundRules`; mutable so the client's own copy can adopt the server's via `syncRoundRules`. */
+  private roundRules: RoundRules;
   private readonly spinners: Spinner[];
   private readonly props: Prop[];
   private readonly spinnerByHandle = new Map<number, Spinner>();
@@ -230,6 +247,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     this.volumes = [...(config.volumes ?? [])].sort((a, b) => b.priority - a.priority);
     this.killPlaneY = config.killPlaneY ?? DEFAULT_KILL_PLANE_Y;
     this.authoritative = config.authoritative ?? true;
+    this.roundRules = config.roundRules ?? DEFAULT_ROUND_RULES;
 
     this.world = new RAPIER.World({ x: 0, y: GRAVITY_Y, z: 0 });
 
@@ -439,6 +457,20 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    */
   syncTick(serverTick: number): void {
     this.tickCount = serverTick;
+  }
+
+  /**
+   * Adopt the server's own resolved `RoundRules` (M5 ticket 02, ADR 0041) —
+   * the client's own guess at construction time (before any snapshot has
+   * arrived) can only be the Track's bare default; the server may have
+   * overridden it. Called every snapshot, the same cadence `phase` is
+   * captured at (`game.ts`), so it self-corrects the instant the real value
+   * is known and is a no-op once it already matches. The server itself never
+   * calls this — its own `RoundRules` is fixed for the Round's life, set
+   * once at construction (ADR 0041's own "nothing downstream re-resolves").
+   */
+  syncRoundRules(rules: RoundRules): void {
+    this.roundRules = rules;
   }
 
   /**

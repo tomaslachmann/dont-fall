@@ -2,6 +2,7 @@ import type { Vec3 } from "../math/vec3.js";
 import type { SimInputs } from "../simulation/SimInputs.js";
 import type { LobbyPlayer } from "../match/Lobby.js";
 import type { MatchPhase } from "../match/MatchPhase.js";
+import type { RoundRules } from "../match/RoundRules.js";
 import type { SimState } from "../state/SimState.js";
 
 /**
@@ -92,6 +93,15 @@ export interface SnapshotMessage {
    * their own Countdown ran out.
    */
   phase: MatchPhase;
+  /**
+   * This Round's rules (M5 ticket 02, ADR 0041/0043) — resolved once by the
+   * server before COUNTDOWN, from the Track's own defaults under this
+   * Match's overrides, and replicated here so the client's own local
+   * prediction (`RapierSimulation`'s `SimulationConfig.roundRules`) runs
+   * against the identical record the server's authority does. Never
+   * re-resolved on either side; both simply hold whatever arrived here.
+   */
+  roundRules: RoundRules;
   /**
    * Milliseconds left on the Countdown, or 0 in every other phase (M4 ticket
    * 04) — what the client's "3, 2, 1" overlay renders. Derived by the server

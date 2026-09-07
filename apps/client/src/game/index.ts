@@ -401,6 +401,12 @@ const boot = async (
         // display that only shows whole seconds.
         timeLeftMs = message.timeLeftMs;
         phase = message.phase;
+        // The server's own resolved RoundRules (M5 ticket 02, ADR 0041) —
+        // adopted every snapshot, same cadence as `phase`, so this client's
+        // own prediction runs against the identical record the server does
+        // rather than its own construction-time guess at the Track's bare
+        // default (which a Match-level override can disagree with).
+        localSim.syncRoundRules(message.roundRules);
         countdownMsLeft = message.countdownMsLeft;
         if (onLobbyState) {
           const lobbySnapshot: LobbySnapshot = {

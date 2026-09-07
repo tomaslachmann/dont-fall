@@ -746,6 +746,64 @@ describe("startServer — the Round clock (M4 ticket 03, ADR 0038)", () => {
   });
 });
 
+describe("startServer — RoundRules ride the snapshot (M5 ticket 02, ADR 0041/0043)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (;;) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+  };
+
+  it("resolves timeLimitMs from the Track's own default — the same number timeLeftMs already showed", async () => {
+    const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+
+    const snapshot = await nextSnapshot(socket);
+
+    expect(snapshot.roundRules.timeLimitMs).toBe(45_000);
+    socket.close();
+  });
+
+  it("takes this Match's own timeLimitMsOverride over the Track's default — the general mechanism, not a special case", async () => {
+    const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, timeLimitMsOverride: 12_000 });
+    const socket = connect(server.port, `?track=${trackId}`);
+
+    const snapshot = await nextSnapshot(socket);
+
+    expect(snapshot.roundRules.timeLimitMs).toBe(12_000);
+    socket.close();
+  });
+
+  it("re-resolves on a live Track pick — the new Track's own default, not the old one carried forward", async () => {
+    server = await startServer({ port: 0 });
+    const socket = connect(server.port);
+    await nextMessage(socket); // welcome, host
+
+    const altTrackId = await publishTrack(M1_TRACK, undefined, 20_000);
+    socket.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
+
+    const reloaded = await snapshotUntil(socket, (s) => s.trackId === altTrackId);
+    expect(reloaded.roundRules.timeLimitMs).toBe(20_000);
+    socket.close();
+  });
+});
+
 describe("startServer — Countdown and a shared start (M4 ticket 04, ADR 0040)", () => {
   const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
     new Promise((resolve) => {
