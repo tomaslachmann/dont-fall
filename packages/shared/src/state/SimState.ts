@@ -113,6 +113,18 @@ export interface CharacterSnapshot {
    * `RAGDOLL_BONES` order; empty otherwise (the renderer draws the capsule).
    */
   bones: BoneSnapshot[];
+  /**
+   * Whether this Character is eliminated (M5 ticket 04, ADR 0042) — marked,
+   * never removed, so its entry keeps appearing here with this set, never
+   * cleared. Set either by an eliminating Fall (Survival) or directly (a
+   * mid-Round disconnect, any Round type). Distinct from `isEliminated`
+   * (CONTEXT.md's Results-time "didn't Qualify before the Round ended," true
+   * for a Race's own DNFs too): this is the simulation's own, earlier,
+   * mid-Round signal that a Character will never move or Qualify again —
+   * match authority (`allQualified`) reads it to stop waiting on a
+   * Character that can't finish.
+   */
+  eliminated: boolean;
 }
 
 /**
@@ -153,6 +165,7 @@ export interface CharacterSnapshotFields {
   phaseStartTick?: number;
   bones?: BoneSnapshot[];
   finishTick?: number | null;
+  eliminated?: boolean;
 }
 
 /**
@@ -177,6 +190,11 @@ export type ReconcileBase = Pick<
   // M4 ticket 02: Qualification is latched and locks input, so the client
   // must be able to take the server's answer rather than keep its own.
   | "finishTick"
+  // M5 ticket 04: Elimination is latched too, and a disconnect-triggered one
+  // can never be predicted at all (it never applies to your own Character)
+  // — the server's answer wins here for the same reason it does for
+  // `finishTick`.
+  | "eliminated"
 >;
 
 export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSnapshot => ({
@@ -200,4 +218,5 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   phaseStartTick: fields.phaseStartTick ?? 0,
   bones: fields.bones ?? [],
   finishTick: fields.finishTick ?? null,
+  eliminated: fields.eliminated ?? false,
 });

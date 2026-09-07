@@ -425,18 +425,56 @@ export class CharacterController {
   /**
    * React to a Fall (M5 ticket 03, ADR 0042): losing control always happens
    * — a Fall never varies, only what follows it does. `respawnPoint` is
-   * `null` for a Round type with no Respawn (Survival): the Character still
-   * goes Ragdoll here, exactly as a respawning one does, but nothing is
-   * queued to bring it back — "you are out of this Round" is match
-   * authority, not this class's concern (RapierSimulation's own `detectFall`
-   * decides which to pass, from `RoundRules.fallBehavior`). A Respawn is
-   * queued for `point`, applied at the top of the next {@link beginTick}.
+   * `null` for a Round type with no Respawn (Survival): the Character is
+   * eliminated ({@link eliminateNow}) rather than queued a Respawn. A
+   * Respawn is queued for `point`, applied at the top of the next
+   * {@link beginTick} — unchanged, and still the only branch that needs the
+   * state machine's own deferred {@link CharacterStateMachine.forceRagdoll},
+   * since a respawning Character keeps being stepped afterward.
+   * `RapierSimulation`'s own `detectFall` decides which to pass, from
+   * `RoundRules.fallBehavior`.
    */
   fall(respawnPoint: Vec3 | null, fallCount: number): void {
-    this.resetMovementControllers();
     this.pendingCause = "Fall";
-    this.machine.forceRagdoll();
-    if (respawnPoint) this.pendingRespawn = { point: { ...respawnPoint }, fallCount };
+    if (respawnPoint) {
+      this.resetMovementControllers();
+      this.machine.forceRagdoll();
+      this.pendingRespawn = { point: { ...respawnPoint }, fallCount };
+    } else {
+      this.eliminateNow();
+    }
+  }
+
+  /**
+   * Eliminate this Character directly, outside a Fall — a mid-Round
+   * disconnect (M5 ticket 04, ADR 0042). Same permanent "down, collider
+   * disabled, never stepped again" freeze as an eliminating Fall, without
+   * Fall's own bookkeeping (`fallCount`, a queued Respawn): a disconnect
+   * ends a Character's part in any Round type, not only an eliminating one.
+   */
+  eliminate(): void {
+    this.pendingCause = "Fall";
+    this.eliminateNow();
+  }
+
+  /**
+   * Immediate, synchronous Ragdoll entry — unlike an ordinary Impact or a
+   * Checkpoint respawn, both of which land on the *next* {@link beginTick}
+   * via the state machine's own deferred `forceRagdoll`/`impact` queue, this
+   * has no next `beginTick` to land on: an eliminated Character is never
+   * stepped again (M5 ticket 04, ADR 0042), so it must reach `Ragdoll` and
+   * activate the ragdoll body in this same call. Mirrors exactly what
+   * `beginTick` itself does on an ordinary Ragdoll entry (`ragdollEpoch`,
+   * `ragdollCause`, {@link beginRagdoll}), which is what disables the
+   * capsule collider — {@link beginRagdoll} reads `velocity` *before*
+   * resetting it, so a Fall's own momentum still carries into the launch,
+   * exactly like an ordinary Impact-triggered Ragdoll.
+   */
+  private eliminateNow(): void {
+    this.machine.snapTo("Ragdoll");
+    this.ragdollEpoch += 1;
+    this.ragdollCause = this.pendingCause;
+    this.beginRagdoll();
   }
 
   /**

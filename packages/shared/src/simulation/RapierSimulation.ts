@@ -62,6 +62,17 @@ interface CharacterProgress {
    * back out of the zone afterwards keeps it.
    */
   finishTick: number | null;
+  /**
+   * Whether this Character is eliminated (M5 ticket 04, ADR 0042) — marked,
+   * never removed: its entry stays in `characters` and its body stays in
+   * the world (collider disabled), so the simulated set and the iteration
+   * order never vary. Once `true`, `tick`'s own per-Character loops skip it
+   * entirely — not a controller sweep, an iteration and a branch. Set either
+   * by an eliminating Fall (`detectFall`) or directly (`eliminateCharacter`,
+   * a mid-Round disconnect) — never cleared; a Round with an eliminated
+   * Character in it always gets a fresh simulation before it plays again.
+   */
+  eliminated: boolean;
 }
 
 export interface SimulationConfig {
@@ -327,6 +338,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       touchedSpeedPadIndex: undefined,
       touchedLaunchPadIndex: undefined,
       finishTick: null,
+      eliminated: false,
     });
   }
 
@@ -367,6 +379,23 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     character?.dispose();
     this.characters.delete(id);
     this.progress.delete(id);
+  }
+
+  /**
+   * Mark a Character eliminated directly, outside a Fall (M5 ticket 04, ADR
+   * 0042) — a mid-Round disconnect, which used to call {@link removeCharacter}
+   * mid-Round and disturb contact resolution for everyone still playing.
+   * Its entry stays, its body stays (collider disabled), the simulated set
+   * and iteration order never vary — the caller no longer removes it. Needs
+   * no `RoundRules` opinion: a disconnect ends a Character's part in any
+   * Round type, not only an eliminating one. A no-op if `id` doesn't exist
+   * or is already eliminated.
+   */
+  eliminateCharacter(id: string): void {
+    const progress = this.progress.get(id);
+    if (!progress || progress.eliminated) return;
+    progress.eliminated = true;
+    this.character(id).eliminate();
   }
 
   /**
@@ -445,6 +474,11 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       // input while the server kept expecting it to run. The server's answer
       // wins in both directions.
       progress.finishTick = base.finishTick;
+      // Elimination is latched too (M5 ticket 04) — synced outright for the
+      // same reason: a disconnect-triggered one never applies to your own
+      // Character (nothing to predict), and a Fall-triggered misprediction
+      // must not stay locally "still in it" for the rest of the Round.
+      progress.eliminated = base.eliminated;
     }
   }
 
@@ -533,13 +567,10 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     for (const mirror of this.mirrors.values()) mirror.step();
 
     // "May this Character be driven this tick?" (M5 ticket 01) is now decided
-    // in exactly one place, for exactly one reason each Round type can add
-    // to: the whole Match is locked outside RUNNING (ADR 0040 — Lobby,
-    // Countdown, Round end), or this one Character is individually locked
-    // because it Qualified (M4 ticket 02, ADR 0039) and stops to spectate
-    // from inside the zone. A future Round type's own "who may move" rule
-    // (an eliminated Character in Survival, M5 ticket 04) is one more term
-    // ORed in right here, not a third mechanism at a third layer.
+    // in exactly one place: the whole Match is locked outside RUNNING (ADR
+    // 0040 — Lobby, Countdown, Round end), or this one Character is
+    // individually locked because it Qualified (M4 ticket 02, ADR 0039) and
+    // stops to spectate from inside the zone.
     //
     // Applied here, in the shared step, rather than by the server dropping
     // the packet or the client withholding it before this call: that is what
@@ -547,10 +578,19 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     // so it never runs half an RTT past a lock before being yanked back.
     // Everything else still acts on the body while locked: gravity,
     // collision, and another Character shoving it are all unchanged.
+    //
+    // An eliminated Character (M5 ticket 04, ADR 0042) is a step further:
+    // not merely locked but not stepped at all — no `beginTick`/`endTick`,
+    // no Checkpoint/Fall/pad detection, nothing. Its entry and body both
+    // stay (the simulated set and iteration order never vary); its collider
+    // is already disabled (`eliminate`/`fall`'s own doing), so nobody can
+    // shove it and it can't shove anybody. The cost per tick is exactly what
+    // ADR 0042 asks for: an iteration and a branch, not a controller sweep.
     const matchLocked = phaseLocksInput(phase);
     for (const [id, character] of this.characters) {
-      const qualified = this.progress.get(id)!.finishTick !== null;
-      character.beginTick(matchLocked || qualified ? IDLE_INPUTS : (inputs[id] ?? IDLE_INPUTS));
+      const progress = this.progress.get(id)!;
+      if (progress.eliminated) continue;
+      character.beginTick(matchLocked || progress.finishTick !== null ? IDLE_INPUTS : (inputs[id] ?? IDLE_INPUTS));
     }
     this.world.step();
     this.tickCount += 1;
@@ -558,6 +598,8 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     // Each Character must finish moving — including any queued respawn —
     // before Checkpoint and Fall detection read its position for this tick.
     for (const [id, character] of this.characters) {
+      const progress = this.progress.get(id)!;
+      if (progress.eliminated) continue;
       character.endTick();
       this.updateCheckpoint(id);
       this.updateFinishZone(id);
@@ -567,7 +609,6 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       // Stamp the tick a `motionState` phase begins, in sim-tick space, exactly
       // once (ADR 0023). Must be here, not in `snapshot()` — that is called
       // several times per client frame and before `syncTick` in reconcile.
-      const progress = this.progress.get(id)!;
       if (character.motionState !== progress.lastMotionState) {
         progress.phaseStartTick = this.tickCount;
         progress.lastMotionState = character.motionState;
@@ -774,19 +815,11 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   private detectFall(id: string): void {
     const character = this.character(id);
     const progress = this.progress.get(id)!;
-    const eliminates = this.roundRules.fallBehavior === "eliminate";
     if (character.hasPendingRespawn || character.position.y >= this.killPlaneY) return;
-    // An eliminating Round type queues no respawn, so nothing else stops
-    // this from re-triggering every tick while the Character keeps falling
-    // through the void below the kill plane — already having lost control
-    // is the guard instead. Race is untouched: `hasPendingRespawn` already
-    // covers it for exactly one tick, until the queued Respawn lifts the
-    // Character back above the kill plane. Ticket 04 gives an eliminated
-    // Character its permanent answer (marked, not stepped at all); this is
-    // only what keeps it sane in the meantime.
-    if (eliminates && isDownMotionState(character.motionState)) return;
 
     progress.fallCount += 1;
+    const eliminates = this.roundRules.fallBehavior === "eliminate";
+    if (eliminates) progress.eliminated = true;
     character.fall(eliminates ? null : progress.respawnPoint, progress.fallCount);
   }
 
@@ -800,6 +833,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
         fallCount: progress.fallCount,
         phaseStartTick: progress.phaseStartTick,
         finishTick: progress.finishTick,
+        eliminated: progress.eliminated,
       });
     }
     return {

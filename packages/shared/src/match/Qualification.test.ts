@@ -21,6 +21,14 @@ describe("allQualified", () => {
   it("is true for a single Character who Qualified", () => {
     expect(allQualified(chars(5))).toBe(true);
   });
+
+  it("does not wait on an eliminated Character — M5 ticket 04's disconnect fix would otherwise hold a Round open forever", () => {
+    expect(allQualified({ p0: { finishTick: 10 }, p1: { finishTick: null, eliminated: true } })).toBe(true);
+  });
+
+  it("still waits on a Character that is down but not eliminated (an ordinary Impact, still racing)", () => {
+    expect(allQualified({ p0: { finishTick: 10 }, p1: { finishTick: null, eliminated: false } })).toBe(false);
+  });
 });
 
 describe("isEliminated", () => {

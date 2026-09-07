@@ -276,13 +276,20 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         // before `lobbyPlayers.delete` below removes the only place this
         // nickname lives — the Results screen (ticket 08) has nothing else
         // to call this Player once their Character is gone.
-        if (rt.match.phase === "RUNNING" && !rt.dnf.some((entry) => entry.id === id)) {
+        const midRound = rt.match.phase === "RUNNING";
+        if (midRound && !rt.dnf.some((entry) => entry.id === id)) {
           rt.dnf.push({ id, nickname: rt.lobbyPlayers.get(id)?.nickname ?? "Player" });
         }
         rt.sockets.delete(id);
         rt.inputs.remove(id);
         rt.lobbyPlayers.delete(id);
-        rt.simulation.removeCharacter(id);
+        // A mid-Round disconnect is eliminated, not removed (M5 ticket 04,
+        // ADR 0042) — pulling a rigid body out of the world mid-Round would
+        // disturb contact resolution for everyone still racing. Outside
+        // RUNNING nobody else is relying on this Character's body for
+        // anything, so a plain removal is still correct and cheaper.
+        if (midRound) rt.simulation.eliminateCharacter(id);
+        else rt.simulation.removeCharacter(id);
       });
     })();
   });

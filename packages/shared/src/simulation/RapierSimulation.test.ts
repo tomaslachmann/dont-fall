@@ -698,7 +698,7 @@ describe("RapierSimulation — Fall & Respawn", () => {
   });
 });
 
-describe("RapierSimulation — what a Fall does is a RoundRules field (M5 ticket 03, ADR 0042)", () => {
+describe("RapierSimulation — what a Fall does is a RoundRules field (M5 tickets 03/04, ADR 0042)", () => {
   const PLATFORM: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 4, y: 0.5, z: 4 } };
   const eliminatingSim = () =>
     new RapierSimulation({
@@ -708,11 +708,10 @@ describe("RapierSimulation — what a Fall does is a RoundRules field (M5 ticket
       roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate" },
     });
 
-  it("still loses control on a Fall — the Fall itself never varies", () => {
+  it("still loses control on a Fall — the Fall itself never varies, and it happens immediately (M5 ticket 04: never stepped again to land a deferred one)", () => {
     const sim = eliminatingSim();
     tick(sim, 0.5);
     tickUntilFall(sim);
-    sim.tick({}); // the forced Ragdoll transition lands the tick after the Fall is detected
 
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.ragdollCause).toBe("Fall");
@@ -779,6 +778,113 @@ describe("RapierSimulation — what a Fall does is a RoundRules field (M5 ticket
     expect(character.fallCount).toBe(1);
     expect(character.position.y).toBeGreaterThan(-8);
     expect(Math.hypot(character.position.x, character.position.z)).toBeLessThan(3);
+  });
+
+  it("stays eliminated forever — well past RAGDOLL_MAX_MS + GETUP_MS, never cycles back to Controlled (code review, ticket 03)", () => {
+    // The exact bug caught reviewing ticket 03: without ticket 04's "not
+    // stepped at all", the state machine's own unconditional Ragdoll →
+    // GettingUp → Controlled timers (RAGDOLL_MAX_MS=4000, GETUP_MS=450)
+    // fire regardless of settling, so a Character eliminated into an open
+    // void would cycle back to Controlled while still falling and
+    // detectFall would fire again. Being marked eliminated stops it from
+    // ever being stepped again, so those timers can never advance.
+    const sim = eliminatingSim();
+    tick(sim, 0.5);
+    tickUntilFall(sim);
+
+    tick(sim, 6); // well past 4.45s
+
+    const character = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(character.motionState).toBe("Ragdoll");
+    expect(character.fallCount).toBe(1);
+  });
+});
+
+describe("RapierSimulation — an eliminated Character is marked, not removed (M5 ticket 04, ADR 0042)", () => {
+  const MOVER = DEFAULT_CHARACTER_ID;
+  const TARGET = "target";
+  const onGround = (z: number) => ({ x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z });
+
+  it("stays in the Character collection and the snapshot — marked, not removed", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-3));
+    tick(sim, 0.3);
+
+    sim.eliminateCharacter(TARGET);
+    tick(sim, 0.3);
+
+    expect(Object.keys(sim.snapshot().characters).sort()).toEqual([MOVER, TARGET].sort());
+  });
+
+  it("is not stepped — input can no longer move it, only its own ragdoll settling can", () => {
+    // Its `position` keeps reading from the ragdoll's own body (`snapshot`
+    // already does this for anyone down, ticket-04 or not) — a genuinely
+    // separate dynamic Rapier body `world.step()` still simulates every
+    // tick regardless of `beginTick`/`endTick` ever running again, so a
+    // *little* settle drift is real and expected. What "not stepped" rules
+    // out is 2 seconds of continued WALK_SPEED-driven travel (12 units) if
+    // this Character's own controller were still reading `NORTH`.
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-3));
+    tick(sim, 0.3);
+    sim.eliminateCharacter(TARGET);
+    const at = sim.snapshot().characters[TARGET]!.position;
+
+    for (let n = 0; n < 60; n += 1) sim.tick({ [TARGET]: NORTH }); // input it can no longer receive
+
+    const after = sim.snapshot().characters[TARGET]!.position;
+    expect(Math.hypot(after.x - at.x, after.z - at.z)).toBeLessThan(2);
+  });
+
+  it("goes down immediately — motionState Ragdoll from the moment it is eliminated", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-3));
+    tick(sim, 0.3);
+
+    sim.eliminateCharacter(TARGET);
+
+    expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Ragdoll");
+  });
+
+  it("is a no-op on an unknown id or an already-eliminated Character", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-3));
+    tick(sim, 0.3);
+
+    expect(() => sim.eliminateCharacter("nobody")).not.toThrow();
+    sim.eliminateCharacter(TARGET);
+    expect(() => sim.eliminateCharacter(TARGET)).not.toThrow(); // already eliminated
+  });
+
+  it("nobody can shove a corpse — a live Character walks straight through where its disabled collider was", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-1));
+    tick(sim, 0.3);
+    sim.eliminateCharacter(TARGET);
+    const eliminatedAt = sim.snapshot().characters[TARGET]!.position;
+
+    for (let n = 0; n < Math.round(2 * TICK_RATE_HZ); n += 1) sim.tick({ [MOVER]: NORTH }); // walk straight at it
+
+    // Not blocked — the mover's own centre passes well beyond where a solid
+    // Character would have stopped it (compare the Bump-collision test above:
+    // "centres never get closer than roughly two capsule radii").
+    expect(sim.snapshot().characters[MOVER]!.position.z).toBeLessThan(eliminatedAt.z - 0.6);
+  });
+
+  it("a corpse cannot shove anybody — eliminating a Character mid-Impact leaves nothing behind to knock others around", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-1));
+    tick(sim, 0.3);
+    sim.eliminateCharacter(TARGET);
+    const moverBefore = sim.snapshot().characters[MOVER]!.position;
+
+    for (let n = 0; n < Math.round(2 * TICK_RATE_HZ); n += 1) sim.tick({ [MOVER]: NORTH });
+
+    // The mover's own trajectory is undisturbed by whatever the corpse is
+    // doing (ragdolling from Impact groups, which never collide with a live
+    // Character's capsule) — it moves the same distance a clear walk would.
+    const moverAfter = sim.snapshot().characters[MOVER]!.position;
+    expect(moverBefore.z - moverAfter.z).toBeGreaterThan(1.5);
   });
 });
 
@@ -1050,6 +1156,7 @@ describe("RapierSimulation — dash", () => {
       speedPadMsLeft: midBurst.speedPadMsLeft,
       speedPadCapMultiplier: midBurst.speedPadCapMultiplier,
       finishTick: midBurst.finishTick,
+      eliminated: midBurst.eliminated,
     });
 
     const afterReconcile = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -1103,6 +1210,7 @@ describe("RapierSimulation — dash", () => {
       speedPadMsLeft: ackedSnapshot.speedPadMsLeft,
       speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
       finishTick: ackedSnapshot.finishTick,
+      eliminated: ackedSnapshot.eliminated,
     });
     client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unackedInputs);
 
@@ -1181,6 +1289,7 @@ describe("RapierSimulation — dash", () => {
           speedPadMsLeft: acked.speedPadMsLeft,
           speedPadCapMultiplier: acked.speedPadCapMultiplier,
           finishTick: acked.finishTick,
+          eliminated: acked.eliminated,
         });
         client.replayLocalCharacter(DEFAULT_CHARACTER_ID, inputHistory.slice(ackedIdx + 1));
         const afterSnap = client.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -2007,6 +2116,7 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
         speedPadMsLeft: 0,
         speedPadCapMultiplier: 1,
         finishTick: null,
+        eliminated: false,
       });
       sim.reconcileCharacter(DEFAULT_CHARACTER_ID, gettingUp({ x: 5, y: RESTING_SPAWN.y, z: 5 }));
       const afterEntry = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
@@ -2082,6 +2192,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     speedPadMsLeft: 0,
     speedPadCapMultiplier: 1,
     finishTick: null,
+    eliminated: false,
   });
 
   it("snaps a locally-Controlled Character into Ragdoll the client never predicted (ADR 0015)", () => {
@@ -2099,6 +2210,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
       finishTick: null,
+      eliminated: false,
     });
 
     // Immediate — the discrete state is never delayed or smoothed (ADR 0013).
@@ -2128,6 +2240,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
       finishTick: null,
+      eliminated: false,
     });
 
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
@@ -2215,6 +2328,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
         speedPadMsLeft: 0,
         speedPadCapMultiplier: 1,
         finishTick: null,
+        eliminated: false,
       });
       tick(sim, 0.1); // a few local ticks between snapshots
 
@@ -2276,6 +2390,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
       finishTick: null,
+      eliminated: false,
     });
     sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Sliding");
@@ -2589,6 +2704,7 @@ describe("RapierSimulation — speed/slow pads (M3.7 ticket 01, ADR 0035): one-s
       speedPadMsLeft: firedSnap.speedPadMsLeft,
       speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
       finishTick: firedSnap.finishTick,
+      eliminated: firedSnap.eliminated,
     });
     sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, buffered);
 
@@ -3074,6 +3190,7 @@ describe("RapierSimulation — launch pads (M3.7 ticket 02): one-shot full-veloc
       speedPadMsLeft: firedSnap.speedPadMsLeft,
       speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
       finishTick: firedSnap.finishTick,
+      eliminated: firedSnap.eliminated,
     });
     sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, buffered);
 

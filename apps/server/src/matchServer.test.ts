@@ -1074,8 +1074,37 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     const afterDrop = await snapshotUntil(b, (s) => s.dnf.length > 0);
 
     expect(afterDrop.dnf).toEqual([{ id: welcomeA.playerId, nickname: "Player" }]);
-    // The Character is gone from the world too, not left standing.
-    expect(afterDrop.state.characters[welcomeA.playerId]).toBeUndefined();
+    // Eliminated, not removed (M5 ticket 04, ADR 0042): the entry stays —
+    // pulling its rigid body out of the world mid-Round would disturb
+    // contact resolution for everyone still racing (the flaw this ticket
+    // fixed) — but it goes down and can no longer be bumped or bump anyone.
+    expect(afterDrop.state.characters[welcomeA.playerId]!.motionState).toBe("Ragdoll");
+    b.close();
+  });
+
+  it("still ends early on Qualification after a mid-Round drop — the eliminated dropout doesn't hold the Round open (M5 ticket 04)", async () => {
+    // A long Time Limit: if the dropout's own never-Qualifying entry could
+    // still block `allQualified`, this test would only pass by waiting out
+    // the whole thing — this instead asserts the early, Qualification-driven
+    // ending, the same shape "ends the Round as soon as every connected
+    // Character has Qualified" above already pins for the no-dropout case.
+    const trackId = await publishTrack(INSTANT_FINISH, undefined, 60_000);
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, roundEndMs: 0 });
+    const a = connect(server.port, `?track=${trackId}`);
+    await nextMessage(a);
+    const b = connect(server.port);
+    await nextMessage(b);
+    await startMatch(a, b);
+    await snapshotUntil(b, (s) => s.phase === "RUNNING");
+
+    a.close(); // eliminated, not removed — stays in state.characters forever, never Qualifying
+
+    const ended = await snapshotUntil(b, (s) => s.phase === "ROUND_END" || s.phase === "RESULTS");
+
+    // Early — the Track's Finish Zone sits right at spawn, so b Qualifies in
+    // the first few Ticks. A trapped-open Round would still read the full
+    // 60s here instead.
+    expect(ended.timeLeftMs).toBeGreaterThan(55_000);
     b.close();
   });
 

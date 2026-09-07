@@ -1,13 +1,22 @@
 import type { MatchPhase } from "./MatchPhase.js";
 
-/** The slice of a Character that Qualification depends on — nothing but the Tick it finished on. */
+/** The slice of a Character that Qualification depends on — the Tick it finished on, and whether it's out of contention entirely (M5 ticket 04). */
 interface Qualifiable {
   finishTick: number | null;
+  /** See `CharacterSnapshot.eliminated`. Optional so nothing outside `RapierSimulation`'s own snapshot has to know about it to stay `Qualifiable`. */
+  eliminated?: boolean;
 }
 
 /**
- * Whether every connected Character has reached the Finish Zone (M4 ticket
- * 05) — the condition that ends a Round early, before its clock runs out.
+ * Whether every connected Character is resolved — either it reached the
+ * Finish Zone, or it is eliminated (M4 ticket 05; M5 ticket 04 folds
+ * elimination in) — the condition that ends a Round early, before its clock
+ * runs out.
+ *
+ * An eliminated Character (a mid-Round disconnect — marked, not removed,
+ * M5 ticket 04 — or Survival's own Fall rule) can never reach `finishTick`
+ * again; without this it would hold a Race open for the rest of its Time
+ * Limit on everyone else's behalf, the exact live flaw ticket 04 fixes.
  *
  * An empty Match is deliberately `false`: nobody having Qualified is not
  * everybody having Qualified, and treating it as true would have an empty
@@ -15,7 +24,7 @@ interface Qualifiable {
  */
 export const allQualified = (characters: Record<string, Qualifiable>): boolean => {
   const all = Object.values(characters);
-  return all.length > 0 && all.every((character) => character.finishTick !== null);
+  return all.length > 0 && all.every((character) => character.finishTick !== null || character.eliminated === true);
 };
 
 /**
