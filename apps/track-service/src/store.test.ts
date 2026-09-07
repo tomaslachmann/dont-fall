@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
-import { DEFAULT_TIME_LIMIT_MS, type Track } from "@dont-fall/shared";
+import { DEFAULT_SURVIVOR_TARGET, DEFAULT_TIME_LIMIT_MS, type Track } from "@dont-fall/shared";
 import { openDb, type TrackDb } from "./db.js";
 import { getTrackById, listTracks, saveTrack } from "./store.js";
 import { tracks } from "./schema.js";
@@ -145,5 +145,54 @@ describe("migration onto a pre-M4 database (ADR 0038)", () => {
     const stored = getTrackById(migrated, "old-track")!;
     expect(stored.timeLimitMs).toBe(DEFAULT_TIME_LIMIT_MS);
     expect(stored.track).toEqual(SAMPLE_TRACK); // and the Track itself is untouched
+  });
+});
+
+describe("the Survivor Target a Revision carries (M5 ticket 07, ADR 0041)", () => {
+  it("stores and returns the authored target", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK, survivorTarget: 4 });
+
+    expect(getTrackById(db, id)!.survivorTarget).toBe(4);
+  });
+
+  it("defaults a publish that omits it, so every pre-M5 caller keeps working", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK });
+
+    expect(getTrackById(db, id)!.survivorTarget).toBe(DEFAULT_SURVIVOR_TARGET);
+  });
+
+  it("is not part of the content hash — two Revisions differing only in it are the same Segments", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK, survivorTarget: 1 });
+    saveTrack(db, { id, track: SAMPLE_TRACK, survivorTarget: 6 });
+
+    const rows = db.select().from(tracks).where(eq(tracks.trackId, id)).all();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.contentHash).toBe(rows[1]!.contentHash);
+    expect(getTrackById(db, id)!.survivorTarget).toBe(6);
+  });
+
+  it("backfills the default onto a Revision published before the column existed", () => {
+    // The pre-M5 table: everything M4 had, and no survivor_target.
+    const legacyPath = join(dir, "pre-m5.sqlite");
+    const legacy = new Database(legacyPath);
+    legacy.exec(`
+      CREATE TABLE tracks (
+        track_id TEXT NOT NULL, revision INTEGER NOT NULL, name TEXT,
+        author_id TEXT NOT NULL, content_hash TEXT NOT NULL, data TEXT NOT NULL,
+        created_at INTEGER NOT NULL, time_limit_ms INTEGER NOT NULL,
+        PRIMARY KEY (track_id, revision)
+      )
+    `);
+    legacy
+      .prepare("INSERT INTO tracks VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("old-track", 1, "pre-M5", "local-author", "hash", JSON.stringify(SAMPLE_TRACK), Date.now(), 90_000);
+    legacy.close();
+
+    const migrated = openDb(legacyPath);
+
+    const stored = getTrackById(migrated, "old-track")!;
+    expect(stored.survivorTarget).toBe(DEFAULT_SURVIVOR_TARGET);
+    expect(stored.timeLimitMs).toBe(90_000); // and what it did author is untouched
+    expect(stored.track).toEqual(SAMPLE_TRACK);
   });
 });

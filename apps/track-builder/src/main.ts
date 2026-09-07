@@ -1,5 +1,17 @@
-import { DEFAULT_TIME_LIMIT_MS, MAX_TIME_LIMIT_MS, MIN_TIME_LIMIT_MS, MODULE_LIBRARY, type Track, type Vec3 } from "@dont-fall/shared";
+import {
+  DEFAULT_SURVIVOR_TARGET,
+  DEFAULT_TIME_LIMIT_MS,
+  MAX_SURVIVOR_TARGET,
+  MAX_TIME_LIMIT_MS,
+  MIN_SURVIVOR_TARGET,
+  MIN_TIME_LIMIT_MS,
+  MODULE_LIBRARY,
+  type Track,
+  type TrackRoundDefaults,
+  type Vec3,
+} from "@dont-fall/shared";
 import { listTracks, loadTrack, publishPlaytestTrack, saveTrack } from "./api.js";
+import { parseDraftSurvivorTarget } from "./survivorTargetField.js";
 import { parseDraftTimeLimitMs } from "./timeLimitField.js";
 import {
   deleteSegment,
@@ -25,6 +37,7 @@ const serviceUrlInput = $<HTMLInputElement>("service-url");
 const trackNameInput = $<HTMLInputElement>("track-name");
 const trackIdInput = $<HTMLInputElement>("track-id");
 const timeLimitInput = $<HTMLInputElement>("time-limit");
+const survivorTargetInput = $<HTMLInputElement>("survivor-target");
 const statusEl = $("status");
 const playtestButton = $("playtest");
 
@@ -35,8 +48,24 @@ timeLimitInput.min = String(MIN_TIME_LIMIT_MS / 1000);
 timeLimitInput.max = String(MAX_TIME_LIMIT_MS / 1000);
 timeLimitInput.value = String(DEFAULT_TIME_LIMIT_MS / 1000);
 
-/** The Draft's Time Limit in ms, as the field currently reads (M4 ticket 03). */
-const draftTimeLimitMs = (): number => parseDraftTimeLimitMs(timeLimitInput.value);
+survivorTargetInput.min = String(MIN_SURVIVOR_TARGET);
+survivorTargetInput.max = String(MAX_SURVIVOR_TARGET);
+survivorTargetInput.value = String(DEFAULT_SURVIVOR_TARGET);
+
+/**
+ * Both of the Draft's authored Round defaults, as the fields currently read
+ * (M4 ticket 03, M5 ticket 07) — read together because every publish writes
+ * them together, and reading them apart is how one of them gets forgotten at
+ * a call site.
+ *
+ * The Survivor Target is authored here even though a Track carries no
+ * opinion on whether it will ever host Survival (ADR 0041): it is "how many
+ * this place plays well down to", which is a property of the place.
+ */
+const draftRoundDefaults = (): TrackRoundDefaults => ({
+  timeLimitMs: parseDraftTimeLimitMs(timeLimitInput.value),
+  survivorTarget: parseDraftSurvivorTarget(survivorTargetInput.value),
+});
 const viewportContainer = $("viewport");
 const undoButton = $<HTMLButtonElement>("undo");
 const redoButton = $<HTMLButtonElement>("redo");
@@ -318,7 +347,7 @@ redoButton.addEventListener("click", () => {
 $("save").addEventListener("click", () => {
   void (async () => {
     try {
-      const { id } = await saveTrack(serviceUrlInput.value, trackNameInput.value.trim(), history.track, draftTimeLimitMs());
+      const { id } = await saveTrack(serviceUrlInput.value, trackNameInput.value.trim(), history.track, draftRoundDefaults());
       trackIdInput.value = id;
       setStatus(`saved as "${id}"`);
     } catch (err) {
@@ -333,9 +362,10 @@ const loadById = async (id: string): Promise<void> => {
     history.reset(stored.track);
     trackNameInput.value = stored.name ?? "";
     trackIdInput.value = stored.id;
-    // The loaded Revision's own clock, so editing and republishing keeps it
-    // rather than silently resetting every Track to the default.
+    // The loaded Revision's own Round defaults, so editing and republishing
+    // keeps them rather than silently resetting every Track to the default.
     timeLimitInput.value = String(Math.round(stored.timeLimitMs / 1000));
+    survivorTargetInput.value = String(stored.survivorTarget);
     rerender();
     select(undefined);
     setStatus(`loaded "${stored.id}" (${history.track.length} Segment(s))`);
@@ -401,7 +431,7 @@ playtestButton.addEventListener("click", () => {
   void (async () => {
     try {
       setStatus("publishing for playtest…");
-      const { id } = await publishPlaytestTrack(serviceUrlInput.value, history.track, draftTimeLimitMs());
+      const { id } = await publishPlaytestTrack(serviceUrlInput.value, history.track, draftRoundDefaults());
       // 5173 is apps/client's own fixed dev port (its `vite.config.ts`) — a
       // local-dev-only detail, not a shared runtime constant the way the
       // server/track-service ports are (ADR 0028's own network protocol).

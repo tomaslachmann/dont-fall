@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { sql } from "drizzle-orm";
-import { DEFAULT_TIME_LIMIT_MS } from "@dont-fall/shared";
+import { DEFAULT_SURVIVOR_TARGET, DEFAULT_TIME_LIMIT_MS } from "@dont-fall/shared";
 import * as schema from "./schema.js";
 
 /**
@@ -49,6 +49,7 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
       data TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       time_limit_ms INTEGER NOT NULL DEFAULT ${sql.raw(String(DEFAULT_TIME_LIMIT_MS))},
+      survivor_target INTEGER NOT NULL DEFAULT ${sql.raw(String(DEFAULT_SURVIVOR_TARGET))},
       PRIMARY KEY (track_id, revision)
     )
   `);
@@ -68,6 +69,15 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
   if (!columns.some((c) => c.name === "time_limit_ms")) {
     console.log(`track-service: backfilling time_limit_ms = ${DEFAULT_TIME_LIMIT_MS} onto pre-M4 Revisions`);
     sqlite.exec(`ALTER TABLE tracks ADD COLUMN time_limit_ms INTEGER NOT NULL DEFAULT ${DEFAULT_TIME_LIMIT_MS}`);
+  }
+
+  // M5 ticket 07 / ADR 0041, the same additive migration for the same
+  // reasons: a Revision published before M5 backfills to the default
+  // Survivor Target and keeps loading and playing unchanged. A Race never
+  // reads the column at all, so every existing Track is entirely unaffected.
+  if (!columns.some((c) => c.name === "survivor_target")) {
+    console.log(`track-service: backfilling survivor_target = ${DEFAULT_SURVIVOR_TARGET} onto pre-M5 Revisions`);
+    sqlite.exec(`ALTER TABLE tracks ADD COLUMN survivor_target INTEGER NOT NULL DEFAULT ${DEFAULT_SURVIVOR_TARGET}`);
   }
 
   return db;

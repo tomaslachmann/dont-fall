@@ -7,6 +7,7 @@ import {
   RapierSimulation,
   TICK_MS,
   type ClientMessage,
+  type RoundType,
   type ServerMessage,
   type SimInputs,
   type Track,
@@ -60,11 +61,21 @@ const nextMessage = (socket: WebSocket): Promise<ServerMessage> =>
  * Revision (ADR 0032) instead of creating a fresh one — Playtest always
  * reuses the same fixed reserved id across repeated clicks.
  */
-const publishTrack = async (track: Track = M1_TRACK, id?: string, timeLimitMs?: number): Promise<string> => {
+const publishTrack = async (
+  track: Track = M1_TRACK,
+  id?: string,
+  timeLimitMs?: number,
+  survivorTarget?: number,
+): Promise<string> => {
   const res = await fetch(`http://localhost:${trackService.port}/tracks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ track, ...(id ? { id } : {}), ...(timeLimitMs !== undefined ? { timeLimitMs } : {}) }),
+    body: JSON.stringify({
+      track,
+      ...(id ? { id } : {}),
+      ...(timeLimitMs !== undefined ? { timeLimitMs } : {}),
+      ...(survivorTarget !== undefined ? { survivorTarget } : {}),
+    }),
   });
   const body = (await res.json()) as { id: string };
   return body.id;
@@ -112,6 +123,17 @@ const startMatch = async (...sockets: WebSocket[]): Promise<void> => {
     host.on("message", onMessage);
   });
   host.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
+};
+
+/**
+ * The host picks this Lobby's Round type (M5 ticket 07) — the real path, and
+ * since ticket 07 the only one: the `fallBehaviorOverride` config that stood
+ * in for it is gone. Sent on the host's own socket before `startMatch`, so
+ * message ordering guarantees the server has applied it before it sees
+ * `start`.
+ */
+const pickRoundType = (host: WebSocket, roundType: RoundType): void => {
+  host.send(JSON.stringify({ type: "setRoundType", roundType } satisfies ClientMessage));
 };
 
 describe("startServer", () => {
@@ -1210,13 +1232,13 @@ describe("startServer — a Survival Round ends (M5 ticket 05)", () => {
       playersToStart: 2,
       countdownMs: 0,
       roundEndMs: 0,
-      fallBehaviorOverride: "eliminate",
       survivorTargetOverride: 1,
     });
     const a = connect(server.port);
     const welcomeA = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
     const b = connect(server.port);
     const welcomeB = (await nextMessage(b)) as Extract<ServerMessage, { type: "welcome" }>;
+    pickRoundType(a, "survival");
     await startMatch(a, b);
     await snapshotUntil(b, (s) => s.phase === "RUNNING");
 
@@ -1243,7 +1265,6 @@ describe("startServer — a Survival Round ends (M5 ticket 05)", () => {
       playersToStart: 2,
       countdownMs: 0,
       roundEndMs: 0,
-      fallBehaviorOverride: "eliminate",
       survivorTargetOverride: 1,
       timeLimitMsOverride: 300,
     });
@@ -1251,6 +1272,7 @@ describe("startServer — a Survival Round ends (M5 ticket 05)", () => {
     const welcomeA = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
     const b = connect(server.port);
     const welcomeB = (await nextMessage(b)) as Extract<ServerMessage, { type: "welcome" }>;
+    pickRoundType(a, "survival");
     await startMatch(a, b);
 
     const ended = await snapshotUntil(b, (s) => s.phase === "ROUND_END" || s.phase === "RESULTS");
@@ -1725,5 +1747,163 @@ describe("startServer — a failed tick must not swallow the host's start (M4.5 
       patched.mockRestore();
       socket.close();
     }
+  });
+});
+
+describe("startServer — the Lobby picks a Round type (M5 ticket 07, ADR 0041/0043)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (;;) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+  };
+
+  /** A Track with no Finish Zone at all — the Survival arena on its own (ticket 06). */
+  const ARENA_ONLY: Track = [{ moduleId: "arena", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+
+  it("starts every Lobby on a Race, so a host who never touches the picker gets what M4 always did", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+
+    const snapshot = await nextSnapshot(socket);
+
+    expect(snapshot.lobby.roundType).toBe("race");
+    expect(snapshot.roundRules.fallBehavior).toBe("respawn");
+    socket.close();
+  });
+
+  it("shows the host's pick to everyone in the Lobby, not just to whoever clicked", async () => {
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0 });
+    const host = connect(server.port);
+    await nextMessage(host); // welcome
+    const other = connect(server.port);
+    await nextMessage(other); // welcome
+
+    pickRoundType(host, "survival");
+
+    const seenByOther = await snapshotUntil(other, (s) => s.lobby.roundType === "survival");
+    // And as data, not only as a name — this is what the client predicts against.
+    expect(seenByOther.roundRules.fallBehavior).toBe("eliminate");
+    host.close();
+    other.close();
+  });
+
+  it("ignores a Round type from anyone but the host", async () => {
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0 });
+    const host = connect(server.port);
+    await nextMessage(host);
+    const other = connect(server.port);
+    await nextMessage(other);
+    await snapshotUntil(host, (s) => s.lobby.players.length === 2);
+
+    pickRoundType(other, "survival");
+
+    // Give the server real ticks to have acted on it, had it been going to.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect((await nextSnapshot(host)).lobby.roundType).toBe("race");
+    host.close();
+    other.close();
+  });
+
+  it("ignores a Round type nobody defines rather than resolving Rounds nothing knows the rules for", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+    await nextMessage(socket);
+
+    socket.send(JSON.stringify({ type: "setRoundType", roundType: "battle-royale" }));
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect((await nextSnapshot(socket)).lobby.roundType).toBe("race");
+    socket.close();
+  });
+
+  it("keeps the pick across a Track change — a host chose Survival for this Lobby, not for one Round", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+    await nextMessage(socket);
+    pickRoundType(socket, "survival");
+    await snapshotUntil(socket, (s) => s.lobby.roundType === "survival");
+
+    const altTrackId = await publishTrack(M1_TRACK, undefined, 20_000);
+    socket.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
+
+    const reloaded = await snapshotUntil(socket, (s) => s.trackId === altTrackId);
+    expect(reloaded.lobby.roundType).toBe("survival");
+    expect(reloaded.roundRules.fallBehavior).toBe("eliminate");
+    socket.close();
+  });
+
+  it("resolves survivorTarget from the Track's own authored default (ADR 0041)", async () => {
+    const trackId = await publishTrack(M1_TRACK, undefined, undefined, 4);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+
+    expect((await nextSnapshot(socket)).roundRules.survivorTarget).toBe(4);
+    socket.close();
+  });
+
+  it("takes this Match's own survivorTargetOverride over the Track's authored default", async () => {
+    const trackId = await publishTrack(M1_TRACK, undefined, undefined, 4);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, survivorTargetOverride: 2 });
+    const socket = connect(server.port, `?track=${trackId}`);
+
+    expect((await nextSnapshot(socket)).roundRules.survivorTarget).toBe(2);
+    socket.close();
+  });
+
+  it("explains why a Race can't start on a Track with no Finish Zone, instead of failing silently", async () => {
+    const trackId = await publishTrack(ARENA_ONLY);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+
+    const snapshot = await snapshotUntil(socket, (s) => s.trackId === trackId);
+
+    expect(snapshot.lobby.startBlockedReason).toMatch(/Finish Zone/);
+    socket.close();
+  });
+
+  it("refuses the start itself, not just the button — the Lobby stays put", async () => {
+    const trackId = await publishTrack(ARENA_ONLY);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket);
+    await snapshotUntil(socket, (s) => s.trackId === trackId);
+
+    await startMatch(socket);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect((await nextSnapshot(socket)).phase).toBe("LOBBY");
+    socket.close();
+  });
+
+  it("lets that same Track run the moment the host picks Survival — nothing tags the Track itself", async () => {
+    const trackId = await publishTrack(ARENA_ONLY);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket);
+    await snapshotUntil(socket, (s) => s.trackId === trackId);
+
+    pickRoundType(socket, "survival");
+    const unblocked = await snapshotUntil(socket, (s) => s.lobby.roundType === "survival");
+    expect(unblocked.lobby.startBlockedReason).toBeUndefined();
+
+    await startMatch(socket);
+
+    expect((await snapshotUntil(socket, (s) => s.phase !== "LOBBY")).phase).not.toBe("LOBBY");
+    socket.close();
   });
 });

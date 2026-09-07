@@ -740,6 +740,36 @@ describe("RapierSimulation — what a Fall does is a RoundRules field (M5 ticket
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.fallCount).toBe(1);
   });
 
+  it("only eliminates while the Round is RUNNING — a Fall in the Lobby respawns instead (code review, ticket 07)", () => {
+    // A Lobby host can pick Survival before the Round starts (ticket 07), so
+    // `fallBehavior` is already "eliminate" through LOBBY and COUNTDOWN.
+    // Input is locked there but gravity and Spinners are not, and `eliminated`
+    // is never cleared — a Fall before the Round would put a Player out of a
+    // Round that hasn't begun.
+    // Spawned clear off the platform, so it Falls under gravity alone — no
+    // input, which is locked in LOBBY anyway.
+    const overTheVoid = () =>
+      new RapierSimulation({
+        spawn: { x: 20, y: 1.5, z: 0 },
+        statics: [PLATFORM],
+        killPlaneY: -8,
+        roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
+      });
+
+    const sim = overTheVoid();
+    for (let i = 0; i < 120; i += 1) sim.tick({}, "LOBBY");
+
+    const inLobby = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(inLobby.eliminated).toBe(false);
+    expect(inLobby.fallCount).toBeGreaterThan(0); // it did Fall — it just Respawned instead
+    expect(inLobby.respawnCount).toBeGreaterThan(0);
+
+    // And the identical Fall, once the Round is RUNNING, eliminates as ever.
+    const running = overTheVoid();
+    for (let i = 0; i < 120; i += 1) running.tick({});
+    expect(running.snapshot().characters[DEFAULT_CHARACTER_ID]!.eliminated).toBe(true);
+  });
+
   it("ignores Checkpoints crossed before the Fall — a Round with no Respawn never reads respawnPoint", () => {
     const sim = new RapierSimulation({
       spawn: { x: 0, y: 1.5, z: 6 },

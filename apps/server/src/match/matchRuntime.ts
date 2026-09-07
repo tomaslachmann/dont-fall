@@ -1,14 +1,16 @@
 import {
-  DEFAULT_SURVIVOR_TARGET,
+  DEFAULT_ROUND_TYPE,
   MODULE_LIBRARY,
   RapierSimulation,
   resolveRoundRules,
   resolveTrack,
+  roundStartBlockedReason,
+  roundTypeOverrides,
   trackSpawn,
-  type FallBehavior,
   type LobbyPlayer,
   type MatchState,
   type RoundRules,
+  type RoundType,
   type Track,
 } from "@dont-fall/shared";
 import type { WebSocket } from "ws";
@@ -23,9 +25,17 @@ export interface MatchConfig {
   roundEndMs: number;
   playersToStart: number;
   timeLimitMsOverride?: number | undefined;
-  /** Test-only, standing in for the Lobby's own Round-type picker (M5 ticket 07) until it exists. */
-  fallBehaviorOverride?: FallBehavior | undefined;
-  /** Test-only, same reasoning as `fallBehaviorOverride`. */
+  /**
+   * Force this Match's `RoundRules.survivorTarget` over whatever Track it
+   * loads (M5 ticket 05) — the same kind of Match-level override
+   * `timeLimitMsOverride` is, over the same kind of Track default.
+   *
+   * There is deliberately no `fallBehaviorOverride` beside it any more
+   * (ticket 07): that one was never a Track default to override, it was the
+   * Round type standing in for a Lobby that couldn't pick one yet. The Lobby
+   * picks now ({@link MatchRuntime.setRoundType}), so the stand-in is gone
+   * rather than left as a second way to decide the same thing.
+   */
   survivorTargetOverride?: number | undefined;
 }
 
@@ -67,6 +77,24 @@ export class MatchRuntime {
    * (`matchLoop.ts`) so the client predicts against the identical record.
    */
   roundRules: RoundRules;
+  /**
+   * The Round type this Lobby will start (M5 ticket 07) — a name, and the
+   * only place in the server one exists. Everything downstream reads
+   * {@link roundRules}, which {@link setRoundType} re-resolves from this;
+   * nothing branches on the name itself (ADR 0043).
+   *
+   * Survives a Track pick and the return from Results: a host who chose
+   * Survival chose it for this Lobby, not for one Round.
+   */
+  roundType: RoundType = DEFAULT_ROUND_TYPE;
+  /**
+   * Whether the currently-loaded Track has a Finish Zone at all (M5 ticket
+   * 07) — resolved with the simulation, since `resolveTrack` already
+   * answers it, rather than re-flattening the Track every time the Lobby
+   * asks. This is the *only* thing that decides whether a Race can run
+   * here; no Track is ever tagged with the Round types it allows (ADR 0041).
+   */
+  trackHasFinishZone: boolean;
 
   /**
    * The server's own monotonic tick — advances by exactly one every interval,
@@ -104,6 +132,53 @@ export class MatchRuntime {
     const built = this.buildSimulationFor(fetched.track);
     this.simulation = built.simulation;
     this.roundRules = built.roundRules;
+    this.trackHasFinishZone = built.trackHasFinishZone;
+  }
+
+  /**
+   * This Round's rules, from the three sources ADR 0041 allows and no
+   * others: the Track Revision's own authored defaults, under the Lobby's
+   * Round-type pick, under this Match's own configured overrides.
+   *
+   * Ordering is the ADR's own — a Round's override beats a Track's default —
+   * and the Round type sits between the two because it *is* a Round-level
+   * choice, just one a host makes instead of a process config.
+   */
+  private resolveRules(): RoundRules {
+    return resolveRoundRules(
+      { timeLimitMs: this.fetched.timeLimitMs, fallBehavior: "respawn", survivorTarget: this.fetched.survivorTarget },
+      {
+        ...roundTypeOverrides(this.roundType),
+        // Spread conditionally, not assigned as a possibly-`undefined` value:
+        // an explicit `undefined` here would clobber a field the Round type
+        // had just set, the day a Round type overrides more than
+        // `fallBehavior`. Same idiom `startServer` uses building this config.
+        ...(this.config.timeLimitMsOverride !== undefined ? { timeLimitMs: this.config.timeLimitMsOverride } : {}),
+        ...(this.config.survivorTargetOverride !== undefined ? { survivorTarget: this.config.survivorTargetOverride } : {}),
+      },
+    );
+  }
+
+  /**
+   * The host picked a Round type (M5 ticket 07). Re-resolves this Round's
+   * rules and hands them straight to the live simulation — no rebuild: a
+   * Round type changes what the rules *say*, never what the world *is*,
+   * unlike a Track pick, which changes both.
+   */
+  setRoundType(roundType: RoundType): void {
+    this.roundType = roundType;
+    this.roundRules = this.resolveRules();
+    this.simulation.syncRoundRules(this.roundRules);
+  }
+
+  /**
+   * Why this Lobby can't start right now, in words a Player can read, or
+   * `undefined` when it can (M5 ticket 07). One expression, read by both the
+   * `start` gate that refuses and the snapshot field that explains — so what
+   * a Player is told and what the server enforces can never disagree.
+   */
+  startBlockedReason(): string | undefined {
+    return roundStartBlockedReason(this.roundType, this.trackHasFinishZone);
   }
 
   /**
@@ -124,12 +199,11 @@ export class MatchRuntime {
    * ticket has a source for; a real per-Round choice (a future Lobby control)
    * is more overrides added to the same call, not a new mechanism.
    *
-   * `fallBehavior`/`survivorTarget`'s own "Track default" is always the
-   * constant `"respawn"`/`DEFAULT_SURVIVOR_TARGET` (M5 ticket 03/05, ADR
-   * 0041) — no Track carries a Round-type opinion, so every Round is a Race
-   * until a real override exists to say otherwise (M5 ticket 07's Lobby
-   * Round-type picker adds one to this same call; `fallBehaviorOverride`/
-   * `survivorTargetOverride` stand in for it in the meantime, test-only).
+   * `fallBehavior`'s own "Track default" is always the constant `"respawn"`
+   * (M5 ticket 03, ADR 0041) — no Track carries a Round-type opinion, so
+   * every Round is a Race until the Lobby's own pick says otherwise
+   * (`roundType`, ticket 07). `survivorTarget`, by contrast, is a real Track
+   * default the Revision authors (ticket 07) — see {@link resolveRules}.
    *
    * Returns both rather than assigning `this.roundRules` as a side effect:
    * `new RapierSimulation` can throw (an unknown Module id), and only the
@@ -137,24 +211,18 @@ export class MatchRuntime {
    * the same "build before discarding the old one" discipline it already
    * follows for `simulation` itself.
    */
-  buildSimulationFor(track: Track): { simulation: RapierSimulation; roundRules: RoundRules } {
-    const roundRules = resolveRoundRules(
-      { timeLimitMs: this.fetched.timeLimitMs, fallBehavior: "respawn", survivorTarget: DEFAULT_SURVIVOR_TARGET },
-      {
-        timeLimitMs: this.config.timeLimitMsOverride,
-        fallBehavior: this.config.fallBehaviorOverride,
-        survivorTarget: this.config.survivorTargetOverride,
-      },
-    );
+  buildSimulationFor(track: Track): { simulation: RapierSimulation; roundRules: RoundRules; trackHasFinishZone: boolean } {
+    const roundRules = this.resolveRules();
+    const resolved = resolveTrack(MODULE_LIBRARY, track);
     const simulation = new RapierSimulation({
-      ...resolveTrack(MODULE_LIBRARY, track),
+      ...resolved,
       withDefaultCharacter: false,
       roundRules,
     });
     for (const [playerId, player] of this.lobbyPlayers) {
       simulation.addCharacter(playerId, trackSpawn(track, player.joinOrder));
     }
-    return { simulation, roundRules };
+    return { simulation, roundRules, trackHasFinishZone: resolved.finishZones.length > 0 };
   }
 
   /**
@@ -189,6 +257,7 @@ export class MatchRuntime {
     this.simulation.dispose();
     this.simulation = built.simulation;
     this.roundRules = built.roundRules;
+    this.trackHasFinishZone = built.trackHasFinishZone;
     this.serverTick = 0;
     this.roundStartTick = 0;
     this.match = { phase: "LOBBY", phaseStartTick: 0 };

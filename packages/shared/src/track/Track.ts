@@ -65,15 +65,39 @@ export interface TrackListing {
  * silently dropped `revision`/`authorId`/`contentHash`, which the wire
  * always carried) must agree on this without a second declaration to drift.
  */
-export interface StoredTrack {
+export interface StoredTrack extends TrackRoundDefaults {
   id: string;
   name: string | null;
   track: Track;
   revision: number;
   authorId: string;
   contentHash: string;
+}
+
+/**
+ * The Round defaults a Track Revision carries (ADR 0041) — the "Track
+ * defaults" half of `resolveRoundRules`, authored in the Track builder and
+ * written with the Revision.
+ *
+ * Deliberately not a `RoundRules`: a Track carries no `fallBehavior` opinion
+ * at all, because nothing tags a Track with the Round types it allows (ADR
+ * 0041). These are the numbers a Round uses *if* a Lobby runs that kind of
+ * Round here — `survivorTarget` says nothing about whether this Track will
+ * ever host Survival, the same way a Finish Zone says nothing about whether
+ * it will ever be raced.
+ *
+ * Named once and shared by everything that moves the pair around — the
+ * stored Revision, the builder's publish, the Match server's fetch — so a
+ * field added here can't be silently dropped by one of the three.
+ */
+export interface TrackRoundDefaults {
   /** How long a Round on this Revision gets, in ms (M4 ticket 03, ADR 0038). */
   timeLimitMs: number;
+  /**
+   * How many Players a Survival Round on this Revision leaves standing
+   * before it ends (M5 ticket 07). A Race never reads it.
+   */
+  survivorTarget: number;
 }
 
 /** A Segment's full 3D orientation as one quaternion (ADR 0034) — composes its yaw/pitch/roll fields. */

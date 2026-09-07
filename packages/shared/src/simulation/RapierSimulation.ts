@@ -527,9 +527,15 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * arrived) can only be the Track's bare default; the server may have
    * overridden it. Called every snapshot, the same cadence `phase` is
    * captured at (`game.ts`), so it self-corrects the instant the real value
-   * is known and is a no-op once it already matches. The server itself never
-   * calls this — its own `RoundRules` is fixed for the Round's life, set
-   * once at construction (ADR 0041's own "nothing downstream re-resolves").
+   * is known and is a no-op once it already matches.
+   *
+   * The server calls it in exactly one place (M5 ticket 07): a Lobby host
+   * picking a Round type, which re-resolves the rules and hands them here
+   * rather than rebuilding a world that has not changed. That does not
+   * weaken ADR 0041's "nothing downstream re-resolves" — the rules are
+   * still resolved once, by `MatchRuntime.resolveRules`, and are still fixed
+   * for the life of a *Round*: `setRoundType` is LOBBY-only, so nothing can
+   * move them once a Round is under way.
    */
   syncRoundRules(rules: RoundRules): void {
     this.roundRules = rules;
@@ -633,7 +639,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       this.updateFinishZone(id);
       this.updateSpeedPad(id);
       this.updateLaunchPad(id);
-      this.detectFall(id);
+      this.detectFall(id, !matchLocked);
       // Stamp the tick a `motionState` phase begins, in sim-tick space, exactly
       // once (ADR 0023). Must be here, not in `snapshot()` — that is called
       // several times per client frame and before `syncTick` in reconcile.
@@ -850,8 +856,10 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * `respawnPoint` (unchanged), an eliminating Round type passes `null`, and
    * `CharacterController.fall` decides what that means. The Fall itself —
    * a Character's centre crossing the kill plane — is unchanged either way.
+   *
+   * `roundRunning` gates only the *eliminating* half — see below.
    */
-  private detectFall(id: string): void {
+  private detectFall(id: string, roundRunning: boolean): void {
     const character = this.character(id);
     const progress = this.progress.get(id)!;
     if (character.hasPendingRespawn || character.position.y >= this.killPlaneY) return;
@@ -865,7 +873,16 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     if (progress.finishTick !== null) return;
 
     progress.fallCount += 1;
-    const eliminates = this.roundRules.fallBehavior === "eliminate";
+    // Only a Round that is actually RUNNING can eliminate (code review,
+    // ticket 07). `fallBehavior` is resolved the moment a Lobby host picks
+    // Survival, but physics keeps running through LOBBY and COUNTDOWN —
+    // input is locked, gravity and Spinners are not — so without this a
+    // Character shoved off the start platform before the Countdown ends is
+    // Eliminated from a Round that has not begun, permanently: nothing
+    // between LOBBY and RUNNING rebuilds the world, and `eliminated` is
+    // never cleared. Outside a running Round a Fall does what it has always
+    // done and respawns, in either Round type.
+    const eliminates = roundRunning && this.roundRules.fallBehavior === "eliminate";
     if (eliminates) progress.eliminated = true;
     character.fall(eliminates ? null : progress.respawnPoint, progress.fallCount);
   }

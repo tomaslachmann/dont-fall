@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { DEFAULT_TIME_LIMIT_MS, type StoredTrack, type Track, type TrackListing } from "@dont-fall/shared";
+import { DEFAULT_SURVIVOR_TARGET, DEFAULT_TIME_LIMIT_MS, type StoredTrack, type Track, type TrackListing } from "@dont-fall/shared";
 import type { TrackDb } from "./db.js";
 import { tracks } from "./schema.js";
 
@@ -22,6 +22,7 @@ const toStored = (row: typeof tracks.$inferSelect): StoredTrack => ({
   authorId: row.authorId,
   contentHash: row.contentHash,
   timeLimitMs: row.timeLimitMs,
+  survivorTarget: row.survivorTarget,
 });
 
 /**
@@ -53,7 +54,7 @@ const hashTrack = (track: Track): string => createHash("sha256").update(canonica
  */
 export const saveTrack = (
   db: TrackDb,
-  input: { id?: string; name?: string; track: Track; timeLimitMs?: number },
+  input: { id?: string; name?: string; track: Track; timeLimitMs?: number; survivorTarget?: number },
 ): { id: string } => {
   // An empty string is treated the same as absent (code review, ticket 10) —
   // otherwise it becomes a real, permanently unfetchable trackId (the
@@ -81,6 +82,9 @@ export const saveTrack = (
       data: JSON.stringify(input.track),
       createdAt: Date.now(),
       timeLimitMs: input.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS,
+      // Out of the content hash for the same reason the clock is (ADR 0038):
+      // two Revisions differing only in this are the same Segments.
+      survivorTarget: input.survivorTarget ?? DEFAULT_SURVIVOR_TARGET,
     })
     .run();
   return { id: trackId };

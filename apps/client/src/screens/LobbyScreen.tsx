@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { allReady, NICKNAME_MAX_LENGTH } from "@dont-fall/shared";
+import { allReady, NICKNAME_MAX_LENGTH, ROUND_TYPES, roundTypeLabel, type RoundType } from "@dont-fall/shared";
 import { Avatar, Button, Card, HostBadge, LiveOverlay, Panel, Row, Toggle } from "@dont-fall/ui";
 import type { LobbySnapshot } from "../game/index.js";
 import { formatRoundClock } from "../lib/roundTimer.js";
@@ -11,6 +11,7 @@ export interface LobbyScreenProps {
   onSetNickname: (nickname: string) => void;
   onSetReady: (ready: boolean) => void;
   onSelectTrack: (trackId: string) => void;
+  onSetRoundType: (roundType: RoundType) => void;
   onStart: () => void;
 }
 
@@ -35,7 +36,7 @@ const initials = (nickname: string): string => {
  * this, not the placeholder backdrop that prop paints for a context with
  * no real one — the backdrop stays clear and the real render shows through.
  */
-export function LobbyScreen({ lobby, onSetNickname, onSetReady, onSelectTrack, onStart }: LobbyScreenProps) {
+export function LobbyScreen({ lobby, onSetNickname, onSetReady, onSelectTrack, onSetRoundType, onStart }: LobbyScreenProps) {
   const me = lobby.players.find((p) => p.id === lobby.myId);
   const isHost = lobby.hostId === lobby.myId;
   const [nicknameDraft, setNicknameDraft] = useState(me?.nickname ?? "");
@@ -113,8 +114,37 @@ export function LobbyScreen({ lobby, onSetNickname, onSetReady, onSelectTrack, o
             />
           </div>
 
+          <h2 className={styles.heading}>Round</h2>
+          {/*
+            Everyone sees the Round type, host or not (M5 ticket 07) — only
+            the host can change it. Rendered as the same row of choices
+            either way rather than as a picker for one Player and a sentence
+            for everyone else, so what the Lobby agreed on reads the same to
+            all of them.
+          */}
+          <div className={styles.roundTypes} role="group" aria-label="Round type">
+            {ROUND_TYPES.map((type) => (
+              <Card
+                key={type}
+                className={[styles.roundTypeCard, type === lobby.roundType && styles.roundTypeCardSelected]
+                  .filter(Boolean)
+                  .join(" ")}
+                aria-pressed={type === lobby.roundType}
+                disabled={!isHost}
+                onClick={() => onSetRoundType(type)}
+              >
+                {roundTypeLabel(type)}
+              </Card>
+            ))}
+          </div>
+          <p className={styles.roundFacts}>
+            Time Limit {formatRoundClock(lobby.timeLimitMs)}
+            {/* Meaningless in a Race, which never reads the Survivor Target. */}
+            {lobby.roundType === "survival" &&
+              ` · last ${lobby.survivorTarget} ${lobby.survivorTarget === 1 ? "Player" : "Players"} standing`}
+          </p>
+
           <h2 className={styles.heading}>Track</h2>
-          <p className={styles.timeLimit}>Time Limit {formatRoundClock(lobby.timeLimitMs)}</p>
           {isHost ? (
             <div className={styles.trackPicker}>
               {tracks === null && <p className={styles.trackHint}>Loading Tracks…</p>}
@@ -134,8 +164,20 @@ export function LobbyScreen({ lobby, onSetNickname, onSetReady, onSelectTrack, o
             <p className={styles.trackHint}>Only the host picks the Track.</p>
           )}
 
+          {/*
+            The server's own reason this Lobby can't start (M5 ticket 07) —
+            shown to everyone, not only to the host holding the disabled
+            button, since on a Track with no Finish Zone the wait would
+            otherwise look like the host simply not clicking.
+          */}
+          {lobby.startBlockedReason !== undefined && <p className={styles.blocked}>{lobby.startBlockedReason}</p>}
+
           {isHost ? (
-            <Button className={styles.startButton} disabled={!allReady(lobby.players)} onClick={onStart}>
+            <Button
+              className={styles.startButton}
+              disabled={!allReady(lobby.players) || lobby.startBlockedReason !== undefined}
+              onClick={onStart}
+            >
               Start
             </Button>
           ) : (

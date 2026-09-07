@@ -690,15 +690,26 @@ export const MAX_TIME_LIMIT_MS = 30 * 60_000;
  * something (0 would end every Survival Round before it could start). A
  * Race never reads this field at all.
  *
- * Unlike `DEFAULT_TIME_LIMIT_MS`, this has no `MIN_`/`MAX_` sibling or any
- * enforcement yet (code review, ticket 05) — nothing before ticket 07 gives
- * this a real input to validate (today it is reachable only through the
- * test-only `survivorTargetOverride`). Bounds — and whether they should be
- * absolute or relative to how many Players actually joined — are ticket
- * 07's own design question, alongside "the server refuses to start a Round
- * whose Track cannot support it."
+ * Ticket 07 gave this a real authored input (the Track builder's own field,
+ * written with the Revision exactly as the Time Limit is), so it now has the
+ * `MIN_`/`MAX_` siblings ticket 05 deferred.
  */
 export const DEFAULT_SURVIVOR_TARGET = 1;
+
+/**
+ * Bounds on an authored Survivor Target (ticket 07). Absolute, not relative
+ * to how many Players actually joined — that was ticket 05's open question,
+ * and absolute wins for the same reason the Time Limit's bounds are: this is
+ * validated at publish time, when a Revision is frozen forever (ADR 0032),
+ * and nothing at publish time knows how many Players a future Lobby will
+ * hold. A target larger than the roster simply ends its Round the moment it
+ * starts, which is a Lobby's problem to surface, not a Revision's to prevent.
+ *
+ * The ceiling is one below ADR 0011's twelve-Player ceiling: at twelve there
+ * is no Round left to play, and "everybody survives" is not a Survival Round.
+ */
+export const MIN_SURVIVOR_TARGET = 1;
+export const MAX_SURVIVOR_TARGET = 11;
 
 // --- Match phase (M4 ticket 04, ADR 0040) -----------------------------------
 

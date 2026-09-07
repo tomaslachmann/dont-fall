@@ -1,17 +1,17 @@
 import {
+  DEFAULT_SURVIVOR_TARGET,
   DEFAULT_TIME_LIMIT_MS,
   TRACK_FETCH_ATTEMPT_TIMEOUT_MS,
   TRACK_FETCH_MAX_WAIT_MS,
   TRACK_FETCH_RETRY_DELAY_MS,
   type Track,
+  type TrackRoundDefaults,
 } from "@dont-fall/shared";
 
-export interface FetchedTrack {
+export interface FetchedTrack extends TrackRoundDefaults {
   id: string;
   revision: number;
   track: Track;
-  /** The Time Limit published with this Revision (M4 ticket 03, ADR 0038). */
-  timeLimitMs: number;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -57,16 +57,23 @@ export const fetchTrack = async (
     try {
       const res = await fetch(`${trackServiceUrl}${path}`, { signal: AbortSignal.timeout(attemptTimeoutMs) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = (await res.json()) as { id: string; revision: number; track: Track; timeLimitMs?: number };
+      const body = (await res.json()) as {
+        id: string;
+        revision: number;
+        track: Track;
+        timeLimitMs?: number;
+        survivorTarget?: number;
+      };
       if (attempt > 1) console.log(`DON'T FALL: track-service reachable after ${attempt} attempts`);
       return {
         id: body.id,
         revision: body.revision,
         track: body.track,
         // Defaulted rather than required, so a track-service that predates
-        // the column (ADR 0038's own backfill hasn't run yet) still yields a
-        // playable Round rather than a Match server that won't start.
+        // either column (ADR 0038/0041's own backfills haven't run yet) still
+        // yields a playable Round rather than a Match server that won't start.
         timeLimitMs: body.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS,
+        survivorTarget: body.survivorTarget ?? DEFAULT_SURVIVOR_TARGET,
       };
     } catch (err) {
       lastError = err;

@@ -175,7 +175,16 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       // client sees the identical Lobby (M4 ticket 07), and `hostId` is
       // recomputed from who's here now rather than stored anywhere.
       const lobbyPlayerList = [...rt.lobbyPlayers.values()];
-      const lobbySnapshot = { hostId: resolveHostId(lobbyPlayerList), players: lobbyPlayerList };
+      const blockedReason = rt.startBlockedReason();
+      const lobbySnapshot = {
+        hostId: resolveHostId(lobbyPlayerList),
+        players: lobbyPlayerList,
+        // The host's Round-type pick and why (if at all) it can't start on
+        // this Track — both shown to everyone before the start (M5 ticket
+        // 07), not discovered when the Round behaves unexpectedly.
+        roundType: rt.roundType,
+        ...(blockedReason !== undefined ? { startBlockedReason: blockedReason } : {}),
+      };
       for (const [id, socket] of rt.sockets) {
         if (socket.readyState !== socket.OPEN) continue;
         trySend(

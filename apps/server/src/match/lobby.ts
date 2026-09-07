@@ -1,8 +1,10 @@
 import {
   NICKNAME_MAX_LENGTH,
+  ROUND_TYPES,
   allReady,
   resolveHostId,
   type ClientMessage,
+  type RoundType,
 } from "@dont-fall/shared";
 import { fetchTrack, type FetchedTrack } from "../track/trackSource.js";
 import type { MatchRuntime } from "./matchRuntime.js";
@@ -80,6 +82,19 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
     return true;
   }
 
+  if (message.type === "setRoundType") {
+    // Host-only and LOBBY-only, the same discipline as `selectTrack` — and
+    // validated against the Round types that actually exist, because this
+    // is a name off the wire rather than a number: a client sending
+    // anything else would otherwise put the server on a `RoundType` no
+    // resolver knows, and every Round after it would resolve as a Race
+    // without anyone being told why.
+    if (rt.match.phase !== "LOBBY" || resolveHostId([...rt.lobbyPlayers.values()]) !== id) return true;
+    if (!ROUND_TYPES.includes(message.roundType as RoundType)) return true;
+    rt.setRoundType(message.roundType);
+    return true;
+  }
+
   if (message.type === "start") {
     // Enforced here, not by whichever client happens to click: host
     // only, LOBBY only, enough Players, everyone Ready (ADR 0040). A
@@ -91,6 +106,12 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
     if (resolveHostId(players) !== id) return true;
     if (rt.sockets.size < rt.config.playersToStart) return true;
     if (!allReady(players)) return true;
+    // A Race needs a Finish Zone (M5 ticket 07, ADR 0041) — refused here,
+    // against the Track actually loaded. Silence is fine for this one
+    // *because* it is not silent: the reason has been on every snapshot's
+    // `lobby.startBlockedReason` since the moment it became true, and the
+    // host's own Start button is disabled by it.
+    if (rt.startBlockedReason() !== undefined) return true;
     rt.startRequested = true;
     return true;
   }

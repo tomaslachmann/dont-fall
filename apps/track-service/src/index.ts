@@ -5,7 +5,7 @@ import { DEFAULT_TRACK_SERVICE_PORT, MODULE_LIBRARY, M1_TRACK } from "@dont-fall
 import { openDb, type TrackDb } from "./db.js";
 import { generateRandomTrack } from "./generate.js";
 import { getAnyTrack, getTrackById, listTracks, saveTrack, seedIfEmpty } from "./store.js";
-import { invalidTimeLimitReason, unknownModuleIds } from "./validate.js";
+import { invalidSurvivorTargetReason, invalidTimeLimitReason, unknownModuleIds } from "./validate.js";
 
 /**
  * track-service (ADR 0028): the single source of truth for Tracks, separate
@@ -115,7 +115,7 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
       json(res, 400, { error: "invalid JSON body" });
       return;
     }
-    const body = parsed as { id?: unknown; name?: unknown; track?: unknown; timeLimitMs?: unknown };
+    const body = parsed as { id?: unknown; name?: unknown; track?: unknown; timeLimitMs?: unknown; survivorTarget?: unknown };
     if (!isTrack(body.track)) {
       json(res, 400, {
         error:
@@ -134,6 +134,11 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
       json(res, 400, { error: badTimeLimit });
       return;
     }
+    const badSurvivorTarget = invalidSurvivorTargetReason(body.survivorTarget);
+    if (badSurvivorTarget) {
+      json(res, 400, { error: badSurvivorTarget });
+      return;
+    }
     // An explicit body.id republishes that same trackId as a new Revision
     // (ADR 0032) instead of creating a fresh one — never mutates Revision 1.
     const saved = saveTrack(db, {
@@ -143,6 +148,9 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
       // Absent is valid and means "the default" (ADR 0038) — already
       // validated above, so anything still here is a real integer.
       ...(typeof body.timeLimitMs === "number" ? { timeLimitMs: body.timeLimitMs } : {}),
+      // Absent is valid and means "the default" (ADR 0041), same as the
+      // clock above — already validated, so anything here is a real integer.
+      ...(typeof body.survivorTarget === "number" ? { survivorTarget: body.survivorTarget } : {}),
     });
     json(res, 201, saved);
     return;

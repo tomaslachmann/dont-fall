@@ -29,7 +29,6 @@ import {
   roundTimeLeftMs,
   trackSpawn,
   type ClientMessage,
-  type FallBehavior,
   type LobbyPlayer,
   type MatchState,
   type ServerMessage,
@@ -92,13 +91,17 @@ export interface StartServerConfig {
    */
   timeLimitMsOverride?: number;
   /**
-   * Force this Round's `RoundRules.fallBehavior` (M5 ticket 05). Test-only,
-   * standing in for the Lobby's own Round-type picker (ticket 07) — until
-   * that exists, a Round-level override with no live source is exactly what
-   * a test needs to exercise Survival's own endings server-side at all.
+   * Ignore the Revision's authored Survivor Target and use this instead
+   * (M5 ticket 05). Test-only, and the same kind of override
+   * `timeLimitMsOverride` is over the same kind of Track default: a test
+   * that needs a Survival Round to end on a specific number shouldn't have
+   * to publish a Revision authored for it.
+   *
+   * Ticket 05's `fallBehaviorOverride` is deliberately gone from beside it
+   * (ticket 07): that was never a Track default to override, it was the
+   * Round type standing in for a Lobby that couldn't pick one. The Lobby
+   * picks now (`setRoundType`), and the tests go through it.
    */
-  fallBehaviorOverride?: FallBehavior;
-  /** Force this Round's `RoundRules.survivorTarget` (M5 ticket 05). Same reasoning and same test-only status as `fallBehaviorOverride`. */
   survivorTargetOverride?: number;
 }
 
@@ -136,7 +139,6 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       roundEndMs,
       playersToStart,
       ...(config.timeLimitMsOverride !== undefined ? { timeLimitMsOverride: config.timeLimitMsOverride } : {}),
-      ...(config.fallBehaviorOverride !== undefined ? { fallBehaviorOverride: config.fallBehaviorOverride } : {}),
       ...(config.survivorTargetOverride !== undefined ? { survivorTargetOverride: config.survivorTargetOverride } : {}),
     },
     bootTrack,

@@ -26,6 +26,7 @@ import {
   type PropSnapshot,
   type RenderCharacter,
   type ResultsRow,
+  type RoundType,
   type ServerMessage,
   type SimInputs,
   type SimState,
@@ -86,6 +87,24 @@ export interface LobbySnapshot {
    * "authored Time Limit" field of its own.
    */
   timeLimitMs: number;
+  /**
+   * The Round type this Lobby will start, and how many survivors a Survival
+   * Round here would run to (M5 ticket 07) — both shown before the start, so
+   * nobody learns what kind of Round they're in by falling into it.
+   *
+   * `survivorTarget` is the Track's own authored default under whatever this
+   * Match overrides (it is read straight off the snapshot's `roundRules`,
+   * the same resolved record the simulation runs by) — never re-derived
+   * here, and meaningless while `roundType` is `"race"`.
+   */
+  roundType: RoundType;
+  survivorTarget: number;
+  /**
+   * Why the host can't start on this Track, in words to show, or `undefined`
+   * when they can (M5 ticket 07). The server's own answer, rendered — the
+   * client never computes a second opinion about a gate it doesn't enforce.
+   */
+  startBlockedReason: string | undefined;
 }
 
 /**
@@ -153,6 +172,8 @@ export interface GameHandle {
   setReady: (ready: boolean) => void;
   /** Host-only: picks a different Track for this Lobby (M4 ticket 07). Ignored if not host or not in LOBBY. */
   selectTrack: (trackId: string) => void;
+  /** Host-only: picks this Lobby's Round type (M5 ticket 07). Ignored if not host or not in LOBBY. */
+  setRoundType: (roundType: RoundType) => void;
   /** Host-only: asks the server to start the Round (M4 ticket 07). Ignored unless the server's own gate passes. */
   start: () => void;
   /** Host-only: asks the server to return to the Lobby from Results (M4 ticket 08). Ignored outside RESULTS. */
@@ -417,6 +438,9 @@ const boot = async (
             trackId: message.trackId,
             trackRevision: message.trackRevision,
             timeLimitMs: message.timeLeftMs,
+            roundType: message.lobby.roundType,
+            survivorTarget: message.roundRules.survivorTarget,
+            startBlockedReason: message.lobby.startBlockedReason,
           };
           const lobbyJson = JSON.stringify(lobbySnapshot);
           if (lobbyJson !== lastLobbyJson) {
@@ -808,6 +832,7 @@ const boot = async (
     setNickname: (nickname) => sendLobbyMessage({ type: "setNickname", nickname }),
     setReady: (ready) => sendLobbyMessage({ type: "setReady", ready }),
     selectTrack: (trackId) => sendLobbyMessage({ type: "selectTrack", trackId }),
+    setRoundType: (roundType) => sendLobbyMessage({ type: "setRoundType", roundType }),
     start: () => sendLobbyMessage({ type: "start" }),
     returnToLobby: () => sendLobbyMessage({ type: "returnToLobby" }),
   };
