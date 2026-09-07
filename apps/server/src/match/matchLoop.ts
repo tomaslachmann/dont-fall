@@ -1,12 +1,10 @@
 import {
-  IDLE_INPUTS,
   SNAPSHOT_HZ,
   TICK_MS,
   TICK_RATE_HZ,
   advanceMatchPhase,
   allQualified,
   countdownMsLeft,
-  phaseLocksInput,
   resolveHostId,
   roundTimeLeftMs,
   type ServerMessage,
@@ -64,22 +62,18 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
         timeExpired: rt.roundEnding.timeExpired,
         returnToLobbyRequested: rt.returnToLobbyRequested,
       });
-      // Input is locked in every phase but RUNNING (ADR 0040). Enforced here
-      // rather than by refusing the packet: the client runs the same rule on
-      // its own prediction, so both sides stop and start driving the
-      // Character on the identical Tick, and a client that ignores the rule
-      // simply has its input replaced.
-      const inputLocked = phaseLocksInput(nextMatch.phase);
+      // Whether input is actually applied — locked outside RUNNING (ADR
+      // 0040), locked per-Character on Qualification (ADR 0039), and every
+      // Round type's own rule after that — is entirely `RapierSimulation.tick`'s
+      // own call now (M5 ticket 01, ADR 0044): this loop just hands it every
+      // connected Character's raw applied input and the phase it decided,
+      // never a pre-substituted one. The ack bookkeeping inside `takeFor`
+      // stays honest whatever the phase — the client is still reconciling
+      // against these Ticks even while locked.
       const tickInputs: Record<string, SimInputs> = {};
-      for (const id of rt.sockets.keys()) {
-        // The ack bookkeeping inside `takeFor` stays honest whatever the phase
-        // — the client is still reconciling against these Ticks — only the
-        // input actually simulated is replaced.
-        const applied = rt.inputs.takeFor(id, thisTick);
-        tickInputs[id] = inputLocked ? IDLE_INPUTS : applied;
-      }
+      for (const id of rt.sockets.keys()) tickInputs[id] = rt.inputs.takeFor(id, thisTick);
 
-      rt.simulation.tick(tickInputs);
+      rt.simulation.tick(tickInputs, nextMatch.phase);
       rt.serverTick = thisTick;
       // A one-shot edge, spent the instant a tick reads it whether or not it
       // actually caused a transition — otherwise a request left stale by (say)

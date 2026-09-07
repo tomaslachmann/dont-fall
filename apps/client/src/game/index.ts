@@ -462,7 +462,13 @@ const boot = async (
           // obstacle sits exactly where it's drawn and advances smoothly
           // between snapshots rather than jumping once per snapshot (which,
           // for a Prop you're pushing, read as a per-snapshot sawtooth / lag).
-          const result = predictionLoop.reconcile(character, message.state.tick, message.state.props, propPrediction);
+          const result = predictionLoop.reconcile(
+            character,
+            message.state.tick,
+            message.state.props,
+            propPrediction,
+            message.phase,
+          );
           if (result.positionError !== null) netMetrics.recordCorrection(result.positionError);
         }
       }
@@ -527,20 +533,20 @@ const boot = async (
       return;
     }
 
-    // Input is locked in every phase but RUNNING (ADR 0040), and the client
-    // applies the identical rule to its own prediction that the server
-    // applies to the authority — so the Character stops and starts being
-    // drivable on the same Tick on both sides, rather than this client
-    // predicting half an RTT of movement that the server never simulated.
-    // The camera is deliberately untouched: it stays live through the
-    // Countdown, which is what lets a player look around before the start.
-    const sampledInput: SimInputs = phaseLocksInput(phase)
-      ? IDLE_INPUTS
-      : {
-          moveDirection: movementDirection(keyboard.movementKeys(), look.yaw),
-          jumpHeld: keyboard.jumpHeld(),
-          dashHeld: keyboard.dashHeld(),
-        };
+    // Sampled unconditionally — whether it actually drives the Character is
+    // the shared step's own call now (M5 ticket 01, ADR 0044): `phase` goes
+    // down to `predictionLoop.step` below, and `RapierSimulation.tick` is the
+    // one place, on both sides, that decides "may this Character be driven
+    // this tick?" — so it stops and starts driving on the identical Tick the
+    // server does, rather than this client predicting half an RTT of movement
+    // the server never simulated. The camera is deliberately untouched here:
+    // it stays live through the Countdown, which is what lets a player look
+    // around before the start.
+    const sampledInput: SimInputs = {
+      moveDirection: movementDirection(keyboard.movementKeys(), look.yaw),
+      jumpHeld: keyboard.jumpHeld(),
+      dashHeld: keyboard.dashHeld(),
+    };
 
     // World this client doesn't predict — Props and every other player's
     // Character — comes from the render-delay interpolation buffer (ADR 0003).
@@ -608,8 +614,11 @@ const boot = async (
     // Fixed-timestep prediction: one shared sim step per tick, each fed —
     // and sent to the server, from `onBuffered` — with the input sampled for
     // that tick, and each buffered by tick number for reconciliation (ADR
-    // 0005, 0013, 0021).
-    predictionLoop.step(sampledInput, elapsedMs + leadStepMs, sendInput);
+    // 0005, 0013, 0021). `phase` is what lets the shared step gate it (M5
+    // ticket 01) — this call sends real input over the wire even while
+    // locked, same as the server always has; only whether it moves the
+    // Character is decided, identically, on both sides.
+    predictionLoop.step(sampledInput, elapsedMs + leadStepMs, sendInput, phase);
 
     const snapshot = localSim.snapshot();
 
@@ -695,9 +704,13 @@ const boot = async (
 
     stage.applyRenderState({ character: visualCharacter, props });
     stage.applyRemoteCharacters(remoteCharacters);
+    // Cosmetic only, not a second lock: the sim itself already refused to
+    // move the Character while locked (M5 ticket 01), so this just picks the
+    // idle stance over animating legs toward a `moveDirection` it never
+    // actually walked toward on screen.
     stage.updateCharacterAnimation(
       Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000,
-      input.moveDirection,
+      phaseLocksInput(phase) ? IDLE_INPUTS.moveDirection : input.moveDirection,
       c.grounded,
       c.dashing,
       c.dashSpeed,

@@ -2,6 +2,7 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import { pointInOrientedBox, type OrientedBox } from "../math/box.js";
 import { IDENTITY_QUAT } from "../math/quat.js";
 import { normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
+import { phaseLocksInput, type MatchPhase } from "../match/MatchPhase.js";
 import { characterSnapshot, type CharacterSnapshot, type ReconcileBase, type SimState } from "../state/SimState.js";
 import type { FixedSimulation } from "../timing/FixedSimulation.js";
 import {
@@ -452,11 +453,20 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * detection all stay coherent during the replay (call {@link syncTick}
    * first). A few extra `world.step()`s do nudge dynamic Props slightly — an
    * accepted M2 approximation; Prop sync is ticket 06.
+   *
+   * `phase` is the one the caller's own reconcile is currently acting under —
+   * applied to every replayed tick alike (M5 ticket 01). A phase transition
+   * landing mid-replay is a real but vanishingly rare edge (the whole
+   * unacked span this replays is only an RTT wide); the client's own
+   * behaviour already treated this instant as the reconcile's single source
+   * of truth for tick alignment and Prop poses before this ticket, so this
+   * follows the same discipline rather than inventing per-tick phase history
+   * nothing else here tracks.
    */
-  replayLocalCharacter(id: string, inputs: readonly SimInputs[]): Vec3[] {
+  replayLocalCharacter(id: string, inputs: readonly SimInputs[], phase: MatchPhase = "RUNNING"): Vec3[] {
     const positions: Vec3[] = [];
     for (const input of inputs) {
-      this.tick({ [id]: input });
+      this.tick({ [id]: input }, phase);
       positions.push({ ...this.character(id).snapshot().position });
     }
     return positions;
@@ -469,8 +479,18 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * `world` steps exactly once for all of them together, then each Character
    * reads the result back — the split `beginTick`/`endTick` on
    * `CharacterController` (ticket 02) is what makes one shared step possible.
+   *
+   * `phase` answers the one question every Round type's "who may move right
+   * now" rule ultimately reduces to (M5 ticket 01, ADR 0044 extending ADR
+   * 0040): whether every Character's input is locked this tick. Defaults to
+   * `"RUNNING"` (unlocked) so the many callers that only care about physics —
+   * most of this file's own tests among them — never have to think about
+   * Match phase at all; the two real production callers (the server's Match
+   * loop, and the client's own local prediction) always pass their current
+   * phase, which is what makes the two stop and start driving the Character
+   * on the identical Tick.
    */
-  tick(inputs: Record<string, SimInputs>): void {
+  tick(inputs: Record<string, SimInputs>, phase: MatchPhase = "RUNNING"): void {
     if (this.disposed) throw new Error("RapierSimulation: tick() on a disposed simulation");
     // Queue each Spinner's rotation for the tick about to run — it must be
     // queued before `world.step()` applies it, the same way each Character's
@@ -480,16 +500,25 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     // snapshot pose every tick — they never move under their own physics.
     for (const mirror of this.mirrors.values()) mirror.step();
 
-    // A Qualified Character's input is locked (M4 ticket 02, ADR 0039): it
-    // stops where it stands and spectates the rest of the Round from inside
-    // the zone. Applied here, in the shared step, rather than by the server
-    // dropping the packet — that is what makes a client's own prediction lock
-    // at the same Tick, so it never runs half an RTT past the finish before
-    // being yanked back. Everything else still acts on the body: gravity,
+    // "May this Character be driven this tick?" (M5 ticket 01) is now decided
+    // in exactly one place, for exactly one reason each Round type can add
+    // to: the whole Match is locked outside RUNNING (ADR 0040 — Lobby,
+    // Countdown, Round end), or this one Character is individually locked
+    // because it Qualified (M4 ticket 02, ADR 0039) and stops to spectate
+    // from inside the zone. A future Round type's own "who may move" rule
+    // (an eliminated Character in Survival, M5 ticket 04) is one more term
+    // ORed in right here, not a third mechanism at a third layer.
+    //
+    // Applied here, in the shared step, rather than by the server dropping
+    // the packet or the client withholding it before this call: that is what
+    // makes a client's own prediction lock at the same Tick the server does,
+    // so it never runs half an RTT past a lock before being yanked back.
+    // Everything else still acts on the body while locked: gravity,
     // collision, and another Character shoving it are all unchanged.
+    const matchLocked = phaseLocksInput(phase);
     for (const [id, character] of this.characters) {
       const qualified = this.progress.get(id)!.finishTick !== null;
-      character.beginTick(qualified ? IDLE_INPUTS : (inputs[id] ?? IDLE_INPUTS));
+      character.beginTick(matchLocked || qualified ? IDLE_INPUTS : (inputs[id] ?? IDLE_INPUTS));
     }
     this.world.step();
     this.tickCount += 1;

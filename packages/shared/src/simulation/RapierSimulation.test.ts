@@ -3317,6 +3317,86 @@ describe("Finish Zone — Qualification (M4 ticket 02, ADR 0039)", () => {
   });
 });
 
+describe("RapierSimulation — input lock is one rule at one layer (M5 ticket 01, ADR 0044)", () => {
+  const raceSim = () => new RapierSimulation({ statics: [GROUND], spawn: RESTING_SPAWN });
+  const me = (sim: RapierSimulation) => sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+
+  it("defaults to unlocked — every existing caller that never passes phase keeps working", () => {
+    const sim = raceSim();
+
+    tick(sim, 1, NORTH);
+
+    expect(me(sim).position.z).toBeLessThan(RESTING_SPAWN.z);
+
+    sim.dispose();
+  });
+
+  it("locks every Character's input outside RUNNING, in the shared step itself", () => {
+    const sim = raceSim();
+    const before = me(sim).position;
+
+    for (let n = 0; n < Math.round(1 * TICK_RATE_HZ); n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }, "COUNTDOWN");
+
+    const after = me(sim).position;
+    expect(Math.hypot(after.x - before.x, after.z - before.z)).toBeLessThan(0.05);
+
+    sim.dispose();
+  });
+
+  it("releases on the exact tick the phase becomes RUNNING — no half-tick of leftover lock", () => {
+    const sim = raceSim();
+
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }, "COUNTDOWN");
+    const stillLocked = me(sim).position;
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }, "RUNNING");
+    const firstRunningTick = me(sim).position;
+
+    expect(firstRunningTick.z).toBeLessThan(stillLocked.z);
+
+    sim.dispose();
+  });
+
+  it("locks again once the Round has ended (ROUND_END / RESULTS), same as before it started", () => {
+    const sim = raceSim();
+    tick(sim, 1, NORTH); // RUNNING, moving
+    const atEnd = me(sim).position;
+
+    for (let n = 0; n < Math.round(1 * TICK_RATE_HZ); n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }, "ROUND_END");
+
+    const after = me(sim).position;
+    expect(Math.hypot(after.x - atEnd.x, after.z - atEnd.z)).toBeLessThan(0.05);
+
+    sim.dispose();
+  });
+
+  it("still locks a Qualified Character even while the Match phase itself is unlocked (RUNNING)", () => {
+    const zone = { center: { x: 0, y: 1, z: -4 }, halfExtents: { x: 3, y: 2, z: 1 } };
+    const sim = new RapierSimulation({ statics: [GROUND], spawn: RESTING_SPAWN, finishZones: [{ trigger: zone }] });
+    for (let i = 0; i < 200 && me(sim).finishTick === null; i += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }, "RUNNING");
+    expect(me(sim).finishTick).not.toBeNull();
+    const atFinish = me(sim).position;
+
+    for (let n = 0; n < Math.round(1 * TICK_RATE_HZ); n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }, "RUNNING");
+
+    const after = me(sim).position;
+    expect(Math.hypot(after.x - atFinish.x, after.z - atFinish.z)).toBeLessThan(0.05);
+
+    sim.dispose();
+  });
+
+  it("replayLocalCharacter applies the same lock to every replayed tick", () => {
+    const sim = raceSim();
+    const before = me(sim).position;
+
+    sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, [NORTH, NORTH, NORTH], "COUNTDOWN");
+
+    const after = me(sim).position;
+    expect(Math.hypot(after.x - before.x, after.z - before.z)).toBeLessThan(0.05);
+
+    sim.dispose();
+  });
+});
+
 describe("dispose (M4 ticket 01)", () => {
   it("frees the Rapier world so a client can start, stop and start again without leaking it", () => {
     const sim = new RapierSimulation();
