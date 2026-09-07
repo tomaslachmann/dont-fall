@@ -28,6 +28,28 @@ export const allQualified = (characters: Record<string, Qualifiable>): boolean =
 };
 
 /**
+ * Whether a Survival Round has reached its Survivor Target (M5 ticket 05,
+ * ADR 0042, CONTEXT.md) — the Survival-shaped sibling of {@link allQualified},
+ * fed into the identical RUNNING → ROUND_END transition Race already uses
+ * (`matchLoop.ts` picks whichever of the two applies; `advanceMatchPhase`
+ * itself stays Round-type-agnostic either way).
+ *
+ * Counts survivors *at or below* the target rather than requiring an exact
+ * match: a lopsided Impact that eliminates two Characters on the same Tick
+ * must still end the Round, not skip past its own ending condition.
+ *
+ * An empty Match is deliberately `false` too, for the identical reason
+ * {@link allQualified} is: nobody connected is not a Round with survivors
+ * left standing, and treating it as true would end a Round nobody started.
+ */
+export const survivorTargetReached = (characters: Record<string, Pick<Qualifiable, "eliminated">>, survivorTarget: number): boolean => {
+  const all = Object.values(characters);
+  if (all.length === 0) return false;
+  const survivors = all.filter((character) => character.eliminated !== true).length;
+  return survivors <= survivorTarget;
+};
+
+/**
  * Whether this Character was Eliminated (CONTEXT.md) — it did not Qualify
  * before the Round ended.
  *

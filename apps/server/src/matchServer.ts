@@ -29,6 +29,7 @@ import {
   roundTimeLeftMs,
   trackSpawn,
   type ClientMessage,
+  type FallBehavior,
   type LobbyPlayer,
   type MatchState,
   type ServerMessage,
@@ -90,6 +91,15 @@ export interface StartServerConfig {
    * long to wait out in a test of what happens when the clock expires.
    */
   timeLimitMsOverride?: number;
+  /**
+   * Force this Round's `RoundRules.fallBehavior` (M5 ticket 05). Test-only,
+   * standing in for the Lobby's own Round-type picker (ticket 07) — until
+   * that exists, a Round-level override with no live source is exactly what
+   * a test needs to exercise Survival's own endings server-side at all.
+   */
+  fallBehaviorOverride?: FallBehavior;
+  /** Force this Round's `RoundRules.survivorTarget` (M5 ticket 05). Same reasoning and same test-only status as `fallBehaviorOverride`. */
+  survivorTargetOverride?: number;
 }
 
 export const startServer = async (config: StartServerConfig = {}): Promise<MatchServer> => {
@@ -126,6 +136,8 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       roundEndMs,
       playersToStart,
       ...(config.timeLimitMsOverride !== undefined ? { timeLimitMsOverride: config.timeLimitMsOverride } : {}),
+      ...(config.fallBehaviorOverride !== undefined ? { fallBehaviorOverride: config.fallBehaviorOverride } : {}),
+      ...(config.survivorTargetOverride !== undefined ? { survivorTargetOverride: config.survivorTargetOverride } : {}),
     },
     bootTrack,
   );

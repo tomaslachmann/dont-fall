@@ -705,7 +705,7 @@ describe("RapierSimulation — what a Fall does is a RoundRules field (M5 ticket
       spawn: { x: 0, y: 1.5, z: 0 },
       statics: [PLATFORM],
       killPlaneY: -8,
-      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate" },
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
     });
 
   it("still loses control on a Fall — the Fall itself never varies, and it happens immediately (M5 ticket 04: never stepped again to land a deferred one)", () => {
@@ -746,7 +746,7 @@ describe("RapierSimulation — what a Fall does is a RoundRules field (M5 ticket
       statics: [{ center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 12 } }],
       checkpoints: [{ respawn: { x: -8, y: 1.5, z: 4 }, trigger: { center: { x: 0, y: 0.5, z: 4 }, halfExtents: { x: 3, y: 2, z: 1.5 } } }],
       killPlaneY: -8,
-      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate" },
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
     });
     tick(sim, 0.5);
     tick(sim, 1, NORTH); // walk through the Checkpoint
@@ -768,7 +768,7 @@ describe("RapierSimulation — what a Fall does is a RoundRules field (M5 ticket
       spawn: { x: 0, y: 1.5, z: 0 },
       statics: [PLATFORM],
       killPlaneY: -8,
-      roundRules: { timeLimitMs: 60_000, fallBehavior: "respawn" },
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "respawn", survivorTarget: 1 },
     });
     tick(sim, 0.5);
     tickUntilFall(sim);
@@ -919,7 +919,7 @@ describe("RapierSimulation — an eliminated Character is marked, not removed (M
       spawn: { x: 0, y: 1.5, z: 0 },
       statics: [],
       killPlaneY: -8,
-      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate" },
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
     });
 
     sim.applyImpact(MOVER, { x: IMPACT_RAGDOLL_MIN + 5, y: 0, z: 0 });
@@ -937,6 +937,45 @@ describe("RapierSimulation — an eliminated Character is marked, not removed (M
     expect(afterFall.eliminated).toBe(true); // still eliminated
     expect(afterFall.ragdollCause).toBe("Bump"); // the real cause survives, not silently rewritten to "Fall"
     expect(afterFall.ragdollEpoch).toBe(afterImpact.ragdollEpoch); // one knockdown, not two
+  });
+});
+
+describe("RapierSimulation — qualifySurvivors (M5 ticket 05, ADR 0042)", () => {
+  const MOVER = DEFAULT_CHARACTER_ID;
+  const TARGET = "target";
+  const onGround = (z: number) => ({ x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z });
+
+  it("Qualifies every Character still standing, at the given Tick", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-1));
+    tick(sim, 0.3);
+
+    sim.qualifySurvivors(sim.snapshot().tick);
+
+    expect(sim.snapshot().characters[MOVER]!.finishTick).toBe(sim.snapshot().tick);
+    expect(sim.snapshot().characters[TARGET]!.finishTick).toBe(sim.snapshot().tick);
+  });
+
+  it("never Qualifies an eliminated Character", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-1));
+    tick(sim, 0.3);
+    sim.eliminateCharacter(TARGET);
+
+    sim.qualifySurvivors(sim.snapshot().tick);
+
+    expect(sim.snapshot().characters[MOVER]!.finishTick).not.toBeNull();
+    expect(sim.snapshot().characters[TARGET]!.finishTick).toBeNull();
+  });
+
+  it("keeps a Character's own earlier finishTick rather than overwriting it", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    tick(sim, 0.3);
+    sim.reconcileCharacter(MOVER, { ...sim.snapshot().characters[MOVER]!, finishTick: 5 });
+
+    sim.qualifySurvivors(50);
+
+    expect(sim.snapshot().characters[MOVER]!.finishTick).toBe(5);
   });
 });
 
@@ -3662,7 +3701,7 @@ describe("RapierSimulation — RoundRules (M5 ticket 02, ADR 0041/0043)", () => 
     const withRules = new RapierSimulation({
       statics: [GROUND],
       spawn: RESTING_SPAWN,
-      roundRules: { timeLimitMs: 5_000, fallBehavior: "respawn" },
+      roundRules: { timeLimitMs: 5_000, fallBehavior: "respawn", survivorTarget: 1 },
     });
 
     tick(plain, 1, NORTH);
@@ -3677,7 +3716,7 @@ describe("RapierSimulation — RoundRules (M5 ticket 02, ADR 0041/0043)", () => 
     const sim = new RapierSimulation({ statics: [GROUND], spawn: RESTING_SPAWN });
     const before = me(sim).position;
 
-    sim.syncRoundRules({ timeLimitMs: 30_000, fallBehavior: "respawn" });
+    sim.syncRoundRules({ timeLimitMs: 30_000, fallBehavior: "respawn", survivorTarget: 1 });
 
     expect(me(sim).position).toEqual(before);
     tick(sim, 1, NORTH); // still simulates normally afterward

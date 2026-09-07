@@ -7,6 +7,7 @@ import {
   countdownMsLeft,
   resolveHostId,
   roundTimeLeftMs,
+  survivorTargetReached,
   type ServerMessage,
   type SimInputs,
 } from "@dont-fall/shared";
@@ -92,6 +93,16 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       // The Round's clock starts the Tick the Countdown ends, not when the
       // server did (M4 ticket 03's anchor, now owned by this transition).
       if (nextMatch.phase === "RUNNING" && rt.match.phase !== "RUNNING") rt.roundStartTick = thisTick;
+      // A Survival Round's own ending Qualifies whoever it left standing,
+      // all at once — the Race-shaped sibling already stamps `finishTick`
+      // continuously, per-Character, from inside the shared step itself
+      // (crossing the Finish Zone), so only Survival needs this (M5 ticket
+      // 05, ADR 0042). Exactly once, the Tick the transition actually
+      // happens — before `state` is built below, so this same snapshot
+      // already shows survivors Qualified.
+      if (nextMatch.phase === "ROUND_END" && rt.match.phase === "RUNNING" && rt.roundRules.fallBehavior === "eliminate") {
+        rt.simulation.qualifySurvivors(thisTick);
+      }
       // A fresh Countdown is a fresh Round: last Round's DNFs are not this
       // Round's (M4 ticket 05).
       if (nextMatch.phase === "COUNTDOWN" && rt.match.phase !== "COUNTDOWN") rt.dnf = [];
@@ -136,9 +147,17 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
         timeLeftMs = timeLimitMs;
       }
       // Both endings, decided by the server from state it already owns (ADR
-      // 0040) — whichever happens first ends the Round.
+      // 0040) — whichever happens first ends the Round. Which Round-shaped
+      // ending applies is `roundRules.fallBehavior`'s own call (M5 ticket
+      // 05) — `advanceMatchPhase` itself stays Round-type-agnostic either
+      // way: this is still the one `allQualified` field it has always read,
+      // just fed a different Round type's own answer to "has this Round's
+      // condition been met," never a third mechanism alongside it.
       rt.roundEnding = {
-        allQualified: allQualified(state.characters),
+        allQualified:
+          rt.roundRules.fallBehavior === "eliminate"
+            ? survivorTargetReached(state.characters, rt.roundRules.survivorTarget)
+            : allQualified(state.characters),
         timeExpired: rt.match.phase === "RUNNING" && timeLeftMs === 0,
       };
 

@@ -1182,6 +1182,91 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
   });
 });
 
+describe("startServer — a Survival Round ends (M5 ticket 05)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (;;) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+  };
+
+  it("ends early once eliminations bring survivors down to the Survivor Target — the remaining Player Qualifies", async () => {
+    server = await startServer({
+      port: 0,
+      playersToStart: 2,
+      countdownMs: 0,
+      roundEndMs: 0,
+      fallBehaviorOverride: "eliminate",
+      survivorTargetOverride: 1,
+    });
+    const a = connect(server.port);
+    const welcomeA = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
+    const b = connect(server.port);
+    const welcomeB = (await nextMessage(b)) as Extract<ServerMessage, { type: "welcome" }>;
+    await startMatch(a, b);
+    await snapshotUntil(b, (s) => s.phase === "RUNNING");
+
+    a.close(); // eliminated (M5 ticket 04) — 1 survivor left, at the Target
+
+    const ended = await snapshotUntil(b, (s) => s.phase === "ROUND_END" || s.phase === "RESULTS");
+
+    // Early, not by waiting out the (long, unset) Time Limit.
+    expect(ended.timeLeftMs).toBeGreaterThan(0);
+    // The survivor Qualifies — the same finishTick mechanism a Race's own
+    // Finish Zone uses, just granted by the Round's own ending instead.
+    expect(ended.state.characters[welcomeB.playerId]!.finishTick).not.toBeNull();
+    // The eliminated Player never does, and stays eliminated, not removed.
+    expect(ended.state.characters[welcomeA.playerId]!.finishTick).toBeNull();
+    expect(ended.state.characters[welcomeA.playerId]!.eliminated).toBe(true);
+    b.close();
+  });
+
+  it("ends on the clock with survivors still above the Target — everyone left standing Qualifies", async () => {
+    // Target 1 with both Players still standing (2 > 1) never reaches the
+    // early-ending path — this only ever ends once the (very short) clock does.
+    server = await startServer({
+      port: 0,
+      playersToStart: 2,
+      countdownMs: 0,
+      roundEndMs: 0,
+      fallBehaviorOverride: "eliminate",
+      survivorTargetOverride: 1,
+      timeLimitMsOverride: 300,
+    });
+    const a = connect(server.port);
+    const welcomeA = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
+    const b = connect(server.port);
+    const welcomeB = (await nextMessage(b)) as Extract<ServerMessage, { type: "welcome" }>;
+    await startMatch(a, b);
+
+    const ended = await snapshotUntil(b, (s) => s.phase === "ROUND_END" || s.phase === "RESULTS");
+
+    expect(ended.timeLeftMs).toBe(0);
+    // Neither eliminated, both still standing when the clock ran out —
+    // both Qualify, exactly like a Race's own clock-ran-out survivors do.
+    expect(ended.state.characters[welcomeA.playerId]!.finishTick).not.toBeNull();
+    expect(ended.state.characters[welcomeB.playerId]!.finishTick).not.toBeNull();
+    expect(ended.state.characters[welcomeA.playerId]!.eliminated).toBe(false);
+    expect(ended.state.characters[welcomeB.playerId]!.eliminated).toBe(false);
+    a.close();
+    b.close();
+  });
+});
+
 describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
   const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
     new Promise((resolve) => {

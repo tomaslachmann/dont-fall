@@ -409,6 +409,24 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   }
 
   /**
+   * Qualify every Character still standing (M5 ticket 05, ADR 0042) — a
+   * Survival Round's own ending grants Qualification to whoever it left
+   * un-eliminated, all at once, rather than a Race's own per-Character
+   * Finish Zone crossing. Match authority only: `matchLoop.ts` calls this
+   * exactly once, the Tick it decides the Round has ended, never predicted
+   * by a client — which Character survives depends on every other
+   * Character, exactly the kind of decision ADR 0003/0042 keep off the
+   * shared step. A Character that already has a `finishTick` some other
+   * way (impossible for Survival today — no Finish Zone on an arena — but
+   * not assumed here) keeps its own earlier one.
+   */
+  qualifySurvivors(tick: number): void {
+    for (const progress of this.progress.values()) {
+      if (!progress.eliminated && progress.finishTick === null) progress.finishTick = tick;
+    }
+  }
+
+  /**
    * Client-only (ADR 0012, ticket 04): reconcile this local prediction world's
    * set of *other* players' mirror capsules against `poses` (every connected
    * Character except the local one, positioned from the latest server

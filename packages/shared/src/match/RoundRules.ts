@@ -1,4 +1,4 @@
-import { DEFAULT_TIME_LIMIT_MS } from "../tuning.js";
+import { DEFAULT_SURVIVOR_TARGET, DEFAULT_TIME_LIMIT_MS } from "../tuning.js";
 
 /**
  * The rules a Round runs by, as data (M5 ticket 02, ADR 0041/0043) — never a
@@ -25,6 +25,12 @@ import { DEFAULT_TIME_LIMIT_MS } from "../tuning.js";
  * ever supplies `"eliminate"`. The same one mechanism, still — a Round type
  * is just the caller that knows which override to pass, never a name the
  * step itself sees.
+ *
+ * `survivorTarget` (ticket 05, ADR 0041) is the field ADR 0041 itself was
+ * written for: a real Track default ("this arena plays well down to 4"),
+ * resolved the same way `timeLimitMs` is. Meaningless whenever
+ * `fallBehavior` is `"respawn"` — a Race never reads it — the same way a
+ * Track author never tags which Round types a Track allows.
  */
 export interface RoundRules {
   /** How long a Round gets, in ms (ADR 0038, folded into ADR 0041's general mechanism). */
@@ -36,6 +42,11 @@ export interface RoundRules {
    * plane — never varies; only this does.
    */
   fallBehavior: FallBehavior;
+  /**
+   * How many Players a Survival Round leaves standing before it ends
+   * (CONTEXT.md). Read only when `fallBehavior` is `"eliminate"`.
+   */
+  survivorTarget: number;
 }
 
 /** What follows a Character's Fall (ADR 0042) — see {@link RoundRules.fallBehavior}. */
@@ -52,12 +63,14 @@ export type FallBehavior = "respawn" | "eliminate";
 export interface RoundOverrides {
   timeLimitMs?: number | undefined;
   fallBehavior?: FallBehavior | undefined;
+  survivorTarget?: number | undefined;
 }
 
 /** Every value {@link RoundRules} can take when nothing overrides anything — a Race, on a Track authored with no other opinion. */
 export const DEFAULT_ROUND_RULES: RoundRules = {
   timeLimitMs: DEFAULT_TIME_LIMIT_MS,
   fallBehavior: "respawn",
+  survivorTarget: DEFAULT_SURVIVOR_TARGET,
 };
 
 /**
@@ -69,4 +82,5 @@ export const DEFAULT_ROUND_RULES: RoundRules = {
 export const resolveRoundRules = (trackDefaults: RoundRules, overrides: RoundOverrides = {}): RoundRules => ({
   timeLimitMs: overrides.timeLimitMs ?? trackDefaults.timeLimitMs,
   fallBehavior: overrides.fallBehavior ?? trackDefaults.fallBehavior,
+  survivorTarget: overrides.survivorTarget ?? trackDefaults.survivorTarget,
 });

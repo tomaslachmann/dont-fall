@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { allQualified, isEliminated, qualificationPlacement } from "./Qualification.js";
+import { allQualified, isEliminated, qualificationPlacement, survivorTargetReached } from "./Qualification.js";
 
 const chars = (...ticks: (number | null)[]) =>
   Object.fromEntries(ticks.map((finishTick, i) => [`p${i}`, { finishTick }]));
+
+const survivors = (...eliminated: boolean[]) => Object.fromEntries(eliminated.map((e, i) => [`p${i}`, { eliminated: e }]));
 
 describe("allQualified", () => {
   it("is true once every connected Character has reached the Finish Zone", () => {
@@ -28,6 +30,28 @@ describe("allQualified", () => {
 
   it("still waits on a Character that is down but not eliminated (an ordinary Impact, still racing)", () => {
     expect(allQualified({ p0: { finishTick: 10 }, p1: { finishTick: null, eliminated: false } })).toBe(false);
+  });
+});
+
+describe("survivorTargetReached", () => {
+  it("is false while more Players remain standing than the Target", () => {
+    expect(survivorTargetReached(survivors(false, false, false), 1)).toBe(false);
+  });
+
+  it("is true once survivors drop to exactly the Target", () => {
+    expect(survivorTargetReached(survivors(false, true, true), 1)).toBe(true);
+  });
+
+  it("is true once survivors drop below the Target, not just to it — a lopsided Impact eliminating two at once must not skip past its own ending", () => {
+    expect(survivorTargetReached(survivors(true, true, true), 1)).toBe(true);
+  });
+
+  it("is false for an empty Match — nobody connected is not a Round with survivors left, same reasoning as allQualified", () => {
+    expect(survivorTargetReached({}, 1)).toBe(false);
+  });
+
+  it("is true immediately when nobody has been eliminated and the Target is already met (winner-takes-all with one Player)", () => {
+    expect(survivorTargetReached(survivors(false), 1)).toBe(true);
   });
 });
 

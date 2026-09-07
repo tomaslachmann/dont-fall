@@ -1,9 +1,11 @@
 import {
+  DEFAULT_SURVIVOR_TARGET,
   MODULE_LIBRARY,
   RapierSimulation,
   resolveRoundRules,
   resolveTrack,
   trackSpawn,
+  type FallBehavior,
   type LobbyPlayer,
   type MatchState,
   type RoundRules,
@@ -21,6 +23,10 @@ export interface MatchConfig {
   roundEndMs: number;
   playersToStart: number;
   timeLimitMsOverride?: number | undefined;
+  /** Test-only, standing in for the Lobby's own Round-type picker (M5 ticket 07) until it exists. */
+  fallBehaviorOverride?: FallBehavior | undefined;
+  /** Test-only, same reasoning as `fallBehaviorOverride`. */
+  survivorTargetOverride?: number | undefined;
 }
 
 /**
@@ -118,10 +124,12 @@ export class MatchRuntime {
    * ticket has a source for; a real per-Round choice (a future Lobby control)
    * is more overrides added to the same call, not a new mechanism.
    *
-   * `fallBehavior`'s own "Track default" is always the constant `"respawn"`
-   * (M5 ticket 03, ADR 0041) — no Track carries a Round-type opinion, so
-   * every Round is a Race until a real override exists to say otherwise
-   * (M5 ticket 07's Lobby Round-type picker adds one to this same call).
+   * `fallBehavior`/`survivorTarget`'s own "Track default" is always the
+   * constant `"respawn"`/`DEFAULT_SURVIVOR_TARGET` (M5 ticket 03/05, ADR
+   * 0041) — no Track carries a Round-type opinion, so every Round is a Race
+   * until a real override exists to say otherwise (M5 ticket 07's Lobby
+   * Round-type picker adds one to this same call; `fallBehaviorOverride`/
+   * `survivorTargetOverride` stand in for it in the meantime, test-only).
    *
    * Returns both rather than assigning `this.roundRules` as a side effect:
    * `new RapierSimulation` can throw (an unknown Module id), and only the
@@ -131,8 +139,12 @@ export class MatchRuntime {
    */
   buildSimulationFor(track: Track): { simulation: RapierSimulation; roundRules: RoundRules } {
     const roundRules = resolveRoundRules(
-      { timeLimitMs: this.fetched.timeLimitMs, fallBehavior: "respawn" },
-      { timeLimitMs: this.config.timeLimitMsOverride },
+      { timeLimitMs: this.fetched.timeLimitMs, fallBehavior: "respawn", survivorTarget: DEFAULT_SURVIVOR_TARGET },
+      {
+        timeLimitMs: this.config.timeLimitMsOverride,
+        fallBehavior: this.config.fallBehaviorOverride,
+        survivorTarget: this.config.survivorTargetOverride,
+      },
     );
     const simulation = new RapierSimulation({
       ...resolveTrack(MODULE_LIBRARY, track),

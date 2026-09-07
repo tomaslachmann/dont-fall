@@ -680,6 +680,19 @@ export const DEFAULT_TIME_LIMIT_MS = 180_000;
 export const MIN_TIME_LIMIT_MS = 10_000;
 export const MAX_TIME_LIMIT_MS = 30 * 60_000;
 
+// --- Survival (M5 ticket 05, ADR 0041/0042) ---------------------------------
+
+/**
+ * The Survivor Target (CONTEXT.md) a Track backfills to when it carries no
+ * default of its own, and what the Track builder offers for a new one
+ * (ticket 07) — the same "backfill, never leave a value that means nothing"
+ * discipline `DEFAULT_TIME_LIMIT_MS` follows. 1: winner-takes-all, last one
+ * standing — the Final Race form's own target (CONTEXT.md), and the
+ * smallest number that still means something (0 would end every Survival
+ * Round before it could start). A Race never reads this field at all.
+ */
+export const DEFAULT_SURVIVOR_TARGET = 1;
+
 // --- Match phase (M4 ticket 04, ADR 0040) -----------------------------------
 
 /**
