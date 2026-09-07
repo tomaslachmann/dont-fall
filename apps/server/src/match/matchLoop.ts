@@ -1,14 +1,13 @@
 import {
-  IDLE_INPUTS,
   SNAPSHOT_HZ,
   TICK_MS,
   TICK_RATE_HZ,
   advanceMatchPhase,
   allQualified,
   countdownMsLeft,
-  phaseLocksInput,
   resolveHostId,
   roundTimeLeftMs,
+  survivorTargetReached,
   type ServerMessage,
   type SimInputs,
 } from "@dont-fall/shared";
@@ -64,22 +63,18 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
         timeExpired: rt.roundEnding.timeExpired,
         returnToLobbyRequested: rt.returnToLobbyRequested,
       });
-      // Input is locked in every phase but RUNNING (ADR 0040). Enforced here
-      // rather than by refusing the packet: the client runs the same rule on
-      // its own prediction, so both sides stop and start driving the
-      // Character on the identical Tick, and a client that ignores the rule
-      // simply has its input replaced.
-      const inputLocked = phaseLocksInput(nextMatch.phase);
+      // Whether input is actually applied — locked outside RUNNING (ADR
+      // 0040), locked per-Character on Qualification (ADR 0039), and every
+      // Round type's own rule after that — is entirely `RapierSimulation.tick`'s
+      // own call now (M5 ticket 01, ADR 0044): this loop just hands it every
+      // connected Character's raw applied input and the phase it decided,
+      // never a pre-substituted one. The ack bookkeeping inside `takeFor`
+      // stays honest whatever the phase — the client is still reconciling
+      // against these Ticks even while locked.
       const tickInputs: Record<string, SimInputs> = {};
-      for (const id of rt.sockets.keys()) {
-        // The ack bookkeeping inside `takeFor` stays honest whatever the phase
-        // — the client is still reconciling against these Ticks — only the
-        // input actually simulated is replaced.
-        const applied = rt.inputs.takeFor(id, thisTick);
-        tickInputs[id] = inputLocked ? IDLE_INPUTS : applied;
-      }
+      for (const id of rt.sockets.keys()) tickInputs[id] = rt.inputs.takeFor(id, thisTick);
 
-      rt.simulation.tick(tickInputs);
+      rt.simulation.tick(tickInputs, nextMatch.phase);
       rt.serverTick = thisTick;
       // A one-shot edge, spent the instant a tick reads it whether or not it
       // actually caused a transition — otherwise a request left stale by (say)
@@ -98,13 +93,42 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       // The Round's clock starts the Tick the Countdown ends, not when the
       // server did (M4 ticket 03's anchor, now owned by this transition).
       if (nextMatch.phase === "RUNNING" && rt.match.phase !== "RUNNING") rt.roundStartTick = thisTick;
+      // Read once and reused below (code review, ticket 05) — the same
+      // immutable value for the whole tick, so "which Round type is this"
+      // can never silently disagree between the two places that ask it.
+      const isSurvival = rt.roundRules.fallBehavior === "eliminate";
+      // A Survival Round's own ending Qualifies whoever it left standing,
+      // all at once — the Race-shaped sibling already stamps `finishTick`
+      // continuously, per-Character, from inside the shared step itself
+      // (crossing the Finish Zone), so only Survival needs this (M5 ticket
+      // 05, ADR 0042). Exactly once, the Tick the transition actually
+      // happens — before `state` is built below, so this same snapshot
+      // already shows survivors Qualified.
+      if (nextMatch.phase === "ROUND_END" && rt.match.phase === "RUNNING" && isSurvival) {
+        rt.simulation.qualifySurvivors(thisTick);
+      }
       // A fresh Countdown is a fresh Round: last Round's DNFs are not this
       // Round's (M4 ticket 05).
       if (nextMatch.phase === "COUNTDOWN" && rt.match.phase !== "COUNTDOWN") rt.dnf = [];
-      if (nextMatch.phase === "LOBBY" && rt.match.phase === "RESULTS") {
-        // Going again (M4 ticket 08): everyone still connected gets a fresh
-        // Round on the same Track, re-seated at their spawn slot. A genuinely
-        // fresh Lobby, not a resumed one: last Round's DNFs are not this
+      if (nextMatch.phase === "LOBBY" && rt.match.phase !== "LOBBY") {
+        // Every way back to a Lobby gets a genuinely fresh one, never a
+        // resumed one: the host going again from Results (M4 ticket 08), and
+        // the last Player leaving mid-Round (`advanceMatchPhase`'s "a Round
+        // with nobody in it is over").
+        //
+        // Both need the world rebuilt, not just the phase reset (M5 ticket
+        // 08, found live). Since ticket 04 a Character that drops mid-Round
+        // is *marked* eliminated rather than removed (ADR 0042) — right for
+        // the Round it was racing, and wrong forever after: if that drop was
+        // the last one, the phase snapped back to LOBBY around a world still
+        // holding its body. Those ghosts then counted as connected Players on
+        // every client's HUD, and — because `allQualified` needs a
+        // `finishTick` from *every* Character and a ghost can never earn one
+        // — no Race on that server could ever again end by everyone
+        // Qualifying, only by running out its clock.
+        //
+        // Everyone still connected gets a fresh Round on the same Track,
+        // re-seated at their spawn slot. Last Round's DNFs are not this
         // Round's (same reasoning as the Countdown-triggered clear above),
         // and everyone's Ready goes back to false — otherwise a Lobby the
         // host returns to would start itself the instant it existed, since
@@ -127,7 +151,9 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
 
       // Before the Round is RUNNING none of its clock has been spent, so it
       // reads its full authored value rather than counting down in the Lobby.
-      const timeLimitMs = rt.roundTimeLimitMs();
+      // `rt.roundRules` is resolved once, before COUNTDOWN (ADR 0041) —
+      // nothing here re-resolves it or reads Track/override separately.
+      const timeLimitMs = rt.roundRules.timeLimitMs;
       // Before a Round the clock reads its full authored value; during one it
       // counts down; after one it stops where it stopped.
       let timeLeftMs: number;
@@ -140,9 +166,14 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
         timeLeftMs = timeLimitMs;
       }
       // Both endings, decided by the server from state it already owns (ADR
-      // 0040) — whichever happens first ends the Round.
+      // 0040) — whichever happens first ends the Round. Which Round-shaped
+      // ending applies is `roundRules.fallBehavior`'s own call (M5 ticket
+      // 05) — `advanceMatchPhase` itself stays Round-type-agnostic either
+      // way: this is still the one `allQualified` field it has always read,
+      // just fed a different Round type's own answer to "has this Round's
+      // condition been met," never a third mechanism alongside it.
       rt.roundEnding = {
-        allQualified: allQualified(state.characters),
+        allQualified: isSurvival ? survivorTargetReached(state.characters, rt.roundRules.survivorTarget) : allQualified(state.characters),
         timeExpired: rt.match.phase === "RUNNING" && timeLeftMs === 0,
       };
 
@@ -159,7 +190,16 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       // client sees the identical Lobby (M4 ticket 07), and `hostId` is
       // recomputed from who's here now rather than stored anywhere.
       const lobbyPlayerList = [...rt.lobbyPlayers.values()];
-      const lobbySnapshot = { hostId: resolveHostId(lobbyPlayerList), players: lobbyPlayerList };
+      const blockedReason = rt.startBlockedReason();
+      const lobbySnapshot = {
+        hostId: resolveHostId(lobbyPlayerList),
+        players: lobbyPlayerList,
+        // The host's Round-type pick and why (if at all) it can't start on
+        // this Track — both shown to everyone before the start (M5 ticket
+        // 07), not discovered when the Round behaves unexpectedly.
+        roundType: rt.roundType,
+        ...(blockedReason !== undefined ? { startBlockedReason: blockedReason } : {}),
+      };
       for (const [id, socket] of rt.sockets) {
         if (socket.readyState !== socket.OPEN) continue;
         trySend(
@@ -171,6 +211,7 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
             commandQueueDepth: rt.inputs.depth(id),
             timeLeftMs,
             phase: rt.match.phase,
+            roundRules: rt.roundRules,
             countdownMsLeft: countdown,
             dnf: rt.dnf,
             trackId: rt.fetched.id,

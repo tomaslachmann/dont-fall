@@ -15,6 +15,7 @@ import {
   subVec3,
   type CharacterMotionState,
   type CharacterSnapshot,
+  type MatchPhase,
   type PropSnapshot,
   type SimInputs,
   type SimState,
@@ -151,12 +152,18 @@ export class PredictionLoop {
    * send every backlogged tick's own packet with the *final* buffer
    * contents, changing what ADR 0021 actually puts on the wire during a
    * multi-tick catch-up frame — moved code must not move that.
+   *
+   * `phase` (M5 ticket 01, ADR 0044) is passed straight through to the
+   * shared step, which is the sole place that decides whether it actually
+   * moves the Character — the caller hands in real input every tick, locked
+   * or not, and `RapierSimulation.tick` is what makes this client's own
+   * prediction stop and start driving on the identical Tick the server does.
    */
-  step(input: SimInputs, advanceMs: number, onBuffered?: () => void): void {
+  step(input: SimInputs, advanceMs: number, onBuffered?: () => void, phase: MatchPhase = "RUNNING"): void {
     this.accumulatorMs = Math.min(this.accumulatorMs + advanceMs, TICK_MS * MAX_STEPS_PER_FRAME);
     let steps = 0;
     while (this.accumulatorMs + EPSILON_MS >= TICK_MS && steps < MAX_STEPS_PER_FRAME) {
-      this.recordTick(this.tick + 1, input, onBuffered);
+      this.recordTick(this.tick + 1, input, onBuffered, phase);
       this.accumulatorMs -= TICK_MS;
       steps += 1;
     }
@@ -182,13 +189,13 @@ export class PredictionLoop {
    * "not yet validated" outside a real client/server integration test, so it
    * is not something production or this class's own `step` need to model).
    */
-  recordTick(tick: number, input: SimInputs, onBuffered?: () => void): void {
+  recordTick(tick: number, input: SimInputs, onBuffered?: () => void, phase: MatchPhase = "RUNNING"): void {
     this.tick = tick;
     this.inputBuffer.push({ tick, input });
     onBuffered?.();
 
     this.previousSnapshot = this.sim.snapshot();
-    this.sim.tick({ [this.myId]: input });
+    this.sim.tick({ [this.myId]: input }, phase);
     const predicted = this.sim.snapshot().characters[this.myId]!;
     this.positionHistory.set(tick, predicted.position);
     this.predictedDownAtTick = isDownMotionState(predicted.motionState) ? (this.predictedDownAtTick ?? tick) : null;
@@ -220,12 +227,18 @@ export class PredictionLoop {
    * whichever instance is currently live (recreated on a Track reload, same
    * as this class itself), since a Prop's own predicted/pinned state has to
    * stay interleaved with exactly when the Character's own replay runs.
+   *
+   * `phase` (M5 ticket 01) is the caller's current one, applied to every
+   * replayed tick below alike — the unacked span this replays is only ever
+   * an RTT wide, so treating "now" as the phase for the whole replay is the
+   * same simplification `syncTick`/`syncPropsToSnapshot` already make.
    */
   reconcile(
     server: CharacterSnapshot,
     serverTick: number,
     serverProps: readonly PropSnapshot[],
     propPrediction: PropPredictionController,
+    phase: MatchPhase = "RUNNING",
   ): ReconcileResult {
     const acked = server.lastInputTick;
     // Keep the entry AT `acked` — that's the tick the server's report is for,
@@ -283,7 +296,7 @@ export class PredictionLoop {
         const sp = serverProps[i];
         if (sp) this.sim.applyAuthoritativePropState(i, sp);
       }
-      const replayed = this.sim.replayLocalCharacter(this.myId, unacked.map((entry) => entry.input));
+      const replayed = this.sim.replayLocalCharacter(this.myId, unacked.map((entry) => entry.input), phase);
       afterCorrection = this.sim.snapshot();
       propPrediction.reseedAfterReconcile(renderedBefore, afterCorrection.props);
       this.positionHistory.clear();

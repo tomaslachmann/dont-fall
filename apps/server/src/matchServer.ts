@@ -90,6 +90,19 @@ export interface StartServerConfig {
    * long to wait out in a test of what happens when the clock expires.
    */
   timeLimitMsOverride?: number;
+  /**
+   * Ignore the Revision's authored Survivor Target and use this instead
+   * (M5 ticket 05). Test-only, and the same kind of override
+   * `timeLimitMsOverride` is over the same kind of Track default: a test
+   * that needs a Survival Round to end on a specific number shouldn't have
+   * to publish a Revision authored for it.
+   *
+   * Ticket 05's `fallBehaviorOverride` is deliberately gone from beside it
+   * (ticket 07): that was never a Track default to override, it was the
+   * Round type standing in for a Lobby that couldn't pick one. The Lobby
+   * picks now (`setRoundType`), and the tests go through it.
+   */
+  survivorTargetOverride?: number;
 }
 
 export const startServer = async (config: StartServerConfig = {}): Promise<MatchServer> => {
@@ -126,6 +139,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       roundEndMs,
       playersToStart,
       ...(config.timeLimitMsOverride !== undefined ? { timeLimitMsOverride: config.timeLimitMsOverride } : {}),
+      ...(config.survivorTargetOverride !== undefined ? { survivorTargetOverride: config.survivorTargetOverride } : {}),
     },
     bootTrack,
   );
@@ -276,13 +290,20 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         // before `lobbyPlayers.delete` below removes the only place this
         // nickname lives — the Results screen (ticket 08) has nothing else
         // to call this Player once their Character is gone.
-        if (rt.match.phase === "RUNNING" && !rt.dnf.some((entry) => entry.id === id)) {
+        const midRound = rt.match.phase === "RUNNING";
+        if (midRound && !rt.dnf.some((entry) => entry.id === id)) {
           rt.dnf.push({ id, nickname: rt.lobbyPlayers.get(id)?.nickname ?? "Player" });
         }
         rt.sockets.delete(id);
         rt.inputs.remove(id);
         rt.lobbyPlayers.delete(id);
-        rt.simulation.removeCharacter(id);
+        // A mid-Round disconnect is eliminated, not removed (M5 ticket 04,
+        // ADR 0042) — pulling a rigid body out of the world mid-Round would
+        // disturb contact resolution for everyone still racing. Outside
+        // RUNNING nobody else is relying on this Character's body for
+        // anything, so a plain removal is still correct and cheaper.
+        if (midRound) rt.simulation.eliminateCharacter(id);
+        else rt.simulation.removeCharacter(id);
       });
     })();
   });

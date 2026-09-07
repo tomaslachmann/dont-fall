@@ -25,6 +25,9 @@ const baseLobby = (overrides: Partial<LobbySnapshot> = {}): LobbySnapshot => ({
   trackId: "track-a",
   trackRevision: 1,
   timeLimitMs: 180_000,
+  roundType: "race",
+  survivorTarget: 1,
+  startBlockedReason: undefined,
   ...overrides,
 });
 
@@ -33,7 +36,7 @@ const noop = () => {};
 describe("LobbyScreen", () => {
   it("lists every connected Player, marking the host row", () => {
     render(
-      <LobbyScreen lobby={baseLobby()} onSetNickname={noop} onSetReady={noop} onSelectTrack={noop} onStart={noop} />,
+      <LobbyScreen lobby={baseLobby()} onSetNickname={noop} onSetReady={noop} onSelectTrack={noop} onSetRoundType={noop} onStart={noop} />,
     );
 
     expect(screen.getByText("Host Player")).toBeInTheDocument();
@@ -49,6 +52,7 @@ describe("LobbyScreen", () => {
         onSetNickname={noop}
         onSetReady={onSetReady}
         onSelectTrack={noop}
+        onSetRoundType={noop}
         onStart={noop}
       />,
     );
@@ -71,6 +75,7 @@ describe("LobbyScreen", () => {
         onSetNickname={onSetNickname}
         onSetReady={noop}
         onSelectTrack={noop}
+        onSetRoundType={noop}
         onStart={noop}
       />,
     );
@@ -84,7 +89,7 @@ describe("LobbyScreen", () => {
   it("disables Start until everyone connected is Ready, for the host", () => {
     const onStart = vi.fn();
     const { rerender } = render(
-      <LobbyScreen lobby={baseLobby()} onSetNickname={noop} onSetReady={noop} onSelectTrack={noop} onStart={onStart} />,
+      <LobbyScreen lobby={baseLobby()} onSetNickname={noop} onSetReady={noop} onSelectTrack={noop} onSetRoundType={noop} onStart={onStart} />,
     );
 
     expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
@@ -100,6 +105,7 @@ describe("LobbyScreen", () => {
         onSetNickname={noop}
         onSetReady={noop}
         onSelectTrack={noop}
+        onSetRoundType={noop}
         onStart={onStart}
       />,
     );
@@ -125,6 +131,7 @@ describe("LobbyScreen", () => {
         onSetNickname={noop}
         onSetReady={noop}
         onSelectTrack={onSelectTrack}
+        onSetRoundType={noop}
         onStart={noop}
       />,
     );
@@ -145,6 +152,7 @@ describe("LobbyScreen", () => {
         onSetNickname={noop}
         onSetReady={noop}
         onSelectTrack={noop}
+        onSetRoundType={noop}
         onStart={noop}
       />,
     );
@@ -152,5 +160,118 @@ describe("LobbyScreen", () => {
     expect(screen.getByText("Only the host picks the Track.")).toBeInTheDocument();
     expect(screen.getByText("Waiting for the host to start…")).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
+  });
+
+  describe("the Round type (M5 ticket 07)", () => {
+    it("shows the picked Round type to every Player, host or not", () => {
+      render(
+        <LobbyScreen
+          lobby={baseLobby({ myId: "guest-id", roundType: "survival" })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onStart={noop}
+        />,
+      );
+
+      expect(screen.getByRole("button", { name: "Survival" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("button", { name: "Race" })).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("lets the host pick one, and nobody else", () => {
+      const onSetRoundType = vi.fn();
+      const { rerender } = render(
+        <LobbyScreen
+          lobby={baseLobby()}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={onSetRoundType}
+          onStart={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Survival" }));
+      expect(onSetRoundType).toHaveBeenCalledWith("survival");
+
+      rerender(
+        <LobbyScreen
+          lobby={baseLobby({ myId: "guest-id" })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={onSetRoundType}
+          onStart={noop}
+        />,
+      );
+
+      expect(screen.getByRole("button", { name: "Survival" })).toBeDisabled();
+    });
+
+    it("shows the Survivor Target for Survival, and never for a Race", () => {
+      const { rerender } = render(
+        <LobbyScreen
+          lobby={baseLobby({ roundType: "survival", survivorTarget: 4 })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onStart={noop}
+        />,
+      );
+
+      expect(screen.getByText(/last 4 Players standing/)).toBeInTheDocument();
+
+      rerender(
+        <LobbyScreen
+          lobby={baseLobby({ roundType: "race", survivorTarget: 4 })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onStart={noop}
+        />,
+      );
+
+      expect(screen.queryByText(/standing/)).not.toBeInTheDocument();
+    });
+
+    it("shows the server's reason a Round can't start, and disables Start with it", () => {
+      const onStart = vi.fn();
+      const readyPlayers = [
+        { id: "host-id", nickname: "Host Player", ready: true, joinOrder: 0 },
+        { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1 },
+      ];
+      render(
+        <LobbyScreen
+          lobby={baseLobby({ players: readyPlayers, startBlockedReason: "This Track has no Finish Zone." })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onStart={onStart}
+        />,
+      );
+
+      expect(screen.getByText("This Track has no Finish Zone.")).toBeInTheDocument();
+      // Everyone is Ready — the only thing holding this Lobby is the Track.
+      expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    });
+
+    it("shows the reason to a non-host too, so the wait doesn't look like the host not clicking", () => {
+      render(
+        <LobbyScreen
+          lobby={baseLobby({ myId: "guest-id", startBlockedReason: "This Track has no Finish Zone." })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onStart={noop}
+        />,
+      );
+
+      expect(screen.getByText("This Track has no Finish Zone.")).toBeInTheDocument();
+    });
   });
 });

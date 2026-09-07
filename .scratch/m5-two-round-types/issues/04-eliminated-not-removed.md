@@ -16,10 +16,57 @@ players go through that same path.
 
 **Blocked by:** 03.
 
-**Status:** blocked
+**Status:** done
 
-- [ ] An eliminated Character is marked; its body stays, its collider does not
-- [ ] It is not stepped, and the saving is real — not a controller sweep per corpse per tick
-- [ ] A mid-Round disconnect stops removing the Character from the simulation
-- [ ] The client does not mirror eliminated Characters, reusing the down-player path
-- [ ] Nobody can shove a corpse, and a corpse cannot shove anybody
+- [x] An eliminated Character is marked; its body stays, its collider does not —
+      `CharacterProgress.eliminated`, replicated as `CharacterSnapshot.eliminated`. Going down is
+      immediate and synchronous (`CharacterController.eliminateNow`: `machine.snapTo("Ragdoll")` +
+      `beginRagdoll()`, which disables the collider) — not the state machine's usual deferred
+      `forceRagdoll`, because there is no next `beginTick` left to land it on
+- [x] It is not stepped, and the saving is real — not a controller sweep per corpse per tick.
+      `RapierSimulation.tick`'s two per-Character loops both `continue` on `progress.eliminated`
+      before calling `beginTick`/`endTick` or any Checkpoint/Fall/pad detection
+- [x] A mid-Round disconnect stops removing the Character from the simulation — a new
+      `RapierSimulation.eliminateCharacter(id)` the server's `close` handler calls instead of
+      `removeCharacter`, but only while `match.phase === "RUNNING"` (matching the existing DNF
+      condition exactly); outside RUNNING nothing relies on the body, so a plain removal stays
+      correct and cheaper
+- [x] The client does not mirror eliminated Characters, reusing the down-player path — needed
+      literally nothing: an eliminated Character's `motionState` is always `Ragdoll` and never
+      recovers (it is never stepped again), so `game/index.ts`'s existing `isDownMotionState`
+      mirror-skip already excludes it
+- [x] Nobody can shove a corpse, and a corpse cannot shove anybody — its capsule collider (the only
+      thing that ever collides with another live Character; `RAGDOLL_GROUPS` already excludes
+      `GROUP_CHARACTER`) is disabled and never re-enabled once eliminated
+- [x] (Found during implementation, not on the original checklist) Code review on ticket 03 caught
+      a real bug this ticket's own mechanism fixes as a side effect: without "not stepped at all,"
+      the state machine's unconditional Ragdoll→GettingUp→Controlled timers would eventually cycle
+      an eliminated Character back to `Controlled` while still falling, re-triggering `detectFall`
+      forever. A new long-running test (well past `RAGDOLL_MAX_MS + GETUP_MS`) pins that this can
+      no longer happen
+- [x] (Found by code review, `high` effort) `eliminateNow` forced a *fresh* Ragdoll entry
+      unconditionally, even over one already in progress from an unrelated Impact (a Bump off a
+      ledge, still tumbling) — discarding its real velocity for the capsule's own zeroed one,
+      overwriting `ragdollCause`, and double-bumping `ragdollEpoch` for one knockdown. Fixed with
+      the same `isDownMotionState` guard every *other* Ragdoll-entry path already has
+      (`beginTick`'s `prevState !== "Ragdoll"`, `reconcileTo`'s own check) — already-down just
+      needs `progress.eliminated` to start skipping it, nothing left for `eliminateNow` to do.
+      Two regression tests pin both directions (disconnect mid-Impact, Fall mid-Impact)
+- [x] (Found by code review) `eliminateCharacter` (the disconnect path) set `progress.eliminated`
+      and flipped `motionState` outside `tick`'s own per-Character loop, so the
+      `phaseStartTick`/`lastMotionState` stamping that loop normally does for a Fall-eliminated
+      Character never ran for a disconnect-eliminated one — silent today (nothing reads it yet)
+      but a real inconsistency between the two paths. `eliminateCharacter` now does the same
+      stamping inline
+- [x] (Found by code review) A mid-Round disconnect reported `ragdollCause: "Fall"` — nothing fell.
+      Added `"Disconnect"` to `RagdollCause`; `eliminate()` uses it, `fall()`'s eliminating branch
+      still uses `"Fall"`. Also removed the redundant `pendingCause` pre-set at both call sites —
+      `eliminateNow` now takes the cause as a parameter instead of reading a field a caller had to
+      remember to set first
+- [x] (Found during implementation, not on the original checklist) `allQualified` — the condition
+      that ends a Race early — used to require *every* entry in `state.characters` to have
+      `finishTick` set. Since an eliminated Character (a mid-Round disconnect) now stays in that
+      collection forever without one, it would have held every future Race open for the rest of
+      its Time Limit the instant anyone disconnected. Fixed by treating "eliminated" as resolved,
+      same as "Qualified," for this one check — pinned by both a unit test and a real
+      two-Player-drop-then-the-other-Qualifies server integration test

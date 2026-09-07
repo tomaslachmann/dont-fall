@@ -698,6 +698,346 @@ describe("RapierSimulation — Fall & Respawn", () => {
   });
 });
 
+describe("RapierSimulation — what a Fall does is a RoundRules field (M5 tickets 03/04, ADR 0042)", () => {
+  const PLATFORM: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 4, y: 0.5, z: 4 } };
+  const eliminatingSim = () =>
+    new RapierSimulation({
+      spawn: { x: 0, y: 1.5, z: 0 },
+      statics: [PLATFORM],
+      killPlaneY: -8,
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
+    });
+
+  it("still loses control on a Fall — the Fall itself never varies, and it happens immediately (M5 ticket 04: never stepped again to land a deferred one)", () => {
+    const sim = eliminatingSim();
+    tick(sim, 0.5);
+    tickUntilFall(sim);
+
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.ragdollCause).toBe("Fall");
+  });
+
+  it("queues no Respawn — the Character keeps falling through the void instead of returning", () => {
+    const sim = eliminatingSim();
+    tick(sim, 0.5);
+    tickUntilFall(sim);
+    const atFall = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
+
+    tick(sim, 1); // a full second of continuing to fall
+
+    const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
+    expect(after).toBeLessThan(atFall); // still falling, never lifted back above the kill plane
+  });
+
+  it("does not re-trigger every tick while already down — fallCount stays exactly 1", () => {
+    const sim = eliminatingSim();
+    tick(sim, 0.5);
+    tickUntilFall(sim);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.fallCount).toBe(1);
+
+    tick(sim, 1); // well inside RAGDOLL_MAX_MS (4s) — no forced recovery to race this
+
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.fallCount).toBe(1);
+  });
+
+  it("only eliminates while the Round is RUNNING — a Fall in the Lobby respawns instead (code review, ticket 07)", () => {
+    // A Lobby host can pick Survival before the Round starts (ticket 07), so
+    // `fallBehavior` is already "eliminate" through LOBBY and COUNTDOWN.
+    // Input is locked there but gravity and Spinners are not, and `eliminated`
+    // is never cleared — a Fall before the Round would put a Player out of a
+    // Round that hasn't begun.
+    // Spawned clear off the platform, so it Falls under gravity alone — no
+    // input, which is locked in LOBBY anyway.
+    const overTheVoid = () =>
+      new RapierSimulation({
+        spawn: { x: 20, y: 1.5, z: 0 },
+        statics: [PLATFORM],
+        killPlaneY: -8,
+        roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
+      });
+
+    const sim = overTheVoid();
+    for (let i = 0; i < 120; i += 1) sim.tick({}, "LOBBY");
+
+    const inLobby = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(inLobby.eliminated).toBe(false);
+    expect(inLobby.fallCount).toBeGreaterThan(0); // it did Fall — it just Respawned instead
+    expect(inLobby.respawnCount).toBeGreaterThan(0);
+
+    // And the identical Fall, once the Round is RUNNING, eliminates as ever.
+    const running = overTheVoid();
+    for (let i = 0; i < 120; i += 1) running.tick({});
+    expect(running.snapshot().characters[DEFAULT_CHARACTER_ID]!.eliminated).toBe(true);
+  });
+
+  it("ignores Checkpoints crossed before the Fall — a Round with no Respawn never reads respawnPoint", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: 1.5, z: 6 },
+      statics: [{ center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 12 } }],
+      checkpoints: [{ respawn: { x: -8, y: 1.5, z: 4 }, trigger: { center: { x: 0, y: 0.5, z: 4 }, halfExtents: { x: 3, y: 2, z: 1.5 } } }],
+      killPlaneY: -8,
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
+    });
+    tick(sim, 0.5);
+    tick(sim, 1, NORTH); // walk through the Checkpoint
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.checkpointIndex).toBe(0); // reached, tracked as ever
+
+    tickUntilFall(sim);
+    tick(sim, 1);
+
+    // Never teleported to the Checkpoint's respawn point (x = -8) — ignored, not rejected.
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x).toBeCloseTo(0, 0);
+  });
+
+  it("a Race (fallBehavior: respawn) resolves to exactly today's behaviour, pinned by the existing suite", () => {
+    // The existing "Fall & Respawn" describe block above already covers this
+    // exhaustively against the RoundRules-less default; this is the one
+    // targeted check that an *explicit* respawn RoundRules resolves
+    // identically to no RoundRules opinion at all.
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: 1.5, z: 0 },
+      statics: [PLATFORM],
+      killPlaneY: -8,
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "respawn", survivorTarget: 1 },
+    });
+    tick(sim, 0.5);
+    tickUntilFall(sim);
+    tickUntilControlled(sim);
+
+    const character = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(character.fallCount).toBe(1);
+    expect(character.position.y).toBeGreaterThan(-8);
+    expect(Math.hypot(character.position.x, character.position.z)).toBeLessThan(3);
+  });
+
+  it("stays eliminated forever — well past RAGDOLL_MAX_MS + GETUP_MS, never cycles back to Controlled (code review, ticket 03)", () => {
+    // The exact bug caught reviewing ticket 03: without ticket 04's "not
+    // stepped at all", the state machine's own unconditional Ragdoll →
+    // GettingUp → Controlled timers (RAGDOLL_MAX_MS=4000, GETUP_MS=450)
+    // fire regardless of settling, so a Character eliminated into an open
+    // void would cycle back to Controlled while still falling and
+    // detectFall would fire again. Being marked eliminated stops it from
+    // ever being stepped again, so those timers can never advance.
+    const sim = eliminatingSim();
+    tick(sim, 0.5);
+    tickUntilFall(sim);
+
+    tick(sim, 6); // well past 4.45s
+
+    const character = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(character.motionState).toBe("Ragdoll");
+    expect(character.fallCount).toBe(1);
+  });
+});
+
+describe("RapierSimulation — an eliminated Character is marked, not removed (M5 ticket 04, ADR 0042)", () => {
+  const MOVER = DEFAULT_CHARACTER_ID;
+  const TARGET = "target";
+  const onGround = (z: number) => ({ x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z });
+
+  it("stays in the Character collection and the snapshot — marked, not removed", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-3));
+    tick(sim, 0.3);
+
+    sim.eliminateCharacter(TARGET);
+    tick(sim, 0.3);
+
+    expect(Object.keys(sim.snapshot().characters).sort()).toEqual([MOVER, TARGET].sort());
+  });
+
+  it("is not stepped — input can no longer move it, only its own ragdoll settling can", () => {
+    // Its `position` keeps reading from the ragdoll's own body (`snapshot`
+    // already does this for anyone down, ticket-04 or not) — a genuinely
+    // separate dynamic Rapier body `world.step()` still simulates every
+    // tick regardless of `beginTick`/`endTick` ever running again, so a
+    // *little* settle drift is real and expected. What "not stepped" rules
+    // out is 2 seconds of continued WALK_SPEED-driven travel (12 units) if
+    // this Character's own controller were still reading `NORTH`.
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-3));
+    tick(sim, 0.3);
+    sim.eliminateCharacter(TARGET);
+    const at = sim.snapshot().characters[TARGET]!.position;
+
+    for (let n = 0; n < 60; n += 1) sim.tick({ [TARGET]: NORTH }); // input it can no longer receive
+
+    const after = sim.snapshot().characters[TARGET]!.position;
+    expect(Math.hypot(after.x - at.x, after.z - at.z)).toBeLessThan(2);
+  });
+
+  it("goes down immediately — motionState Ragdoll from the moment it is eliminated", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-3));
+    tick(sim, 0.3);
+
+    sim.eliminateCharacter(TARGET);
+
+    expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Ragdoll");
+  });
+
+  it("is a no-op on an unknown id or an already-eliminated Character", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-3));
+    tick(sim, 0.3);
+
+    expect(() => sim.eliminateCharacter("nobody")).not.toThrow();
+    sim.eliminateCharacter(TARGET);
+    expect(() => sim.eliminateCharacter(TARGET)).not.toThrow(); // already eliminated
+  });
+
+  it("nobody can shove a corpse — a live Character walks straight through where its disabled collider was", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-1));
+    tick(sim, 0.3);
+    sim.eliminateCharacter(TARGET);
+    const eliminatedAt = sim.snapshot().characters[TARGET]!.position;
+
+    for (let n = 0; n < Math.round(2 * TICK_RATE_HZ); n += 1) sim.tick({ [MOVER]: NORTH }); // walk straight at it
+
+    // Not blocked — the mover's own centre passes well beyond where a solid
+    // Character would have stopped it (compare the Bump-collision test above:
+    // "centres never get closer than roughly two capsule radii").
+    expect(sim.snapshot().characters[MOVER]!.position.z).toBeLessThan(eliminatedAt.z - 0.6);
+  });
+
+  it("a corpse cannot shove anybody — eliminating a Character mid-Impact leaves nothing behind to knock others around", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-1));
+    tick(sim, 0.3);
+    sim.eliminateCharacter(TARGET);
+    const moverBefore = sim.snapshot().characters[MOVER]!.position;
+
+    for (let n = 0; n < Math.round(2 * TICK_RATE_HZ); n += 1) sim.tick({ [MOVER]: NORTH });
+
+    // The mover's own trajectory is undisturbed by whatever the corpse is
+    // doing (ragdolling from Impact groups, which never collide with a live
+    // Character's capsule) — it moves the same distance a clear walk would.
+    const moverAfter = sim.snapshot().characters[MOVER]!.position;
+    expect(moverBefore.z - moverAfter.z).toBeGreaterThan(1.5);
+  });
+
+  it("eliminating an already-Ragdolling Character (a disconnect mid-Impact) never re-snaps its ragdoll (code review)", () => {
+    // A guard was missing here: eliminateNow used to force a *fresh* Ragdoll
+    // entry unconditionally, even over one already in progress — discarding
+    // its real tumbling velocity, overwriting ragdollCause, and double-
+    // bumping ragdollEpoch for what was really the same knockdown.
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-3));
+    tick(sim, 0.3);
+
+    sim.applyImpact(TARGET, { x: IMPACT_RAGDOLL_MIN + 5, y: 0, z: 0 });
+    sim.tick({}); // the Impact's own Ragdoll entry lands
+    const afterImpact = sim.snapshot().characters[TARGET]!;
+    expect(afterImpact.motionState).toBe("Ragdoll");
+    expect(afterImpact.ragdollCause).toBe("Bump");
+    expect(afterImpact.ragdollEpoch).toBe(1);
+
+    sim.eliminateCharacter(TARGET);
+
+    const afterEliminate = sim.snapshot().characters[TARGET]!;
+    expect(afterEliminate.ragdollCause).toBe("Bump"); // not overwritten to "Disconnect"
+    expect(afterEliminate.ragdollEpoch).toBe(1); // not double-bumped
+  });
+
+  it("a Fall while already Ragdolling from an unrelated Impact eliminates without disturbing the ragdoll in progress (code review)", () => {
+    // Spawned already off any solid ground (no statics under it at all) and
+    // Impacted on literally the first tick — the fall to the kill plane
+    // below is gravity alone, under a Ragdoll whose cause is genuinely the
+    // Impact, not the Fall this test is really about.
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: 1.5, z: 0 },
+      statics: [],
+      killPlaneY: -8,
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
+    });
+
+    sim.applyImpact(MOVER, { x: IMPACT_RAGDOLL_MIN + 5, y: 0, z: 0 });
+    sim.tick({});
+    const afterImpact = sim.snapshot().characters[MOVER]!;
+    expect(afterImpact.motionState).toBe("Ragdoll");
+    expect(afterImpact.ragdollCause).toBe("Bump");
+
+    for (let n = 0; n < Math.round(3 * TICK_RATE_HZ) && sim.snapshot().characters[MOVER]!.fallCount === 0; n += 1) {
+      sim.tick({});
+    }
+
+    const afterFall = sim.snapshot().characters[MOVER]!;
+    expect(afterFall.fallCount).toBe(1); // still recorded, for stats
+    expect(afterFall.eliminated).toBe(true); // still eliminated
+    expect(afterFall.ragdollCause).toBe("Bump"); // the real cause survives, not silently rewritten to "Fall"
+    expect(afterFall.ragdollEpoch).toBe(afterImpact.ragdollEpoch); // one knockdown, not two
+  });
+});
+
+describe("RapierSimulation — qualifySurvivors (M5 ticket 05, ADR 0042)", () => {
+  const MOVER = DEFAULT_CHARACTER_ID;
+  const TARGET = "target";
+  const onGround = (z: number) => ({ x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z });
+
+  it("Qualifies every Character still standing, at the given Tick", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-1));
+    tick(sim, 0.3);
+
+    sim.qualifySurvivors(sim.snapshot().tick);
+
+    expect(sim.snapshot().characters[MOVER]!.finishTick).toBe(sim.snapshot().tick);
+    expect(sim.snapshot().characters[TARGET]!.finishTick).toBe(sim.snapshot().tick);
+  });
+
+  it("never Qualifies an eliminated Character", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-1));
+    tick(sim, 0.3);
+    sim.eliminateCharacter(TARGET);
+
+    sim.qualifySurvivors(sim.snapshot().tick);
+
+    expect(sim.snapshot().characters[MOVER]!.finishTick).not.toBeNull();
+    expect(sim.snapshot().characters[TARGET]!.finishTick).toBeNull();
+  });
+
+  it("keeps a Character's own earlier finishTick rather than overwriting it", () => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    tick(sim, 0.3);
+    sim.reconcileCharacter(MOVER, { ...sim.snapshot().characters[MOVER]!, finishTick: 5 });
+
+    sim.qualifySurvivors(50);
+
+    expect(sim.snapshot().characters[MOVER]!.finishTick).toBe(5);
+  });
+
+  it("a Fall after already Qualifying never marks the Character eliminated too (code review)", () => {
+    // A real, if narrow, contradiction the review caught: residual ragdoll
+    // momentum from an unrelated, earlier Impact can keep carrying an
+    // already-Qualified Character (input-locked, so it can't walk itself
+    // anywhere new) downward — simulated here directly via `reconcileCharacter`
+    // rather than choreographing a real Impact's own physics, since the
+    // point is purely "does `detectFall` still react," not how the
+    // Character got below the kill plane. `eliminated` and `Qualified`
+    // (`finishTick`) can never both be true at once.
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: 1.5, z: 0 },
+      statics: [GROUND],
+      killPlaneY: -8,
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
+    });
+    tick(sim, 0.3);
+    sim.qualifySurvivors(sim.snapshot().tick);
+    const qualified = sim.snapshot().characters[MOVER]!;
+    expect(qualified.finishTick).not.toBeNull();
+
+    sim.reconcileCharacter(MOVER, { ...qualified, position: { x: 0, y: -9, z: 0 } }); // below the kill plane
+    sim.tick({}); // the only tick detectFall could react on
+
+    const after = sim.snapshot().characters[MOVER]!;
+    expect(after.finishTick).not.toBeNull(); // still Qualified
+    expect(after.eliminated).toBe(false); // never flipped
+    expect(after.fallCount).toBe(0); // the Fall reaction never ran at all
+  });
+});
+
 describe("RapierSimulation — jump", () => {
   const settled = () => {
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
@@ -966,6 +1306,7 @@ describe("RapierSimulation — dash", () => {
       speedPadMsLeft: midBurst.speedPadMsLeft,
       speedPadCapMultiplier: midBurst.speedPadCapMultiplier,
       finishTick: midBurst.finishTick,
+      eliminated: midBurst.eliminated,
     });
 
     const afterReconcile = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -1019,6 +1360,7 @@ describe("RapierSimulation — dash", () => {
       speedPadMsLeft: ackedSnapshot.speedPadMsLeft,
       speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
       finishTick: ackedSnapshot.finishTick,
+      eliminated: ackedSnapshot.eliminated,
     });
     client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unackedInputs);
 
@@ -1097,6 +1439,7 @@ describe("RapierSimulation — dash", () => {
           speedPadMsLeft: acked.speedPadMsLeft,
           speedPadCapMultiplier: acked.speedPadCapMultiplier,
           finishTick: acked.finishTick,
+          eliminated: acked.eliminated,
         });
         client.replayLocalCharacter(DEFAULT_CHARACTER_ID, inputHistory.slice(ackedIdx + 1));
         const afterSnap = client.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -1923,6 +2266,7 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
         speedPadMsLeft: 0,
         speedPadCapMultiplier: 1,
         finishTick: null,
+        eliminated: false,
       });
       sim.reconcileCharacter(DEFAULT_CHARACTER_ID, gettingUp({ x: 5, y: RESTING_SPAWN.y, z: 5 }));
       const afterEntry = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
@@ -1998,6 +2342,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     speedPadMsLeft: 0,
     speedPadCapMultiplier: 1,
     finishTick: null,
+    eliminated: false,
   });
 
   it("snaps a locally-Controlled Character into Ragdoll the client never predicted (ADR 0015)", () => {
@@ -2015,6 +2360,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
       finishTick: null,
+      eliminated: false,
     });
 
     // Immediate — the discrete state is never delayed or smoothed (ADR 0013).
@@ -2044,6 +2390,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
       finishTick: null,
+      eliminated: false,
     });
 
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
@@ -2131,6 +2478,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
         speedPadMsLeft: 0,
         speedPadCapMultiplier: 1,
         finishTick: null,
+        eliminated: false,
       });
       tick(sim, 0.1); // a few local ticks between snapshots
 
@@ -2192,6 +2540,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
       finishTick: null,
+      eliminated: false,
     });
     sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Sliding");
@@ -2505,6 +2854,7 @@ describe("RapierSimulation — speed/slow pads (M3.7 ticket 01, ADR 0035): one-s
       speedPadMsLeft: firedSnap.speedPadMsLeft,
       speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
       finishTick: firedSnap.finishTick,
+      eliminated: firedSnap.eliminated,
     });
     sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, buffered);
 
@@ -2990,6 +3340,7 @@ describe("RapierSimulation — launch pads (M3.7 ticket 02): one-shot full-veloc
       speedPadMsLeft: firedSnap.speedPadMsLeft,
       speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
       finishTick: firedSnap.finishTick,
+      eliminated: firedSnap.eliminated,
     });
     sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, buffered);
 
@@ -3312,6 +3663,143 @@ describe("Finish Zone — Qualification (M4 ticket 02, ADR 0039)", () => {
     });
 
     expect(me(sim).finishTick).toBeNull();
+
+    sim.dispose();
+  });
+
+  it("never Qualifies through the Finish Zone in an eliminating Round type — that grants Qualification a different way (M5 ticket 05, code review)", () => {
+    // The exact bug a flaky server test caught: a Survival Round run (as it
+    // must be, until ticket 06's arena exists) on an ordinary, possibly
+    // Finish-Zone-carrying Track let a Character Qualify by simply walking
+    // to the finish line, bypassing qualifySurvivors/the Survivor Target
+    // entirely.
+    const sim = new RapierSimulation({
+      statics: [GROUND],
+      spawn: RESTING_SPAWN,
+      finishZones: [{ trigger: ZONE_AHEAD }],
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
+    });
+
+    tick(sim, 5, NORTH); // walks straight through where the zone would qualify a Race
+
+    expect(me(sim).finishTick).toBeNull();
+
+    sim.dispose();
+  });
+});
+
+describe("RapierSimulation — input lock is one rule at one layer (M5 ticket 01, ADR 0044)", () => {
+  const raceSim = () => new RapierSimulation({ statics: [GROUND], spawn: RESTING_SPAWN });
+  const me = (sim: RapierSimulation) => sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+
+  it("defaults to unlocked — every existing caller that never passes phase keeps working", () => {
+    const sim = raceSim();
+
+    tick(sim, 1, NORTH);
+
+    expect(me(sim).position.z).toBeLessThan(RESTING_SPAWN.z);
+
+    sim.dispose();
+  });
+
+  it("locks every Character's input outside RUNNING, in the shared step itself", () => {
+    const sim = raceSim();
+    const before = me(sim).position;
+
+    for (let n = 0; n < Math.round(1 * TICK_RATE_HZ); n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }, "COUNTDOWN");
+
+    const after = me(sim).position;
+    expect(Math.hypot(after.x - before.x, after.z - before.z)).toBeLessThan(0.05);
+
+    sim.dispose();
+  });
+
+  it("releases on the exact tick the phase becomes RUNNING — no half-tick of leftover lock", () => {
+    const sim = raceSim();
+
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }, "COUNTDOWN");
+    const stillLocked = me(sim).position;
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }, "RUNNING");
+    const firstRunningTick = me(sim).position;
+
+    expect(firstRunningTick.z).toBeLessThan(stillLocked.z);
+
+    sim.dispose();
+  });
+
+  it("locks again once the Round has ended (ROUND_END / RESULTS), same as before it started", () => {
+    const sim = raceSim();
+    tick(sim, 1, NORTH); // RUNNING, moving
+    const atEnd = me(sim).position;
+
+    for (let n = 0; n < Math.round(1 * TICK_RATE_HZ); n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }, "ROUND_END");
+
+    const after = me(sim).position;
+    expect(Math.hypot(after.x - atEnd.x, after.z - atEnd.z)).toBeLessThan(0.05);
+
+    sim.dispose();
+  });
+
+  it("still locks a Qualified Character even while the Match phase itself is unlocked (RUNNING)", () => {
+    const zone = { center: { x: 0, y: 1, z: -4 }, halfExtents: { x: 3, y: 2, z: 1 } };
+    const sim = new RapierSimulation({ statics: [GROUND], spawn: RESTING_SPAWN, finishZones: [{ trigger: zone }] });
+    for (let i = 0; i < 200 && me(sim).finishTick === null; i += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }, "RUNNING");
+    expect(me(sim).finishTick).not.toBeNull();
+    const atFinish = me(sim).position;
+
+    for (let n = 0; n < Math.round(1 * TICK_RATE_HZ); n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH }, "RUNNING");
+
+    const after = me(sim).position;
+    expect(Math.hypot(after.x - atFinish.x, after.z - atFinish.z)).toBeLessThan(0.05);
+
+    sim.dispose();
+  });
+
+  it("replayLocalCharacter applies the same lock to every replayed tick", () => {
+    const sim = raceSim();
+    const before = me(sim).position;
+
+    sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, [NORTH, NORTH, NORTH], "COUNTDOWN");
+
+    const after = me(sim).position;
+    expect(Math.hypot(after.x - before.x, after.z - before.z)).toBeLessThan(0.05);
+
+    sim.dispose();
+  });
+});
+
+describe("RapierSimulation — RoundRules (M5 ticket 02, ADR 0041/0043)", () => {
+  const me = (sim: RapierSimulation) => sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+
+  it("accepts a Round's own RoundRules at construction — a Race resolves to today's behaviour exactly", () => {
+    // `timeLimitMs` is never read by the step at all (a Match-authority
+    // concern, `matchLoop.ts`), and `fallBehavior: "respawn"` here on both
+    // is exactly today's Race — so movement must be identical regardless of
+    // the RoundRules opinion, right down to a different Time Limit.
+    const plain = new RapierSimulation({ statics: [GROUND], spawn: RESTING_SPAWN });
+    const withRules = new RapierSimulation({
+      statics: [GROUND],
+      spawn: RESTING_SPAWN,
+      roundRules: { timeLimitMs: 5_000, fallBehavior: "respawn", survivorTarget: 1 },
+    });
+
+    tick(plain, 1, NORTH);
+    tick(withRules, 1, NORTH);
+
+    expect(me(withRules).position).toEqual(me(plain).position);
+    plain.dispose();
+    withRules.dispose();
+  });
+
+  it("syncRoundRules adopts a new record without disturbing anything already simulated", () => {
+    const sim = new RapierSimulation({ statics: [GROUND], spawn: RESTING_SPAWN });
+    const before = me(sim).position;
+
+    sim.syncRoundRules({ timeLimitMs: 30_000, fallBehavior: "respawn", survivorTarget: 1 });
+
+    expect(me(sim).position).toEqual(before);
+    tick(sim, 1, NORTH); // still simulates normally afterward
+    expect(me(sim).position.z).toBeLessThan(before.z);
 
     sim.dispose();
   });

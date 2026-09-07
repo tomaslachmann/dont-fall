@@ -13,6 +13,8 @@ export * from "./match/Lobby.js";
 export * from "./match/MatchPhase.js";
 export * from "./match/Qualification.js";
 export * from "./match/Results.js";
+export * from "./match/RoundRules.js";
+export * from "./match/RoundType.js";
 export * from "./simulation/SimInputs.js";
 export * from "./simulation/Checkpoint.js";
 export * from "./simulation/FinishZone.js";

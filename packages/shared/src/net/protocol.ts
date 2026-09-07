@@ -2,6 +2,8 @@ import type { Vec3 } from "../math/vec3.js";
 import type { SimInputs } from "../simulation/SimInputs.js";
 import type { LobbyPlayer } from "../match/Lobby.js";
 import type { MatchPhase } from "../match/MatchPhase.js";
+import type { RoundRules } from "../match/RoundRules.js";
+import type { RoundType } from "../match/RoundType.js";
 import type { SimState } from "../state/SimState.js";
 
 /**
@@ -93,6 +95,15 @@ export interface SnapshotMessage {
    */
   phase: MatchPhase;
   /**
+   * This Round's rules (M5 ticket 02, ADR 0041/0043) — resolved once by the
+   * server before COUNTDOWN, from the Track's own defaults under this
+   * Match's overrides, and replicated here so the client's own local
+   * prediction (`RapierSimulation`'s `SimulationConfig.roundRules`) runs
+   * against the identical record the server's authority does. Never
+   * re-resolved on either side; both simply hold whatever arrived here.
+   */
+  roundRules: RoundRules;
+  /**
    * Milliseconds left on the Countdown, or 0 in every other phase (M4 ticket
    * 04) — what the client's "3, 2, 1" overlay renders. Derived by the server
    * from its own Tick, never from a client's wall clock.
@@ -129,6 +140,29 @@ export interface SnapshotMessage {
   lobby: {
     hostId: string | undefined;
     players: LobbyPlayer[];
+    /**
+     * The Round type this Lobby will start (M5 ticket 07) — the host's pick,
+     * shown to everyone before the start rather than discovered when the
+     * Round behaves unexpectedly.
+     *
+     * A name, unlike `roundRules` above, which is the same choice as data.
+     * Both ride the snapshot because they answer different questions: this
+     * is what the Lobby chose, that is what the simulation runs by. The name
+     * never leaves the Lobby — nothing downstream of `roundTypeOverrides`
+     * sees it (ADR 0043).
+     */
+    roundType: RoundType;
+    /**
+     * Why this Lobby cannot start, in words a Player can read, or absent
+     * when it can (M5 ticket 07) — today only "a Race needs a Finish Zone".
+     *
+     * Sent rather than derived client-side: the server is the thing that
+     * knows what Track is loaded and what is in it, and it is the thing that
+     * refuses the `start`. A client computing its own answer would be a
+     * second implementation of the gate, free to disagree with the one that
+     * actually decides.
+     */
+    startBlockedReason?: string;
   };
 }
 
@@ -205,6 +239,18 @@ export interface SelectTrackMessage {
 }
 
 /**
+ * Client → server: the host picks this Lobby's Round type (M5 ticket 07).
+ * Host-only and LOBBY-only, enforced by the server exactly as `selectTrack`
+ * is — and, like a Track pick, it takes effect immediately so everyone in
+ * the Lobby sees it on the next snapshot rather than only once the Round
+ * has started.
+ */
+export interface SetRoundTypeMessage {
+  type: "setRoundType";
+  roundType: RoundType;
+}
+
+/**
  * Client → server: the host asks to start the Round (M4 ticket 07, ADR
  * 0040). The server is the only thing that decides whether this actually
  * moves the Match out of LOBBY — enough Players connected and everyone
@@ -232,6 +278,7 @@ export type ClientMessage =
   | SetNicknameMessage
   | SetReadyMessage
   | SelectTrackMessage
+  | SetRoundTypeMessage
   | StartMessage
   | ReturnToLobbyMessage;
 

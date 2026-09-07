@@ -7,15 +7,16 @@ export type { CharacterMotionState, BoneSnapshot, PropSnapshot };
 
 /**
  * Why a Character was knocked down (ADR 0023). Carried so the client can play
- * cause-specific one-shot effects (camera kick, hit-react, impact SFX). 2 bits
- * on the wire once binary encoding lands — a fifth cause is a protocol-version
- * change (known limitation). `"WallImpact"` (M3.7 ticket 03, ADR 0037 —
- * renamed from `"DashWall"`): any Character moving fast enough into a
- * near-vertical surface, whatever gave it the speed — Dash is one
- * contributor among several (a bounce, a launch pad, an updraft), never a
- * separate rule of its own.
+ * cause-specific one-shot effects (camera kick, hit-react, impact SFX).
+ * `"WallImpact"` (M3.7 ticket 03, ADR 0037 — renamed from `"DashWall"`): any
+ * Character moving fast enough into a near-vertical surface, whatever gave
+ * it the speed — Dash is one contributor among several (a bounce, a launch
+ * pad, an updraft), never a separate rule of its own. `"Disconnect"` (M5
+ * ticket 04): a mid-Round drop, distinct from `"Fall"` since nothing fell —
+ * plain JSON today, so a fifth value costs nothing; needs 3 bits instead of
+ * 2 whenever binary encoding lands.
  */
-export type RagdollCause = "Bump" | "Fall" | "WallImpact" | "Spinner";
+export type RagdollCause = "Bump" | "Fall" | "WallImpact" | "Spinner" | "Disconnect";
 
 export interface CharacterSnapshot {
   /** The point the camera follows: capsule centre while upright, pelvis while ragdolling. */
@@ -113,6 +114,18 @@ export interface CharacterSnapshot {
    * `RAGDOLL_BONES` order; empty otherwise (the renderer draws the capsule).
    */
   bones: BoneSnapshot[];
+  /**
+   * Whether this Character is eliminated (M5 ticket 04, ADR 0042) — marked,
+   * never removed, so its entry keeps appearing here with this set, never
+   * cleared. Set either by an eliminating Fall (Survival) or directly (a
+   * mid-Round disconnect, any Round type). Distinct from `isEliminated`
+   * (CONTEXT.md's Results-time "didn't Qualify before the Round ended," true
+   * for a Race's own DNFs too): this is the simulation's own, earlier,
+   * mid-Round signal that a Character will never move or Qualify again —
+   * match authority (`allQualified`) reads it to stop waiting on a
+   * Character that can't finish.
+   */
+  eliminated: boolean;
 }
 
 /**
@@ -153,6 +166,7 @@ export interface CharacterSnapshotFields {
   phaseStartTick?: number;
   bones?: BoneSnapshot[];
   finishTick?: number | null;
+  eliminated?: boolean;
 }
 
 /**
@@ -177,6 +191,11 @@ export type ReconcileBase = Pick<
   // M4 ticket 02: Qualification is latched and locks input, so the client
   // must be able to take the server's answer rather than keep its own.
   | "finishTick"
+  // M5 ticket 04: Elimination is latched too, and a disconnect-triggered one
+  // can never be predicted at all (it never applies to your own Character)
+  // — the server's answer wins here for the same reason it does for
+  // `finishTick`.
+  | "eliminated"
 >;
 
 export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSnapshot => ({
@@ -200,4 +219,5 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   phaseStartTick: fields.phaseStartTick ?? 0,
   bones: fields.bones ?? [],
   finishTick: fields.finishTick ?? null,
+  eliminated: fields.eliminated ?? false,
 });

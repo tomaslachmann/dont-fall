@@ -109,6 +109,20 @@ export interface Module {
   surface?: SurfaceId;
 }
 
+/**
+ * Whether `module` has a Socket named `socketId` — the question
+ * {@link findSocket} answers by throwing.
+ *
+ * Not every Module has Sockets. One meant to be dropped on its own by free
+ * placement (ADR 0034) — the Survival arena is the first — carries none at
+ * all, and nothing in ADR 0031's model requires it to: a Socket is a
+ * connection point, and a piece nothing connects to has no connection points.
+ * Anything that chains Modules has to be able to ask this before assuming it
+ * can (`chainTrack`, and the builder's own re-chaining).
+ */
+export const hasSocket = (module: Module, socketId: string): boolean =>
+  module.sockets.some((s) => s.id === socketId);
+
 export const findSocket = (module: Module, socketId: string): Socket => {
   const socket = module.sockets.find((s) => s.id === socketId);
   if (!socket) throw new Error(`Module "${module.id}" has no Socket "${socketId}"`);

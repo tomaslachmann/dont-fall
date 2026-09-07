@@ -2,6 +2,8 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import { pointInOrientedBox, type OrientedBox } from "../math/box.js";
 import { IDENTITY_QUAT } from "../math/quat.js";
 import { normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
+import { phaseLocksInput, type MatchPhase } from "../match/MatchPhase.js";
+import { DEFAULT_ROUND_RULES, type RoundRules } from "../match/RoundRules.js";
 import { characterSnapshot, type CharacterSnapshot, type ReconcileBase, type SimState } from "../state/SimState.js";
 import type { FixedSimulation } from "../timing/FixedSimulation.js";
 import {
@@ -60,6 +62,17 @@ interface CharacterProgress {
    * back out of the zone afterwards keeps it.
    */
   finishTick: number | null;
+  /**
+   * Whether this Character is eliminated (M5 ticket 04, ADR 0042) — marked,
+   * never removed: its entry stays in `characters` and its body stays in
+   * the world (collider disabled), so the simulated set and the iteration
+   * order never vary. Once `true`, `tick`'s own per-Character loops skip it
+   * entirely — not a controller sweep, an iteration and a branch. Set either
+   * by an eliminating Fall (`detectFall`) or directly (`eliminateCharacter`,
+   * a mid-Round disconnect) — never cleared; a Round with an eliminated
+   * Character in it always gets a fresh simulation before it plays again.
+   */
+  eliminated: boolean;
 }
 
 export interface SimulationConfig {
@@ -115,6 +128,20 @@ export interface SimulationConfig {
    * state unconditional and safe (no more stale-vs-live ambiguity).
    */
   authoritative?: boolean;
+  /**
+   * The Round this simulation runs by (M5 ticket 02, ADR 0041/0043) —
+   * resolved once by the caller (Track defaults under Round overrides,
+   * `resolveRoundRules`) before this simulation exists, and fixed for its
+   * whole life: a Round's rules never change mid-Round, so a rules change
+   * means a fresh simulation, the same way a Track reload already gets one.
+   * Defaults to {@link DEFAULT_ROUND_RULES} — a Race, on a Track authored
+   * with no other opinion — so every existing caller with no Round concept
+   * (most of this file's own tests among them) is unaffected. Nothing in
+   * this ticket reads it yet; ticket 03 is the first Round-type rule that
+   * does (what a Fall does), read where the per-Character loop already
+   * reads `qualified`, right beside it.
+   */
+  roundRules?: RoundRules;
 }
 
 const DEFAULT_SPAWN = vec3(0, 2, 0);
@@ -163,6 +190,8 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   private readonly killPlaneY: number;
   /** See `SimulationConfig.authoritative`. */
   private readonly authoritative: boolean;
+  /** See `SimulationConfig.roundRules`; mutable so the client's own copy can adopt the server's via `syncRoundRules`. */
+  private roundRules: RoundRules;
   private readonly spinners: Spinner[];
   private readonly props: Prop[];
   private readonly spinnerByHandle = new Map<number, Spinner>();
@@ -229,6 +258,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     this.volumes = [...(config.volumes ?? [])].sort((a, b) => b.priority - a.priority);
     this.killPlaneY = config.killPlaneY ?? DEFAULT_KILL_PLANE_Y;
     this.authoritative = config.authoritative ?? true;
+    this.roundRules = config.roundRules ?? DEFAULT_ROUND_RULES;
 
     this.world = new RAPIER.World({ x: 0, y: GRAVITY_Y, z: 0 });
 
@@ -308,6 +338,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       touchedSpeedPadIndex: undefined,
       touchedLaunchPadIndex: undefined,
       finishTick: null,
+      eliminated: false,
     });
   }
 
@@ -348,6 +379,51 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     character?.dispose();
     this.characters.delete(id);
     this.progress.delete(id);
+  }
+
+  /**
+   * Mark a Character eliminated directly, outside a Fall (M5 ticket 04, ADR
+   * 0042) — a mid-Round disconnect, which used to call {@link removeCharacter}
+   * mid-Round and disturb contact resolution for everyone still playing.
+   * Its entry stays, its body stays (collider disabled), the simulated set
+   * and iteration order never vary — the caller no longer removes it. Needs
+   * no `RoundRules` opinion: a disconnect ends a Character's part in any
+   * Round type, not only an eliminating one. A no-op if `id` doesn't exist
+   * or is already eliminated.
+   */
+  eliminateCharacter(id: string): void {
+    const progress = this.progress.get(id);
+    if (!progress || progress.eliminated) return;
+    progress.eliminated = true;
+    const character = this.character(id);
+    character.eliminate();
+    // Same bookkeeping `tick`'s own per-Character loop does right after a
+    // Fall-eliminated Character's `motionState` changes — done here too,
+    // since this runs outside that loop (called directly from a socket
+    // close handler, between ticks) and nothing will ever run it for this
+    // Character again once `eliminated` starts skipping it (code review).
+    if (character.motionState !== progress.lastMotionState) {
+      progress.phaseStartTick = this.tickCount;
+      progress.lastMotionState = character.motionState;
+    }
+  }
+
+  /**
+   * Qualify every Character still standing (M5 ticket 05, ADR 0042) — a
+   * Survival Round's own ending grants Qualification to whoever it left
+   * un-eliminated, all at once, rather than a Race's own per-Character
+   * Finish Zone crossing. Match authority only: `matchLoop.ts` calls this
+   * exactly once, the Tick it decides the Round has ended, never predicted
+   * by a client — which Character survives depends on every other
+   * Character, exactly the kind of decision ADR 0003/0042 keep off the
+   * shared step. A Character that already has a `finishTick` some other
+   * way (impossible for Survival today — no Finish Zone on an arena — but
+   * not assumed here) keeps its own earlier one.
+   */
+  qualifySurvivors(tick: number): void {
+    for (const progress of this.progress.values()) {
+      if (!progress.eliminated && progress.finishTick === null) progress.finishTick = tick;
+    }
   }
 
   /**
@@ -426,6 +502,11 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       // input while the server kept expecting it to run. The server's answer
       // wins in both directions.
       progress.finishTick = base.finishTick;
+      // Elimination is latched too (M5 ticket 04) — synced outright for the
+      // same reason: a disconnect-triggered one never applies to your own
+      // Character (nothing to predict), and a Fall-triggered misprediction
+      // must not stay locally "still in it" for the rest of the Round.
+      progress.eliminated = base.eliminated;
     }
   }
 
@@ -441,6 +522,26 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
   }
 
   /**
+   * Adopt the server's own resolved `RoundRules` (M5 ticket 02, ADR 0041) —
+   * the client's own guess at construction time (before any snapshot has
+   * arrived) can only be the Track's bare default; the server may have
+   * overridden it. Called every snapshot, the same cadence `phase` is
+   * captured at (`game.ts`), so it self-corrects the instant the real value
+   * is known and is a no-op once it already matches.
+   *
+   * The server calls it in exactly one place (M5 ticket 07): a Lobby host
+   * picking a Round type, which re-resolves the rules and hands them here
+   * rather than rebuilding a world that has not changed. That does not
+   * weaken ADR 0041's "nothing downstream re-resolves" — the rules are
+   * still resolved once, by `MatchRuntime.resolveRules`, and are still fixed
+   * for the life of a *Round*: `setRoundType` is LOBBY-only, so nothing can
+   * move them once a Round is under way.
+   */
+  syncRoundRules(rules: RoundRules): void {
+    this.roundRules = rules;
+  }
+
+  /**
    * Ticket 05: re-run one Character's own buffered inputs forward from a
    * freshly-reconciled base — one full shared {@link tick} per input — to
    * catch it back up to the present prediction tick (Bernier-style local
@@ -452,11 +553,20 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * detection all stay coherent during the replay (call {@link syncTick}
    * first). A few extra `world.step()`s do nudge dynamic Props slightly — an
    * accepted M2 approximation; Prop sync is ticket 06.
+   *
+   * `phase` is the one the caller's own reconcile is currently acting under —
+   * applied to every replayed tick alike (M5 ticket 01). A phase transition
+   * landing mid-replay is a real but vanishingly rare edge (the whole
+   * unacked span this replays is only an RTT wide); the client's own
+   * behaviour already treated this instant as the reconcile's single source
+   * of truth for tick alignment and Prop poses before this ticket, so this
+   * follows the same discipline rather than inventing per-tick phase history
+   * nothing else here tracks.
    */
-  replayLocalCharacter(id: string, inputs: readonly SimInputs[]): Vec3[] {
+  replayLocalCharacter(id: string, inputs: readonly SimInputs[], phase: MatchPhase = "RUNNING"): Vec3[] {
     const positions: Vec3[] = [];
     for (const input of inputs) {
-      this.tick({ [id]: input });
+      this.tick({ [id]: input }, phase);
       positions.push({ ...this.character(id).snapshot().position });
     }
     return positions;
@@ -469,8 +579,18 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * `world` steps exactly once for all of them together, then each Character
    * reads the result back — the split `beginTick`/`endTick` on
    * `CharacterController` (ticket 02) is what makes one shared step possible.
+   *
+   * `phase` answers the one question every Round type's "who may move right
+   * now" rule ultimately reduces to (M5 ticket 01, ADR 0044 extending ADR
+   * 0040): whether every Character's input is locked this tick. Defaults to
+   * `"RUNNING"` (unlocked) so the many callers that only care about physics —
+   * most of this file's own tests among them — never have to think about
+   * Match phase at all; the two real production callers (the server's Match
+   * loop, and the client's own local prediction) always pass their current
+   * phase, which is what makes the two stop and start driving the Character
+   * on the identical Tick.
    */
-  tick(inputs: Record<string, SimInputs>): void {
+  tick(inputs: Record<string, SimInputs>, phase: MatchPhase = "RUNNING"): void {
     if (this.disposed) throw new Error("RapierSimulation: tick() on a disposed simulation");
     // Queue each Spinner's rotation for the tick about to run — it must be
     // queued before `world.step()` applies it, the same way each Character's
@@ -480,16 +600,31 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     // snapshot pose every tick — they never move under their own physics.
     for (const mirror of this.mirrors.values()) mirror.step();
 
-    // A Qualified Character's input is locked (M4 ticket 02, ADR 0039): it
-    // stops where it stands and spectates the rest of the Round from inside
-    // the zone. Applied here, in the shared step, rather than by the server
-    // dropping the packet — that is what makes a client's own prediction lock
-    // at the same Tick, so it never runs half an RTT past the finish before
-    // being yanked back. Everything else still acts on the body: gravity,
+    // "May this Character be driven this tick?" (M5 ticket 01) is now decided
+    // in exactly one place: the whole Match is locked outside RUNNING (ADR
+    // 0040 — Lobby, Countdown, Round end), or this one Character is
+    // individually locked because it Qualified (M4 ticket 02, ADR 0039) and
+    // stops to spectate from inside the zone.
+    //
+    // Applied here, in the shared step, rather than by the server dropping
+    // the packet or the client withholding it before this call: that is what
+    // makes a client's own prediction lock at the same Tick the server does,
+    // so it never runs half an RTT past a lock before being yanked back.
+    // Everything else still acts on the body while locked: gravity,
     // collision, and another Character shoving it are all unchanged.
+    //
+    // An eliminated Character (M5 ticket 04, ADR 0042) is a step further:
+    // not merely locked but not stepped at all — no `beginTick`/`endTick`,
+    // no Checkpoint/Fall/pad detection, nothing. Its entry and body both
+    // stay (the simulated set and iteration order never vary); its collider
+    // is already disabled (`eliminate`/`fall`'s own doing), so nobody can
+    // shove it and it can't shove anybody. The cost per tick is exactly what
+    // ADR 0042 asks for: an iteration and a branch, not a controller sweep.
+    const matchLocked = phaseLocksInput(phase);
     for (const [id, character] of this.characters) {
-      const qualified = this.progress.get(id)!.finishTick !== null;
-      character.beginTick(qualified ? IDLE_INPUTS : (inputs[id] ?? IDLE_INPUTS));
+      const progress = this.progress.get(id)!;
+      if (progress.eliminated) continue;
+      character.beginTick(matchLocked || progress.finishTick !== null ? IDLE_INPUTS : (inputs[id] ?? IDLE_INPUTS));
     }
     this.world.step();
     this.tickCount += 1;
@@ -497,16 +632,17 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     // Each Character must finish moving — including any queued respawn —
     // before Checkpoint and Fall detection read its position for this tick.
     for (const [id, character] of this.characters) {
+      const progress = this.progress.get(id)!;
+      if (progress.eliminated) continue;
       character.endTick();
       this.updateCheckpoint(id);
       this.updateFinishZone(id);
       this.updateSpeedPad(id);
       this.updateLaunchPad(id);
-      this.detectFall(id);
+      this.detectFall(id, !matchLocked);
       // Stamp the tick a `motionState` phase begins, in sim-tick space, exactly
       // once (ADR 0023). Must be here, not in `snapshot()` — that is called
       // several times per client frame and before `syncTick` in reconcile.
-      const progress = this.progress.get(id)!;
       if (character.motionState !== progress.lastMotionState) {
         progress.phaseStartTick = this.tickCount;
         progress.lastMotionState = character.motionState;
@@ -648,8 +784,19 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
    * a Character shoved into the zone mid-ragdoll has still entered it, and
    * "entry counts" is the whole M4 rule (ADR 0039). That a launch pad or a
    * Bump can put you there is the design, not a hole in it.
+   *
+   * Skipped outright for an eliminating Round type (M5 ticket 05, ADR
+   * 0041/0043, found by code review): what grants Qualification is the
+   * Round type's own rule, same as what a Fall does — a Survival Round's
+   * arena (ticket 06) authors no Finish Zone of its own, but nothing before
+   * ticket 07 lets the Lobby run Survival on anything *but* an ordinary,
+   * possibly-Finish-Zone-carrying Track (the test-only `fallBehaviorOverride`
+   * this ticket's own tests use is exactly that case). Without this, two
+   * Characters could Qualify by simply crossing a leftover Finish Zone,
+   * bypassing `qualifySurvivors`/the Survivor Target entirely.
    */
   private updateFinishZone(id: string): void {
+    if (this.roundRules.fallBehavior === "eliminate") return;
     const progress = this.progress.get(id)!;
     if (progress.finishTick !== null) return;
     if (this.findTriggerIndex(this.finishZones, this.character(id).position) === undefined) return;
@@ -703,13 +850,41 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     progress.touchedLaunchPadIndex = touched;
   }
 
-  private detectFall(id: string): void {
+  /**
+   * What follows a Fall is read from `RoundRules.fallBehavior`, not
+   * hardcoded (M5 ticket 03, ADR 0042) — a Race passes this Character's own
+   * `respawnPoint` (unchanged), an eliminating Round type passes `null`, and
+   * `CharacterController.fall` decides what that means. The Fall itself —
+   * a Character's centre crossing the kill plane — is unchanged either way.
+   *
+   * `roundRunning` gates only the *eliminating* half — see below.
+   */
+  private detectFall(id: string, roundRunning: boolean): void {
     const character = this.character(id);
     const progress = this.progress.get(id)!;
     if (character.hasPendingRespawn || character.position.y >= this.killPlaneY) return;
+    // Already resolved — Qualified, spectating (code review, ticket 05):
+    // without this, residual ragdoll momentum from an unrelated Impact
+    // could carry an already-Qualified Survival Character across the kill
+    // plane one or more ticks later, marking it eliminated too and
+    // contradicting `finishTick !== null` on the very same snapshot. A
+    // Character that has already Qualified has nothing left for a Fall to
+    // change, in either Round type.
+    if (progress.finishTick !== null) return;
 
     progress.fallCount += 1;
-    character.fall(progress.respawnPoint, progress.fallCount);
+    // Only a Round that is actually RUNNING can eliminate (code review,
+    // ticket 07). `fallBehavior` is resolved the moment a Lobby host picks
+    // Survival, but physics keeps running through LOBBY and COUNTDOWN —
+    // input is locked, gravity and Spinners are not — so without this a
+    // Character shoved off the start platform before the Countdown ends is
+    // Eliminated from a Round that has not begun, permanently: nothing
+    // between LOBBY and RUNNING rebuilds the world, and `eliminated` is
+    // never cleared. Outside a running Round a Fall does what it has always
+    // done and respawns, in either Round type.
+    const eliminates = roundRunning && this.roundRules.fallBehavior === "eliminate";
+    if (eliminates) progress.eliminated = true;
+    character.fall(eliminates ? null : progress.respawnPoint, progress.fallCount);
   }
 
   snapshot(): SimState {
@@ -722,6 +897,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
         fallCount: progress.fallCount,
         phaseStartTick: progress.phaseStartTick,
         finishTick: progress.finishTick,
+        eliminated: progress.eliminated,
       });
     }
     return {

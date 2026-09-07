@@ -28,6 +28,14 @@ export const tracks = sqliteTable(
      * `resolveTrack` never needs this to do its job.
      */
     timeLimitMs: integer("time_limit_ms").notNull(),
+    /**
+     * The Survivor Target a Survival Round on this Revision runs to (M5
+     * ticket 07, ADR 0041). A row attribute for exactly the reasons
+     * `time_limit_ms` is one: per `(track_id, revision)`, and deliberately
+     * not folded into `data`, which stays the `Segment[]` every existing
+     * consumer parses.
+     */
+    survivorTarget: integer("survivor_target").notNull(),
   },
   (table) => [primaryKey({ columns: [table.trackId, table.revision] })],
 );

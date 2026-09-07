@@ -26,6 +26,7 @@ import {
   type PropSnapshot,
   type RenderCharacter,
   type ResultsRow,
+  type RoundType,
   type ServerMessage,
   type SimInputs,
   type SimState,
@@ -86,6 +87,24 @@ export interface LobbySnapshot {
    * "authored Time Limit" field of its own.
    */
   timeLimitMs: number;
+  /**
+   * The Round type this Lobby will start, and how many survivors a Survival
+   * Round here would run to (M5 ticket 07) — both shown before the start, so
+   * nobody learns what kind of Round they're in by falling into it.
+   *
+   * `survivorTarget` is the Track's own authored default under whatever this
+   * Match overrides (it is read straight off the snapshot's `roundRules`,
+   * the same resolved record the simulation runs by) — never re-derived
+   * here, and meaningless while `roundType` is `"race"`.
+   */
+  roundType: RoundType;
+  survivorTarget: number;
+  /**
+   * Why the host can't start on this Track, in words to show, or `undefined`
+   * when they can (M5 ticket 07). The server's own answer, rendered — the
+   * client never computes a second opinion about a gate it doesn't enforce.
+   */
+  startBlockedReason: string | undefined;
 }
 
 /**
@@ -153,6 +172,8 @@ export interface GameHandle {
   setReady: (ready: boolean) => void;
   /** Host-only: picks a different Track for this Lobby (M4 ticket 07). Ignored if not host or not in LOBBY. */
   selectTrack: (trackId: string) => void;
+  /** Host-only: picks this Lobby's Round type (M5 ticket 07). Ignored if not host or not in LOBBY. */
+  setRoundType: (roundType: RoundType) => void;
   /** Host-only: asks the server to start the Round (M4 ticket 07). Ignored unless the server's own gate passes. */
   start: () => void;
   /** Host-only: asks the server to return to the Lobby from Results (M4 ticket 08). Ignored outside RESULTS. */
@@ -326,16 +347,25 @@ const boot = async (
 
   /**
    * Rebuilds everything derived from the active Track — the mirror of the
-   * server's own `rebuildSimulationFor` for a live Lobby Track pick (M4
+   * server's own `buildSimulationFor` for a live Lobby Track pick (M4
    * ticket 07). `look` is rebuilt too: it holds a reference to `stage`'s own
    * canvas, which `stage.dispose()` removes from the DOM, so a `look` still
    * bound to the old one would never see another mouse event.
    *
-   * The tick-space state below is reset, not carried over: the server
-   * restarts this Track's `serverTick` at 0 on the same pick (ADR 0027's own
-   * "one Tick, one authority" discipline applied to a fresh Lobby), so every
-   * prediction/interpolation structure keyed by tick number would otherwise
-   * compare the new low ticks against the old high ones forever.
+   * The tick-space state below is replaced rather than carried over, but not
+   * because the Tick epoch moves: it does not (M5 ticket 08 — the server
+   * hands the rebuilt simulation the Tick it is already on, so a client's
+   * once-seeded prediction tick stays valid, which is what keeps everyone
+   * already in the Lobby able to move). It is replaced because every one of
+   * these structures is keyed by tick *and* describes the old Track: a
+   * position history, an interpolation buffer and a replay base recorded
+   * against geometry that no longer exists. A fresh `PredictionLoop` re-seeds
+   * itself into the same, still-running epoch on the next frame.
+   *
+   * Note this only runs when the Track actually *changes*. Going again from
+   * Results keeps the same Track, so nothing here re-seeds anything — which
+   * is exactly why the epoch has to stay continuous rather than being reset
+   * and re-seeded around.
    */
   const loadTrack = async (trackId: string, trackRevision: number, spawn: Vec3): Promise<void> => {
     const nextTrack = await fetchTrack(trackId, trackRevision);
@@ -401,6 +431,12 @@ const boot = async (
         // display that only shows whole seconds.
         timeLeftMs = message.timeLeftMs;
         phase = message.phase;
+        // The server's own resolved RoundRules (M5 ticket 02, ADR 0041) —
+        // adopted every snapshot, same cadence as `phase`, so this client's
+        // own prediction runs against the identical record the server does
+        // rather than its own construction-time guess at the Track's bare
+        // default (which a Match-level override can disagree with).
+        localSim.syncRoundRules(message.roundRules);
         countdownMsLeft = message.countdownMsLeft;
         if (onLobbyState) {
           const lobbySnapshot: LobbySnapshot = {
@@ -411,6 +447,9 @@ const boot = async (
             trackId: message.trackId,
             trackRevision: message.trackRevision,
             timeLimitMs: message.timeLeftMs,
+            roundType: message.lobby.roundType,
+            survivorTarget: message.roundRules.survivorTarget,
+            startBlockedReason: message.lobby.startBlockedReason,
           };
           const lobbyJson = JSON.stringify(lobbySnapshot);
           if (lobbyJson !== lastLobbyJson) {
@@ -441,7 +480,7 @@ const boot = async (
         ) {
           trackReloadInFlight = true;
           // The server already placed this Character at its spawn slot on
-          // the new Track (`trackSpawn`, mirrored by `rebuildSimulationFor`)
+          // the new Track (`trackSpawn`, mirrored by `buildSimulationFor`)
           // — read straight off this very snapshot rather than recomputing
           // it, so there is exactly one source for "where do I start."
           const spawn = message.state.characters[myId]?.position ?? welcome.spawn;
@@ -462,7 +501,13 @@ const boot = async (
           // obstacle sits exactly where it's drawn and advances smoothly
           // between snapshots rather than jumping once per snapshot (which,
           // for a Prop you're pushing, read as a per-snapshot sawtooth / lag).
-          const result = predictionLoop.reconcile(character, message.state.tick, message.state.props, propPrediction);
+          const result = predictionLoop.reconcile(
+            character,
+            message.state.tick,
+            message.state.props,
+            propPrediction,
+            message.phase,
+          );
           if (result.positionError !== null) netMetrics.recordCorrection(result.positionError);
         }
       }
@@ -527,20 +572,20 @@ const boot = async (
       return;
     }
 
-    // Input is locked in every phase but RUNNING (ADR 0040), and the client
-    // applies the identical rule to its own prediction that the server
-    // applies to the authority — so the Character stops and starts being
-    // drivable on the same Tick on both sides, rather than this client
-    // predicting half an RTT of movement that the server never simulated.
-    // The camera is deliberately untouched: it stays live through the
-    // Countdown, which is what lets a player look around before the start.
-    const sampledInput: SimInputs = phaseLocksInput(phase)
-      ? IDLE_INPUTS
-      : {
-          moveDirection: movementDirection(keyboard.movementKeys(), look.yaw),
-          jumpHeld: keyboard.jumpHeld(),
-          dashHeld: keyboard.dashHeld(),
-        };
+    // Sampled unconditionally — whether it actually drives the Character is
+    // the shared step's own call now (M5 ticket 01, ADR 0044): `phase` goes
+    // down to `predictionLoop.step` below, and `RapierSimulation.tick` is the
+    // one place, on both sides, that decides "may this Character be driven
+    // this tick?" — so it stops and starts driving on the identical Tick the
+    // server does, rather than this client predicting half an RTT of movement
+    // the server never simulated. The camera is deliberately untouched here:
+    // it stays live through the Countdown, which is what lets a player look
+    // around before the start.
+    const sampledInput: SimInputs = {
+      moveDirection: movementDirection(keyboard.movementKeys(), look.yaw),
+      jumpHeld: keyboard.jumpHeld(),
+      dashHeld: keyboard.dashHeld(),
+    };
 
     // World this client doesn't predict — Props and every other player's
     // Character — comes from the render-delay interpolation buffer (ADR 0003).
@@ -608,8 +653,11 @@ const boot = async (
     // Fixed-timestep prediction: one shared sim step per tick, each fed —
     // and sent to the server, from `onBuffered` — with the input sampled for
     // that tick, and each buffered by tick number for reconciliation (ADR
-    // 0005, 0013, 0021).
-    predictionLoop.step(sampledInput, elapsedMs + leadStepMs, sendInput);
+    // 0005, 0013, 0021). `phase` is what lets the shared step gate it (M5
+    // ticket 01) — this call sends real input over the wire even while
+    // locked, same as the server always has; only whether it moves the
+    // Character is decided, identically, on both sides.
+    predictionLoop.step(sampledInput, elapsedMs + leadStepMs, sendInput, phase);
 
     const snapshot = localSim.snapshot();
 
@@ -695,9 +743,13 @@ const boot = async (
 
     stage.applyRenderState({ character: visualCharacter, props });
     stage.applyRemoteCharacters(remoteCharacters);
+    // Cosmetic only, not a second lock: the sim itself already refused to
+    // move the Character while locked (M5 ticket 01), so this just picks the
+    // idle stance over animating legs toward a `moveDirection` it never
+    // actually walked toward on screen.
     stage.updateCharacterAnimation(
       Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000,
-      input.moveDirection,
+      phaseLocksInput(phase) ? IDLE_INPUTS.moveDirection : input.moveDirection,
       c.grounded,
       c.dashing,
       c.dashSpeed,
@@ -789,6 +841,7 @@ const boot = async (
     setNickname: (nickname) => sendLobbyMessage({ type: "setNickname", nickname }),
     setReady: (ready) => sendLobbyMessage({ type: "setReady", ready }),
     selectTrack: (trackId) => sendLobbyMessage({ type: "selectTrack", trackId }),
+    setRoundType: (roundType) => sendLobbyMessage({ type: "setRoundType", roundType }),
     start: () => sendLobbyMessage({ type: "start" }),
     returnToLobby: () => sendLobbyMessage({ type: "returnToLobby" }),
   };

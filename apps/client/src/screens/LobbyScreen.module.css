@@ -62,10 +62,36 @@
   outline-offset: 1px;
 }
 
-.timeLimit {
+.roundTypes {
+  display: flex;
+  gap: var(--df-space-2);
+}
+
+.roundTypeCard {
+  flex: 1;
+  text-align: center;
+}
+.roundTypeCard:disabled {
+  cursor: default;
+}
+.roundTypeCardSelected {
+  border-color: var(--df-color-go);
+  box-shadow: inset 0 0 0 1px var(--df-color-go);
+}
+
+.roundFacts {
   margin: 0;
   font-variant-numeric: tabular-nums;
   color: var(--df-color-ink-secondary);
+}
+
+/* The server's reason this Lobby can't start — a statement of fact, not an
+   error the Player did something to cause, so it reads as emphasis rather
+   than as an alarm. */
+.blocked {
+  margin: 0;
+  color: var(--df-color-ink-primary);
+  font-size: var(--df-type-body);
 }
 
 .trackPicker {

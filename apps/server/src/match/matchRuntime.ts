@@ -1,10 +1,16 @@
 import {
+  DEFAULT_ROUND_TYPE,
   MODULE_LIBRARY,
   RapierSimulation,
+  resolveRoundRules,
   resolveTrack,
+  roundStartBlockedReason,
+  roundTypeOverrides,
   trackSpawn,
   type LobbyPlayer,
   type MatchState,
+  type RoundRules,
+  type RoundType,
   type Track,
 } from "@dont-fall/shared";
 import type { WebSocket } from "ws";
@@ -19,6 +25,18 @@ export interface MatchConfig {
   roundEndMs: number;
   playersToStart: number;
   timeLimitMsOverride?: number | undefined;
+  /**
+   * Force this Match's `RoundRules.survivorTarget` over whatever Track it
+   * loads (M5 ticket 05) — the same kind of Match-level override
+   * `timeLimitMsOverride` is, over the same kind of Track default.
+   *
+   * There is deliberately no `fallBehaviorOverride` beside it any more
+   * (ticket 07): that one was never a Track default to override, it was the
+   * Round type standing in for a Lobby that couldn't pick one yet. The Lobby
+   * picks now ({@link MatchRuntime.setRoundType}), so the stand-in is gone
+   * rather than left as a second way to decide the same thing.
+   */
+  survivorTargetOverride?: number | undefined;
 }
 
 /**
@@ -51,6 +69,32 @@ export class MatchRuntime {
   /** The world. Replaced wholesale by a Playtest reload or a Lobby Track pick. */
   simulation: RapierSimulation;
   fetched: FetchedTrack;
+  /**
+   * This Round's rules (M5 ticket 02, ADR 0041/0043) — the Track's own
+   * defaults under this Match's overrides, resolved once by
+   * {@link buildSimulationFor} every time `simulation`/`fetched` are, and
+   * fixed in between. Replicated on the snapshot beside `phase`
+   * (`matchLoop.ts`) so the client predicts against the identical record.
+   */
+  roundRules: RoundRules;
+  /**
+   * The Round type this Lobby will start (M5 ticket 07) — a name, and the
+   * only place in the server one exists. Everything downstream reads
+   * {@link roundRules}, which {@link setRoundType} re-resolves from this;
+   * nothing branches on the name itself (ADR 0043).
+   *
+   * Survives a Track pick and the return from Results: a host who chose
+   * Survival chose it for this Lobby, not for one Round.
+   */
+  roundType: RoundType = DEFAULT_ROUND_TYPE;
+  /**
+   * Whether the currently-loaded Track has a Finish Zone at all (M5 ticket
+   * 07) — resolved with the simulation, since `resolveTrack` already
+   * answers it, rather than re-flattening the Track every time the Lobby
+   * asks. This is the *only* thing that decides whether a Race can run
+   * here; no Track is ever tagged with the Round types it allows (ADR 0041).
+   */
+  trackHasFinishZone: boolean;
 
   /**
    * The server's own monotonic tick — advances by exactly one every interval,
@@ -85,16 +129,56 @@ export class MatchRuntime {
     this.fetched = fetched;
     // The Match starts with no players; ticket 01's single-player default
     // Character is opted out here rather than added and immediately disposed.
-    this.simulation = this.rebuildSimulationFor(fetched.track);
+    const built = this.buildSimulationFor(fetched.track);
+    this.simulation = built.simulation;
+    this.roundRules = built.roundRules;
+    this.trackHasFinishZone = built.trackHasFinishZone;
   }
 
   /**
-   * This Round's Time Limit — the Revision's own (ADR 0038), unless a test has
-   * overridden it. A method, not a captured value: a reload replaces `fetched`
-   * with a different Track carrying a different clock.
+   * This Round's rules, from the three sources ADR 0041 allows and no
+   * others: the Track Revision's own authored defaults, under the Lobby's
+   * Round-type pick, under this Match's own configured overrides.
+   *
+   * Ordering is the ADR's own — a Round's override beats a Track's default —
+   * and the Round type sits between the two because it *is* a Round-level
+   * choice, just one a host makes instead of a process config.
    */
-  roundTimeLimitMs(): number {
-    return this.config.timeLimitMsOverride ?? this.fetched.timeLimitMs;
+  private resolveRules(): RoundRules {
+    return resolveRoundRules(
+      { timeLimitMs: this.fetched.timeLimitMs, fallBehavior: "respawn", survivorTarget: this.fetched.survivorTarget },
+      {
+        ...roundTypeOverrides(this.roundType),
+        // Spread conditionally, not assigned as a possibly-`undefined` value:
+        // an explicit `undefined` here would clobber a field the Round type
+        // had just set, the day a Round type overrides more than
+        // `fallBehavior`. Same idiom `startServer` uses building this config.
+        ...(this.config.timeLimitMsOverride !== undefined ? { timeLimitMs: this.config.timeLimitMsOverride } : {}),
+        ...(this.config.survivorTargetOverride !== undefined ? { survivorTarget: this.config.survivorTargetOverride } : {}),
+      },
+    );
+  }
+
+  /**
+   * The host picked a Round type (M5 ticket 07). Re-resolves this Round's
+   * rules and hands them straight to the live simulation — no rebuild: a
+   * Round type changes what the rules *say*, never what the world *is*,
+   * unlike a Track pick, which changes both.
+   */
+  setRoundType(roundType: RoundType): void {
+    this.roundType = roundType;
+    this.roundRules = this.resolveRules();
+    this.simulation.syncRoundRules(this.roundRules);
+  }
+
+  /**
+   * Why this Lobby can't start right now, in words a Player can read, or
+   * `undefined` when it can (M5 ticket 07). One expression, read by both the
+   * `start` gate that refuses and the snapshot field that explains — so what
+   * a Player is told and what the server enforces can never disagree.
+   */
+  startBlockedReason(): string | undefined {
+    return roundStartBlockedReason(this.roundType, this.trackHasFinishZone);
   }
 
   /**
@@ -105,16 +189,45 @@ export class MatchRuntime {
    * `sockets.size === 0`. A Lobby's host picking a different Track can do this
    * with others already sitting in it; nobody's Character should vanish just
    * because the world under it changed.
+   *
+   * Also resolves `roundRules` (M5 ticket 02, ADR 0041/0043) — `this.fetched`
+   * is always updated by the caller before this runs (`selectTrack`, the
+   * connect-time reload, going again), so its Time Limit is the fresh Track's
+   * own. `timeLimitMsOverride` is this Match's own Round-level override,
+   * folded through the same mechanism as everything else rather than staying
+   * a special case (ticket 02's own requirement) — the only override this
+   * ticket has a source for; a real per-Round choice (a future Lobby control)
+   * is more overrides added to the same call, not a new mechanism.
+   *
+   * `fallBehavior`'s own "Track default" is always the constant `"respawn"`
+   * (M5 ticket 03, ADR 0041) — no Track carries a Round-type opinion, so
+   * every Round is a Race until the Lobby's own pick says otherwise
+   * (`roundType`, ticket 07). `survivorTarget`, by contrast, is a real Track
+   * default the Revision authors (ticket 07) — see {@link resolveRules}.
+   *
+   * Returns both rather than assigning `this.roundRules` as a side effect:
+   * `new RapierSimulation` can throw (an unknown Module id), and only the
+   * caller (`resetToFreshLobby`) knows it is safe to commit either field —
+   * the same "build before discarding the old one" discipline it already
+   * follows for `simulation` itself.
    */
-  rebuildSimulationFor(track: Track): RapierSimulation {
-    const next = new RapierSimulation({
-      ...resolveTrack(MODULE_LIBRARY, track),
+  buildSimulationFor(track: Track): { simulation: RapierSimulation; roundRules: RoundRules; trackHasFinishZone: boolean } {
+    const roundRules = this.resolveRules();
+    const resolved = resolveTrack(MODULE_LIBRARY, track);
+    const simulation = new RapierSimulation({
+      ...resolved,
       withDefaultCharacter: false,
+      roundRules,
     });
+    // Onto the Tick the server is already on, before anyone is seated in it
+    // (M5 ticket 08) — a Character added at tick 0 and only then jumped
+    // forward would carry a `phaseStartTick` thousands of Ticks in its own
+    // past. No-op at construction, where `serverTick` is 0.
+    simulation.syncTick(this.serverTick);
     for (const [playerId, player] of this.lobbyPlayers) {
-      next.addCharacter(playerId, trackSpawn(track, player.joinOrder));
+      simulation.addCharacter(playerId, trackSpawn(track, player.joinOrder));
     }
-    return next;
+    return { simulation, roundRules, trackHasFinishZone: resolved.finishZones.length > 0 };
   }
 
   /**
@@ -124,17 +237,27 @@ export class MatchRuntime {
    * restart the tick/phase bookkeeping it depends on.
    *
    * The replacement is built before the old one is disposed
-   * (`rebuildSimulationFor` can throw — an unknown Module id in a Track
+   * (`buildSimulationFor` can throw — an unknown Module id in a Track
    * published against a newer library); disposing first would leave this
    * server holding a freed Rapier world for every subsequent tick.
    *
-   * `serverTick` restarts with the new simulation's own tick counter (ADR
-   * 0027), or every subsequent input — stamped from the client's *new*
-   * `state.tick`, always small — reads as permanently stale against the old,
-   * much larger `serverTick`: every queued input discarded before it can ever
-   * match `thisTick`, and the resulting `lastInputTick` ack (now way ahead of
-   * what the client sent) makes the client think everything it sent already
-   * got applied. No one can move, for the rest of this process's life.
+   * The Match's Tick epoch is *not* restarted (M5 ticket 08, found live).
+   * `state.tick` and `serverTick` must keep agreeing (ADR 0027 addresses
+   * every input by Tick number), and the way to keep them agreeing across a
+   * rebuild is to hand the new simulation the Tick the server is already on
+   * — `syncTick` — not to send both back to zero.
+   *
+   * Sending both to zero looks equivalent and is not, because a *connected*
+   * client's own prediction tick is seeded into the server's Tick space
+   * exactly once, at join (ADR 0027, `PredictionLoop.seed`), and never
+   * re-seeded. Restarting the epoch under it left every client already in
+   * the Lobby stamping inputs from an epoch the server no longer used: the
+   * server's `takeFor(id, thisTick)` never found them, `lastInputTick` ran
+   * away ahead of what the client had sent, and nobody who was already
+   * connected could move again for the rest of the Match. Live, that meant
+   * the host picking a different Track — or anyone going again from Results
+   * — froze everyone who was already there, on a Track they could see and
+   * not walk on.
    *
    * Callers still own anything specific to their own trigger — which Track
    * `fetched` now points at, clearing `dnf`, resetting Ready.
@@ -145,12 +268,13 @@ export class MatchRuntime {
    * tick loop right after, starting a Round on the just-swapped-away Track.
    */
   resetToFreshLobby(track: Track): void {
-    const nextSimulation = this.rebuildSimulationFor(track);
+    const built = this.buildSimulationFor(track);
     this.simulation.dispose();
-    this.simulation = nextSimulation;
-    this.serverTick = 0;
-    this.roundStartTick = 0;
-    this.match = { phase: "LOBBY", phaseStartTick: 0 };
+    this.simulation = built.simulation;
+    this.roundRules = built.roundRules;
+    this.trackHasFinishZone = built.trackHasFinishZone;
+    this.roundStartTick = this.serverTick;
+    this.match = { phase: "LOBBY", phaseStartTick: this.serverTick };
     this.startRequested = false;
   }
 }

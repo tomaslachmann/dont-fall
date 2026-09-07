@@ -3,9 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  DEFAULT_SURVIVOR_TARGET,
   DEFAULT_TIME_LIMIT_MS,
   M1_TRACK,
+  MAX_SURVIVOR_TARGET,
   MAX_TIME_LIMIT_MS,
+  MIN_SURVIVOR_TARGET,
   MIN_TIME_LIMIT_MS,
   type Track,
 } from "@dont-fall/shared";
@@ -425,5 +428,65 @@ describe("publish validation — a Segment must actually be a Segment", () => {
 
     expect((await publish(service.port, SAMPLE_TRACK)).status).toBe(201);
     expect((await publish(service.port, M1_TRACK)).status).toBe(201);
+  });
+});
+
+describe("Survivor Target on publish (M5 ticket 07, ADR 0041)", () => {
+  const publish = async (port: number, body: Record<string, unknown>) =>
+    fetch(`http://localhost:${port}/tracks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("returns the authored Survivor Target alongside the Track", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const { id } = (await (await publish(service.port, { track: SAMPLE_TRACK, survivorTarget: 4 })).json()) as {
+      id: string;
+    };
+
+    const stored = (await (await fetch(`http://localhost:${service.port}/tracks/${id}`)).json()) as {
+      survivorTarget: number;
+      track: Track;
+    };
+
+    expect(stored.survivorTarget).toBe(4);
+    expect(stored.track).toEqual(SAMPLE_TRACK);
+  });
+
+  it("defaults a publish that omits it, so every existing caller keeps working", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const { id } = (await (await publish(service.port, { track: SAMPLE_TRACK })).json()) as { id: string };
+
+    const stored = (await (await fetch(`http://localhost:${service.port}/tracks/${id}`)).json()) as {
+      survivorTarget: number;
+    };
+
+    expect(stored.survivorTarget).toBe(DEFAULT_SURVIVOR_TARGET);
+  });
+
+  it("rejects a target outside the bounds rather than storing a Revision that can't be survived", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+
+    const res = await publish(service.port, { track: SAMPLE_TRACK, survivorTarget: MIN_SURVIVOR_TARGET - 1 });
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toMatch(/survivorTarget/);
+    expect((await publish(service.port, { track: SAMPLE_TRACK, survivorTarget: MAX_SURVIVOR_TARGET + 1 })).status).toBe(400);
+    expect((await publish(service.port, { track: SAMPLE_TRACK, survivorTarget: 2.5 })).status).toBe(400);
+  });
+
+  it("stores a Track's clock and its Survivor Target together — one publish authors both", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const { id } = (await (
+      await publish(service.port, { track: SAMPLE_TRACK, timeLimitMs: 45_000, survivorTarget: 3 })
+    ).json()) as { id: string };
+
+    const stored = (await (await fetch(`http://localhost:${service.port}/tracks/${id}`)).json()) as {
+      timeLimitMs: number;
+      survivorTarget: number;
+    };
+
+    expect(stored).toMatchObject({ timeLimitMs: 45_000, survivorTarget: 3 });
   });
 });

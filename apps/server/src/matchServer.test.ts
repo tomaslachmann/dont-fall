@@ -7,6 +7,7 @@ import {
   RapierSimulation,
   TICK_MS,
   type ClientMessage,
+  type RoundType,
   type ServerMessage,
   type SimInputs,
   type Track,
@@ -60,11 +61,21 @@ const nextMessage = (socket: WebSocket): Promise<ServerMessage> =>
  * Revision (ADR 0032) instead of creating a fresh one — Playtest always
  * reuses the same fixed reserved id across repeated clicks.
  */
-const publishTrack = async (track: Track = M1_TRACK, id?: string, timeLimitMs?: number): Promise<string> => {
+const publishTrack = async (
+  track: Track = M1_TRACK,
+  id?: string,
+  timeLimitMs?: number,
+  survivorTarget?: number,
+): Promise<string> => {
   const res = await fetch(`http://localhost:${trackService.port}/tracks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ track, ...(id ? { id } : {}), ...(timeLimitMs !== undefined ? { timeLimitMs } : {}) }),
+    body: JSON.stringify({
+      track,
+      ...(id ? { id } : {}),
+      ...(timeLimitMs !== undefined ? { timeLimitMs } : {}),
+      ...(survivorTarget !== undefined ? { survivorTarget } : {}),
+    }),
   });
   const body = (await res.json()) as { id: string };
   return body.id;
@@ -112,6 +123,17 @@ const startMatch = async (...sockets: WebSocket[]): Promise<void> => {
     host.on("message", onMessage);
   });
   host.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
+};
+
+/**
+ * The host picks this Lobby's Round type (M5 ticket 07) — the real path, and
+ * since ticket 07 the only one: the `fallBehaviorOverride` config that stood
+ * in for it is gone. Sent on the host's own socket before `startMatch`, so
+ * message ordering guarantees the server has applied it before it sees
+ * `start`.
+ */
+const pickRoundType = (host: WebSocket, roundType: RoundType): void => {
+  host.send(JSON.stringify({ type: "setRoundType", roundType } satisfies ClientMessage));
 };
 
 describe("startServer", () => {
@@ -640,8 +662,7 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
     await new Promise((resolve) => first.once("close", resolve));
 
     // Reload — a genuinely different Track, with no one connected, so the
-    // reload path actually runs and replaces `simulation` (whose own tick
-    // counter restarts at 0) without resetting the server's `serverTick`.
+    // reload path actually runs and replaces `simulation`.
     const altTrackId = await publishTrack();
     const second = connect(server.port, `?track=${altTrackId}`);
     const secondWelcome = await nextMessage(second);
@@ -652,9 +673,13 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
     const postReloadFirst = await nextMessage(second);
     if (postReloadFirst.type !== "snapshot") throw new Error("unreachable");
     const startZ = postReloadFirst.state.characters[id]!.position.z;
-    // The new simulation's own tick counter restarted at 0 — this is exactly
-    // what the client would seed `predictionTick` from post-reload.
-    expect(postReloadFirst.state.tick).toBeLessThan(10);
+    // The rebuilt simulation carries on from the Tick the server is already
+    // on rather than restarting the epoch (M5 ticket 08): `state.tick` — what
+    // a client seeds `predictionTick` from — and `serverTick` still agree,
+    // which is the whole of ADR 0027's addressing. Restarting it instead
+    // froze every client that was *already* connected, since a prediction
+    // tick is seeded once and never re-seeded.
+    expect(postReloadFirst.state.tick).toBeGreaterThan(tick);
 
     let postTick = postReloadFirst.state.tick;
     let lastZ = startZ;
@@ -743,6 +768,64 @@ describe("startServer — the Round clock (M4 ticket 03, ADR 0038)", () => {
     expect(Math.abs(snapA.timeLeftMs - snapB.timeLeftMs)).toBeLessThan(200);
     a.close();
     b.close();
+  });
+});
+
+describe("startServer — RoundRules ride the snapshot (M5 ticket 02, ADR 0041/0043)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (;;) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+  };
+
+  it("resolves timeLimitMs from the Track's own default — the same number timeLeftMs already showed", async () => {
+    const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+
+    const snapshot = await nextSnapshot(socket);
+
+    expect(snapshot.roundRules.timeLimitMs).toBe(45_000);
+    socket.close();
+  });
+
+  it("takes this Match's own timeLimitMsOverride over the Track's default — the general mechanism, not a special case", async () => {
+    const trackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, timeLimitMsOverride: 12_000 });
+    const socket = connect(server.port, `?track=${trackId}`);
+
+    const snapshot = await nextSnapshot(socket);
+
+    expect(snapshot.roundRules.timeLimitMs).toBe(12_000);
+    socket.close();
+  });
+
+  it("re-resolves on a live Track pick — the new Track's own default, not the old one carried forward", async () => {
+    server = await startServer({ port: 0 });
+    const socket = connect(server.port);
+    await nextMessage(socket); // welcome, host
+
+    const altTrackId = await publishTrack(M1_TRACK, undefined, 20_000);
+    socket.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
+
+    const reloaded = await snapshotUntil(socket, (s) => s.trackId === altTrackId);
+    expect(reloaded.roundRules.timeLimitMs).toBe(20_000);
+    socket.close();
   });
 });
 
@@ -1016,8 +1099,37 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     const afterDrop = await snapshotUntil(b, (s) => s.dnf.length > 0);
 
     expect(afterDrop.dnf).toEqual([{ id: welcomeA.playerId, nickname: "Player" }]);
-    // The Character is gone from the world too, not left standing.
-    expect(afterDrop.state.characters[welcomeA.playerId]).toBeUndefined();
+    // Eliminated, not removed (M5 ticket 04, ADR 0042): the entry stays —
+    // pulling its rigid body out of the world mid-Round would disturb
+    // contact resolution for everyone still racing (the flaw this ticket
+    // fixed) — but it goes down and can no longer be bumped or bump anyone.
+    expect(afterDrop.state.characters[welcomeA.playerId]!.motionState).toBe("Ragdoll");
+    b.close();
+  });
+
+  it("still ends early on Qualification after a mid-Round drop — the eliminated dropout doesn't hold the Round open (M5 ticket 04)", async () => {
+    // A long Time Limit: if the dropout's own never-Qualifying entry could
+    // still block `allQualified`, this test would only pass by waiting out
+    // the whole thing — this instead asserts the early, Qualification-driven
+    // ending, the same shape "ends the Round as soon as every connected
+    // Character has Qualified" above already pins for the no-dropout case.
+    const trackId = await publishTrack(INSTANT_FINISH, undefined, 60_000);
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, roundEndMs: 0 });
+    const a = connect(server.port, `?track=${trackId}`);
+    await nextMessage(a);
+    const b = connect(server.port);
+    await nextMessage(b);
+    await startMatch(a, b);
+    await snapshotUntil(b, (s) => s.phase === "RUNNING");
+
+    a.close(); // eliminated, not removed — stays in state.characters forever, never Qualifying
+
+    const ended = await snapshotUntil(b, (s) => s.phase === "ROUND_END" || s.phase === "RESULTS");
+
+    // Early — the Track's Finish Zone sits right at spawn, so b Qualifies in
+    // the first few Ticks. A trapped-open Round would still read the full
+    // 60s here instead.
+    expect(ended.timeLeftMs).toBeGreaterThan(55_000);
     b.close();
   });
 
@@ -1092,6 +1204,91 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     expect(running.dnf).toEqual([]);
     c.close();
     d.close();
+  });
+});
+
+describe("startServer — a Survival Round ends (M5 ticket 05)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (;;) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+  };
+
+  it("ends early once eliminations bring survivors down to the Survivor Target — the remaining Player Qualifies", async () => {
+    server = await startServer({
+      port: 0,
+      playersToStart: 2,
+      countdownMs: 0,
+      roundEndMs: 0,
+      survivorTargetOverride: 1,
+    });
+    const a = connect(server.port);
+    const welcomeA = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
+    const b = connect(server.port);
+    const welcomeB = (await nextMessage(b)) as Extract<ServerMessage, { type: "welcome" }>;
+    pickRoundType(a, "survival");
+    await startMatch(a, b);
+    await snapshotUntil(b, (s) => s.phase === "RUNNING");
+
+    a.close(); // eliminated (M5 ticket 04) — 1 survivor left, at the Target
+
+    const ended = await snapshotUntil(b, (s) => s.phase === "ROUND_END" || s.phase === "RESULTS");
+
+    // Early, not by waiting out the (long, unset) Time Limit.
+    expect(ended.timeLeftMs).toBeGreaterThan(0);
+    // The survivor Qualifies — the same finishTick mechanism a Race's own
+    // Finish Zone uses, just granted by the Round's own ending instead.
+    expect(ended.state.characters[welcomeB.playerId]!.finishTick).not.toBeNull();
+    // The eliminated Player never does, and stays eliminated, not removed.
+    expect(ended.state.characters[welcomeA.playerId]!.finishTick).toBeNull();
+    expect(ended.state.characters[welcomeA.playerId]!.eliminated).toBe(true);
+    b.close();
+  });
+
+  it("ends on the clock with survivors still above the Target — everyone left standing Qualifies", async () => {
+    // Target 1 with both Players still standing (2 > 1) never reaches the
+    // early-ending path — this only ever ends once the (very short) clock does.
+    server = await startServer({
+      port: 0,
+      playersToStart: 2,
+      countdownMs: 0,
+      roundEndMs: 0,
+      survivorTargetOverride: 1,
+      timeLimitMsOverride: 300,
+    });
+    const a = connect(server.port);
+    const welcomeA = (await nextMessage(a)) as Extract<ServerMessage, { type: "welcome" }>;
+    const b = connect(server.port);
+    const welcomeB = (await nextMessage(b)) as Extract<ServerMessage, { type: "welcome" }>;
+    pickRoundType(a, "survival");
+    await startMatch(a, b);
+
+    const ended = await snapshotUntil(b, (s) => s.phase === "ROUND_END" || s.phase === "RESULTS");
+
+    expect(ended.timeLeftMs).toBe(0);
+    // Neither eliminated, both still standing when the clock ran out —
+    // both Qualify, exactly like a Race's own clock-ran-out survivors do.
+    expect(ended.state.characters[welcomeA.playerId]!.finishTick).not.toBeNull();
+    expect(ended.state.characters[welcomeB.playerId]!.finishTick).not.toBeNull();
+    expect(ended.state.characters[welcomeA.playerId]!.eliminated).toBe(false);
+    expect(ended.state.characters[welcomeB.playerId]!.eliminated).toBe(false);
+    a.close();
+    b.close();
   });
 });
 
@@ -1555,3 +1752,283 @@ describe("startServer — a failed tick must not swallow the host's start (M4.5 
     }
   });
 });
+
+describe("startServer — the Lobby picks a Round type (M5 ticket 07, ADR 0041/0043)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (;;) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+  };
+
+  /** A Track with no Finish Zone at all — the Survival arena on its own (ticket 06). */
+  const ARENA_ONLY: Track = [{ moduleId: "arena", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+
+  it("starts every Lobby on a Race, so a host who never touches the picker gets what M4 always did", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+
+    const snapshot = await nextSnapshot(socket);
+
+    expect(snapshot.lobby.roundType).toBe("race");
+    expect(snapshot.roundRules.fallBehavior).toBe("respawn");
+    socket.close();
+  });
+
+  it("shows the host's pick to everyone in the Lobby, not just to whoever clicked", async () => {
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0 });
+    const host = connect(server.port);
+    await nextMessage(host); // welcome
+    const other = connect(server.port);
+    await nextMessage(other); // welcome
+
+    pickRoundType(host, "survival");
+
+    const seenByOther = await snapshotUntil(other, (s) => s.lobby.roundType === "survival");
+    // And as data, not only as a name — this is what the client predicts against.
+    expect(seenByOther.roundRules.fallBehavior).toBe("eliminate");
+    host.close();
+    other.close();
+  });
+
+  it("ignores a Round type from anyone but the host", async () => {
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0 });
+    const host = connect(server.port);
+    await nextMessage(host);
+    const other = connect(server.port);
+    await nextMessage(other);
+    await snapshotUntil(host, (s) => s.lobby.players.length === 2);
+
+    pickRoundType(other, "survival");
+
+    // Give the server real ticks to have acted on it, had it been going to.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect((await nextSnapshot(host)).lobby.roundType).toBe("race");
+    host.close();
+    other.close();
+  });
+
+  it("ignores a Round type nobody defines rather than resolving Rounds nothing knows the rules for", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+    await nextMessage(socket);
+
+    socket.send(JSON.stringify({ type: "setRoundType", roundType: "battle-royale" }));
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect((await nextSnapshot(socket)).lobby.roundType).toBe("race");
+    socket.close();
+  });
+
+  it("keeps the pick across a Track change — a host chose Survival for this Lobby, not for one Round", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+    await nextMessage(socket);
+    pickRoundType(socket, "survival");
+    await snapshotUntil(socket, (s) => s.lobby.roundType === "survival");
+
+    const altTrackId = await publishTrack(M1_TRACK, undefined, 20_000);
+    socket.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
+
+    const reloaded = await snapshotUntil(socket, (s) => s.trackId === altTrackId);
+    expect(reloaded.lobby.roundType).toBe("survival");
+    expect(reloaded.roundRules.fallBehavior).toBe("eliminate");
+    socket.close();
+  });
+
+  it("resolves survivorTarget from the Track's own authored default (ADR 0041)", async () => {
+    const trackId = await publishTrack(M1_TRACK, undefined, undefined, 4);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+
+    expect((await nextSnapshot(socket)).roundRules.survivorTarget).toBe(4);
+    socket.close();
+  });
+
+  it("takes this Match's own survivorTargetOverride over the Track's authored default", async () => {
+    const trackId = await publishTrack(M1_TRACK, undefined, undefined, 4);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, survivorTargetOverride: 2 });
+    const socket = connect(server.port, `?track=${trackId}`);
+
+    expect((await nextSnapshot(socket)).roundRules.survivorTarget).toBe(2);
+    socket.close();
+  });
+
+  it("explains why a Race can't start on a Track with no Finish Zone, instead of failing silently", async () => {
+    const trackId = await publishTrack(ARENA_ONLY);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+
+    const snapshot = await snapshotUntil(socket, (s) => s.trackId === trackId);
+
+    expect(snapshot.lobby.startBlockedReason).toMatch(/Finish Zone/);
+    socket.close();
+  });
+
+  it("refuses the start itself, not just the button — the Lobby stays put", async () => {
+    const trackId = await publishTrack(ARENA_ONLY);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket);
+    await snapshotUntil(socket, (s) => s.trackId === trackId);
+
+    await startMatch(socket);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect((await nextSnapshot(socket)).phase).toBe("LOBBY");
+    socket.close();
+  });
+
+  it("lets that same Track run the moment the host picks Survival — nothing tags the Track itself", async () => {
+    const trackId = await publishTrack(ARENA_ONLY);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket);
+    await snapshotUntil(socket, (s) => s.trackId === trackId);
+
+    pickRoundType(socket, "survival");
+    const unblocked = await snapshotUntil(socket, (s) => s.lobby.roundType === "survival");
+    expect(unblocked.lobby.startBlockedReason).toBeUndefined();
+
+    await startMatch(socket);
+
+    expect((await snapshotUntil(socket, (s) => s.phase !== "LOBBY")).phase).not.toBe("LOBBY");
+    socket.close();
+  });
+});
+
+describe("startServer — the last Player leaving leaves no ghosts behind (M5 ticket 08, found live)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (;;) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+  };
+
+  it("rebuilds the world, so a mid-Round drop that empties the server doesn't haunt the next Lobby", async () => {
+    // Since M5 ticket 04 a mid-Round drop is *marked* eliminated rather than
+    // removed (ADR 0042). If that drop is the last one, the phase snaps back
+    // to LOBBY — and used to do it around a world still holding the body.
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0 });
+    const first = connect(server.port);
+    await nextMessage(first); // welcome
+    await startMatch(first);
+    await snapshotUntil(first, (s) => s.phase === "RUNNING");
+    first.close();
+    // Let the server actually tick with nobody connected — that is the
+    // transition under test, and reconnecting inside the same 33 ms would
+    // race past it.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // Nobody left: `advanceMatchPhase` puts the Match back in LOBBY.
+    const second = connect(server.port);
+    const welcome = (await nextMessage(second)) as Extract<ServerMessage, { type: "welcome" }>;
+    const snapshot = await snapshotUntil(second, (s) => s.lobby.players.length === 1);
+
+    expect(snapshot.phase).toBe("LOBBY");
+    // Exactly one Character — the joiner's own, no ghost from the abandoned Round.
+    expect(Object.keys(snapshot.state.characters)).toEqual([welcome.playerId]);
+    second.close();
+  });
+});
+
+describe("startServer — a Track pick must not freeze the Players already in the Lobby (M5 ticket 08, found live)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (;;) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+  };
+
+  it("keeps the Tick epoch running across the rebuild, so an already-seeded prediction tick stays valid", async () => {
+    // A client seeds its own prediction tick into the server's Tick space
+    // once, at join (ADR 0027) — never again. Restarting `serverTick` under
+    // it meant every input it sent afterward addressed a Tick the server had
+    // already passed, so nothing it sent was ever applied again.
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+    await nextMessage(socket); // welcome
+    const before = await snapshotUntil(socket, (s) => s.state.tick > 10);
+
+    const altTrackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    socket.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
+    const reloaded = await snapshotUntil(socket, (s) => s.trackId === altTrackId);
+
+    expect(reloaded.state.tick).toBeGreaterThanOrEqual(before.state.tick);
+    socket.close();
+  });
+
+  it("still applies that client's own input after the Track changes under it", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+    const welcome = (await nextMessage(socket)) as Extract<ServerMessage, { type: "welcome" }>;
+    const id = welcome.playerId;
+
+    const altTrackId = await publishTrack(M1_TRACK, undefined, 45_000);
+    socket.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
+    await snapshotUntil(socket, (s) => s.trackId === altTrackId);
+    await startMatch(socket);
+    const running = await snapshotUntil(socket, (s) => s.phase === "RUNNING");
+
+    // Stamp each input a little ahead of the latest snapshot's Tick. Note
+    // this re-reads the Tick every iteration, so it would recover from a
+    // broken epoch on its own where a real client cannot — the epoch itself
+    // is what the test above pins. This one is the end-to-end sanity check
+    // that a Track pick leaves a Player able to walk at all.
+    let tick = running.state.tick;
+    const startZ = running.state.characters[id]!.position.z;
+    let z = startZ;
+    for (let i = 0; i < 40; i += 1) {
+      sendInput(socket, tick + 2, NORTH);
+      const snapshot = await nextSnapshot(socket);
+      tick = snapshot.state.tick;
+      z = snapshot.state.characters[id]!.position.z;
+    }
+
+    expect(z).toBeLessThan(startZ - 1); // it walked — the Track pick did not freeze it
+    socket.close();
+  });
+});
+

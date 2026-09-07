@@ -109,6 +109,7 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
           onSetNickname={(nickname) => handleRef.current?.setNickname(nickname)}
           onSetReady={(ready) => handleRef.current?.setReady(ready)}
           onSelectTrack={(id) => handleRef.current?.selectTrack(id)}
+          onSetRoundType={(roundType) => handleRef.current?.setRoundType(roundType)}
           onStart={() => handleRef.current?.start()}
         />
       )}

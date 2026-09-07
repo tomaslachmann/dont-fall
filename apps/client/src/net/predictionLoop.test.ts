@@ -95,6 +95,22 @@ describe("PredictionLoop — step (the fixed-timestep accumulator)", () => {
     for (let i = 0; i < MAX_BUFFERED_INPUT_TICKS + 10; i += 1) loop.step(IDLE, TICK_MS);
     expect(loop.inputBuffer.length).toBeLessThanOrEqual(MAX_BUFFERED_INPUT_TICKS);
   });
+
+  it("defaults phase to RUNNING — a caller that never passes it still predicts movement", () => {
+    const sim = newSim();
+    const loop = new PredictionLoop(sim, DEFAULT_CHARACTER_ID);
+    loop.step(EAST, TICK_MS * 3);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x).toBeGreaterThan(SPAWN.x);
+  });
+
+  it("still buffers input while phase-locked, but the shared step refuses to move the Character (M5 ticket 01)", () => {
+    const sim = newSim();
+    const loop = new PredictionLoop(sim, DEFAULT_CHARACTER_ID);
+    loop.step(EAST, TICK_MS * 3, undefined, "COUNTDOWN");
+    expect(loop.inputBuffer.map((e) => e.tick)).toEqual([1, 2, 3]);
+    expect(loop.inputBuffer.every((e) => e.input === EAST)).toBe(true);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x).toBeCloseTo(SPAWN.x, 5);
+  });
 });
 
 describe("PredictionLoop — reconcile (the correction gate, ADR 0013/0026)", () => {
@@ -154,6 +170,25 @@ describe("PredictionLoop — reconcile (the correction gate, ADR 0013/0026)", ()
       new PropPredictionController(),
     );
     expect(repeatNoHistory.corrected).toBe(true);
+  });
+
+  it("replays unacked ticks locked when the reconcile itself says the phase is locked (M5 ticket 01)", () => {
+    const sim = newSim();
+    const loop = new PredictionLoop(sim, DEFAULT_CHARACTER_ID);
+    // Predicted forward while (incorrectly) believing input was live — the
+    // server's own report below disagrees hard enough to force a replay.
+    loop.step(EAST, TICK_MS * 3);
+    const result = loop.reconcile(
+      serverReport({ position: { x: 5, y: 1.2, z: 0 } }),
+      1,
+      [],
+      new PropPredictionController(),
+      "COUNTDOWN",
+    );
+    expect(result.corrected).toBe(true);
+    // The replayed (unacked) ticks 2 and 3 ran locked — the Character stayed
+    // put at the server's corrected position rather than continuing east.
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x).toBeCloseTo(5, 5);
   });
 });
 
