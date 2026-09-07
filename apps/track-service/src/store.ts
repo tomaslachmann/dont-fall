@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { DEFAULT_TIME_LIMIT_MS, type Track, type TrackListing } from "@dont-fall/shared";
+import { DEFAULT_TIME_LIMIT_MS, type StoredTrack, type Track, type TrackListing } from "@dont-fall/shared";
 import type { TrackDb } from "./db.js";
 import { tracks } from "./schema.js";
 
-export type { TrackListing };
+export type { StoredTrack, TrackListing };
 
 /**
  * Single hardcoded author for every published Revision (ADR 0032) —
@@ -13,17 +13,6 @@ export type { TrackListing };
  * Revision shape needs to change, only what populates the field.
  */
 export const DEFAULT_AUTHOR_ID = "local-author";
-
-export interface StoredTrack {
-  id: string;
-  name: string | null;
-  track: Track;
-  revision: number;
-  authorId: string;
-  contentHash: string;
-  /** How long a Round on this Revision gets, in ms (M4 ticket 03, ADR 0038). */
-  timeLimitMs: number;
-}
 
 const toStored = (row: typeof tracks.$inferSelect): StoredTrack => ({
   id: row.trackId,

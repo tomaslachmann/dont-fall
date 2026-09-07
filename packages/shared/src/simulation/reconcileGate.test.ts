@@ -1,5 +1,6 @@
-import { RECONCILE_POSITION_EPSILON, type CharacterMotionState } from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
+import { RECONCILE_POSITION_EPSILON } from "../tuning.js";
+import type { CharacterMotionState } from "./CharacterStateMachine.js";
 import { needsCorrection } from "./reconcileGate.js";
 
 const at = (motionState: CharacterMotionState, finishTick: number | null = null) => ({ motionState, finishTick });

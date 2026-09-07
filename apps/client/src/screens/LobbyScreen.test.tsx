@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { LobbySnapshot } from "../game.js";
+import type { LobbySnapshot } from "../game/index.js";
 import { LobbyScreen } from "./LobbyScreen";
 
 // The host row's own effect fetches track-service's Track list on mount —

@@ -1,4 +1,4 @@
-import { MODULE_LIBRARY, type Track, type Vec3 } from "@dont-fall/shared";
+import { DEFAULT_TIME_LIMIT_MS, MAX_TIME_LIMIT_MS, MIN_TIME_LIMIT_MS, MODULE_LIBRARY, type Track, type Vec3 } from "@dont-fall/shared";
 import { listTracks, loadTrack, publishPlaytestTrack, saveTrack } from "./api.js";
 import { parseDraftTimeLimitMs } from "./timeLimitField.js";
 import {
@@ -27,6 +27,13 @@ const trackIdInput = $<HTMLInputElement>("track-id");
 const timeLimitInput = $<HTMLInputElement>("time-limit");
 const statusEl = $("status");
 const playtestButton = $("playtest");
+
+// The field's own displayed bounds and default come from the same shared
+// constants `parseDraftTimeLimitMs` clamps against (M4.5 ticket: the HTML
+// used to hardcode these as a third copy that could silently drift from them).
+timeLimitInput.min = String(MIN_TIME_LIMIT_MS / 1000);
+timeLimitInput.max = String(MAX_TIME_LIMIT_MS / 1000);
+timeLimitInput.value = String(DEFAULT_TIME_LIMIT_MS / 1000);
 
 /** The Draft's Time Limit in ms, as the field currently reads (M4 ticket 03). */
 const draftTimeLimitMs = (): number => parseDraftTimeLimitMs(timeLimitInput.value);

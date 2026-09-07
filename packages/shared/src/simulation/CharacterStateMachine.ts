@@ -34,6 +34,18 @@ import {
 export type CharacterMotionState = "Controlled" | "Stagger" | "Sliding" | "Ragdoll" | "GettingUp";
 
 /**
+ * Whether a Character in this motion state is "down" — Ragdolled or getting
+ * back up from one, as opposed to driving its own movement. The one
+ * predicate every down-state check across client and server means (M4.5
+ * ticket 03): ADR 0015's unconditional down-state reconciliation, ADR
+ * 0023's prediction-tick guard, and the renderer's own pose selection all
+ * ask exactly this question, and used to each answer it with their own
+ * inline copy of the same two-state check.
+ */
+export const isDownMotionState = (state: CharacterMotionState): boolean =>
+  state === "Ragdoll" || state === "GettingUp";
+
+/**
  * Drives the Character between its motion states. Pure with respect to the world
  * — the simulation feeds it Impact magnitudes and a "ragdoll settled" flag and
  * reads back the current state and the movement-input multiplier.

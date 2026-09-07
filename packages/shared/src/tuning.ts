@@ -628,6 +628,18 @@ export const INTERP_RATIO = 2;
  */
 export const INPUT_REDUNDANCY = 2;
 
+/**
+ * How many un-applied inputs the server keeps queued per client (ADR 0021).
+ * A fast or hitching client can briefly outrun the tick rate; keeping only
+ * the newest few means the server never falls a growing number of ticks
+ * behind a client's intent.
+ *
+ * Lives here with {@link INPUT_REDUNDANCY} and {@link MAX_BUFFERED_INPUT_TICKS}
+ * rather than in the server: the four numbers describe one pipeline, and
+ * anyone tuning it should find them together.
+ */
+export const MAX_QUEUED_INPUTS = 6;
+
 // --- track-service fetch (ADR 0028; ticket 12) ------------------------------
 
 /**

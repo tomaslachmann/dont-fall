@@ -1,33 +1,25 @@
 import {
-  CAPSULE_ERR_FLAT_EPSILON_M,
-  CAPSULE_ERR_HALFLIFE_MS,
-  DASH_COOLDOWN_MS,
   DEFAULT_KILL_PLANE_Y,
   INITIAL_LEAD_TICKS_MAX,
   INITIAL_LEAD_TICKS_MIN,
   INPUT_REDUNDANCY,
   LEAD_DRAIN_FRACTION,
-  MAX_BUFFERED_INPUT_TICKS,
-  MAX_STEPS_PER_FRAME,
   IDLE_INPUTS,
   MODULE_LIBRARY,
-  RECONCILE_HARDSNAP_M,
   RapierSimulation,
   TICK_MS,
   TICK_RATE_HZ,
   addVec3,
   buildResults,
-  decayPositionOffset,
   initPhysics,
+  isDownMotionState,
   isEliminated,
   interpolateState,
   lengthVec3,
   movementDirection,
   phaseLocksInput,
+  qualificationPlacement,
   resolveTrack,
-  subVec3,
-  type CharacterMotionState,
-  type CharacterSnapshot,
   type ClientMessage,
   type LobbyPlayer,
   type MatchPhase,
@@ -40,21 +32,21 @@ import {
   type Track,
   type Vec3,
 } from "@dont-fall/shared";
-import { loadCharacterModel } from "./characterModel.js";
-import { awaitWelcome, resolveEndpoints } from "./connection.js";
-import { createHud } from "./hud.js";
-import { FreeLookCamera, KeyboardInput } from "./input.js";
-import { listen } from "./listeners.js";
-import { createStage } from "./scene.js";
-import { NetMetrics } from "./netMetrics.js";
-import { PropPredictionController, graceTicksForRtt } from "./propPrediction.js";
-import { needsCorrection } from "./reconcileGate.js";
-import { matchBanner } from "./matchBanner.js";
-import { qualificationPlacement } from "./qualification.js";
-import { formatRoundClock } from "./roundTimer.js";
-import { SnapshotInterpolator } from "./snapshotInterpolation.js";
-import { createTeardown, type Teardown } from "./teardown.js";
-import { TimeSync } from "./timeSync.js";
+import { loadCharacterModel } from "../render/characterModel.js";
+import { awaitWelcome, resolveEndpoints } from "../lib/connection.js";
+import { createHud } from "../hud/hud.js";
+import { formatHudText } from "../hud/hudText.js";
+import { FreeLookCamera, KeyboardInput } from "../input/input.js";
+import { listen } from "../lib/listeners.js";
+import { createStage } from "../render/scene.js";
+import { NetMetrics } from "../net/netMetrics.js";
+import { PropPredictionController, graceTicksForRtt } from "../net/propPrediction.js";
+import { matchBanner } from "../hud/matchBanner.js";
+import { PredictionLoop } from "../net/predictionLoop.js";
+import { formatRoundClock } from "../lib/roundTimer.js";
+import { SnapshotInterpolator } from "../net/snapshotInterpolation.js";
+import { createTeardown, type Teardown } from "../lib/teardown.js";
+import { TimeSync } from "../net/timeSync.js";
 
 /**
  * Cap on the per-frame delta fed to the Character model's animation/facing
@@ -274,33 +266,10 @@ const boot = async (
   // per-player spawn grid, ticket 04) — ticket 03's reconcile deliberately
   // never corrects position, so prediction must start already aligned.
   localSim.addCharacter(myId, welcome.spawn);
-  let predictionTick = 0; // this client's own monotonic sim-tick counter
-  // ADR 0027: `predictionTick`'s numbering is seeded, once, into the server's
-  // own tick space (`estimatedServerTick + an initial LEAD`) as soon as both
-  // estimates are ready — required so the server can apply `input[serverTick]`
-  // instead of FIFO next-in-queue. Before that, the counter free-runs from 0;
-  // those low tick numbers are meaningless to the server and simply go
-  // unmatched (repeat-filled) for the brief pre-connect window.
-  let predictionTickSeeded = false;
-  let predictionAccumulatorMs = 0;
-  let renderPreviousSnapshot: SimState | undefined; // state one tick behind, for render interpolation
-
-  // Reconciliation state (ticket 05, ADR 0013): every input this client sends
-  // is buffered by the prediction tick it was for, along with the position it
-  // predicted after that tick — so on a server correction the client can line
-  // the two up tick-for-tick and replay everything since.
-  const inputBuffer: { tick: number; input: SimInputs }[] = [];
-  const positionHistory = new Map<number, Vec3>();
-
-  // ADR 0026: the local Character's own reconciliation correction is a
-  // decaying render-time offset (the same mechanism ADR 0022 ships for pushed
-  // Props) instead of an instant snap — the sim always reconciles exactly;
-  // only the drawn mesh carries the residual, easing it out over
-  // CAPSULE_ERR_HALFLIFE_MS. Never applied while down (ADR 0015 addendum
-  // already draws that state straight from the server) and zeroed on every
-  // motionState change.
-  let capsuleErrorOffset: Vec3 = { x: 0, y: 0, z: 0 };
-  let offsetMotionState: CharacterMotionState = "Controlled";
+  // The predict/reconcile core (M4.5 ticket 02, ADR 0013) — accumulator,
+  // input buffering, reconciliation and the capsule render-time offset all
+  // live here; the frame below keeps only rAF/sockets/rendering/HUD.
+  let predictionLoop = new PredictionLoop(localSim, myId);
 
   // World content this client does not predict — Spinner rotation, Props, other
   // players, this player's own ragdoll while down — comes straight from the
@@ -332,11 +301,6 @@ const boot = async (
   // NTP-style clock sync (ADR 0019) — feeds the interpolation buffer's clock
   // and the net-graph RTT.
   const timeSync = new TimeSync();
-  // The prediction tick the local Character first went down on, or null while
-  // up (ADR 0023 prediction-tick guard). A server snapshot that reports
-  // "not down" for a tick *before* this one hasn't seen the knockdown yet — it
-  // is stale, not a disagreement, and must not revert the just-started ragdoll.
-  let predictedDownAtTick: number | null = null;
   // Prediction LEAD (ADR 0021): keep the server's command buffer near ~1.5 so it
   // never starves. Pure feedback on the server-reported `commandQueueDepth` — at
   // most one prediction tick injected or dropped per `LEAD_ADJUST_FRAMES`, so it
@@ -346,119 +310,6 @@ const boot = async (
   const LEAD_ADJUST_FRAMES = 12;
   let smoothedQueueDepth = 1.5;
   let framesSinceLeadAdjust = LEAD_ADJUST_FRAMES;
-
-  const distance = (a: Vec3, b: Vec3): number => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-  const isDown = (state: CharacterSnapshot["motionState"]): boolean =>
-    state === "Ragdoll" || state === "GettingUp";
-
-  /**
-   * Reconcile the local prediction against the server's authoritative snapshot
-   * for our own Character (ticket 05, ADR 0015). The server echoes the last
-   * input tick it applied (`lastInputTick`); everything the client predicted
-   * past that point is replayed forward from the corrected base.
-   *
-   * A server-reported down state (`Ragdoll`/`GettingUp`) is always synced,
-   * unconditionally — safe because `localSim` is non-`authoritative` (see its
-   * construction below): it never decides on its own when a knockdown ends,
-   * so it can only ever be at or behind the server's down-state, never ahead
-   * of it, and there is no "stale vs. live" report left to tell apart (ADR
-   * 0015 supersedes ADR 0014's `bumpSeq` gate).
-   */
-  const reconcile = (
-    sim: RapierSimulation,
-    id: string,
-    server: CharacterSnapshot,
-    serverTick: number,
-    serverProps: readonly PropSnapshot[],
-  ): void => {
-    const acked = server.lastInputTick;
-    // Keep the entry AT `acked` — that's the tick the server's report is for,
-    // and the baseline the same-tick position check compares against.
-    for (const t of [...positionHistory.keys()]) if (t < acked) positionHistory.delete(t);
-    const unacked = inputBuffer.filter((entry) => entry.tick > acked);
-    inputBuffer.splice(0, inputBuffer.length, ...unacked);
-
-    const localChar = sim.snapshot().characters[id]!;
-    const serverDown = isDown(server.motionState);
-    const localDown = isDown(localChar.motionState);
-
-    // Prediction-tick guard (ADR 0023): the server can't have seen a knockdown
-    // it hasn't yet processed the input for. A "not down" report for an input
-    // tick before we predicted going down is stale — leave the ragdoll alone.
-    if (localDown && !serverDown && predictedDownAtTick !== null && acked < predictedDownAtTick) {
-      return;
-    }
-
-    const predictedAtAck = positionHistory.get(acked);
-    const positionError = predictedAtAck ? distance(predictedAtAck, server.position) : Infinity;
-    const motionChanged = server.motionState !== localChar.motionState;
-
-    // ADR 0026: the *simulation* reconciles on any real disagreement — a
-    // float-noise epsilon, not the old one-walk-step "correct or ignore" gate
-    // that let an ordinary phase slip park exactly on the threshold. The
-    // render-time offset below is what keeps that invisible.
-    if (!needsCorrection(server, localChar, positionError)) return;
-
-    if (Number.isFinite(positionError)) netMetrics.recordCorrection(positionError);
-    const simBefore = localChar.position;
-    sim.reconcileCharacter(id, server);
-    // The state right after this correction — captured once and reused below
-    // (for the Prop offset reseed, the capsule offset, and the render-interp
-    // baseline) instead of re-reading the whole sim from Rapier each time.
-    let afterCorrection: SimState;
-    if (!serverDown) {
-      // Realign the tick counter so replayed ticks see the right Spinner phase,
-      // pin every Prop to the fresh authoritative pose so replayed ticks slide
-      // against obstacles where the server has them, then re-run every
-      // unacknowledged input forward from the corrected base.
-      sim.syncTick(serverTick);
-      sim.syncPropsToSnapshot(serverProps);
-      // Predicted Props (ADR 0022): snap each one's body to the server's tick-T
-      // state, remember where it was *rendered*, replay, then re-seed the error
-      // offset so the correction eases in rather than popping.
-      const renderedBefore = propPrediction.captureBeforeReconcile(sim.snapshot().props);
-      for (const i of propPrediction.predictedIndices) {
-        const sp = serverProps[i];
-        if (sp) sim.applyAuthoritativePropState(i, sp);
-      }
-      const replayed = sim.replayLocalCharacter(id, unacked.map((entry) => entry.input));
-      afterCorrection = sim.snapshot();
-      propPrediction.reseedAfterReconcile(renderedBefore, afterCorrection.props);
-      positionHistory.clear();
-      // Keep the acked tick itself in history: a snapshot that repeats the
-      // same ack (a starved server tick, a duplicate, a reorder) then finds a
-      // baseline and computes error 0 instead of Infinity — not a spurious
-      // full replay.
-      positionHistory.set(acked, { ...server.position });
-      unacked.forEach((entry, i) => {
-        const p = replayed[i];
-        if (p) positionHistory.set(entry.tick, p);
-      });
-
-      // ADR 0026: re-seed the local Character's own render-time error offset
-      // exactly like `PropPredictionController.reseedAfterReconcile` — capture
-      // how far the replay moved the sim pose, then let the offset (not the
-      // sim) carry that delta and decay it out. A genuine desync (past the
-      // hard-snap distance) or a motionState change drops the offset instead.
-      if (!localDown) {
-        if (motionChanged || positionError > RECONCILE_HARDSNAP_M) {
-          capsuleErrorOffset = { x: 0, y: 0, z: 0 };
-        } else {
-          const after = afterCorrection.characters[id]!.position;
-          capsuleErrorOffset = addVec3(capsuleErrorOffset, subVec3(simBefore, after));
-          if (lengthVec3(capsuleErrorOffset) > RECONCILE_HARDSNAP_M) {
-            capsuleErrorOffset = { x: 0, y: 0, z: 0 };
-          }
-        }
-      }
-    } else {
-      positionHistory.clear();
-      afterCorrection = sim.snapshot();
-    }
-    // Don't let render interpolation blend a frame through the correction —
-    // the error offset above carries the local Character's own visual delta.
-    renderPreviousSnapshot = afterCorrection;
-  };
 
   // The Track this client currently has loaded — compared against every
   // snapshot's own `trackId`/`trackRevision` (M4 ticket 07) to notice the
@@ -523,14 +374,10 @@ const boot = async (
     serverInterp = new SnapshotInterpolator();
     serverInterp.setSnapshotHz(welcome.config.snapshotHz);
     propPrediction = new PropPredictionController();
-    predictionTick = 0;
-    predictionTickSeeded = false;
-    predictionAccumulatorMs = 0;
-    renderPreviousSnapshot = undefined;
-    inputBuffer.length = 0;
-    positionHistory.clear();
-    capsuleErrorOffset = { x: 0, y: 0, z: 0 };
-    offsetMotionState = "Controlled";
+    // A fresh instance starts with a clean tick counter, buffer and offset —
+    // the exact reset this used to do field-by-field, now just "there is a
+    // new one" (M4.5 ticket 02).
+    predictionLoop = new PredictionLoop(localSim, myId);
 
     loadedTrackId = trackId;
     loadedTrackRevision = trackRevision;
@@ -615,7 +462,8 @@ const boot = async (
           // obstacle sits exactly where it's drawn and advances smoothly
           // between snapshots rather than jumping once per snapshot (which,
           // for a Prop you're pushing, read as a per-snapshot sawtooth / lag).
-          reconcile(localSim, myId, character, message.state.tick, message.state.props);
+          const result = predictionLoop.reconcile(character, message.state.tick, message.state.props, propPrediction);
+          if (result.positionError !== null) netMetrics.recordCorrection(result.positionError);
         }
       }
     }),
@@ -647,12 +495,13 @@ const boot = async (
   teardown.add(() => clearInterval(pingInterval));
 
   // Send the current tick's input plus a redundant tail of the last few unacked
-  // ones (ADR 0021) — `inputBuffer` is already pruned to `tick > acked` by
-  // `reconcile`, so its tail is exactly the unacknowledged set. A WebSocket
-  // head-of-line burst or reorder then loses nothing; the server dedupes by tick.
+  // ones (ADR 0021) — `predictionLoop.inputBuffer` is already pruned to
+  // `tick > acked` by `reconcile`, so its tail is exactly the unacknowledged
+  // set. A WebSocket head-of-line burst or reorder then loses nothing; the
+  // server dedupes by tick.
   const sendInput = (): void => {
     if (socket.readyState !== WebSocket.OPEN) return;
-    const tail = inputBuffer.slice(-(INPUT_REDUNDANCY + 1));
+    const tail = predictionLoop.inputBuffer.slice(-(INPUT_REDUNDANCY + 1));
     socket.send(JSON.stringify({ type: "input", inputs: tail } satisfies ClientMessage));
   };
 
@@ -699,19 +548,16 @@ const boot = async (
     // Prop obstacles are placed from it (below).
     const serverRender = serverInterp.ready ? serverInterp.sample(now) : null;
 
-    // ADR 0027: seed `predictionTick` into the server's own tick space, once,
-    // as soon as both estimates are available. Ongoing drift afterward is
-    // corrected by the existing LEAD feedback below (ADR 0021) — this only
+    // ADR 0027: seed the prediction tick into the server's own tick space,
+    // once, as soon as both estimates are available. Ongoing drift afterward
+    // is corrected by the existing LEAD feedback below (ADR 0021) — this only
     // needs to land in the right ballpark, not stay exact forever.
-    if (!predictionTickSeeded && timeSync.ready && serverInterp.ready) {
+    if (!predictionLoop.isSeeded && timeSync.ready && serverInterp.ready) {
       const leadTicks = Math.max(
         INITIAL_LEAD_TICKS_MIN,
         Math.min(INITIAL_LEAD_TICKS_MAX, Math.ceil(timeSync.rttMs / 2 / TICK_MS) + 1),
       );
-      predictionTick = Math.round(serverInterp.estimatedServerTick(now)) + leadTicks;
-      inputBuffer.length = 0;
-      positionHistory.clear();
-      predictionTickSeeded = true;
+      predictionLoop.seed(serverInterp.estimatedServerTick(now), leadTicks);
     }
 
     // Refresh the obstacles this client's prediction slides against — other
@@ -724,7 +570,7 @@ const boot = async (
     if (serverRender) {
       const others: Record<string, Vec3> = {};
       for (const [id, character] of Object.entries(serverRender.characters)) {
-        const down = character.motionState === "Ragdoll" || character.motionState === "GettingUp";
+        const down = isDownMotionState(character.motionState);
         // A player who is down gets no mirror at all — you run through a
         // floored body rather than snag on a half-buried pelvis-height
         // capsule (the M2 simplification, made explicit).
@@ -741,13 +587,6 @@ const boot = async (
     // state machine can't advance without server poses, so it stays frozen.
     localSim.setPredictedProps(serverRender ? propPrediction.predictedIndices : []);
 
-    // Fixed-timestep prediction: one shared sim step per tick, each fed —
-    // and sent to the server — with the input sampled for that tick, and
-    // each buffered by tick number for reconciliation (ADR 0005, 0013). The
-    // accumulator is clamped so a long stall drops its backlog rather than
-    // spiralling; EPSILON absorbs float drift so an exact multiple still runs
-    // its last tick (same guard as `advanceFixed`).
-    const EPSILON_MS = 1e-6;
     // LEAD feedback (ADR 0021, gentle drain per ADR 0026): inject at most one
     // prediction tick per window when the queue is starving — responsive,
     // since an empty queue means the server is about to repeat a stale
@@ -766,35 +605,11 @@ const boot = async (
         leadStepMs = -TICK_MS * LEAD_DRAIN_FRACTION;
       }
     }
-    predictionAccumulatorMs = Math.min(
-      predictionAccumulatorMs + elapsedMs + leadStepMs,
-      TICK_MS * MAX_STEPS_PER_FRAME,
-    );
-    let steps = 0;
-    while (predictionAccumulatorMs + EPSILON_MS >= TICK_MS && steps < MAX_STEPS_PER_FRAME) {
-      predictionTick += 1;
-      inputBuffer.push({ tick: predictionTick, input: sampledInput });
-      sendInput();
-
-      renderPreviousSnapshot = localSim.snapshot();
-      localSim.tick({ [myId]: sampledInput });
-      const predicted = localSim.snapshot().characters[myId]!;
-      positionHistory.set(predictionTick, predicted.position);
-      // Track the tick we first predicted going down, for the reconcile guard.
-      predictedDownAtTick = isDown(predicted.motionState)
-        ? (predictedDownAtTick ?? predictionTick)
-        : null;
-
-      predictionAccumulatorMs -= TICK_MS;
-      steps += 1;
-    }
-    if (predictionAccumulatorMs < 0) predictionAccumulatorMs = 0;
-
-    // Bound the buffers if snapshots stop arriving (a stalled connection).
-    while (inputBuffer.length > MAX_BUFFERED_INPUT_TICKS) inputBuffer.shift();
-    for (const t of [...positionHistory.keys()]) {
-      if (t <= predictionTick - MAX_BUFFERED_INPUT_TICKS) positionHistory.delete(t);
-    }
+    // Fixed-timestep prediction: one shared sim step per tick, each fed —
+    // and sent to the server, from `onBuffered` — with the input sampled for
+    // that tick, and each buffered by tick number for reconciliation (ADR
+    // 0005, 0013, 0021).
+    predictionLoop.step(sampledInput, elapsedMs + leadStepMs, sendInput);
 
     const snapshot = localSim.snapshot();
 
@@ -808,7 +623,7 @@ const boot = async (
     if (serverRender) {
       propPrediction.frame({
         contacted: contactedProps,
-        predictionTick,
+        predictionTick: predictionLoop.tick,
         graceTicks: graceTicksForRtt(timeSync.rttMs),
         dtMs: Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS),
         simProps: snapshot.props,
@@ -818,8 +633,8 @@ const boot = async (
       propPrediction.reset();
     }
 
-    const previous = renderPreviousSnapshot ?? snapshot;
-    const localAlpha = predictionAccumulatorMs / TICK_MS;
+    const previous = predictionLoop.previousSnapshot ?? snapshot;
+    const localAlpha = predictionLoop.accumulatorMs / TICK_MS;
     const render = interpolateState(previous, snapshot, localAlpha);
     const c = snapshot.characters[myId]!;
     const input = sampledInput;
@@ -837,7 +652,7 @@ const boot = async (
     // a real reported glitch (an off-centre wall hit settles differently on
     // each side, then pops straight when `Controlled` resumes). There is
     // exactly one down-state position/pose on screen, and it's the server's.
-    const localDown = c.motionState === "Ragdoll" || c.motionState === "GettingUp";
+    const localDown = isDownMotionState(c.motionState);
     const serverOwnCharacter = serverRender?.characters[myId];
     const renderCharacter =
       localDown && serverOwnCharacter && serverOwnCharacter.bones.length > 0
@@ -848,18 +663,7 @@ const boot = async (
     // offset one frame, same as a pushed Prop's (ADR 0022). Never carried
     // across a motionState change or while down — the offset only smooths
     // corrections against the interpolated Controlled/Stagger pose.
-    if (c.motionState !== offsetMotionState || localDown) {
-      capsuleErrorOffset = { x: 0, y: 0, z: 0 };
-      offsetMotionState = c.motionState;
-    } else {
-      capsuleErrorOffset = decayPositionOffset(
-        capsuleErrorOffset,
-        Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS),
-        CAPSULE_ERR_HALFLIFE_MS,
-        RECONCILE_HARDSNAP_M,
-        CAPSULE_ERR_FLAT_EPSILON_M,
-      );
-    }
+    predictionLoop.decayCapsuleOffset(Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS), c.motionState, localDown);
     // Obstacle/mirror sync and every gameplay read use the raw pose
     // (Fiedler: smoothing must never feed back into the sim or anything
     // that drives further simulation). The camera is not one of those —
@@ -873,7 +677,7 @@ const boot = async (
     // (`predictionRegression.harness.test.ts`, "the CAMERA target").
     const visualCharacter: RenderCharacter = localDown
       ? renderCharacter
-      : { ...renderCharacter, position: addVec3(renderCharacter.position, capsuleErrorOffset) };
+      : { ...renderCharacter, position: addVec3(renderCharacter.position, predictionLoop.capsuleErrorOffset) };
     // Props are drawn from the interpolated server snapshot (ADR 0017),
     // except the one the local Character is pushing, which is drawn from the
     // sub-tick-interpolated local sim pose (`render.props`) plus a decaying
@@ -907,7 +711,6 @@ const boot = async (
     stage.updateSpinners(snapshot.tick - 1 + localAlpha);
     stage.updateCamera(visualCharacter.position, look.yaw, look.pitch);
 
-    const cp = c.checkpointIndex === null ? "spawn" : `#${c.checkpointIndex + 1}`;
     // The Qualification banner (M4 ticket 02). Shown the instant the local
     // prediction says we're in the zone — that's the same Tick the input lock
     // is felt, so the two never disagree on screen. The *placement* can only
@@ -935,31 +738,38 @@ const boot = async (
     );
     const qualified = c.finishTick !== null;
     const placement = latestServerSnapshot ? qualificationPlacement(latestServerSnapshot.characters, myId) : null;
-    const banner = qualified ? `\n${placement === null ? "QUALIFIED" : `QUALIFIED #${placement}`}` : "";
-    const dashFill = Math.max(0, Math.min(10, Math.round((1 - c.dashCooldownMs / DASH_COOLDOWN_MS) * 10)));
-    const dashBar = "#".repeat(dashFill) + "-".repeat(10 - dashFill);
     netMetrics.rttMs = timeSync.rttMs;
     netMetrics.clockOffsetMs = timeSync.serverClockOffsetMs;
     netMetrics.snapshotAgeMs = now - lastSnapshotArrivedAt;
-    netMetrics.ackAgeTicks = predictionTick - (latestServerSnapshot?.characters[myId]?.lastInputTick ?? predictionTick);
-    netMetrics.predictedTick = predictionTick;
+    netMetrics.ackAgeTicks =
+      predictionLoop.tick - (latestServerSnapshot?.characters[myId]?.lastInputTick ?? predictionLoop.tick);
+    netMetrics.predictedTick = predictionLoop.tick;
     netMetrics.estServerTick = serverInterp.ready ? serverInterp.estimatedServerTick(now) : 0;
     netMetrics.lead = smoothedQueueDepth; // effective lead = the server's buffered command count
-    netMetrics.inputBufferDepth = inputBuffer.length;
+    netMetrics.inputBufferDepth = predictionLoop.inputBuffer.length;
     netMetrics.interpBufferDepth = serverInterp.bufferDepth;
     netMetrics.extrapolating = serverInterp.holdingLatest;
     netMetrics.predictedPropCount = propPrediction.predictedCount;
-    netMetrics.capsuleOffsetM = lengthVec3(capsuleErrorOffset);
+    netMetrics.capsuleOffsetM = lengthVec3(predictionLoop.capsuleErrorOffset);
 
     hud.setText(
-      `DON'T FALL — M2 · predicted + reconciled\n` +
-        `time ${roundClock} · ${phase.toLowerCase()}\n` +
-        `sim ${TICK_RATE_HZ} Hz · render ${fps.toFixed(0)} fps · tick ${predictionTick}\n` +
-        `pos ${c.position.x.toFixed(1)}, ${c.position.y.toFixed(1)}, ${c.position.z.toFixed(1)} · ${c.motionState}\n` +
-        `checkpoint ${cp} · falls ${c.fallCount} · qualified ${qualifiedCount}/${connectedPlayers}${banner}\n` +
-        `dash [${dashBar}]${c.dashCooldownMs === 0 ? " ready" : ""}\n` +
-        `WASD move · Space jump · Shift dash · mouse look\n` +
-        netMetrics.format(),
+      formatHudText({
+        roundClock,
+        phase,
+        tickRateHz: TICK_RATE_HZ,
+        fps,
+        predictionTick: predictionLoop.tick,
+        position: c.position,
+        motionState: c.motionState,
+        checkpointIndex: c.checkpointIndex,
+        fallCount: c.fallCount,
+        qualifiedCount,
+        connectedPlayers,
+        qualified,
+        placement,
+        dashCooldownMs: c.dashCooldownMs,
+        netMetricsText: netMetrics.format(),
+      }),
     );
 
     stage.render();

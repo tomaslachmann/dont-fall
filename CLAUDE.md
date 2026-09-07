@@ -78,8 +78,30 @@ a fresh Round (08). All manually verified live with two browsers; ticket 08's ow
 the real Results Screen rendering ranked server data and the host's "Back to Lobby" action working
 end to end, reusing 07's already-verified `selectTrack`/`start` for the second Round.
 
-**Next:** M4.5 (tested where it runs) or M5 (two Round types on one engine) — both already planned
-(ADR 0041–0043, `docs/milestones/M4.5.md`, `docs/milestones/M5.md`), not yet started.
+**M4.5 done** — Tested where it runs (`docs/milestones/M4.5.md`, "Done when" met). A codebase audit
+(`docs/research/codebase-audit-m5.md`) redirected the milestone from its opening premise ("some files
+are too large") to its real #1 finding: `apps/client`'s predict/reconcile loop had no seam, so
+`predictionRegression.harness.test.ts` tested a hand-maintained copy of it that had already drifted
+from production. Tickets 01–09 in `.scratch/m4.5-tested-where-it-runs/issues/`: one real
+`needsCorrection` gate, the stale `positionError > 0.2` copy retired (01); the predict/reconcile core
+extracted into `PredictionLoop` — `game.ts`'s sole production consumer, the regression harness now
+drives the real class instead of a port, including its experimental tick-addressed path via a new
+`recordTick` primitive (02, ADR 0013/0021/0026/0027 unchanged); one `isDownMotionState` (03);
+`qualificationPlacement`/`StoredTrack` moved into `packages/shared` (04); dead code deleted —
+`RapierSimulation`'s unused renderer accessors, `playground.ts` off shared's public index (05); HUD
+text extracted as a pure function (06); `selectTrack` gets race tests and a real bug they found fixed
+(`startRequested` surviving a live Track swap; 07); `apps/client/src` reorganized by kind, resolving
+the `game.ts`/`game/` naming collision (08); `apps/server/src/index.ts` reduced to an entry point,
+the 620-line `startServer` split into `match/`, `net/`, `track/` folders (09). One documented
+exception to "the harness's numbers don't move": driving the real class exposed a genuine
+pre-existing production gap in ADR 0026's capsule-offset smoothing under packet loss (a missing
+`positionHistory` entry hard-resets the offset instead of decaying it) — a real finding, not a
+regression from this milestone, left as a follow-up. Live-verified with two browsers over raw CDP:
+Lobby join, Ready, host start, a real Countdown into RUNNING, and a real wall Impact into `Ragdoll`
+correctly replicated to the other client.
+
+**Next:** M5 (two Round types on one engine) — already planned (ADR 0041–0043,
+`docs/milestones/M5.md`), not yet started.
 
 ## Tech stack
 

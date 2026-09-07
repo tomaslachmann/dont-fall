@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { GameCanvas } from "./GameCanvas";
 
 const { startGame } = vi.hoisted(() => ({ startGame: vi.fn() }));
-vi.mock("../game.js", () => ({ startGame }));
+vi.mock("../game/index.js", () => ({ startGame }));
 
 function renderAtPlayRoute(props: React.ComponentProps<typeof GameCanvas> = {}) {
   return render(

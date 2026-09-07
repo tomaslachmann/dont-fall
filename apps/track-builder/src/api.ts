@@ -1,14 +1,6 @@
-import type { Track, TrackListing } from "@dont-fall/shared";
+import type { StoredTrack, Track, TrackListing } from "@dont-fall/shared";
 
-export type { TrackListing };
-
-export interface StoredTrackResponse {
-  id: string;
-  name: string | null;
-  track: Track;
-  /** The Time Limit this Revision was published with (M4 ticket 03, ADR 0038). */
-  timeLimitMs: number;
-}
+export type { StoredTrack, TrackListing };
 
 /**
  * Saves a Track to track-service (ticket 02's `POST /tracks`). `timeLimitMs`
@@ -61,10 +53,10 @@ export const publishPlaytestTrack = async (
 };
 
 /** Loads a Track from track-service by id (`GET /tracks/:id`). */
-export const loadTrack = async (baseUrl: string, id: string): Promise<StoredTrackResponse> => {
+export const loadTrack = async (baseUrl: string, id: string): Promise<StoredTrack> => {
   const res = await fetch(`${baseUrl}/tracks/${encodeURIComponent(id)}`);
   if (!res.ok) throw new Error(`load failed: HTTP ${res.status}`);
-  return (await res.json()) as StoredTrackResponse;
+  return (await res.json()) as StoredTrack;
 };
 
 /** Lists every stored Track (`GET /tracks`, ticket 09) — the Browse panel's data source. */

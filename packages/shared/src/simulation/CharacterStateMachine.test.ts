@@ -9,11 +9,21 @@ import {
   STAGGER_INPUT_SCALE,
   STAGGER_TICKS,
 } from "../tuning.js";
-import { CharacterStateMachine } from "./CharacterStateMachine.js";
+import { CharacterStateMachine, isDownMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
 
 const run = (m: CharacterStateMachine, ticks: number, settled = false) => {
   for (let i = 0; i < ticks; i += 1) m.tick(settled);
 };
+
+describe("isDownMotionState", () => {
+  it("is true for Ragdoll and GettingUp, false for every other motion state", () => {
+    const down: CharacterMotionState[] = ["Ragdoll", "GettingUp"];
+    const up: CharacterMotionState[] = ["Controlled", "Stagger", "Sliding"];
+
+    for (const state of down) expect(isDownMotionState(state)).toBe(true);
+    for (const state of up) expect(isDownMotionState(state)).toBe(false);
+  });
+});
 
 describe("CharacterStateMachine", () => {
   it("starts Controlled with full input", () => {

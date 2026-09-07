@@ -14,9 +14,22 @@ can race there.
 
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Tests for the host-only gate, the LOBBY-only gate, the post-`await` re-check, and the swap
-- [ ] The two reload paths share one implementation, including the `serverTick` reset the
-      Playtest path learned the hard way
-- [ ] The existing Playtest tests still pass unchanged — they are the specification of the shared path
+- [x] Tests for the host-only gate ("ignores a Track pick from anyone but the host"), the
+      LOBBY-only gate ("ignores a Track pick once the Round has left the Lobby"), the swap ("lets
+      the host pick a different Track live, re-seating everyone already connected"), and — the two
+      new ones this ticket adds — the post-`await` re-check: "supersedes a still-in-flight
+      selectTrack with whichever pick was requested last" (the `selectTrackSeq` guard) and "drops
+      a start queued right behind a still-in-flight selectTrack, rather than starting the wrong
+      Track"
+- [x] The two reload paths already shared one implementation before this ticket
+      (`resetToFreshLobby`, M4 ticket 07/08) including the `serverTick` reset. This ticket's own
+      race test caught a real gap in it: `resetToFreshLobby` never cleared `startRequested`, so a
+      `start` sent right behind a `selectTrack` could be validated against the old Lobby and, once
+      the tick loop consumed it, start a Round on the just-swapped-to Track nobody asked to start
+      — fixed by clearing `startRequested` in the same shared reset. Not a "moves code" ticket 02
+      style change: a real pre-existing bug this ticket's own coverage requirement surfaced,
+      fixed where it lives (`resetToFreshLobby`, `apps/server/src/index.ts`)
+- [x] The existing Playtest tests still pass unchanged — full server suite green (60 tests, up
+      from 58)

@@ -11,8 +11,12 @@
 
 **Blocked by:** None.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `qualificationPlacement` lives in `shared/match` with its tests; the client imports it
-- [ ] `StoredTrack` is declared once in `packages/shared`; track-service and the builder import it
-- [ ] No behaviour change; the wire is untouched
+- [x] `qualificationPlacement` lives in `shared/match` with its tests; the client imports it —
+      folded into the existing `Qualification.ts`/`Qualification.test.ts`
+- [x] `StoredTrack` is declared once in `packages/shared` (`track/Track.ts`, beside `TrackListing`);
+      track-service and the builder import it. The builder's own `StoredTrackResponse` was a
+      hand-written subset that silently dropped `revision`/`authorId`/`contentHash` — fields the
+      wire always carried
+- [x] No behaviour change; the wire is untouched

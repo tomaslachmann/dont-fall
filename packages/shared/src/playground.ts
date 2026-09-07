@@ -11,9 +11,15 @@ import { resolveTrack } from "./track/Track.js";
  * The M1 playground, resolved from the Module/Track system (`./track/`) —
  * ticket 01 of M3 (`docs/milestones/M3.md`) replaced the hand-authored
  * world-space arrays that used to live here with reusable Modules chained
- * into a Track. Every consumer (`RapierSimulation`, the client scene, the
- * Match server) still just imports the flat arrays below; none of them know
- * or care that the geometry now comes from `resolveTrack`.
+ * into a Track.
+ *
+ * A test fixture, not production API (M4.5 ticket 05): every real Track,
+ * including M1's own, now comes from `resolveTrack` directly — nothing in
+ * `RapierSimulation`, the client scene, or the Match server imports this
+ * file any more. Kept for tests that want a known, stable world without
+ * publishing/track-service (a real Track's geometry) or hand-rolling a
+ * minimal one — not re-exported from the package's main index, so a cross-
+ * package test imports it by its own subpath (`@dont-fall/shared/playground.js`).
  */
 const resolved = resolveTrack(M1_MODULES, M1_TRACK);
 
