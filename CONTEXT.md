@@ -245,10 +245,17 @@ keeps going if it carries the Character off an edge. Dashing into a wall or
 edge sends the Character to Ragdoll.
 
 **Grab**:
-Briefly latching onto a Character just ahead of you (planned, post-M1). The
-grabber cannot run while holding; the held Player can struggle free; cooldown
-after.
+Briefly latching onto a Character just ahead of you. Both Characters move at a
+greatly reduced pace for the duration; the held Character struggles free by
+moving away from the grabber, or is released once the grabber's own hold limit
+runs out; cooldown after. Connecting cancels an in-progress Dash for both
+Characters, the same cancellation Hit causes.
 _Avoid_: grapple, catch
+
+**Hit**:
+A short-range melee move, on its own cooldown like Dash. Connecting lands an
+Impact on the target and cancels an in-progress Dash for both Characters.
+_Avoid_: punch (that's the unrelated Power-up of the same name), attack, strike
 
 ### Items
 

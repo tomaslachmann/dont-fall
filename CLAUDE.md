@@ -122,7 +122,9 @@ last Player dropped mid-Round (which also meant no later Race could end by every
 pick freezing everyone already in the Lobby by restarting the Tick epoch under their already-seeded
 prediction tick (ADR 0027), and a DNF'd Player listed twice on the Results Screen.
 
-**Next:** multi-Round advancement — chaining Rounds now that two Round types exist to chain.
+**Next:** M6 — Hit and Grab, and a real remote Character. Reordered ahead of multi-Round
+advancement: Survival (M5) is only as good as the shoving it enables, and every Character
+but your own still renders as a capsule (ADR 0045, ADR 0046).
 
 ## Tech stack
 
@@ -178,7 +180,8 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 | **M4** | Match structure — Rounds, Qualification, Time Limit. First Screens: React shell + lobby/results (ADR 0008). |
 | **M4.5** | Tested where it runs — the client's prediction loop gains a seam so its regression suite stops testing a copy. |
 | **M5** | Two Round types on one engine — a Round type becomes shared data (ADR 0041/0042/0043), proven by building Survival. |
-| later | Multi-Round advancement, collapsing terrain, Power-ups, Grab, Betting/Spectator, level themes, the Skyfall final. |
+| **M6** | Hit and Grab, and a real remote Character — replicated `facing` (ADR 0045), the capsule placeholder retired (ADR 0046). |
+| later | Multi-Round advancement, collapsing terrain, Power-ups, Betting/Spectator, level themes, the Skyfall final. |
 
 ## Working agreements
 
