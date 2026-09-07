@@ -435,13 +435,13 @@ export class CharacterController {
    * `RoundRules.fallBehavior`.
    */
   fall(respawnPoint: Vec3 | null, fallCount: number): void {
-    this.pendingCause = "Fall";
     if (respawnPoint) {
+      this.pendingCause = "Fall";
       this.resetMovementControllers();
       this.machine.forceRagdoll();
       this.pendingRespawn = { point: { ...respawnPoint }, fallCount };
     } else {
-      this.eliminateNow();
+      this.eliminateNow("Fall");
     }
   }
 
@@ -451,10 +451,10 @@ export class CharacterController {
    * disabled, never stepped again" freeze as an eliminating Fall, without
    * Fall's own bookkeeping (`fallCount`, a queued Respawn): a disconnect
    * ends a Character's part in any Round type, not only an eliminating one.
+   * Its own cause (`"Disconnect"`, not `"Fall"`) — nothing fell.
    */
   eliminate(): void {
-    this.pendingCause = "Fall";
-    this.eliminateNow();
+    this.eliminateNow("Disconnect");
   }
 
   /**
@@ -463,17 +463,32 @@ export class CharacterController {
    * via the state machine's own deferred `forceRagdoll`/`impact` queue, this
    * has no next `beginTick` to land on: an eliminated Character is never
    * stepped again (M5 ticket 04, ADR 0042), so it must reach `Ragdoll` and
-   * activate the ragdoll body in this same call. Mirrors exactly what
-   * `beginTick` itself does on an ordinary Ragdoll entry (`ragdollEpoch`,
-   * `ragdollCause`, {@link beginRagdoll}), which is what disables the
-   * capsule collider — {@link beginRagdoll} reads `velocity` *before*
-   * resetting it, so a Fall's own momentum still carries into the launch,
-   * exactly like an ordinary Impact-triggered Ragdoll.
+   * activate the ragdoll body in this same call if it isn't already down.
+   *
+   * Guarded by `isDownMotionState` — code review, ticket 04 — the same guard
+   * `beginTick` (`prevState !== "Ragdoll"`) and `reconcileTo`
+   * (`!isDownMotionState(...)`) already apply to every *other* Ragdoll-entry
+   * path: without it, eliminating a Character already Ragdolling from an
+   * unrelated Impact (a Bump off a ledge, mid-tumble) would re-snap every
+   * bone to a fresh standing flop, discard its real tumbling velocity for
+   * `this.velocity` (zeroed since that earlier Impact began), overwrite its
+   * true `ragdollCause`, and double-bump `ragdollEpoch` for one knockdown.
+   * Already-down just needs to stop being stepped — `RapierSimulation`'s own
+   * `progress.eliminated` flag (set by the caller regardless) handles that
+   * on its own; there is nothing left for this method to do.
+   *
+   * Mirrors exactly what `beginTick` itself does on an ordinary Ragdoll
+   * entry (`ragdollEpoch`, `ragdollCause`, {@link beginRagdoll}), which is
+   * what disables the capsule collider — {@link beginRagdoll} reads
+   * `velocity` *before* resetting it, so a Fall's own momentum still
+   * carries into the launch, exactly like an ordinary Impact-triggered one.
    */
-  private eliminateNow(): void {
+  private eliminateNow(cause: RagdollCause): void {
+    if (isDownMotionState(this.machine.state)) return;
+    this.pendingCause = cause;
     this.machine.snapTo("Ragdoll");
     this.ragdollEpoch += 1;
-    this.ragdollCause = this.pendingCause;
+    this.ragdollCause = cause;
     this.beginRagdoll();
   }
 

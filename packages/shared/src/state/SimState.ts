@@ -7,15 +7,16 @@ export type { CharacterMotionState, BoneSnapshot, PropSnapshot };
 
 /**
  * Why a Character was knocked down (ADR 0023). Carried so the client can play
- * cause-specific one-shot effects (camera kick, hit-react, impact SFX). 2 bits
- * on the wire once binary encoding lands — a fifth cause is a protocol-version
- * change (known limitation). `"WallImpact"` (M3.7 ticket 03, ADR 0037 —
- * renamed from `"DashWall"`): any Character moving fast enough into a
- * near-vertical surface, whatever gave it the speed — Dash is one
- * contributor among several (a bounce, a launch pad, an updraft), never a
- * separate rule of its own.
+ * cause-specific one-shot effects (camera kick, hit-react, impact SFX).
+ * `"WallImpact"` (M3.7 ticket 03, ADR 0037 — renamed from `"DashWall"`): any
+ * Character moving fast enough into a near-vertical surface, whatever gave
+ * it the speed — Dash is one contributor among several (a bounce, a launch
+ * pad, an updraft), never a separate rule of its own. `"Disconnect"` (M5
+ * ticket 04): a mid-Round drop, distinct from `"Fall"` since nothing fell —
+ * plain JSON today, so a fifth value costs nothing; needs 3 bits instead of
+ * 2 whenever binary encoding lands.
  */
-export type RagdollCause = "Bump" | "Fall" | "WallImpact" | "Spinner";
+export type RagdollCause = "Bump" | "Fall" | "WallImpact" | "Spinner" | "Disconnect";
 
 export interface CharacterSnapshot {
   /** The point the camera follows: capsule centre while upright, pelvis while ragdolling. */

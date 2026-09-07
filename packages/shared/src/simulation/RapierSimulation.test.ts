@@ -886,6 +886,58 @@ describe("RapierSimulation — an eliminated Character is marked, not removed (M
     const moverAfter = sim.snapshot().characters[MOVER]!.position;
     expect(moverBefore.z - moverAfter.z).toBeGreaterThan(1.5);
   });
+
+  it("eliminating an already-Ragdolling Character (a disconnect mid-Impact) never re-snaps its ragdoll (code review)", () => {
+    // A guard was missing here: eliminateNow used to force a *fresh* Ragdoll
+    // entry unconditionally, even over one already in progress — discarding
+    // its real tumbling velocity, overwriting ragdollCause, and double-
+    // bumping ragdollEpoch for what was really the same knockdown.
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(-3));
+    tick(sim, 0.3);
+
+    sim.applyImpact(TARGET, { x: IMPACT_RAGDOLL_MIN + 5, y: 0, z: 0 });
+    sim.tick({}); // the Impact's own Ragdoll entry lands
+    const afterImpact = sim.snapshot().characters[TARGET]!;
+    expect(afterImpact.motionState).toBe("Ragdoll");
+    expect(afterImpact.ragdollCause).toBe("Bump");
+    expect(afterImpact.ragdollEpoch).toBe(1);
+
+    sim.eliminateCharacter(TARGET);
+
+    const afterEliminate = sim.snapshot().characters[TARGET]!;
+    expect(afterEliminate.ragdollCause).toBe("Bump"); // not overwritten to "Disconnect"
+    expect(afterEliminate.ragdollEpoch).toBe(1); // not double-bumped
+  });
+
+  it("a Fall while already Ragdolling from an unrelated Impact eliminates without disturbing the ragdoll in progress (code review)", () => {
+    // Spawned already off any solid ground (no statics under it at all) and
+    // Impacted on literally the first tick — the fall to the kill plane
+    // below is gravity alone, under a Ragdoll whose cause is genuinely the
+    // Impact, not the Fall this test is really about.
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: 1.5, z: 0 },
+      statics: [],
+      killPlaneY: -8,
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate" },
+    });
+
+    sim.applyImpact(MOVER, { x: IMPACT_RAGDOLL_MIN + 5, y: 0, z: 0 });
+    sim.tick({});
+    const afterImpact = sim.snapshot().characters[MOVER]!;
+    expect(afterImpact.motionState).toBe("Ragdoll");
+    expect(afterImpact.ragdollCause).toBe("Bump");
+
+    for (let n = 0; n < Math.round(3 * TICK_RATE_HZ) && sim.snapshot().characters[MOVER]!.fallCount === 0; n += 1) {
+      sim.tick({});
+    }
+
+    const afterFall = sim.snapshot().characters[MOVER]!;
+    expect(afterFall.fallCount).toBe(1); // still recorded, for stats
+    expect(afterFall.eliminated).toBe(true); // still eliminated
+    expect(afterFall.ragdollCause).toBe("Bump"); // the real cause survives, not silently rewritten to "Fall"
+    expect(afterFall.ragdollEpoch).toBe(afterImpact.ragdollEpoch); // one knockdown, not two
+  });
 });
 
 describe("RapierSimulation — jump", () => {

@@ -44,6 +44,25 @@ players go through that same path.
       an eliminated Character back to `Controlled` while still falling, re-triggering `detectFall`
       forever. A new long-running test (well past `RAGDOLL_MAX_MS + GETUP_MS`) pins that this can
       no longer happen
+- [x] (Found by code review, `high` effort) `eliminateNow` forced a *fresh* Ragdoll entry
+      unconditionally, even over one already in progress from an unrelated Impact (a Bump off a
+      ledge, still tumbling) — discarding its real velocity for the capsule's own zeroed one,
+      overwriting `ragdollCause`, and double-bumping `ragdollEpoch` for one knockdown. Fixed with
+      the same `isDownMotionState` guard every *other* Ragdoll-entry path already has
+      (`beginTick`'s `prevState !== "Ragdoll"`, `reconcileTo`'s own check) — already-down just
+      needs `progress.eliminated` to start skipping it, nothing left for `eliminateNow` to do.
+      Two regression tests pin both directions (disconnect mid-Impact, Fall mid-Impact)
+- [x] (Found by code review) `eliminateCharacter` (the disconnect path) set `progress.eliminated`
+      and flipped `motionState` outside `tick`'s own per-Character loop, so the
+      `phaseStartTick`/`lastMotionState` stamping that loop normally does for a Fall-eliminated
+      Character never ran for a disconnect-eliminated one — silent today (nothing reads it yet)
+      but a real inconsistency between the two paths. `eliminateCharacter` now does the same
+      stamping inline
+- [x] (Found by code review) A mid-Round disconnect reported `ragdollCause: "Fall"` — nothing fell.
+      Added `"Disconnect"` to `RagdollCause`; `eliminate()` uses it, `fall()`'s eliminating branch
+      still uses `"Fall"`. Also removed the redundant `pendingCause` pre-set at both call sites —
+      `eliminateNow` now takes the cause as a parameter instead of reading a field a caller had to
+      remember to set first
 - [x] (Found during implementation, not on the original checklist) `allQualified` — the condition
       that ends a Race early — used to require *every* entry in `state.characters` to have
       `finishTick` set. Since an eliminated Character (a mid-Round disconnect) now stays in that

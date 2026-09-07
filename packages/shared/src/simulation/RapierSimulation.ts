@@ -395,7 +395,17 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     const progress = this.progress.get(id);
     if (!progress || progress.eliminated) return;
     progress.eliminated = true;
-    this.character(id).eliminate();
+    const character = this.character(id);
+    character.eliminate();
+    // Same bookkeeping `tick`'s own per-Character loop does right after a
+    // Fall-eliminated Character's `motionState` changes — done here too,
+    // since this runs outside that loop (called directly from a socket
+    // close handler, between ticks) and nothing will ever run it for this
+    // Character again once `eliminated` starts skipping it (code review).
+    if (character.motionState !== progress.lastMotionState) {
+      progress.phaseStartTick = this.tickCount;
+      progress.lastMotionState = character.motionState;
+    }
   }
 
   /**
