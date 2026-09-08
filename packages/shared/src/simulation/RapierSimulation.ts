@@ -5,7 +5,6 @@ import { addVec3, dotVec3, lengthVec3, normalizeVec3, scaleVec3, subVec3, vec3, 
 import { phaseLocksInput, type MatchPhase } from "../match/MatchPhase.js";
 import { DEFAULT_ROUND_RULES, type RoundRules } from "../match/RoundRules.js";
 import { characterSnapshot, type CharacterSnapshot, type ReconcileBase, type SimState } from "../state/SimState.js";
-import type { FixedSimulation } from "../timing/FixedSimulation.js";
 import {
   BUMP_IMPULSE_SCALE,
   BUMP_LIFT_RATIO,
@@ -202,7 +201,7 @@ export const initPhysics = (): Promise<void> => {
  *
  * `initPhysics()` must have resolved before constructing this.
  */
-export class RapierSimulation implements FixedSimulation<Record<string, SimInputs>, SimState> {
+export class RapierSimulation {
   private readonly world: RAPIER.World;
   private readonly characters = new Map<string, CharacterController>();
   private readonly progress = new Map<string, CharacterProgress>();

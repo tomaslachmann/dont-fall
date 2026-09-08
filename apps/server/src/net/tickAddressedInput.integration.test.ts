@@ -1,4 +1,5 @@
 import {
+  FIXED_STEP_EPSILON_MS,
   INITIAL_LEAD_TICKS_MAX,
   INITIAL_LEAD_TICKS_MIN,
   LEAD_DRAIN_FRACTION,
@@ -353,9 +354,8 @@ class FaithfulClient {
       leadStepMs = -TICK_MS * LEAD_DRAIN_FRACTION;
     }
 
-    const EPSILON_MS = 1e-6;
     this.predictionAccumulatorMs = Math.min(this.predictionAccumulatorMs + elapsedMs + leadStepMs, TICK_MS * MAX_STEPS_PER_FRAME);
-    while (this.predictionAccumulatorMs + EPSILON_MS >= TICK_MS) {
+    while (this.predictionAccumulatorMs + FIXED_STEP_EPSILON_MS >= TICK_MS) {
       this.predictionTick += 1;
       // Oscillate north/south every OSCILLATE_TICKS — keeps the Character
       // moving continuously (needed to expose the ~0.2u/tick bias at all)

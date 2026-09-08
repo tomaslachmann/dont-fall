@@ -51,9 +51,10 @@ import { TimeSync } from "../net/timeSync.js";
 
 /**
  * Cap on the per-frame delta fed to the Character model's animation/facing
- * update. `advanceFixed` already bounds how many sim ticks a stalled frame
- * can catch up on; this bounds the render-only animation step the same way,
- * so a backgrounded-tab refocus can't snap the facing or jump the clip.
+ * update. `PredictionLoop.step` already bounds how many sim ticks a stalled
+ * frame can catch up on (`MAX_STEPS_PER_FRAME`); this bounds the render-only
+ * animation step the same way, so a backgrounded-tab refocus can't snap the
+ * facing or jump the clip.
  */
 const MAX_ANIMATION_DELTA_MS = 100;
 

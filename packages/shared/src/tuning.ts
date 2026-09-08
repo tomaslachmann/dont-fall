@@ -24,6 +24,12 @@ export const msToTicks = (ms: number): number => Math.round(ms / TICK_MS);
  */
 export const MAX_STEPS_PER_FRAME = 5;
 
+/**
+ * Absorbs float drift in the fixed-step accumulator so an exact multiple of
+ * {@link TICK_MS} (e.g. 100ms → 3 ticks) doesn't lose its last tick.
+ */
+export const FIXED_STEP_EPSILON_MS = 1e-6;
+
 // --- Character ---------------------------------------------------------------
 
 /** Downward acceleration (units/s²). Stronger than real gravity for snappier falls. */

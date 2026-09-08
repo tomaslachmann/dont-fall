@@ -7,8 +7,6 @@ export * from "./state/SimState.js";
 export * from "./state/interpolate.js";
 export * from "./state/errorOffset.js";
 export * from "./input/movementDirection.js";
-export * from "./timing/FixedSimulation.js";
-export * from "./timing/advanceFixed.js";
 export * from "./timing/roundClock.js";
 export * from "./match/Lobby.js";
 export * from "./match/MatchPhase.js";

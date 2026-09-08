@@ -1,6 +1,7 @@
 import {
   CAPSULE_ERR_FLAT_EPSILON_M,
   CAPSULE_ERR_HALFLIFE_MS,
+  FIXED_STEP_EPSILON_MS,
   MAX_BUFFERED_INPUT_TICKS,
   MAX_STEPS_PER_FRAME,
   RECONCILE_HARDSNAP_M,
@@ -22,9 +23,6 @@ import {
   type Vec3,
 } from "@dont-fall/shared";
 import type { PropPredictionController } from "./propPrediction.js";
-
-/** Absorbs float drift so an exact multiple of `TICK_MS` doesn't lose its last tick (mirrors `advanceFixed`'s own guard). */
-const EPSILON_MS = 1e-6;
 
 /**
  * Tuning this class defaults to the real shipped values for (M4.5 ticket
@@ -162,7 +160,7 @@ export class PredictionLoop {
   step(input: SimInputs, advanceMs: number, onBuffered?: () => void, phase: MatchPhase = "RUNNING"): void {
     this.accumulatorMs = Math.min(this.accumulatorMs + advanceMs, TICK_MS * MAX_STEPS_PER_FRAME);
     let steps = 0;
-    while (this.accumulatorMs + EPSILON_MS >= TICK_MS && steps < MAX_STEPS_PER_FRAME) {
+    while (this.accumulatorMs + FIXED_STEP_EPSILON_MS >= TICK_MS && steps < MAX_STEPS_PER_FRAME) {
       this.recordTick(this.tick + 1, input, onBuffered, phase);
       this.accumulatorMs -= TICK_MS;
       steps += 1;
