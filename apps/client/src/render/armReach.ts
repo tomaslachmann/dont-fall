@@ -17,7 +17,7 @@ const ARM_TRIPLES = [
 export interface ArmReachNodes {
   shoulder: THREE.Object3D;
   upperArm: THREE.Object3D;
-  /** The forearm, if present — frozen at {@link lowerArmBindQuaternion} while reaching rather than left to the mixer (see `applyArmReach`). */
+  /** The forearm, if present — blended toward {@link lowerArmBindQuaternion} while reaching rather than left to the mixer (see `ArmReachPlayer`). */
   lowerArm?: THREE.Object3D;
   /** `lowerArm`'s own bind-pose local rotation, captured once at lookup time — before any clip has ever played, so this is the model's true rest bend, not whatever the mixer happened to leave it at. */
   lowerArmBindQuaternion?: THREE.Quaternion;
@@ -55,52 +55,84 @@ export const findArmReachNodes = (root: THREE.Object3D): ArmReachNodes[] => {
 /** How far above the held Character's own root position the reach aims — chest height, not feet (M6.1). */
 export const ARM_REACH_TARGET_HEIGHT = 0.8;
 
+/**
+ * How fast the reach blends in/out (1/s, exponential approach) — live
+ * feedback: an instant snap on either end read as broken, not held. Reaches
+ * ~95% of the way in about half a second.
+ */
+const REACH_BLEND_RATE = 6;
+
 const UP = new THREE.Vector3(0, 1, 0);
 const shoulderPos = new THREE.Vector3();
 const parentQuat = new THREE.Quaternion();
 const localTarget = new THREE.Vector3();
-const desired = new THREE.Quaternion();
+const naturalQuat = new THREE.Quaternion();
+
+export interface ArmReachPlayer {
+  /**
+   * Advance the reach blend by one frame and apply it. `targetWorldPosition`
+   * is this Character's own held target's world position (already offset to
+   * reach height by the caller), or `undefined` while not grabbing anyone.
+   * Safe — and necessary — to call every frame regardless of grab state: it
+   * eases the arms in when a target first appears and back out to the
+   * mixer's own natural pose once it goes away, rather than the pose
+   * popping on either end (found live: "the arms just appear with no
+   * transition").
+   */
+  update(targetWorldPosition: THREE.Vector3 | undefined, deltaSeconds: number): void;
+}
 
 /**
- * Rotates the upper arm bones to reach toward `targetWorldPosition` (M6.1,
- * Grab) — a procedural pose, not a canned clip (the rig has none). An
- * additive OVERRIDE applied after the mixer each frame, written the same way
- * `ragdollPose.ts` writes bone quaternions directly, not a blended animation
- * layer.
+ * Drives Grab's arm-reach pose for one rig, blended in and out (M6.1). A
+ * procedural pose, not a canned clip (the rig has none) — see
+ * {@link findArmReachNodes}'s own doc comment for the aiming math and the
+ * rig's bind-orientation subtlety.
  *
- * Aims each upper arm's own bone axis — local +Y, the direction toward its
- * child, the same convention `ragdollPose.ts` relies on — at the target,
- * computed in each shoulder's own *local* frame so the result is a valid
- * local rotation regardless of the rig's own bind orientation (MushroomKing's
- * shoulder/upper-arm bind rotations are far from identity — see that file's
- * own doc comment on why a naive Euler set here would twist the limb).
- *
- * The lower arm, if present, is reset to its own bind-pose rotation every
- * frame this runs — without this it keeps playing whatever the walk/idle
- * clip already had it doing, flailing independently of the now-pinned upper
- * arm above it (a visibly dislocated elbow). Freezing it at the *bind*
- * rotation rather than a fixed world pose is deliberate: that rotation is
- * defined relative to the upper arm's own frame, so it reads as the model's
- * natural resting elbow bend wherever the upper arm now actually points,
- * not a fixed pose that only looked right in the bind orientation.
- *
- * Calls `updateMatrixWorld` on `root` itself, so the shoulders' current
- * (mixer-driven) world transforms are read fresh for this frame, not
- * whatever they were on the last render.
+ * The blend is a single scalar `weight` (0 = pure mixer pose, 1 = pure
+ * reach), eased toward 1 while a target is given and back to 0 once it
+ * isn't, applied per arm as `slerp(thisFrame'sNaturalPose, reachPose,
+ * weight)` — reading the natural pose fresh every frame (whatever the
+ * mixer's walk/idle clip just set) rather than a pose captured once, so the
+ * blend still tracks a Character that's walking/idling while easing in or
+ * out. While fading out with no live target, the last computed reach
+ * quaternion is held frozen (nothing to recompute it toward) and blended
+ * away from — never a stale direction snapped back to on the next grab.
  */
-export const applyArmReach = (root: THREE.Object3D, nodes: readonly ArmReachNodes[], targetWorldPosition: THREE.Vector3): void => {
-  if (nodes.length === 0) return;
-  root.updateMatrixWorld(true);
+export const createArmReachPlayer = (root: THREE.Object3D): ArmReachPlayer => {
+  const nodes = findArmReachNodes(root);
+  const reachQuats = nodes.map(() => new THREE.Quaternion());
+  let weight = 0;
 
-  for (const { shoulder, upperArm, lowerArm, lowerArmBindQuaternion } of nodes) {
-    shoulder.getWorldPosition(shoulderPos);
-    localTarget.copy(targetWorldPosition).sub(shoulderPos);
-    if (localTarget.lengthSq() < 1e-6) continue; // degenerate — shoulder sits exactly at the target
-    localTarget.normalize();
-    shoulder.getWorldQuaternion(parentQuat).invert();
-    localTarget.applyQuaternion(parentQuat);
-    desired.setFromUnitVectors(UP, localTarget);
-    upperArm.quaternion.copy(desired);
-    if (lowerArm && lowerArmBindQuaternion) lowerArm.quaternion.copy(lowerArmBindQuaternion);
-  }
+  return {
+    update(targetWorldPosition, deltaSeconds) {
+      if (nodes.length === 0) return;
+
+      const targetWeight = targetWorldPosition ? 1 : 0;
+      const ease = 1 - Math.exp(-REACH_BLEND_RATE * Math.max(0, deltaSeconds));
+      weight += (targetWeight - weight) * ease;
+      if (weight < 1e-3) return; // fully released — leave the mixer's own pose alone
+
+      if (targetWorldPosition) root.updateMatrixWorld(true);
+
+      nodes.forEach(({ shoulder, upperArm, lowerArm, lowerArmBindQuaternion }, i) => {
+        if (targetWorldPosition) {
+          shoulder.getWorldPosition(shoulderPos);
+          localTarget.copy(targetWorldPosition).sub(shoulderPos);
+          if (localTarget.lengthSq() >= 1e-6) {
+            localTarget.normalize();
+            shoulder.getWorldQuaternion(parentQuat).invert();
+            localTarget.applyQuaternion(parentQuat);
+            reachQuats[i]!.setFromUnitVectors(UP, localTarget);
+          }
+        }
+        naturalQuat.copy(upperArm.quaternion);
+        upperArm.quaternion.copy(naturalQuat).slerp(reachQuats[i]!, weight);
+
+        if (lowerArm && lowerArmBindQuaternion) {
+          naturalQuat.copy(lowerArm.quaternion);
+          lowerArm.quaternion.copy(naturalQuat).slerp(lowerArmBindQuaternion, weight);
+        }
+      });
+    },
+  };
 };

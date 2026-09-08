@@ -769,6 +769,13 @@ const boot = async (
     // grabbing someone.
     const hitReactEpoch = serverOwnCharacter?.hitReactEpoch ?? 0;
     const grabbingId = serverOwnCharacter?.grabbingId ?? null;
+    // M6.1: a hold freezes this Character's own rendered yaw, in either role
+    // — `grabbingId` (holding someone) or `heldByGrabberId` (being held).
+    // Same server-derived reason as `grabbingId` right above: a hold is
+    // cross-Character state `localSim` can never resolve on its own. The
+    // server freezes the replicated `facing` over the same span, so every
+    // other client's rig for this Character stays put too.
+    const facingLocked = grabbingId !== null || (serverOwnCharacter?.heldByGrabberId ?? null) !== null;
     // M6.1: the rig has no Grab clip, so a hold's own visual comes from the
     // arms procedurally reaching toward whoever this Character is grabbing
     // (`Stage.updateCharacterAnimation`'s own `armReach.ts`) — the target's
@@ -784,6 +791,7 @@ const boot = async (
       c.hitEpoch,
       hitReactEpoch,
       grabTargetPosition,
+      facingLocked,
     );
     // Spinner phase is a pure function of the tick and the client can compute
     // it at any tick exactly — so render it at the *prediction* tick, matching

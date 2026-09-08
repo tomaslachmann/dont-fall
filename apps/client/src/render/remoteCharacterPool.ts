@@ -1,7 +1,7 @@
 import { CAPSULE_BOTTOM_OFFSET, isDownMotionState, type RenderCharacter, type Vec3 } from "@dont-fall/shared";
 import * as THREE from "three";
 import { clone as cloneRig } from "three/addons/utils/SkeletonUtils.js";
-import { ARM_REACH_TARGET_HEIGHT, applyArmReach, findArmReachNodes, type ArmReachNodes } from "./armReach.js";
+import { ARM_REACH_TARGET_HEIGHT, createArmReachPlayer, type ArmReachPlayer } from "./armReach.js";
 import { createRagdollPose, type RagdollPose } from "./ragdollPose.js";
 import {
   actionFor,
@@ -39,7 +39,7 @@ interface RemoteRig {
   /** Drives this rig's own Punch/HitReact one-shot overlays (M6 ticket 03). */
   hitReactionPlayer: HitReactionPlayer;
   /** Looked up once — this rig's own arm bones, for Grab's arm-reach pose (M6.1). */
-  armReachNodes: ArmReachNodes[];
+  armReachPlayer: ArmReachPlayer;
 }
 
 /**
@@ -133,7 +133,7 @@ export const createRemoteCharacterPool = (scene: THREE.Scene, characterModel: Ch
       activeAction,
       pose: createRagdollPose(root),
       hitReactionPlayer: new HitReactionPlayer(),
-      armReachNodes: findArmReachNodes(root),
+      armReachPlayer: createArmReachPlayer(root),
     };
   };
 
@@ -204,17 +204,15 @@ export const createRemoteCharacterPool = (scene: THREE.Scene, characterModel: Ch
     rig.root.rotation.y = Math.PI - facing;
 
     // M6.1: no Grab clip exists on the rig — see `scene.ts`'s own identical
-    // arm-reach call for the local Character.
-    if (grabbingId) {
-      const targetPosition = resolvePosition(grabbingId);
-      if (targetPosition) {
-        applyArmReach(
-          rig.root,
-          rig.armReachNodes,
-          new THREE.Vector3(targetPosition.x, targetPosition.y + ARM_REACH_TARGET_HEIGHT, targetPosition.z),
-        );
-      }
-    }
+    // arm-reach call for the local Character. Called every frame regardless
+    // of grab state — `armReachPlayer` eases the pose in and out itself.
+    const targetPosition = grabbingId ? resolvePosition(grabbingId) : undefined;
+    rig.armReachPlayer.update(
+      targetPosition
+        ? new THREE.Vector3(targetPosition.x, targetPosition.y + ARM_REACH_TARGET_HEIGHT, targetPosition.z)
+        : undefined,
+      deltaSeconds,
+    );
   };
 
   return {

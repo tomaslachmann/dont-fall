@@ -16,7 +16,8 @@ import {
   type Vec3,
 } from "@dont-fall/shared";
 import * as THREE from "three";
-import { ARM_REACH_TARGET_HEIGHT, applyArmReach, findArmReachNodes } from "./armReach.js";
+import { ARM_REACH_TARGET_HEIGHT, createArmReachPlayer } from "./armReach.js";
+import { nextModelYaw } from "./modelFacing.js";
 import {
   actionFor,
   crossfadeLocomotion,
@@ -45,9 +46,6 @@ const BACKGROUND_COLOR = 0x0b0e14;
 
 /** Standing height (units) the loaded model is rescaled to, a touch taller than the capsule. */
 const CHARACTER_VISUAL_HEIGHT = 2 * CAPSULE_BOTTOM_OFFSET + 0.35;
-
-/** How fast (rad/s) the model turns to face its movement direction. */
-const FACING_TURN_SPEED = 14;
 
 /**
  * Procedural Wobble lean (ticket 07), temporarily OFF. It derives acceleration
@@ -133,7 +131,10 @@ export interface Stage {
    * grabbing someone, is that Character's own world position — the rig has
    * no Grab clip, so the arms procedurally reach toward it instead
    * (`armReach.ts`); `undefined` leaves the arms at whatever the ordinary
-   * locomotion clip already has them doing.
+   * locomotion clip already has them doing. `facingLocked` (M6.1) freezes the
+   * model's cosmetic yaw outright for as long as this Character is in a Grab
+   * hold, in either role — see `nextModelYaw`'s own doc comment for why a
+   * held Character must strafe rather than turn.
    */
   updateCharacterAnimation: (
     deltaSeconds: number,
@@ -144,6 +145,7 @@ export interface Stage {
     hitEpoch: number,
     hitReactEpoch: number,
     grabTargetPosition: Vec3 | undefined,
+    facingLocked: boolean,
   ) => void;
   /**
    * Give back everything this Stage took: the canvas, its WebGL context, every
@@ -322,7 +324,7 @@ export const createStage = ({
   /** Drives the Punch/HitReact one-shot overlays (M6 ticket 03). */
   const hitReactionPlayer = new HitReactionPlayer();
   /** Looked up once — the rig's own arm bones, for Grab's arm-reach pose (M6.1). */
-  const armReachNodes = findArmReachNodes(character);
+  const armReachPlayer = createArmReachPlayer(character);
 
   let wobbleState = initialWobbleState;
   // Seeded lazily on the first updateCharacterAnimation call (null here would
@@ -428,7 +430,17 @@ export const createStage = ({
         mesh.updateMatrixWorld();
       }
     },
-    updateCharacterAnimation: (deltaSeconds, moveDirection, grounded, dashing, dashSpeed, hitEpoch, hitReactEpoch, grabTargetPosition) => {
+    updateCharacterAnimation: (
+      deltaSeconds,
+      moveDirection,
+      grounded,
+      dashing,
+      dashSpeed,
+      hitEpoch,
+      hitReactEpoch,
+      grabTargetPosition,
+      facingLocked,
+    ) => {
       const currentPosition: Vec3 = { x: character.position.x, y: character.position.y, z: character.position.z };
       // Lazily seeded so the very first call (before any real movement) reads
       // as zero velocity rather than a jump from an arbitrary creation-time value.
@@ -480,24 +492,24 @@ export const createStage = ({
       activeAction = crossfadeLocomotion(next, activeAction, LOCOMOTION_CROSSFADE_SECONDS);
       mixer.update(deltaSeconds);
 
-      if (moving) {
-        const targetYaw = Math.atan2(moveDirection.x, moveDirection.z);
-        const delta = THREE.MathUtils.euclideanModulo(targetYaw - character.rotation.y + Math.PI, Math.PI * 2) - Math.PI;
-        const maxStep = FACING_TURN_SPEED * deltaSeconds;
-        character.rotation.y += THREE.MathUtils.clamp(delta, -maxStep, maxStep);
-      }
+      character.rotation.y = nextModelYaw({
+        currentYaw: character.rotation.y,
+        moveDirection,
+        deltaSeconds,
+        facingLocked,
+      });
 
-      // M6.1: no Grab clip exists on the rig, so a hold's own "reaching"
-      // read comes from procedurally aiming the upper arms instead — after
-      // the turn above, so it reaches toward where the Character is
-      // actually facing this frame, not last frame's.
-      if (grabTargetPosition) {
-        applyArmReach(
-          character,
-          armReachNodes,
-          new THREE.Vector3(grabTargetPosition.x, grabTargetPosition.y + ARM_REACH_TARGET_HEIGHT, grabTargetPosition.z),
-        );
-      }
+      // M6.1: no Grab clip exists on the rig, so a hold's own "reaching" read
+      // comes from procedurally aiming the upper arms instead — after the
+      // turn above, so it reaches toward where the Character is actually
+      // facing this frame, not last frame's. Called every frame regardless
+      // of grab state — `armReachPlayer` eases the pose in and out itself.
+      armReachPlayer.update(
+        grabTargetPosition
+          ? new THREE.Vector3(grabTargetPosition.x, grabTargetPosition.y + ARM_REACH_TARGET_HEIGHT, grabTargetPosition.z)
+          : undefined,
+        deltaSeconds,
+      );
 
       if (visualState === "Controlled") {
         if (WOBBLE_ENABLED) {

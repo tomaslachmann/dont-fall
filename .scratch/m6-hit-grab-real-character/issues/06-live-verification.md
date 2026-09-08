@@ -8,13 +8,13 @@ Characters, Hit, and Grab, together, plus the 12-player performance bar ADR 0011
 
 **Status:** ready-for-agent
 
-- [ ] Two real browsers: one Player Hits another, both see the Impact and the Dash
+- [x] Two real browsers: one Player Hits another, both see the Impact and the Dash
       cancellation land correctly on the real, correctly-oriented remote model
-- [ ] Two real browsers: one Player Grabs another, both see the slow-down on both Characters,
+- [x] Two real browsers: one Player Grabs another, both see the slow-down on both Characters,
       a successful struggle-free release, and the hold-limit auto-release path
-- [ ] 12 real connected Characters render and animate correctly with frame rate holding
+- [x] 12 real connected Characters render and animate correctly with frame rate holding
       (ADR 0046's perf commitment)
-- [ ] Both a Race and a Survival Round exercised live with Hit/Grab, confirming no
+- [x] Both a Race and a Survival Round exercised live with Hit/Grab, confirming no
       Round-type-specific behavior difference
-- [ ] A Character knocked down settles as a body on both sides, and the two sides agree — the
+- [x] A Character knocked down settles as a body on both sides, and the two sides agree — the
       ragdoll runs in client prediction and server authority alike (ticket 05)

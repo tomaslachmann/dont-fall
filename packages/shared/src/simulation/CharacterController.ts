@@ -123,6 +123,8 @@ export interface CharacterState {
   grabCooldownMs: number;
   /** The id of whoever this Character is currently grabbing, or `null` (M6.1) — drives the renderer's own arm-reach pose. `null` for the HELD side of a hold too; only the grabber's own row is ever non-null. */
   grabbingId: string | null;
+  /** The id of whoever is currently grabbing this Character, or `null` (M6.1) — the reverse of {@link grabbingId}. Lets a client tell "am I involved in a hold at all, as either role," which is what locks this Character's own rendered facing/orientation to the server's frozen value instead of steering it from movement input. */
+  heldByGrabberId: string | null;
   /** Current horizontal speed (units/s) contributed by an active Dash burst; 0 when not dashing. Drives the speed-lines effect directly — no noisy derivation from position needed. */
   dashSpeed: number;
   /** Rises every time a speed/slow pad fires (M3.7 ticket 01, ADR 0035). */
@@ -255,6 +257,8 @@ export class CharacterController {
   private grabSpeedMultiplier = 1;
   /** Who this Character is currently grabbing, or `null` (M6.1) — see {@link CharacterState.grabbingId}. Set from outside by `RapierSimulation`, which alone knows the cross-Character hold relationship. */
   private grabbingId: string | null = null;
+  /** Who is currently grabbing this Character, or `null` (M6.1) — the reverse of {@link grabbingId}, see {@link CharacterState.heldByGrabberId}. */
+  private heldByGrabberId: string | null = null;
   /**
    * Current horizontal speed (units/s) contributed by an active Dash burst —
    * the exact `dashEnvelope` curve already driving the physics, exposed
@@ -293,6 +297,20 @@ export class CharacterController {
    * Character never needs to know its own `bounds`/`priority` back.
    */
   private activeVolume: { force: Vec3; maxInducedSpeed: number } | undefined;
+  /**
+   * This tick's shared Grab-tether wish velocity, if any (M6.1, revised from
+   * an earlier spring-pull design after live feedback: a hold reads as a
+   * genuinely *rigid* connection, not a spring) — set from outside by
+   * `RapierSimulation.updateGrabs` to the SAME vector for both participants,
+   * the sum of each one's own wish-velocity, so a Character that inputs
+   * nothing is dragged exactly as fast as the other pulls. Replaces this
+   * Character's own `slopedWalk` contribution outright in
+   * {@link beginCapsuleTick} rather than adding to it — this Character's own
+   * `moveDirection` already fed into computing the shared wish, so re-adding
+   * it here would double-count it. `undefined` (not engaged) until anything
+   * ever calls {@link setGrabTetherWish}.
+   */
+  private grabTetherWish: Vec3 | undefined;
   /**
    * The true peak fall speed (units/s, always ≥ 0) since velocity.y was last
    * non-negative — see the gravity-integration line in {@link beginCapsuleTick}
@@ -451,6 +469,11 @@ export class CharacterController {
     this.grabbingId = id;
   }
 
+  /** Sets who is currently grabbing this Character, or `null` (M6.1) — see {@link heldByGrabberId}. */
+  setHeldByGrabberId(id: string | null): void {
+    this.heldByGrabberId = id;
+  }
+
   /** Sets this tick's Surface-driven top-speed multiplier (ticket 01) — see {@link surfaceTopSpeedMultiplier}. */
   setSurfaceTopSpeedMultiplier(multiplier: number): void {
     this.surfaceTopSpeedMultiplier = multiplier;
@@ -469,6 +492,27 @@ export class CharacterController {
   /** Sets this tick's active Volume, if any (M3.7 ticket 04) — see {@link activeVolume}. */
   setActiveVolume(volume: { force: Vec3; maxInducedSpeed: number } | undefined): void {
     this.activeVolume = volume;
+  }
+
+  /** Sets this tick's shared Grab-tether wish velocity, if any (M6.1) — see {@link grabTetherWish}. */
+  setGrabTetherWish(wish: Vec3 | undefined): void {
+    this.grabTetherWish = wish;
+  }
+
+  /**
+   * Overrides this tick's replicated facing outright (M6.1) — called by
+   * `RapierSimulation.updateGrabs` to hold a grabber's or held Character's
+   * own facing frozen at whatever it was the instant a hold started
+   * (`ActiveGrab.grabberFacing`/`heldFacing`), live feedback on the original
+   * camera-mirrored `facing` (ADR 0045): free look while grabbing let the
+   * arm-reach pose end up aiming behind the Character's own back as it
+   * turned. Takes effect immediately for this tick's own {@link snapshot} —
+   * called post-step, after {@link beginTick} has already set
+   * {@link currentFacing} from the raw input, so it wins for whatever's
+   * read afterward.
+   */
+  setFacing(yaw: number): void {
+    this.currentFacing = yaw;
   }
 
   /** The current motion state — a cheap read (no bone/pose computation), for transition detection. */
@@ -904,7 +948,15 @@ export class CharacterController {
         // one-scalar-does-both model — so ice's near-zero grip alone is
         // exactly what turns this from "identical" into "a genuine, gradual
         // ramp," with no other code path change needed.
-        const wish = addVec3(slopedWalk, dashBurst);
+        //
+        // M6.1: a Grab hold replaces this Character's own `slopedWalk`
+        // outright with the shared tether wish (see `grabTetherWish`'s own
+        // doc comment) — this Character's own `moveDirection` already fed
+        // into computing it, so re-adding `slopedWalk` on top would
+        // double-count this Character's own contribution. `dashBurst` still
+        // adds on top, though it's always zero while held: Dash is gated
+        // out entirely by the same hold (`notGrabbing`, above).
+        const wish = addVec3(this.grabTetherWish ?? slopedWalk, dashBurst);
         const newVelocity = accelerateVelocity(
           this.velocity,
           wish,
@@ -1171,6 +1223,8 @@ export class CharacterController {
     this.grab.reset();
     this.grabSpeedMultiplier = 1;
     this.grabbingId = null;
+    this.heldByGrabberId = null;
+    this.grabTetherWish = undefined;
     this.speedPad.reset();
     this.pendingSpeedPadCapMultiplier = undefined;
     this.pendingLaunchVelocity = undefined;
@@ -1224,6 +1278,7 @@ export class CharacterController {
       hitChargeMs: this.hit.chargeMs,
       grabCooldownMs: this.grab.cooldownMs,
       grabbingId: this.grabbingId,
+      heldByGrabberId: this.heldByGrabberId,
       speedPadEpoch: this.speedPadEpoch,
       speedPadMsLeft: this.speedPad.msLeft,
       speedPadCapMultiplier: this.speedPad.peak,
@@ -1332,6 +1387,11 @@ export class CharacterController {
     // own per-tick push refreshes it, same as `activeVolume` just above.
     this.grabSpeedMultiplier = 1;
     this.grabbingId = null;
+    this.heldByGrabberId = null;
+    // M6.1: same reasoning — a hold's shared tether wish is cross-Character
+    // state, never replicated, "not engaged" until the very next real check
+    // re-derives it.
+    this.grabTetherWish = undefined;
     // Re-derived fresh from `base.velocity` starting the very next tick's
     // own gravity-integration line — a reconciliation landing mid-fall onto
     // a bounce Surface loses whatever higher peak a mispredicting client saw

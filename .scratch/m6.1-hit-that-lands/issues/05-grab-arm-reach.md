@@ -6,7 +6,8 @@ reason: the rig has no Grab/Hold/Catch clip.
 
 **Blocked by:** nothing new — reuses `RapierSimulation`'s existing `activeGrabs` relationship.
 
-**Status:** done (live visual verification not possible from this session — see below)
+**Status:** done, revised twice from live feedback (bone-name bug fixed, then the whole feel
+redesigned) — live visual verification still not possible from this session, see below
 
 ## Why
 

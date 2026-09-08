@@ -69,6 +69,15 @@ export interface CharacterSnapshot {
    */
   grabbingId: string | null;
   /**
+   * The id of whoever is currently grabbing this Character, or `null`
+   * (M6.1) — the reverse of {@link grabbingId}. Lets a client tell "am I
+   * involved in a hold at all, as either role," which is what locks this
+   * Character's own rendered facing/orientation to the server's frozen
+   * value instead of steering it from movement input. Same cross-Character,
+   * authoritative-only, not-in-`ReconcileBase` treatment as `grabbingId`.
+   */
+  heldByGrabberId: string | null;
+  /**
    * Rises every time a speed/slow pad fires (M3.7 ticket 01, ADR 0035) — the
    * Epoch idiom (CONTEXT.md), same as {@link ragdollEpoch}/{@link respawnCount}.
    * Not restored during reconciliation: like `ragdollEpoch`, it's a pure
@@ -212,6 +221,7 @@ export interface CharacterSnapshotFields {
   hitChargeMs?: number;
   grabCooldownMs?: number;
   grabbingId?: string | null;
+  heldByGrabberId?: string | null;
   speedPadEpoch?: number;
   speedPadMsLeft?: number;
   speedPadCapMultiplier?: number;
@@ -275,6 +285,7 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   hitChargeMs: fields.hitChargeMs ?? 0,
   grabCooldownMs: fields.grabCooldownMs ?? 0,
   grabbingId: fields.grabbingId ?? null,
+  heldByGrabberId: fields.heldByGrabberId ?? null,
   speedPadEpoch: fields.speedPadEpoch ?? 0,
   speedPadMsLeft: fields.speedPadMsLeft ?? 0,
   speedPadCapMultiplier: fields.speedPadCapMultiplier ?? 1,

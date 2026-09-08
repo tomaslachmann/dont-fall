@@ -128,6 +128,18 @@ export class Ragdoll {
       body.setLinvel(velocity, true);
       body.setAngvel(ZERO, true);
       collider.setEnabled(true);
+      // M6.1, found live ("a full Hit knocks nobody down"): Rapier derives a
+      // body's mass from its colliders at the *next* step, so a bone that has
+      // been sitting `Fixed` — which is every bone of every ragdoll in a
+      // Match that has run for more than one tick — still reports
+      // `mass() === 0` right here. `applyImpulse` divides the impulse by that
+      // mass, so the shove below was silently discarded and the knockdown got
+      // whatever `setLinvel` gave it and nothing else. That hid for a long
+      // time because the impulse-carrying knockdowns (a dash into a wall, a
+      // Spinner) also carry velocity of their own and tumbled anyway; a Hit
+      // on a Character standing perfectly still carries none, so it just
+      // stood there. Recomputing here is Rapier's own documented remedy.
+      body.recomputeMassPropertiesFromColliders();
     }
     this.byName.get("chest")!.applyImpulse(impulse, true);
     this.active = true;

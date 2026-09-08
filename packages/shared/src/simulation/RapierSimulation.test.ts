@@ -3069,12 +3069,92 @@ describe("RapierSimulation — Grab (M6 ticket 04)", () => {
     expect(zBefore.held).toBeDefined();
   });
 
+  it(
+    "freezes each participant's own facing at whatever it was the instant the hold started, never recomputed " +
+      "toward each other or disturbed by later camera input (M6.1, revised from an earlier 'always face each " +
+      "other' design after live feedback)",
+    () => {
+      const sim = twoCharacters(-1); // held is north of the grabber
+      sim.tick({ [GRABBER]: reach() }); // engages this tick — freezes the grabber's facing at NORTH_FACING
+
+      // From here on the grabber's own camera claims to look south — dead
+      // away from the held Character — but the replicated facing must stay
+      // frozen at whatever it was when the hold started.
+      sim.tick({ [GRABBER]: input({ facing: Math.PI }) });
+      sim.tick({ [GRABBER]: input({ facing: Math.PI }) });
+
+      const grabberFacing = sim.snapshot().characters[GRABBER]!.facing;
+      expect(Math.cos(grabberFacing)).toBeCloseTo(Math.cos(NORTH_FACING), 5);
+      expect(Math.sin(grabberFacing)).toBeCloseTo(Math.sin(NORTH_FACING), 5);
+
+      // The held Character's own facing is frozen too, at whatever it
+      // naturally already was before being grabbed (NORTH_FACING, from
+      // `twoCharacters`' own settle loop) — never forced to face the
+      // grabber instead.
+      const heldFacing = sim.snapshot().characters[HELD]!.facing;
+      expect(Math.cos(heldFacing)).toBeCloseTo(Math.cos(NORTH_FACING), 5);
+      expect(Math.sin(heldFacing)).toBeCloseTo(Math.sin(NORTH_FACING), 5);
+    },
+  );
+
+  it(
+    "drags a Character standing still exactly as fast as the other pulls — a rigid tether, not two independently " +
+      "slowed Characters (M6.1, revised from an earlier distance-threshold spring-pull design after live feedback)",
+    () => {
+      const sim = twoCharacters(-1); // held is north of the grabber
+      sim.tick({ [GRABBER]: reach() });
+      sim.tick({}); // one tick of lag before the tether/multiplier take effect
+
+      const grabberZBefore = sim.snapshot().characters[GRABBER]!.position.z;
+      const heldZBefore = sim.snapshot().characters[HELD]!.position.z;
+      // The grabber walks north; the held sends no input at all.
+      sim.tick({ [GRABBER]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
+      const grabberMoved = grabberZBefore - sim.snapshot().characters[GRABBER]!.position.z;
+      const heldMoved = heldZBefore - sim.snapshot().characters[HELD]!.position.z;
+
+      expect(grabberMoved).toBeGreaterThan(0); // the grabber actually walked
+      expect(heldMoved).toBeCloseTo(grabberMoved, 5); // dragged by exactly the same amount, despite zero input of its own
+    },
+  );
+
+  it("sums both participants' own wish-velocities when they pull the same way, rather than averaging them (M6.1: CONTEXT.md doesn't ask for one side to always win)", () => {
+    const north = input({ moveDirection: { x: 0, y: 0, z: -1 } });
+
+    const solo = twoCharacters(-1);
+    solo.tick({ [GRABBER]: reach() });
+    solo.tick({});
+    const soloZBefore = solo.snapshot().characters[GRABBER]!.position.z;
+    solo.tick({ [GRABBER]: north }); // only the grabber pulls this tick
+    const soloMoved = soloZBefore - solo.snapshot().characters[GRABBER]!.position.z;
+
+    const both = twoCharacters(-1);
+    both.tick({ [GRABBER]: reach() });
+    both.tick({});
+    const bothZBefore = both.snapshot().characters[GRABBER]!.position.z;
+    both.tick({ [GRABBER]: north, [HELD]: north }); // both pull the same way this time
+    const bothMoved = bothZBefore - both.snapshot().characters[GRABBER]!.position.z;
+
+    expect(bothMoved).toBeGreaterThan(soloMoved * 1.5); // meaningfully more than one side alone — summed, not averaged
+  });
+
   it("reports grabbingId on the grabber's own snapshot the instant a hold engages — never on the held Character's own row (M6.1: the renderer's own arm-reach pose)", () => {
     const sim = twoCharacters(-1);
     sim.tick({ [GRABBER]: reach() });
 
     expect(sim.snapshot().characters[GRABBER]!.grabbingId).toBe(HELD);
     expect(sim.snapshot().characters[HELD]!.grabbingId).toBeNull(); // the held side never grabs anyone
+  });
+
+  it("reports heldByGrabberId on the held Character's own snapshot, the mirror of grabbingId — and clears it when the hold ends (M6.1: each client locks its own Character's rendered facing off these two)", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [GRABBER]: reach() });
+
+    expect(sim.snapshot().characters[HELD]!.heldByGrabberId).toBe(GRABBER);
+    expect(sim.snapshot().characters[GRABBER]!.heldByGrabberId).toBeNull(); // the grabber isn't the one being held
+
+    for (let n = 0; n < GRAB_HOLD_MAX_TICKS + 1; n += 1) sim.tick({}); // release via timeout
+
+    expect(sim.snapshot().characters[HELD]!.heldByGrabberId).toBeNull();
   });
 
   it("clears grabbingId the instant a hold ends, however it ends (M6.1)", () => {

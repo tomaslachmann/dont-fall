@@ -4,7 +4,7 @@ import { RAGDOLL_BONES } from "@dont-fall/shared";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { beforeAll, describe, expect, it } from "vitest";
-import { findArmReachNodes } from "./armReach.js";
+import { createArmReachPlayer, findArmReachNodes } from "./armReach.js";
 import { createRagdollPose } from "./ragdollPose.js";
 
 const MODEL_PATH = path.resolve(import.meta.dirname, "../../public/models/MushroomKing.gltf");
@@ -75,5 +75,19 @@ describe("MushroomKing.gltf — real model, real bone names", () => {
     // returned undefined for the dotted "UpperArm.L"), so `apply` silently
     // never touched it at all — this would read as `angleTo` === 0.
     expect(after.angleTo(before)).toBeGreaterThan(0.1);
+  });
+
+  it("createArmReachPlayer actually points the real arms at a target once blended in", () => {
+    const player = createArmReachPlayer(scene);
+    const shoulderL = scene.getObjectByName("ShoulderL")!;
+    const target = new THREE.Vector3(5, 2, 3);
+
+    for (let i = 0; i < 60; i += 1) player.update(target, 1 / 60);
+
+    const upperArmL = scene.getObjectByName("UpperArmL")!;
+    const shoulderWorldPos = shoulderL.getWorldPosition(new THREE.Vector3());
+    const expectedDir = target.clone().sub(shoulderWorldPos).normalize();
+    const actualDir = new THREE.Vector3(0, 1, 0).applyQuaternion(upperArmL.getWorldQuaternion(new THREE.Quaternion())).normalize();
+    expect(actualDir.angleTo(expectedDir)).toBeLessThan(0.05);
   });
 });
