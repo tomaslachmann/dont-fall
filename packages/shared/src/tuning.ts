@@ -886,3 +886,22 @@ export const ROUND_END_MS = 2_500;
 
 /** {@link ROUND_END_MS} in Ticks — every Match duration is measured in Ticks (ADR 0004). */
 export const ROUND_END_TICKS = msToTicks(ROUND_END_MS);
+
+// --- Score (M7 ticket 03, ADR 0049) -----------------------------------------
+
+/**
+ * The percentile-normalised Score a Round's own first place pays out — a
+ * feel constant, not a balance one (ticket 03): a round number that reads
+ * clearly on the Standings Screen. 100 so a placement fraction (e.g. 3rd of
+ * 6) shows up as a legible number rather than a decimal.
+ */
+export const MAX_ROUND_SCORE = 100;
+
+/**
+ * Flat bonus a Round adds on top of its percentile Score for Qualifying
+ * (ADR 0049: Qualification is redefined as the top scoring tier, not a gate
+ * — everyone advances regardless). Smaller than {@link MAX_ROUND_SCORE} so
+ * it rewards Qualifying without letting a last-place Qualifier out-score a
+ * high-placing non-Qualifier by an amount placement itself never could.
+ */
+export const QUALIFICATION_SCORE_BONUS = 20;
