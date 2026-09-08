@@ -442,7 +442,7 @@ export const createStage = ({
       // M6 ticket 03: Punch/HitReact take priority over ordinary locomotion
       // while playing — the caller (this method) never picks a locomotion
       // clip on a frame where a reaction is still in progress.
-      const reacting = hitReactionPlayer.update(hitEpoch, hitReactEpoch, actions, LOCOMOTION_CROSSFADE_SECONDS);
+      const reacting = hitReactionPlayer.update(hitEpoch, hitReactEpoch, actions, LOCOMOTION_CROSSFADE_SECONDS, activeAction);
       if (reacting) {
         activeAction = reacting;
         mixer.update(deltaSeconds);

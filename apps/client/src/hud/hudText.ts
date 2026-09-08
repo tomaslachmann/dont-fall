@@ -1,4 +1,11 @@
-import { DASH_COOLDOWN_MS, HIT_COOLDOWN_MS, type CharacterMotionState, type MatchPhase, type Vec3 } from "@dont-fall/shared";
+import {
+  DASH_COOLDOWN_MS,
+  HIT_CHARGE_MAX_MS,
+  HIT_COOLDOWN_MS,
+  type CharacterMotionState,
+  type MatchPhase,
+  type Vec3,
+} from "@dont-fall/shared";
 
 /** Everything the HUD's main text block reads — all of it already computed by the frame loop (M4.5 ticket 06). */
 export interface HudTextValues {
@@ -20,6 +27,8 @@ export interface HudTextValues {
   dashCooldownMs: number;
   /** M6 ticket 03. */
   hitCooldownMs: number;
+  /** Ms charged so far on an in-progress Hit hold; 0 while not charging (M6.1: hold-to-charge). */
+  hitChargeMs: number;
   /** `NetMetrics.format()`'s own output — this function only places it. */
   netMetricsText: string;
 }
@@ -36,8 +45,12 @@ export const formatHudText = (v: HudTextValues): string => {
   const qualificationBanner = v.qualified ? `\n${v.placement === null ? "QUALIFIED" : `QUALIFIED #${v.placement}`}` : "";
   const dashFill = Math.max(0, Math.min(10, Math.round((1 - v.dashCooldownMs / DASH_COOLDOWN_MS) * 10)));
   const dashBar = "#".repeat(dashFill) + "-".repeat(10 - dashFill);
-  const hitFill = Math.max(0, Math.min(10, Math.round((1 - v.hitCooldownMs / HIT_COOLDOWN_MS) * 10)));
+  const charging = v.hitChargeMs > 0;
+  const hitFill = charging
+    ? Math.max(0, Math.min(10, Math.round((v.hitChargeMs / HIT_CHARGE_MAX_MS) * 10)))
+    : Math.max(0, Math.min(10, Math.round((1 - v.hitCooldownMs / HIT_COOLDOWN_MS) * 10)));
   const hitBar = "#".repeat(hitFill) + "-".repeat(10 - hitFill);
+  const hitLabel = charging ? " charging" : v.hitCooldownMs === 0 ? " ready" : "";
 
   return (
     `DON'T FALL — M2 · predicted + reconciled\n` +
@@ -46,7 +59,7 @@ export const formatHudText = (v: HudTextValues): string => {
     `pos ${v.position.x.toFixed(1)}, ${v.position.y.toFixed(1)}, ${v.position.z.toFixed(1)} · ${v.motionState}\n` +
     `checkpoint ${checkpoint} · falls ${v.fallCount} · qualified ${v.qualifiedCount}/${v.connectedPlayers}${qualificationBanner}\n` +
     `dash [${dashBar}]${v.dashCooldownMs === 0 ? " ready" : ""}\n` +
-    `hit [${hitBar}]${v.hitCooldownMs === 0 ? " ready" : ""}\n` +
+    `hit [${hitBar}]${hitLabel}\n` +
     `WASD move · Space jump · Shift dash · F hit · mouse look\n` +
     v.netMetricsText
   );

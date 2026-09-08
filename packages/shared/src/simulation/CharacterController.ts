@@ -31,6 +31,7 @@ import type { SurfaceBounceConfig } from "../track/Surface.js";
 import { CharacterStateMachine, isDownMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
 import { CHARACTER_GROUPS, GROUP_CHARACTER } from "./collisionGroups.js";
 import { DashController } from "./DashController.js";
+import { GrabController } from "./GrabController.js";
 import { HitController } from "./HitController.js";
 import { accelerateVelocity, applyVolumeForce, JumpController, slopeSpeedMultiplier, SpeedPadController } from "./movementVerbs.js";
 import { Ragdoll } from "./Ragdoll.js";
@@ -116,6 +117,10 @@ export interface CharacterState {
   dashing: boolean;
   /** Milliseconds left on the Hit cooldown; 0 means a swing is ready (M6 ticket 03). */
   hitCooldownMs: number;
+  /** Ms charged so far on an in-progress Hit hold; 0 while not charging (M6.1: hold-to-charge). Drives the HUD's charge tell. */
+  hitChargeMs: number;
+  /** Milliseconds left on the Grab cooldown; 0 means a grab is ready (M6 ticket 04). Counts from the moment a hold this Character initiated last *ended*, not from when it started. */
+  grabCooldownMs: number;
   /** Current horizontal speed (units/s) contributed by an active Dash burst; 0 when not dashing. Drives the speed-lines effect directly — no noisy derivation from position needed. */
   dashSpeed: number;
   /** Rises every time a speed/slow pad fires (M3.7 ticket 01, ADR 0035). */
@@ -231,7 +236,21 @@ export class CharacterController {
    * cross-Character question only `RapierSimulation` can answer.
    */
   private pendingHitFired = false;
-  private hitHeldLastTick = false;
+  /** The charge fraction (0..1) a swing fired with THIS tick; 0 whenever {@link pendingHitFired} is false (M6.1 hold-to-charge). */
+  private pendingHitChargeFraction = 0;
+  /** Grab's cooldown (M6 ticket 04) — see {@link GrabController}. */
+  private readonly grab = new GrabController();
+  /** Same "fresh this tick only" treatment as {@link pendingHitFired}, for a grab attempt instead of a swing. */
+  private pendingGrabFired = false;
+  private grabHeldLastTick = false;
+  /**
+   * Multiplies `WALK_SPEED` this tick, and independently gates Dash outright,
+   * while this Character is engaged in a Grab hold — either role (M6 ticket
+   * 04). Set from outside by `RapierSimulation`, which alone knows the
+   * cross-Character hold relationship; 1 (no effect, not engaged) until
+   * anything ever calls {@link setGrabSpeedMultiplier}.
+   */
+  private grabSpeedMultiplier = 1;
   /**
    * Current horizontal speed (units/s) contributed by an active Dash burst —
    * the exact `dashEnvelope` curve already driving the physics, exposed
@@ -386,10 +405,18 @@ export class CharacterController {
     return this.pendingHitFired;
   }
 
+  /** The charge fraction (0..1) the swing that just fired THIS tick was released at — meaningless unless {@link hitFiredThisTick} is true (M6.1 hold-to-charge). */
+  get hitChargeFraction(): number {
+    return this.pendingHitChargeFraction;
+  }
+
   /**
    * Cancels an in-progress Dash burst outright, leaving its cooldown
-   * untouched (M6 tickets 03/04: Hit and Grab both do this to both
-   * participants the instant they connect). A no-op if no burst is active.
+   * untouched (M6 tickets 03/04: Hit and Grab cancel the TARGET's/HELD's
+   * in-progress Dash the instant they connect). A no-op if no burst is
+   * active — which, since M6.1, is always true for the STRIKER's/GRABBER's
+   * own Dash: Dash now gates Hit and Grab out entirely while a burst plays,
+   * so neither can ever fire while its own initiator is mid-Dash.
    */
   cancelDash(): void {
     this.dash.cancelBurst();
@@ -398,6 +425,21 @@ export class CharacterController {
   /** Registers that this Character was just on the receiving end of a landed Hit (M6 ticket 03) — bumps {@link hitReactEpoch}, called by `RapierSimulation.resolveHit`. */
   registerHitReceived(): void {
     this.hitReactEpoch += 1;
+  }
+
+  /** Whether a grab attempt fired THIS tick (M6 ticket 04) — see {@link pendingGrabFired}. */
+  get grabFiredThisTick(): boolean {
+    return this.pendingGrabFired;
+  }
+
+  /** Sets this tick's Grab-driven walk-speed multiplier (M6 ticket 04) — see {@link grabSpeedMultiplier}. `1` (no effect) once the hold this Character was in has ended. */
+  setGrabSpeedMultiplier(multiplier: number): void {
+    this.grabSpeedMultiplier = multiplier;
+  }
+
+  /** Starts this Character's own Grab cooldown (M6 ticket 04) — called once a hold it initiated has ended, however it ended. See `GrabController.release`. */
+  registerGrabReleased(): void {
+    this.grab.release();
   }
 
   /** Sets this tick's Surface-driven top-speed multiplier (ticket 01) — see {@link surfaceTopSpeedMultiplier}. */
@@ -558,14 +600,16 @@ export class CharacterController {
 
     const jumpPressed = input.jumpHeld && !this.jumpHeldLastTick;
     const dashPressed = input.dashHeld && !this.dashHeldLastTick;
-    const hitPressed = input.hitHeld && !this.hitHeldLastTick;
+    const grabPressed = input.grabHeld && !this.grabHeldLastTick;
     this.jumpHeldLastTick = input.jumpHeld;
     this.dashHeldLastTick = input.dashHeld;
-    this.hitHeldLastTick = input.hitHeld;
+    this.grabHeldLastTick = input.grabHeld;
     this.currentFacing = input.facing;
     // Reset every tick, unconditionally — never stale across a tick where
     // `beginCapsuleTick` (below) doesn't run at all (pure Ragdoll).
     this.pendingHitFired = false;
+    this.pendingHitChargeFraction = 0;
+    this.pendingGrabFired = false;
 
     // Order matters: read prevState before the machine ticks; compute `settled`
     // from last tick's physics before this tick's world.step().
@@ -605,7 +649,7 @@ export class CharacterController {
 
     this.tickingRagdoll = state === "Ragdoll";
     if (!this.tickingRagdoll) {
-      this.beginCapsuleTick(input, jumpPressed, dashPressed, hitPressed);
+      this.beginCapsuleTick(input, jumpPressed, dashPressed, grabPressed);
     }
   }
 
@@ -673,12 +717,22 @@ export class CharacterController {
   }
 
   /** Controlled / Stagger / Sliding / GettingUp: queue the kinematic capsule's movement, input scaled by the state. */
-  private beginCapsuleTick(input: SimInputs, jumpPressed: boolean, dashPressed: boolean, hitPressed: boolean): void {
+  private beginCapsuleTick(
+    input: SimInputs,
+    jumpPressed: boolean,
+    dashPressed: boolean,
+    grabPressed: boolean,
+  ): void {
     // Stagger/Sliding both dampen *all* movement input — walk, jump and dash
     // — not just walk.
     const fullControl = this.machine.inputScale >= 1;
     const move = scaleVec3(input.moveDirection, this.machine.inputScale);
     const sliding = this.machine.state === "Sliding";
+    // M6 ticket 04: engaged in a Grab hold, either role — sits alongside
+    // `fullControl` as its own independent gate, since a hold doesn't touch
+    // `machine.inputScale` at all (it's not a state-machine state, just a
+    // per-tick multiplier `RapierSimulation` pushes in).
+    const notGrabbing = this.grabSpeedMultiplier >= 1;
 
     const takeoff = this.jump.beginTick(this.grounded, fullControl && jumpPressed);
     if (takeoff !== null) this.velocity.y = takeoff;
@@ -687,18 +741,39 @@ export class CharacterController {
     // own remaining duration still ticks down here even while Sliding, it
     // just doesn't contribute to velocity below (ticket 03 simplification —
     // ADR 0035's persistent-velocity model, not yet built, is what would
-    // unify how a burst's momentum carries across a state change).
-    const dashBurst = this.dash.beginTick(move, fullControl && dashPressed && this.grounded);
+    // unify how a burst's momentum carries across a state change). M6 ticket
+    // 04: also never while engaged in a Grab hold — CONTEXT.md's own Grab
+    // definition: "the grabber cannot run while holding."
+    const dashBurst = this.dash.beginTick(move, fullControl && dashPressed && this.grounded && notGrabbing);
     this.dashSpeed = sliding ? 0 : lengthVec3(dashBurst);
-    // M6 ticket 03: `fullControl` alone already excludes Sliding/Stagger (both
-    // scale `inputScale` below 1) as well as Ragdoll/GettingUp (0) — no
-    // separate "not sliding" check needed, unlike Dash's own extra `grounded`
-    // requirement (a punch doesn't need to be grounded the way a burst does).
-    // Whether it actually *connects* with anyone is `RapierSimulation`'s job,
-    // resolved once every Character's `beginTick` has run this tick — this
-    // only decides "may I swing," exactly like Dash only decides "may I burst."
-    this.pendingHitFired = this.hit.beginTick(fullControl && hitPressed);
+    // M6.1: Dash locks Hit and Grab out entirely while a burst is playing —
+    // "dash locks everything until it finishes." Design correction
+    // superseding M6.1 ticket 01's original approach-speed scaling, which let
+    // a swing be thrown FROM a Dash and, as a side effect, left the dash-run
+    // locomotion clip still at full weight underneath the Punch/HitReact
+    // overlay (fixed separately in `HitReactionPlayer`, but firing mid-Dash
+    // is what exposed it). Read right after `dash.beginTick` above has
+    // already advanced this same tick, so it reflects whether a burst is
+    // STILL playing out now, not last tick's stale value.
+    const dashActive = this.dash.isActive;
+    // M6.1 hold-to-charge: hold Hit to charge a stronger swing, release to
+    // fire — the striker's own commitment now comes from how long they held
+    // it, not from how fast a Dash happened to have them moving (which can no
+    // longer overlap a swing at all). `fullControl` alone already excludes
+    // Sliding/Stagger (both scale `inputScale` below 1) and Ragdoll/GettingUp
+    // (0). `HitController` tracks the charge/release edges itself from the
+    // raw held state — no external press-edge needed here anymore, unlike
+    // Dash/Grab, which still fire on a rising edge only.
+    const hitResult = this.hit.beginTick(input.hitHeld, fullControl && !dashActive);
+    this.pendingHitFired = hitResult !== null;
+    this.pendingHitChargeFraction = hitResult ?? 0;
     if (this.pendingHitFired) this.hitEpoch += 1;
+    // M6 ticket 04, M6.1: same shape as Hit above — "may I attempt to grab,"
+    // not "did it connect" (RapierSimulation's job, cross-Character). Also
+    // gated on not already being engaged (so pressing Grab again mid-hold
+    // neither starts a second one nor wastes the cooldown early) and, like
+    // Hit, never while Dashing.
+    this.pendingGrabFired = this.grab.beginTick(fullControl && grabPressed && notGrabbing && !dashActive);
     // Ticks down (and, while active, decides this tick's own {@link
     // SpeedPadController.capMultiplier}) regardless of Sliding/Stagger —
     // mirrors Dash's own cooldown, which likewise only advances whenever this
@@ -711,7 +786,12 @@ export class CharacterController {
     // only, per ADR 0037/CONTEXT.md's split between the two. `speedPad`'s
     // fading cap (M3.7 ticket 01) stacks with the Surface's own multiplier —
     // orthogonal concerns, same slot in the pipeline Surface already proved.
-    const walk = scaleVec3(move, WALK_SPEED * this.surfaceTopSpeedMultiplier * this.speedPad.capMultiplier);
+    // M6 ticket 04: `grabSpeedMultiplier` folds in the same way — 1 (no
+    // effect) unless this Character is currently engaged in a hold.
+    const walk = scaleVec3(
+      move,
+      WALK_SPEED * this.surfaceTopSpeedMultiplier * this.speedPad.capMultiplier * this.grabSpeedMultiplier,
+    );
     // Consumed (at most once) by whichever branch below runs this tick — a
     // pad can fire while Sliding just as easily as while walking (code
     // review: an earlier version only ever checked this inside the `else`
@@ -1073,6 +1153,14 @@ export class CharacterController {
     // cooldown after getting up, while Dash always came back instantly, a
     // surprising inconsistency between two verbs deliberately built the same way.
     this.hit.reset();
+    // M6 ticket 04: same reasoning as Hit just above — a knockdown resets
+    // Grab's cooldown too, and drops this Character's own view of being
+    // engaged in a hold (`RapierSimulation`'s own grab-relationship map ends
+    // the hold from its side independently; this is the same "safest fallback
+    // until the next real check" treatment `activeVolume`/`surfaceBounce`
+    // already get on reconcile).
+    this.grab.reset();
+    this.grabSpeedMultiplier = 1;
     this.speedPad.reset();
     this.pendingSpeedPadCapMultiplier = undefined;
     this.pendingLaunchVelocity = undefined;
@@ -1123,6 +1211,8 @@ export class CharacterController {
       dashing: this.dash.isActive,
       dashSpeed: this.dashSpeed,
       hitCooldownMs: this.hit.cooldownMs,
+      hitChargeMs: this.hit.chargeMs,
+      grabCooldownMs: this.grab.cooldownMs,
       speedPadEpoch: this.speedPadEpoch,
       speedPadMsLeft: this.speedPad.msLeft,
       speedPadCapMultiplier: this.speedPad.peak,
@@ -1225,6 +1315,11 @@ export class CharacterController {
     // until the very next real containment check (below, same tick's own
     // sweep already refreshed the ground handle by then) recomputes it.
     this.activeVolume = undefined;
+    // Same reasoning again (M6 ticket 04): whether this Character is
+    // currently engaged in a Grab hold is cross-Character state, never
+    // replicated on the snapshot — "not engaged" until `RapierSimulation`'s
+    // own per-tick push refreshes it, same as `activeVolume` just above.
+    this.grabSpeedMultiplier = 1;
     // Re-derived fresh from `base.velocity` starting the very next tick's
     // own gravity-integration line — a reconciliation landing mid-fall onto
     // a bounce Surface loses whatever higher peak a mispredicting client saw
@@ -1234,6 +1329,8 @@ export class CharacterController {
     this.machine.snapTo(base.motionState);
     this.dash.restoreCooldownMs(base.dashCooldownMs, base.dashing);
     this.hit.restoreCooldownMs(base.hitCooldownMs);
+    this.hit.restoreCharge(base.hitChargeMs);
+    this.grab.restoreCooldownMs(base.grabCooldownMs);
     this.speedPad.restoreFromMs(base.speedPadMsLeft, base.speedPadCapMultiplier);
     // The one-shot write itself is never replayed here — only the decay
     // curve above. Whether the replay that follows fires a *fresh* one-shot

@@ -17,6 +17,8 @@ export interface SimInputs {
   dashHeld: boolean;
   /** Whether the Hit button is held this tick (M6 ticket 03). */
   hitHeld: boolean;
+  /** Whether the Grab button is held this tick (M6 ticket 04). */
+  grabHeld: boolean;
   /**
    * Which way this Character is looking, world-space yaw in radians (M6, ADR
    * 0045). Sent from the owning client's own camera every tick, exactly like
@@ -35,5 +37,6 @@ export const IDLE_INPUTS: SimInputs = {
   jumpHeld: false,
   dashHeld: false,
   hitHeld: false,
+  grabHeld: false,
   facing: 0,
 };

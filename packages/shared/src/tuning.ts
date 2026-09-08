@@ -562,6 +562,93 @@ export const HIT_IMPACT_MAGNITUDE = 6;
 /** Upward bias mixed into a Hit's knockback direction — same idea as {@link BUMP_LIFT_RATIO}. */
 export const HIT_LIFT_RATIO = 0.3;
 
+/**
+ * How long (ms) the Hit button must be held to reach full charge (M6.1:
+ * hold-to-charge). Supersedes M6.1 ticket 01's original design, which scaled
+ * a Hit's Impact off the striker's own approach speed so a swing thrown out
+ * of a committed Dash could knock down — Dash now locks Hit (and Grab) out
+ * entirely while a burst is playing ("dash locks everything until it
+ * finishes"), so a swing can never overlap a Dash at all, and needs its own,
+ * independent source of "how committed was this."
+ *
+ * A release short of full charge still swings, just for less — there is no
+ * minimum hold, only a ceiling on how much longer holding keeps helping.
+ * Chosen shorter than `DASH_DURATION_MS` (1000): charging is a windup, not a
+ * second burst to commit to.
+ */
+export const HIT_CHARGE_MAX_MS = 600;
+
+/** {@link HIT_CHARGE_MAX_MS} in whole ticks. */
+export const HIT_CHARGE_MAX_TICKS = msToTicks(HIT_CHARGE_MAX_MS);
+
+/**
+ * How much a full charge adds on top of {@link HIT_IMPACT_MAGNITUDE} (M6.1:
+ * hold-to-charge). Sized so a full charge (`6 + 6 = 12`) clears
+ * `IMPACT_RAGDOLL_MIN` (9) with the same margin M6.1 ticket 01's own "wound
+ * Dash" case had, and a half charge (`6 + 3 = 9`) lands right at the
+ * threshold — a knockdown costs a real, deliberate hold, not a tap, the same
+ * design intent ticket 01 had for a committed Dash.
+ */
+export const HIT_CHARGE_IMPACT_BONUS = 6;
+
+/**
+ * Ceiling on a Hit's Impact — a safety net, not an active clamp. A full
+ * charge tops out at `12` (see {@link HIT_CHARGE_IMPACT_BONUS}), so this
+ * never bites; it exists so a future power-up or charge retune cannot turn
+ * the same swing into a launcher that punts someone off the arena.
+ */
+export const HIT_IMPACT_MAX = 14;
+
+// --- Grab (M6 ticket 04) -----------------------------------------------------
+
+/** Same targeting reach as {@link HIT_RANGE} — latching on needs the Character to already be close, not a wider grab-specific range. */
+export const GRAB_RANGE = 1.8;
+
+/** Same targeting cone as {@link HIT_FACING_COS_MIN} — "the Character just ahead of you" (CONTEXT.md). */
+export const GRAB_FACING_COS_MIN = 0.5;
+
+/** How long a hold lasts if the held Character never struggles free (ms) — released automatically once this elapses. */
+export const GRAB_HOLD_MAX_MS = 3000;
+
+/** {@link GRAB_HOLD_MAX_MS} in whole ticks. */
+export const GRAB_HOLD_MAX_TICKS = msToTicks(GRAB_HOLD_MAX_MS);
+
+/**
+ * How long the held Character must actively move away from the grabber
+ * (continuously — see {@link GRAB_STRUGGLE_DOT_MIN}) before breaking free
+ * early (ms). Standing still or drifting with the grabber never accumulates
+ * this — it resets the instant the held Character stops actively resisting,
+ * so it isn't a fixed timer that quietly ticks by unnoticed.
+ */
+export const GRAB_STRUGGLE_FREE_MS = 1000;
+
+/** {@link GRAB_STRUGGLE_FREE_MS} in whole ticks. */
+export const GRAB_STRUGGLE_FREE_TICKS = msToTicks(GRAB_STRUGGLE_FREE_MS);
+
+/**
+ * How directly the held Character's own move input must point away from the
+ * grabber to count as struggling, as a cosine — `0.5` = within 60° of
+ * dead-away, the same cone width {@link HIT_FACING_COS_MIN}/
+ * {@link GRAB_FACING_COS_MIN} already use elsewhere.
+ */
+export const GRAB_STRUGGLE_DOT_MIN = 0.5;
+
+/**
+ * Both the grabber and the held Character move at this fraction of their
+ * ordinary speed for the duration of a hold (a grilling-session decision:
+ * "greatly reduced pace," not a full movement lock) — folded into the same
+ * `WALK_SPEED` multiplier chain a Surface's own `topSpeedMultiplier` already
+ * uses. The grabber's own Dash is disabled outright while engaged (CONTEXT.md:
+ * "the grabber cannot run while holding"), not merely slowed.
+ */
+export const GRAB_SPEED_MULTIPLIER = 0.1;
+
+/** Minimum time between grabs (ms), counted from the moment a hold *ends* (CONTEXT.md: "cooldown after") — not from when it started, unlike Dash's own idiom. */
+export const GRAB_COOLDOWN_MS = 1000;
+
+/** {@link GRAB_COOLDOWN_MS} in whole ticks. */
+export const GRAB_COOLDOWN_TICKS = msToTicks(GRAB_COOLDOWN_MS);
+
 // --- Client reconciliation (M2 ticket 05, ADR 0013) ------------------------
 
 /**

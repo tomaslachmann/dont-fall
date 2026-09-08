@@ -39,7 +39,25 @@ export class HitReactionPlayer {
     actions.hitReact?.stop();
   }
 
-  update(hitEpoch: number, hitReactEpoch: number, actions: CharacterActions, crossfadeSeconds: number): THREE.AnimationAction | null {
+  /**
+   * `currentLocomotionAction` is whatever the caller's own ordinary
+   * locomotion crossfade currently has active — passed in so a *fresh*
+   * reaction (none was already playing) can fade it out too. Without this,
+   * a reaction starting while a locomotion clip was mid-crossfade (most
+   * visibly Dash's own run) left that clip at full weight, still playing,
+   * underneath the reaction overlay — visible as the locomotion pose never
+   * releasing while Punch/HitReact plays on top of it (bug report: "hit
+   * locks the dash animation"). A *continuing* reaction (Punch → HitReact
+   * the same tick, or the same reaction still playing) never re-fades it —
+   * by then it was already faded on the tick the first reaction started.
+   */
+  update(
+    hitEpoch: number,
+    hitReactEpoch: number,
+    actions: CharacterActions,
+    crossfadeSeconds: number,
+    currentLocomotionAction: THREE.AnimationAction | null,
+  ): THREE.AnimationAction | null {
     if (this.lastHitEpoch === null || this.lastHitReactEpoch === null) {
       this.lastHitEpoch = hitEpoch;
       this.lastHitReactEpoch = hitReactEpoch;
@@ -58,9 +76,9 @@ export class HitReactionPlayer {
       // Punch clip gets to play, so HitReact wins outright and Punch is
       // never started at all when both happen together.
       if (hitReactChanged && actions.hitReact) {
-        this.start(actions.hitReact, crossfadeSeconds);
+        this.start(actions.hitReact, crossfadeSeconds, currentLocomotionAction);
       } else if (hitChanged && actions.punch) {
-        this.start(actions.punch, crossfadeSeconds);
+        this.start(actions.punch, crossfadeSeconds, currentLocomotionAction);
       }
     }
 
@@ -68,10 +86,14 @@ export class HitReactionPlayer {
     return this.active;
   }
 
-  private start(action: THREE.AnimationAction, crossfadeSeconds: number): void {
+  private start(action: THREE.AnimationAction, crossfadeSeconds: number, currentLocomotionAction: THREE.AnimationAction | null): void {
     if (this.active === action) return; // already playing this exact reaction — don't restart it
+    const wasAlreadyReacting = this.active !== null;
     action.reset().fadeIn(crossfadeSeconds).play();
     this.active?.fadeOut(crossfadeSeconds);
+    // Only on a FRESH entry into reaction — a reaction already faded out
+    // whatever locomotion action preceded it the tick it first started.
+    if (!wasAlreadyReacting) currentLocomotionAction?.fadeOut(crossfadeSeconds);
     this.active = action;
   }
 }

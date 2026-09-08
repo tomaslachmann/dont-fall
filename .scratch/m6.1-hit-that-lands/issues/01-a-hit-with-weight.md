@@ -1,11 +1,19 @@
 # 01 — A Hit with weight
 
+**Superseded by ticket 04 (hold-to-charge and the Dash lock).** Live play found the design below
+let a swing be thrown *from* a Dash, which fought the Punch/HitReact animation for the mixer and,
+separately, was never the intent — Dash was meant to lock out Hit and Grab entirely until it
+finishes. `HIT_MOMENTUM_SCALE`/the approach-speed derivation described here no longer exist; a
+Hit's weight now comes from holding the button before releasing it instead. Kept here for the
+historical record of why the magnitude/threshold table below was shaped the way it was — ticket
+04's own table is sized to match it.
+
 **What to build:** Make a Hit's force depend on how well it was thrown, so a solid connect knocks a
 Character down and a glancing one does not.
 
 **Blocked by:** nothing.
 
-**Status:** done (live tuning pass carried to ticket 03)
+**Status:** done (live tuning pass carried to ticket 03) — superseded, see above
 
 ## Why
 

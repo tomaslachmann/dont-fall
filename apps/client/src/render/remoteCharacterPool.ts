@@ -163,7 +163,7 @@ export const createRemoteCharacterPool = (scene: THREE.Scene, characterModel: Ch
 
     // M6 ticket 03: Punch/HitReact take priority over ordinary locomotion
     // while playing — mirrors `scene.ts`'s own local handling exactly.
-    const reacting = rig.hitReactionPlayer.update(hitEpoch, hitReactEpoch, rig.actions, LOCOMOTION_CROSSFADE_SECONDS);
+    const reacting = rig.hitReactionPlayer.update(hitEpoch, hitReactEpoch, rig.actions, LOCOMOTION_CROSSFADE_SECONDS, rig.activeAction);
     if (reacting) {
       rig.activeAction = reacting;
       rig.mixer.update(deltaSeconds);

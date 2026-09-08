@@ -586,6 +586,7 @@ const boot = async (
       jumpHeld: keyboard.jumpHeld(),
       dashHeld: keyboard.dashHeld(),
       hitHeld: keyboard.hitHeld(),
+      grabHeld: keyboard.grabHeld(),
       // M6, ADR 0045: the plain angle the camera already resolved to, not the
       // camera itself — the simulation stays exactly as camera-agnostic as
       // moveDirection already keeps it (ADR 0009).
@@ -828,6 +829,7 @@ const boot = async (
         placement,
         dashCooldownMs: c.dashCooldownMs,
         hitCooldownMs: c.hitCooldownMs,
+        hitChargeMs: c.hitChargeMs,
         netMetricsText: netMetrics.format(),
       }),
     );

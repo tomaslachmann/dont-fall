@@ -1,4 +1,4 @@
-import { DASH_COOLDOWN_MS, HIT_COOLDOWN_MS } from "@dont-fall/shared";
+import { DASH_COOLDOWN_MS, HIT_CHARGE_MAX_MS, HIT_COOLDOWN_MS } from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
 import { formatHudText, type HudTextValues } from "./hudText.js";
 
@@ -18,6 +18,7 @@ const base: HudTextValues = {
   placement: null,
   dashCooldownMs: 0,
   hitCooldownMs: 0,
+  hitChargeMs: 0,
   netMetricsText: "net rtt 12ms",
 };
 
@@ -81,6 +82,26 @@ describe("formatHudText", () => {
 
   it("marks the hit bar ready only at zero cooldown", () => {
     expect(formatHudText({ ...base, hitCooldownMs: 0 })).toContain("hit [##########] ready\n");
+  });
+
+  it("shows an empty, 'charging' hit bar the instant a hold starts (M6.1: hold-to-charge)", () => {
+    expect(formatHudText({ ...base, hitChargeMs: 1 })).toContain("hit [----------] charging\n");
+  });
+
+  it("fills the hit bar as the charge builds, with no 'ready' suffix while charging", () => {
+    const text = formatHudText({ ...base, hitChargeMs: HIT_CHARGE_MAX_MS / 2 });
+    expect(text).toContain("hit [#####-----] charging\n");
+  });
+
+  it("shows a full hit bar at a full charge, still labelled 'charging' rather than 'ready'", () => {
+    expect(formatHudText({ ...base, hitChargeMs: HIT_CHARGE_MAX_MS })).toContain("hit [##########] charging\n");
+  });
+
+  it("prefers the charge reading over the cooldown reading whenever both are somehow nonzero", () => {
+    // Charging and cooldown are mutually exclusive states in practice, but the
+    // HUD's own precedence should still be well-defined rather than accidental.
+    const text = formatHudText({ ...base, hitChargeMs: HIT_CHARGE_MAX_MS / 2, hitCooldownMs: HIT_COOLDOWN_MS });
+    expect(text).toContain("hit [#####-----] charging\n");
   });
 
   it("rounds position to one decimal place", () => {

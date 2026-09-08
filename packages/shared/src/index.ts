@@ -27,6 +27,7 @@ export * from "./simulation/movementVerbs.js";
 export * from "./simulation/CooldownController.js";
 export * from "./simulation/DashController.js";
 export * from "./simulation/HitController.js";
+export * from "./simulation/GrabController.js";
 export * from "./simulation/collisionGroups.js";
 export * from "./simulation/ragdollSkeleton.js";
 export { Ragdoll } from "./simulation/Ragdoll.js";

@@ -19,8 +19,8 @@ beforeAll(async () => {
 
 const GROUND = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 20, y: 0.5, z: 20 } };
 const SPAWN = { x: 0, y: 1.2, z: 0 };
-const IDLE: SimInputs = { moveDirection: { x: 0, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false };
-const EAST: SimInputs = { moveDirection: { x: 1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false };
+const IDLE: SimInputs = { moveDirection: { x: 0, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false, grabHeld: false };
+const EAST: SimInputs = { moveDirection: { x: 1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false, grabHeld: false };
 
 const newSim = (): RapierSimulation => {
   const sim = new RapierSimulation({ statics: [GROUND], withDefaultCharacter: false, authoritative: false });
