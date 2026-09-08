@@ -181,6 +181,7 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 | **M4.5** | Tested where it runs — the client's prediction loop gains a seam so its regression suite stops testing a copy. |
 | **M5** | Two Round types on one engine — a Round type becomes shared data (ADR 0041/0042/0043), proven by building Survival. |
 | **M6** | Hit and Grab, and a real remote Character — replicated `facing` (ADR 0045), the capsule placeholder retired (ADR 0046). |
+| **M6.1** | A Hit that lands, and a fall you can watch — a Hit that can knock down, and a knockdown drawn from the ragdoll's own bones. |
 | later | Multi-Round advancement, collapsing terrain, Power-ups, Betting/Spectator, level themes, the Skyfall final. |
 
 ## Working agreements
