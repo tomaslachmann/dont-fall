@@ -276,6 +276,25 @@ export const GETUP_MS = 450;
 /** Where the capsule centre is placed above the settled pelvis when GettingUp begins (units). */
 export const GETUP_CAPSULE_LIFT = 0.7;
 
+/**
+ * How far a ragdoll joint may bend, in radians (M6 ticket 05, ADR 0047).
+ *
+ * Before these, every joint was a free ball joint: elbows and knees bent both
+ * ways, the neck spun, and a knocked-down Character folded into a single lump
+ * — measured, under gravity alone, as pelvis→head collapsing from 0.75 to
+ * 0.07. These are what make it settle as a body.
+ *
+ * Not balance values, and not anatomy either: they are the loosest limits that
+ * still read as a body, because ADR 0006 wanted the flop and this keeps as
+ * much of it as it can. The spine and neck are deliberately generous — a
+ * ragdoll that holds itself straight looks like a mannequin.
+ */
+export const RAGDOLL_SPINE_LIMIT = 0.5;
+export const RAGDOLL_NECK_LIMIT = 0.6;
+/** Elbows and knees are hinges: one signed range each, bending the way a limb actually bends. */
+export const RAGDOLL_ELBOW_MAX = 2.3;
+export const RAGDOLL_KNEE_MIN = -2.3;
+
 /** Angular / linear damping on ragdoll bones — higher settles the flop faster. */
 export const RAGDOLL_ANGULAR_DAMPING = 3;
 export const RAGDOLL_LINEAR_DAMPING = 0.12;

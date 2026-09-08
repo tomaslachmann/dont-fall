@@ -11,7 +11,7 @@ Retires the capsule placeholder for good (ADR 0046).
 
 **Status:** code done and reviewed (3 substantive `/code-review medium` passes, all findings
 fixed; a 4th pass stalled on tooling after 600s with no finding to act on); live perf/visual
-check deferred to ticket 05
+check deferred to ticket 06
 
 - [x] A remote Character renders the same shared model the local Character uses, oriented by
       its replicated facing, in place of the capsule
@@ -22,7 +22,7 @@ check deferred to ticket 05
 - [x] A remote Character's Ragdoll/GettingUp plays the same canned collapse/recovery the local
       Character already uses — not true bone-driven puppetry (explicitly out of scope)
 - [ ] Live-verified with 12 connected Characters: frame rate holds and every one renders and
-      animates correctly, satisfying ADR 0011's ceiling — **carried to ticket 05** (its own
+      animates correctly, satisfying ADR 0011's ceiling — **carried to ticket 06** (its own
       checklist already covers this); not something this session's tooling can drive real
       browsers to confirm on its own
 
@@ -88,7 +88,7 @@ plus 4 new `interpolateState` cases) covering everything here that doesn't requi
 WebGL context. The Three.js-heavy integration itself (`remoteCharacterPool.ts`, the `scene.ts`
 wiring) has no unit tests of its own, consistent with the rest of `scene.ts` — matches this
 codebase's existing pattern (only pure functions like `wobble.ts` get unit tests there); its
-correctness rests on code review plus ticket 05's live verification.
+correctness rests on code review plus ticket 06's live verification.
 
 ## Code review findings and fixes
 

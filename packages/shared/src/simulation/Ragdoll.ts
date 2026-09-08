@@ -27,8 +27,9 @@ interface Bone {
 }
 
 /**
- * The Character's articulated ragdoll: 11 dynamic bones joined by spherical
- * joints (ADR 0006, ticket 05). Built once; while inactive the bones are `Fixed`
+ * The Character's articulated ragdoll: 11 dynamic bones (ADR 0006, ticket
+ * 05), hinged where a body hinges and ball-jointed where it doesn't (M6
+ * ticket 05, ADR 0047). Built once; while inactive the bones are `Fixed`
  * with their colliders disabled (the renderer hides them). {@link activate} snaps
  * it into the standing pose and lets physics take over, {@link deactivate} freezes
  * it. `SimState` never holds any of these handles (ADR 0009).
@@ -77,12 +78,30 @@ export class Ragdoll {
         y: joint.y - spec.restCenter.y,
         z: joint.z - spec.restCenter.z,
       };
-      world.createImpulseJoint(
-        RAPIER.JointData.spherical(anchorParent, anchorChild),
+      // A hinge where the body actually hinges, a ball joint where it doesn't
+      // (M6 ticket 05, ADR 0047) — see `BoneSpec.hinge`. Without the limits
+      // the skeleton has nothing holding its shape and settles as a lump.
+      const link = world.createImpulseJoint(
+        spec.hinge
+          ? RAPIER.JointData.revolute(anchorParent, anchorChild, spec.hinge.axis)
+          : RAPIER.JointData.spherical(anchorParent, anchorChild),
         this.byName.get(spec.parent)!,
         this.byName.get(spec.name)!,
         true,
       );
+      if (spec.hinge) {
+        // Loud rather than silent: a revolute joint whose limits never got set
+        // is a hinge that still swings freely, which holds *less* shape than
+        // the ball joint it replaced while looking like it works.
+        if (!(link instanceof RAPIER.RevoluteImpulseJoint)) {
+          throw new Error(`Ragdoll: "${spec.name}" wanted a limited hinge but Rapier returned an unlimitable joint`);
+        }
+        link.setLimits(spec.hinge.min, spec.hinge.max);
+      }
+      // Bones that share a joint always overlap at it, so now that bones see
+      // each other at all (`RAGDOLL_GROUPS`) their contact would be a
+      // permanent shove pushing the skeleton apart from the inside.
+      link.setContactsEnabled(false);
     }
   }
 

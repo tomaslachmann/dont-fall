@@ -23,14 +23,19 @@ export const CHARACTER_GROUPS = collisionGroups(
 );
 
 /**
- * Ragdoll bones: collide with static geometry and dynamic Props (M2 ticket 08 —
- * playtesting showed a dash into a box flung the ragdoll straight through it).
- * Still not the owning capsule, not each other (no self-collision for M2), not
- * the Spinner, and not other players' capsules — the capsule stays the
- * authority for player-vs-player. Ragdoll-vs-ragdoll is a deliberate later
- * call (research §3.3).
+ * Ragdoll bones: collide with static geometry, dynamic Props (M2 ticket 08 —
+ * playtesting showed a dash into a box flung the ragdoll straight through it),
+ * and — since M6 ticket 05 / ADR 0047 — *each other*, so an arm no longer
+ * passes through the chest it is attached to. Bones that share a joint have
+ * their contacts turned off individually (`Ragdoll`), since those overlap by
+ * construction.
+ *
+ * Still not the owning capsule, not the Spinner, and not other players'
+ * capsules — the capsule stays the authority for player-vs-player. One
+ * ragdoll's bones now meet another's, which is what this bit says; research
+ * §3.3 called that a later decision and this is it.
  */
-export const RAGDOLL_GROUPS = collisionGroups(GROUP_RAGDOLL, GROUP_STATIC | GROUP_PROP);
+export const RAGDOLL_GROUPS = collisionGroups(GROUP_RAGDOLL, GROUP_STATIC | GROUP_PROP | GROUP_RAGDOLL);
 
 /** A Spinner's rotating bar: only needs to be seen by the Character. */
 export const OBSTACLE_GROUPS = collisionGroups(GROUP_OBSTACLE, GROUP_CHARACTER);
