@@ -25,6 +25,20 @@ export class HitReactionPlayer {
    * finished) — the caller treats a non-null return as "skip locomotion
    * selection this frame, this overlay owns the model."
    */
+  /**
+   * Cut any reaction dead (M6.1 ticket 02). Used when a knockdown takes the
+   * rig over: from then on the ragdoll's bones own the pose and the mixer is
+   * not advanced at all, so a reaction left merely faded would stay bound and
+   * never finish — and, worse, would be the thing the mixer restores the rig
+   * to if it ever ran again.
+   */
+  stop(actions: CharacterActions): void {
+    this.active?.stop();
+    this.active = null;
+    actions.punch?.stop();
+    actions.hitReact?.stop();
+  }
+
   update(hitEpoch: number, hitReactEpoch: number, actions: CharacterActions, crossfadeSeconds: number): THREE.AnimationAction | null {
     if (this.lastHitEpoch === null || this.lastHitReactEpoch === null) {
       this.lastHitEpoch = hitEpoch;

@@ -1,6 +1,7 @@
-import { CAPSULE_BOTTOM_OFFSET, GETUP_MS, isDownMotionState, type CharacterMotionState, type RenderCharacter } from "@dont-fall/shared";
+import { CAPSULE_BOTTOM_OFFSET, isDownMotionState, type RenderCharacter } from "@dont-fall/shared";
 import * as THREE from "three";
 import { clone as cloneRig } from "three/addons/utils/SkeletonUtils.js";
+import { createRagdollPose, type RagdollPose } from "./ragdollPose.js";
 import {
   actionFor,
   crossfadeLocomotion,
@@ -10,7 +11,6 @@ import {
   type CharacterActions,
   type CharacterModel,
 } from "./characterModel.js";
-import { planDeathClip } from "./deathClipPlan.js";
 import { HitReactionPlayer } from "./hitReactionPlayer.js";
 import { selectLocomotion } from "./locomotionAnimation.js";
 import { tintHueForId } from "./playerTint.js";
@@ -33,12 +33,8 @@ interface RemoteRig {
   mixer: THREE.AnimationMixer;
   actions: CharacterActions;
   activeAction: THREE.AnimationAction | null;
-  /** The last `motionState` seen, to detect the Ragdoll/GettingUp/Controlled edges — one per rig, mirroring the local Character's own `visualState`. */
-  visualState: CharacterMotionState;
-  /** Whether this rig's own `deathAction` has actually been started for the current down episode — see `planDeathClip`'s own doc comment. */
-  everEnteredRagdoll: boolean;
-  /** True only until this rig's first `updateRig` call — see `planDeathClip`'s `isFirstObservation`. */
-  isFirstObservation: boolean;
+  /** Drives this rig straight from the ragdoll's bones while its Character is down (M6.1 ticket 02). */
+  pose: RagdollPose;
   /** Drives this rig's own Punch/HitReact one-shot overlays (M6 ticket 03). */
   hitReactionPlayer: HitReactionPlayer;
 }
@@ -126,95 +122,44 @@ export const createRemoteCharacterPool = (scene: THREE.Scene, characterModel: Ch
       mixer,
       actions,
       activeAction,
-      visualState: "Controlled",
-      everEnteredRagdoll: false,
-      isFirstObservation: true,
+      pose: createRagdollPose(root),
       hitReactionPlayer: new HitReactionPlayer(),
     };
   };
 
   const updateRig = (rig: RemoteRig, rc: RenderCharacter, deltaSeconds: number): void => {
     const { position, motionState, velocity, grounded, dashing, facing, hitEpoch, hitReactEpoch } = rc;
-    const plan = planDeathClip(motionState, rig.visualState, rig.isFirstObservation, rig.everEnteredRagdoll);
-    rig.visualState = motionState;
-    rig.isFirstObservation = false;
-
-    const { death: deathAction } = rig.actions;
-
-    switch (plan.kind) {
-      case "collapse":
-        // Same canned collapse the local Character plays — see `scene.ts`'s own
-        // Death-clip doc comment for why (no compatible get-up clip for this rig).
-        rig.root.position.set(position.x, position.y - RAGDOLL_PELVIS_TO_FEET, position.z);
-        rig.activeAction?.fadeOut(0);
-        rig.activeAction = null;
-        deathAction?.reset();
-        if (deathAction) deathAction.timeScale = 1;
-        deathAction?.play();
-        rig.everEnteredRagdoll = true;
-        break;
-      case "snapDown":
-        // This rig's very first observation of this Character is already
-        // Ragdoll (code review, M6 ticket 02 regression) — no real moment of
-        // impact to animate from, so snap straight to the clip's own
-        // fully-collapsed end frame rather than visibly popping upright to
-        // play the fall from frame 0 on an already-downed body.
-        rig.root.position.set(position.x, position.y - RAGDOLL_PELVIS_TO_FEET, position.z);
-        rig.activeAction?.fadeOut(0);
-        rig.activeAction = null;
-        if (deathAction) {
-          deathAction.reset();
-          deathAction.time = deathAction.getClip().duration;
-          deathAction.paused = true;
-          deathAction.play();
-        }
-        rig.everEnteredRagdoll = true;
-        break;
-      case "resumeReverse": {
-        const fallen = deathAction?.time ?? 0;
-        if (deathAction) deathAction.timeScale = fallen > 0 ? -fallen / (GETUP_MS / 1000) : -1;
-        if (deathAction) deathAction.paused = false;
-        break;
-      }
-      case "coldReverse":
-        // This rig never actually played the collapse (code review, M6 ticket
-        // 02 regression) — start the reverse cold, from the clip's own
-        // fully-collapsed end frame, the same anchor a real collapse would
-        // have left it at.
-        rig.root.position.set(position.x, position.y - RAGDOLL_PELVIS_TO_FEET, position.z);
-        if (deathAction) {
-          deathAction.reset();
-          deathAction.time = deathAction.getClip().duration;
-          deathAction.timeScale = -1;
-          deathAction.paused = false;
-          deathAction.play();
-        }
-        rig.everEnteredRagdoll = true;
-        break;
-      case "resume":
-        deathAction?.stop();
-        rig.root.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
-        rig.everEnteredRagdoll = false;
-        {
-          const resume = rig.actions.idle ?? rig.actions.walk;
-          if (resume) {
-            resume.reset().fadeIn(LOCOMOTION_CROSSFADE_SECONDS).play();
-            rig.activeAction = resume;
-          }
-        }
-        break;
-      case "none":
-        if (!isDownMotionState(motionState)) {
-          rig.root.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
-        }
-        break;
-    }
-    // While Ragdoll/GettingUp continue (plan "none" while down), the root stays put at the frozen anchor.
-
     if (isDownMotionState(motionState)) {
-      rig.mixer.update(deltaSeconds);
+      // The same bone-driven knockdown the local Character gets (M6.1 ticket
+      // 02, ADR 0048), from the same `bones` — already interpolated between
+      // snapshots upstream. This retires `planDeathClip` outright: its four
+      // cases existed only to decide how to wind a canned clip when a rig
+      // joined mid-fall or never saw the collapse, and a pose taken straight
+      // from the bones has nothing to wind. Whenever you start watching, the
+      // bones already say exactly what the body is doing.
+      if (rig.activeAction) {
+        // Stopped, not faded: a faded action stays bound, and the mixer is
+        // deliberately not advanced below, so nothing would ever finish the
+        // fade. Running it *after* the pose would overwrite the pose anyway.
+        rig.activeAction.stop();
+        rig.activeAction = null;
+        rig.hitReactionPlayer.stop(rig.actions);
+      }
+      rig.root.position.set(position.x, position.y - RAGDOLL_PELVIS_TO_FEET, position.z);
+      rig.pose.apply(rc.bones);
       return;
     }
+
+    if (rig.pose.isPosing) {
+      // Back on its feet — drop the anchor and hand the rig to locomotion.
+      rig.pose.release();
+      const resume = rig.actions.idle ?? rig.actions.walk;
+      if (resume) {
+        resume.reset().fadeIn(LOCOMOTION_CROSSFADE_SECONDS).play();
+        rig.activeAction = resume;
+      }
+    }
+    rig.root.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
 
     // M6 ticket 03: Punch/HitReact take priority over ordinary locomotion
     // while playing — mirrors `scene.ts`'s own local handling exactly.

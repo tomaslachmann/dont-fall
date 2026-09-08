@@ -1,5 +1,28 @@
-import { HIT_COOLDOWN_TICKS } from "../tuning.js";
+import {
+  HIT_COOLDOWN_TICKS,
+  HIT_IMPACT_MAGNITUDE,
+  HIT_IMPACT_MAX,
+  HIT_MOMENTUM_SCALE,
+} from "../tuning.js";
 import { CooldownController } from "./CooldownController.js";
+
+/**
+ * How hard a connecting Hit lands, from how fast the striker was closing on
+ * the target (M6.1 ticket 01) — their own approach speed along the line to
+ * the target, in units/s, negative or zero if they were not moving in.
+ *
+ * The striker's *own* commitment, deliberately, not the closing speed
+ * between the two the way `resolveBump` measures it: a target running onto
+ * a stationary fist is already a Bump, and counting it here would pay the
+ * striker twice for standing still.
+ *
+ * Nothing downstream branches on "was this a good hit". This feeds the same
+ * `applyImpact` pipeline every other Impact uses, and `IMPACT_STAGGER_MIN` /
+ * `IMPACT_RAGDOLL_MIN` decide the outcome exactly as they do for a Bump, a
+ * Spinner or a wall.
+ */
+export const hitImpactMagnitude = (approachSpeed: number): number =>
+  Math.min(HIT_IMPACT_MAX, HIT_IMPACT_MAGNITUDE + Math.max(0, approachSpeed) * HIT_MOMENTUM_SCALE);
 
 /**
  * Hit's cooldown bookkeeping (M6 ticket 03). A swing either fires this tick

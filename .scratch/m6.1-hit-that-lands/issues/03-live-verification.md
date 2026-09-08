@@ -5,7 +5,7 @@ actually be judged.
 
 **Blocked by:** 01 — A Hit with weight; 02 — Posing the rig from the ragdoll's bones
 
-**Status:** blocked
+**Status:** ready-for-agent (01 and 02 have landed)
 
 - [ ] Two browsers: a Hit thrown while committed knocks the other Character down, and both sides see
       it fall in the direction it was actually thrown
