@@ -596,6 +596,7 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
 
       grabber.setGrabSpeedMultiplier(GRAB_SPEED_MULTIPLIER);
       held.setGrabSpeedMultiplier(GRAB_SPEED_MULTIPLIER);
+      grabber.setGrabbingId(grab.heldId);
     }
   }
 
@@ -931,6 +932,13 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       // whichever pair, if any, is still actively held once it has resolved
       // this tick's releases.
       character.setGrabSpeedMultiplier(1);
+      // M6.1: who (if anyone) this Character is currently grabbing, for the
+      // renderer's own arm-reach pose — same "not engaged until proven
+      // otherwise" default as the speed multiplier above; re-applied within
+      // this same tick by `updateGrabs` below for whichever grabber is still
+      // actively holding someone (including a hold that just started this
+      // very tick, since `resolveGrabInitiation` already ran pre-step).
+      character.setGrabbingId(null);
     }
     this.updateGrabs(inputs, matchLocked);
 

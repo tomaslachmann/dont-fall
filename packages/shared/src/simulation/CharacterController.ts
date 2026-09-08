@@ -121,6 +121,8 @@ export interface CharacterState {
   hitChargeMs: number;
   /** Milliseconds left on the Grab cooldown; 0 means a grab is ready (M6 ticket 04). Counts from the moment a hold this Character initiated last *ended*, not from when it started. */
   grabCooldownMs: number;
+  /** The id of whoever this Character is currently grabbing, or `null` (M6.1) — drives the renderer's own arm-reach pose. `null` for the HELD side of a hold too; only the grabber's own row is ever non-null. */
+  grabbingId: string | null;
   /** Current horizontal speed (units/s) contributed by an active Dash burst; 0 when not dashing. Drives the speed-lines effect directly — no noisy derivation from position needed. */
   dashSpeed: number;
   /** Rises every time a speed/slow pad fires (M3.7 ticket 01, ADR 0035). */
@@ -251,6 +253,8 @@ export class CharacterController {
    * anything ever calls {@link setGrabSpeedMultiplier}.
    */
   private grabSpeedMultiplier = 1;
+  /** Who this Character is currently grabbing, or `null` (M6.1) — see {@link CharacterState.grabbingId}. Set from outside by `RapierSimulation`, which alone knows the cross-Character hold relationship. */
+  private grabbingId: string | null = null;
   /**
    * Current horizontal speed (units/s) contributed by an active Dash burst —
    * the exact `dashEnvelope` curve already driving the physics, exposed
@@ -440,6 +444,11 @@ export class CharacterController {
   /** Starts this Character's own Grab cooldown (M6 ticket 04) — called once a hold it initiated has ended, however it ended. See `GrabController.release`. */
   registerGrabReleased(): void {
     this.grab.release();
+  }
+
+  /** Sets who this Character is currently grabbing, or `null` (M6.1) — see {@link grabbingId}. */
+  setGrabbingId(id: string | null): void {
+    this.grabbingId = id;
   }
 
   /** Sets this tick's Surface-driven top-speed multiplier (ticket 01) — see {@link surfaceTopSpeedMultiplier}. */
@@ -1161,6 +1170,7 @@ export class CharacterController {
     // already get on reconcile).
     this.grab.reset();
     this.grabSpeedMultiplier = 1;
+    this.grabbingId = null;
     this.speedPad.reset();
     this.pendingSpeedPadCapMultiplier = undefined;
     this.pendingLaunchVelocity = undefined;
@@ -1213,6 +1223,7 @@ export class CharacterController {
       hitCooldownMs: this.hit.cooldownMs,
       hitChargeMs: this.hit.chargeMs,
       grabCooldownMs: this.grab.cooldownMs,
+      grabbingId: this.grabbingId,
       speedPadEpoch: this.speedPadEpoch,
       speedPadMsLeft: this.speedPad.msLeft,
       speedPadCapMultiplier: this.speedPad.peak,
@@ -1320,6 +1331,7 @@ export class CharacterController {
     // replicated on the snapshot — "not engaged" until `RapierSimulation`'s
     // own per-tick push refreshes it, same as `activeVolume` just above.
     this.grabSpeedMultiplier = 1;
+    this.grabbingId = null;
     // Re-derived fresh from `base.velocity` starting the very next tick's
     // own gravity-integration line — a reconciliation landing mid-fall onto
     // a bounce Surface loses whatever higher peak a mispredicting client saw

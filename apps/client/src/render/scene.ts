@@ -16,6 +16,7 @@ import {
   type Vec3,
 } from "@dont-fall/shared";
 import * as THREE from "three";
+import { ARM_REACH_TARGET_HEIGHT, applyArmReach, findArmReachNodes } from "./armReach.js";
 import {
   actionFor,
   crossfadeLocomotion,
@@ -100,8 +101,16 @@ export interface Stage {
    * torn down when an ID drops out of the set (a disconnect). `deltaSeconds`
    * advances each rig's own `AnimationMixer`, exactly like the local
    * Character's own `updateCharacterAnimation`.
+   * `localId`/`localPosition` (M6.1) let a remote rig's own arm-reach pose
+   * target the LOCAL player when it's the one being grabbed — see
+   * `RemoteCharacterPool.apply`.
    */
-  applyRemoteCharacters: (characters: Record<string, RenderCharacter>, deltaSeconds: number) => void;
+  applyRemoteCharacters: (
+    characters: Record<string, RenderCharacter>,
+    deltaSeconds: number,
+    localId: string,
+    localPosition: Vec3,
+  ) => void;
   /** Position the camera on a collision-resolved spring arm around `target`. */
   updateCamera: (target: Vec3, yaw: number, pitch: number) => void;
   /**
@@ -120,6 +129,11 @@ export interface Stage {
    * position, so it is immune to reconciliation noise/pops. `hitEpoch`/
    * `hitReactEpoch` (M6 ticket 03) drive the Punch/HitReact one-shot
    * overlays, which take priority over ordinary locomotion while playing.
+   * `grabTargetPosition` (M6.1), given whenever this Character is currently
+   * grabbing someone, is that Character's own world position — the rig has
+   * no Grab clip, so the arms procedurally reach toward it instead
+   * (`armReach.ts`); `undefined` leaves the arms at whatever the ordinary
+   * locomotion clip already has them doing.
    */
   updateCharacterAnimation: (
     deltaSeconds: number,
@@ -129,6 +143,7 @@ export interface Stage {
     dashSpeed: number,
     hitEpoch: number,
     hitReactEpoch: number,
+    grabTargetPosition: Vec3 | undefined,
   ) => void;
   /**
    * Give back everything this Stage took: the canvas, its WebGL context, every
@@ -306,6 +321,8 @@ export const createStage = ({
   let visualState: CharacterMotionState = "Controlled";
   /** Drives the Punch/HitReact one-shot overlays (M6 ticket 03). */
   const hitReactionPlayer = new HitReactionPlayer();
+  /** Looked up once — the rig's own arm bones, for Grab's arm-reach pose (M6.1). */
+  const armReachNodes = findArmReachNodes(character);
 
   let wobbleState = initialWobbleState;
   // Seeded lazily on the first updateCharacterAnimation call (null here would
@@ -393,7 +410,8 @@ export const createStage = ({
         mesh.updateMatrixWorld();
       }
     },
-    applyRemoteCharacters: (characters, deltaSeconds) => remotePool.apply(characters, deltaSeconds),
+    applyRemoteCharacters: (characters, deltaSeconds, localId, localPosition) =>
+      remotePool.apply(characters, deltaSeconds, localId, localPosition),
     updateCamera: (target, yaw, pitch) => {
       const desired = springArmPosition(target, yaw, pitch, CAMERA_DISTANCE);
       const resolved = resolveArm(target, desired, castArm, CAMERA_MIN_DISTANCE, CAMERA_SKIN);
@@ -410,7 +428,7 @@ export const createStage = ({
         mesh.updateMatrixWorld();
       }
     },
-    updateCharacterAnimation: (deltaSeconds, moveDirection, grounded, dashing, dashSpeed, hitEpoch, hitReactEpoch) => {
+    updateCharacterAnimation: (deltaSeconds, moveDirection, grounded, dashing, dashSpeed, hitEpoch, hitReactEpoch, grabTargetPosition) => {
       const currentPosition: Vec3 = { x: character.position.x, y: character.position.y, z: character.position.z };
       // Lazily seeded so the very first call (before any real movement) reads
       // as zero velocity rather than a jump from an arbitrary creation-time value.
@@ -437,7 +455,13 @@ export const createStage = ({
       // would write over it: three.js restores a bound property to its bind
       // value the moment nothing weighted is driving it, which is exactly the
       // state every action is in once the knockdown faded them out.
-      if (isDownMotionState(visualState)) return;
+      if (isDownMotionState(visualState)) {
+        // Code review, M6.1: keeps the reaction baseline current even though
+        // the down-state pose (drawn by `applyRenderState`) owns the model
+        // and the mixer isn't advanced — see `observeBaseline`'s own doc.
+        hitReactionPlayer.observeBaseline(hitEpoch, hitReactEpoch);
+        return;
+      }
 
       // M6 ticket 03: Punch/HitReact take priority over ordinary locomotion
       // while playing — the caller (this method) never picks a locomotion
@@ -461,6 +485,18 @@ export const createStage = ({
         const delta = THREE.MathUtils.euclideanModulo(targetYaw - character.rotation.y + Math.PI, Math.PI * 2) - Math.PI;
         const maxStep = FACING_TURN_SPEED * deltaSeconds;
         character.rotation.y += THREE.MathUtils.clamp(delta, -maxStep, maxStep);
+      }
+
+      // M6.1: no Grab clip exists on the rig, so a hold's own "reaching"
+      // read comes from procedurally aiming the upper arms instead — after
+      // the turn above, so it reaches toward where the Character is
+      // actually facing this frame, not last frame's.
+      if (grabTargetPosition) {
+        applyArmReach(
+          character,
+          armReachNodes,
+          new THREE.Vector3(grabTargetPosition.x, grabTargetPosition.y + ARM_REACH_TARGET_HEIGHT, grabTargetPosition.z),
+        );
       }
 
       if (visualState === "Controlled") {

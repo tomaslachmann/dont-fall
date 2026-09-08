@@ -40,6 +40,22 @@ export class HitReactionPlayer {
   }
 
   /**
+   * Keep the baseline current without starting or continuing any reaction
+   * (code review, M6.1) — call this every frame something else (the
+   * down-state bone pose) owns the model outright and `update` is never
+   * called. Without it, an epoch that changes while down (a Character can
+   * still be Hit again while already Ragdolling — Hit's targeting doesn't
+   * exclude a down target) leaves the baseline stale for the whole knockdown,
+   * so the very next real `update` call once Controlled resumes reads it as
+   * a brand new reaction and plays Punch/HitReact right as the Character
+   * should be resuming idle/walk.
+   */
+  observeBaseline(hitEpoch: number, hitReactEpoch: number): void {
+    this.lastHitEpoch = hitEpoch;
+    this.lastHitReactEpoch = hitReactEpoch;
+  }
+
+  /**
    * `currentLocomotionAction` is whatever the caller's own ordinary
    * locomotion crossfade currently has active — passed in so a *fresh*
    * reaction (none was already playing) can fade it out too. Without this,

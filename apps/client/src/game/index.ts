@@ -748,11 +748,33 @@ const boot = async (
     }
 
     stage.applyRenderState({ character: visualCharacter, props });
-    stage.applyRemoteCharacters(remoteCharacters, Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000);
+    stage.applyRemoteCharacters(remoteCharacters, Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000, myId, visualCharacter.position);
     // Cosmetic only, not a second lock: the sim itself already refused to
     // move the Character while locked (M5 ticket 01), so this just picks the
     // idle stance over animating legs toward a `moveDirection` it never
     // actually walked toward on screen.
+    // Code review, M6.1: `c` is `localSim`'s own snapshot, whose Character
+    // map only ever holds `myId` itself (every other Player is a lightweight
+    // `MirrorCharacter` for collision, never a real second `CharacterController`
+    // — see `RapierSimulation.syncMirrorCharacters`), so `c` can never reflect
+    // cross-Character authoritative state: Grab and a landed Hit are both
+    // only ever resolved against a real second Character, which `localSim`
+    // never has. `c.hitEpoch` (this Character's own swing firing) is a pure
+    // function of locally-replayed inputs and stays correct read from `c`
+    // exactly like `dashCooldownMs`/`dashing` already are — but
+    // `hitReactEpoch`/`grabbingId` need the server-derived value instead
+    // (`serverOwnCharacter`, already computed above for the local
+    // Character's own down-state pose), or the local player would never see
+    // their own HitReact land, and never see their own arms reach while
+    // grabbing someone.
+    const hitReactEpoch = serverOwnCharacter?.hitReactEpoch ?? 0;
+    const grabbingId = serverOwnCharacter?.grabbingId ?? null;
+    // M6.1: the rig has no Grab clip, so a hold's own visual comes from the
+    // arms procedurally reaching toward whoever this Character is grabbing
+    // (`Stage.updateCharacterAnimation`'s own `armReach.ts`) — the target's
+    // position always comes from `remoteCharacters`, since Grab only ever
+    // engages another, non-local Character.
+    const grabTargetPosition = grabbingId ? remoteCharacters[grabbingId]?.position : undefined;
     stage.updateCharacterAnimation(
       Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000,
       phaseLocksInput(phase) ? IDLE_INPUTS.moveDirection : input.moveDirection,
@@ -760,7 +782,8 @@ const boot = async (
       c.dashing,
       c.dashSpeed,
       c.hitEpoch,
-      c.hitReactEpoch,
+      hitReactEpoch,
+      grabTargetPosition,
     );
     // Spinner phase is a pure function of the tick and the client can compute
     // it at any tick exactly — so render it at the *prediction* tick, matching

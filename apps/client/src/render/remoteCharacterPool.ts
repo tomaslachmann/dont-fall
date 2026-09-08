@@ -1,6 +1,7 @@
-import { CAPSULE_BOTTOM_OFFSET, isDownMotionState, type RenderCharacter } from "@dont-fall/shared";
+import { CAPSULE_BOTTOM_OFFSET, isDownMotionState, type RenderCharacter, type Vec3 } from "@dont-fall/shared";
 import * as THREE from "three";
 import { clone as cloneRig } from "three/addons/utils/SkeletonUtils.js";
+import { ARM_REACH_TARGET_HEIGHT, applyArmReach, findArmReachNodes, type ArmReachNodes } from "./armReach.js";
 import { createRagdollPose, type RagdollPose } from "./ragdollPose.js";
 import {
   actionFor,
@@ -37,6 +38,8 @@ interface RemoteRig {
   pose: RagdollPose;
   /** Drives this rig's own Punch/HitReact one-shot overlays (M6 ticket 03). */
   hitReactionPlayer: HitReactionPlayer;
+  /** Looked up once — this rig's own arm bones, for Grab's arm-reach pose (M6.1). */
+  armReachNodes: ArmReachNodes[];
 }
 
 /**
@@ -93,8 +96,14 @@ const disposeRemoteRig = (root: THREE.Object3D): void => {
  * predicted (ADR 0003).
  */
 export interface RemoteCharacterPool {
-  /** Create/update/remove rigs to match `characters`, and advance every surviving rig's animation by `deltaSeconds`. */
-  apply: (characters: Record<string, RenderCharacter>, deltaSeconds: number) => void;
+  /**
+   * Create/update/remove rigs to match `characters`, and advance every
+   * surviving rig's animation by `deltaSeconds`. `localId`/`localPosition`
+   * (M6.1) resolve a rig's own arm-reach target when it's grabbing the LOCAL
+   * player specifically — the one Character never present in `characters`,
+   * since that map only ever holds every OTHER Character.
+   */
+  apply: (characters: Record<string, RenderCharacter>, deltaSeconds: number, localId: string, localPosition: Vec3) => void;
   /** Tear down every pooled rig still standing — this rig's own exclusively-owned GPU resources included (`disposeRemoteRig`). */
   dispose: () => void;
 }
@@ -124,12 +133,22 @@ export const createRemoteCharacterPool = (scene: THREE.Scene, characterModel: Ch
       activeAction,
       pose: createRagdollPose(root),
       hitReactionPlayer: new HitReactionPlayer(),
+      armReachNodes: findArmReachNodes(root),
     };
   };
 
-  const updateRig = (rig: RemoteRig, rc: RenderCharacter, deltaSeconds: number): void => {
-    const { position, motionState, velocity, grounded, dashing, facing, hitEpoch, hitReactEpoch } = rc;
+  const updateRig = (
+    rig: RemoteRig,
+    rc: RenderCharacter,
+    deltaSeconds: number,
+    resolvePosition: (id: string) => Vec3 | undefined,
+  ): void => {
+    const { position, motionState, velocity, grounded, dashing, facing, hitEpoch, hitReactEpoch, grabbingId } = rc;
     if (isDownMotionState(motionState)) {
+      // Code review, M6.1: keeps the reaction baseline current even though
+      // the down-state pose owns the model and the mixer isn't advanced
+      // below — see `HitReactionPlayer.observeBaseline`'s own doc.
+      rig.hitReactionPlayer.observeBaseline(hitEpoch, hitReactEpoch);
       // The same bone-driven knockdown the local Character gets (M6.1 ticket
       // 02, ADR 0048), from the same `bones` — already interpolated between
       // snapshots upstream. This retires `planDeathClip` outright: its four
@@ -183,17 +202,31 @@ export const createRemoteCharacterPool = (scene: THREE.Scene, characterModel: Ch
     // exists for a different reason (weighty *predicted* turning feel, not
     // smoothing across snapshots).
     rig.root.rotation.y = Math.PI - facing;
+
+    // M6.1: no Grab clip exists on the rig — see `scene.ts`'s own identical
+    // arm-reach call for the local Character.
+    if (grabbingId) {
+      const targetPosition = resolvePosition(grabbingId);
+      if (targetPosition) {
+        applyArmReach(
+          rig.root,
+          rig.armReachNodes,
+          new THREE.Vector3(targetPosition.x, targetPosition.y + ARM_REACH_TARGET_HEIGHT, targetPosition.z),
+        );
+      }
+    }
   };
 
   return {
-    apply: (characters, deltaSeconds) => {
+    apply: (characters, deltaSeconds, localId, localPosition) => {
+      const resolvePosition = (id: string): Vec3 | undefined => (id === localId ? localPosition : characters[id]?.position);
       for (const [id, rc] of Object.entries(characters)) {
         let rig = rigs.get(id);
         if (!rig) {
           rig = buildRig(id);
           rigs.set(id, rig);
         }
-        updateRig(rig, rc, deltaSeconds);
+        updateRig(rig, rc, deltaSeconds, resolvePosition);
       }
       for (const [id, rig] of rigs) {
         if (id in characters) continue;

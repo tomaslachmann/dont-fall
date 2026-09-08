@@ -3069,6 +3069,25 @@ describe("RapierSimulation — Grab (M6 ticket 04)", () => {
     expect(zBefore.held).toBeDefined();
   });
 
+  it("reports grabbingId on the grabber's own snapshot the instant a hold engages — never on the held Character's own row (M6.1: the renderer's own arm-reach pose)", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [GRABBER]: reach() });
+
+    expect(sim.snapshot().characters[GRABBER]!.grabbingId).toBe(HELD);
+    expect(sim.snapshot().characters[HELD]!.grabbingId).toBeNull(); // the held side never grabs anyone
+  });
+
+  it("clears grabbingId the instant a hold ends, however it ends (M6.1)", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [GRABBER]: reach() });
+    sim.tick({});
+    expect(sim.snapshot().characters[GRABBER]!.grabbingId).toBe(HELD);
+
+    for (let n = 0; n < GRAB_HOLD_MAX_TICKS + 1; n += 1) sim.tick({}); // release via timeout
+
+    expect(sim.snapshot().characters[GRABBER]!.grabbingId).toBeNull();
+  });
+
   it("misses a Character outside GRAB_RANGE, even directly ahead", () => {
     const sim = twoCharacters(-(GRAB_RANGE + 1));
     sim.tick({ [GRABBER]: reach() });

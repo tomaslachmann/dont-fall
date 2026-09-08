@@ -41,6 +41,8 @@ export interface RenderCharacter {
   hitEpoch: number;
   /** Not interpolated — same idiom, triggers the HitReact animation exactly once. */
   hitReactEpoch: number;
+  /** Not interpolated — taken straight from `next`, like `dashing`. Drives a grabbing Character's arm-reach pose (M6.1); `null` for everyone not currently grabbing someone. */
+  grabbingId: string | null;
 }
 
 export interface RenderState {
@@ -92,6 +94,7 @@ export const interpolateState = (
       dashing: n.dashing,
       hitEpoch: n.hitEpoch,
       hitReactEpoch: n.hitReactEpoch,
+      grabbingId: n.grabbingId,
     };
   }
 

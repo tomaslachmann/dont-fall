@@ -109,6 +109,28 @@ describe("HitReactionPlayer (M6 ticket 03 — Punch/HitReact, one-shot overlays 
     },
   );
 
+  it(
+    "regression (code review, M6.1): observeBaseline absorbs an epoch change without starting a reaction, so a " +
+      "later real update() with the SAME epochs — e.g. once a knockdown ends and the mixer resumes driving the " +
+      "model — does not read it as a fresh reaction",
+    () => {
+      const { actions, punch } = setup();
+      const player = new HitReactionPlayer();
+      player.update(0, 0, actions, 0.1, null); // seed baseline
+
+      // A Hit lands while something else (a down-state pose) owns the model
+      // — the caller observes the new epoch instead of calling update().
+      player.observeBaseline(1, 0);
+
+      // Controlled resumes; update() runs again with the SAME epoch the
+      // caller already told it about.
+      const result = player.update(1, 0, actions, 0.1, null);
+
+      expect(result).toBeNull();
+      expect(punch.isRunning()).toBe(false);
+    },
+  );
+
   it("does not re-fade the locomotion action on a continuing reaction (Punch → HitReact the same tick, or the same reaction still playing)", () => {
     const { actions, run } = setup();
     run.play();

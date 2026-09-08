@@ -60,6 +60,15 @@ export interface CharacterSnapshot {
   /** Milliseconds left on the Grab cooldown (M6 ticket 04); 0 means a grab is ready. Counts from when a hold this Character initiated last ended, not from when it started. */
   grabCooldownMs: number;
   /**
+   * The id of whoever this Character is currently grabbing, or `null` (M6.1)
+   * — drives the renderer's own arm-reach pose. Cross-Character, authoritative
+   * state only `RapierSimulation` can resolve, never predicted locally (Grab
+   * itself is authoritative-only) — not in `ReconcileBase` for the same
+   * reason `hitReactEpoch` isn't: there is no local prediction of it to
+   * correct.
+   */
+  grabbingId: string | null;
+  /**
    * Rises every time a speed/slow pad fires (M3.7 ticket 01, ADR 0035) — the
    * Epoch idiom (CONTEXT.md), same as {@link ragdollEpoch}/{@link respawnCount}.
    * Not restored during reconciliation: like `ragdollEpoch`, it's a pure
@@ -202,6 +211,7 @@ export interface CharacterSnapshotFields {
   hitCooldownMs?: number;
   hitChargeMs?: number;
   grabCooldownMs?: number;
+  grabbingId?: string | null;
   speedPadEpoch?: number;
   speedPadMsLeft?: number;
   speedPadCapMultiplier?: number;
@@ -264,6 +274,7 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   hitCooldownMs: fields.hitCooldownMs ?? 0,
   hitChargeMs: fields.hitChargeMs ?? 0,
   grabCooldownMs: fields.grabCooldownMs ?? 0,
+  grabbingId: fields.grabbingId ?? null,
   speedPadEpoch: fields.speedPadEpoch ?? 0,
   speedPadMsLeft: fields.speedPadMsLeft ?? 0,
   speedPadCapMultiplier: fields.speedPadCapMultiplier ?? 1,

@@ -80,6 +80,9 @@ self-heal it.
   full list: Death, Duck, HitReact, Idle, Jump, Jump_Idle, Jump_Land, No, Punch, Run, Walk, Wave,
   Weapon, Yes), so inventing an unused epoch here would repeat the exact "speculative, never
   consumed" mistake ticket 02's own code review already caught with the original `dashSpeed`.
+  **Revisited in M6.1 ticket 05**: a live playtest found "nothing at all" too thin, so a procedural
+  arm-reach pose was built instead of a canned clip — no epoch needed even then, since it's driven
+  by the new continuous `grabbingId` field, not a one-shot trigger.
 - **No forced repositioning/dragging** — neither CONTEXT.md's definition nor this ticket
   describes the grabber physically dragging the held Character around; ordinary Bump-style solid
   collision between the two, both slowed, is what keeps them physically near each other.
