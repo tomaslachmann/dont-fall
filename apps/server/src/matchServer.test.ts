@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import {
   COUNTDOWN_MS,
   DEFAULT_TIME_LIMIT_MS,
+  HIT_CHARGE_MAX_MS,
   M1_TRACK,
   MIN_TIME_LIMIT_MS,
   RapierSimulation,
@@ -2030,5 +2031,116 @@ describe("startServer — a Track pick must not freeze the Players already in th
     expect(z).toBeLessThan(startZ - 1); // it walked — the Track pick did not freeze it
     socket.close();
   });
+});
+
+describe("startServer — Hit's hold-to-charge over a real network round trip (M6.1, found live)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const ARENA_ONLY: Track = [{ moduleId: "arena", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+
+  /**
+   * Reproduces a live bug report end to end: a real WebSocket round trip
+   * (not `RapierSimulation.test.ts`'s in-process synthetic feed, which
+   * already proves the charge math itself is correct — `hitImpactMagnitude`
+   * and the Hit describe block's own "knocks the target down at a full
+   * charge" test) to rule in or out a real-network-specific cause (dropped/
+   * defaulted input ticks, repeated reconcile-and-replay under the tick-
+   * addressed model) for "held Hit through the HUD's own 'charging' bar
+   * filling to full, released, only got a Stagger."
+   */
+  it("knocks the target down after a real, held-out charge sent tick by tick over the wire", async () => {
+    // Up to ~200 real ticks closing distance plus ~24 charging/settling, each
+    // waiting on an actual ~33ms server tick — comfortably over the default
+    // 5s budget.
+    const trackId = await publishTrack(ARENA_ONLY);
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0 });
+    const striker = connect(server.port, `?track=${trackId}`);
+    const welcomeStriker = (await nextMessage(striker)) as Extract<ServerMessage, { type: "welcome" }>;
+    const target = connect(server.port);
+    const welcomeTarget = (await nextMessage(target)) as Extract<ServerMessage, { type: "welcome" }>;
+
+    pickRoundType(striker, "survival"); // the arena has no Finish Zone — a Race would be refused
+    await startMatch(striker, target);
+    let snapshot = await new Promise<Extract<ServerMessage, { type: "snapshot" }>>((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot" || message.phase !== "RUNNING") return;
+        striker.off("message", onMessage);
+        resolve(message);
+      };
+      striker.on("message", onMessage);
+    });
+
+    const strikerId = welcomeStriker.playerId;
+    const targetId = welcomeTarget.playerId;
+    let tick = snapshot.state.tick;
+
+    // Walk the striker toward the target, one real tick at a time, addressed
+    // 2 ticks ahead of the latest reported one — the same lead the existing
+    // "a Track pick must not freeze the Players already in the Lobby" test
+    // above already uses for exactly this reason (enough runway for the
+    // server to have it queued by the time it reaches that tick).
+    const HIT_RANGE_TARGET_GAP = 1.2; // comfortably inside HIT_RANGE (1.8)
+    for (let i = 0; i < 200; i += 1) {
+      const s = snapshot.state.characters[strikerId]!.position;
+      const t = snapshot.state.characters[targetId]!.position;
+      const dx = t.x - s.x;
+      const dz = t.z - s.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist <= HIT_RANGE_TARGET_GAP) break;
+      const facing = Math.atan2(dx, -dz); // forward(yaw) = (sin(yaw), 0, -cos(yaw)), ADR 0045
+      const moveDirection = { x: dx / dist, y: 0, z: dz / dist };
+      sendInput(striker, tick + 2, { moveDirection, jumpHeld: false, dashHeld: false, hitHeld: false, grabHeld: false, facing });
+      snapshot = await nextSnapshot(striker);
+      tick = snapshot.state.tick;
+    }
+    const closingGap = Math.hypot(
+      snapshot.state.characters[targetId]!.position.x - snapshot.state.characters[strikerId]!.position.x,
+      snapshot.state.characters[targetId]!.position.z - snapshot.state.characters[strikerId]!.position.z,
+    );
+    expect(closingGap).toBeLessThanOrEqual(HIT_RANGE_TARGET_GAP); // sanity: actually got close enough
+
+    // Face the target and hold Hit — real ticks, real network round trip —
+    // through a full HIT_CHARGE_MAX_MS charge window and past it, then
+    // release on the very next tick.
+    const s = snapshot.state.characters[strikerId]!.position;
+    const t = snapshot.state.characters[targetId]!.position;
+    const facing = Math.atan2(t.x - s.x, -(t.z - s.z));
+    const held = { moveDirection: { x: 0, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, hitHeld: true, grabHeld: false, facing };
+    const releaseInput = { ...held, hitHeld: false };
+    const chargeTicks = Math.ceil(HIT_CHARGE_MAX_MS / TICK_MS) + 3;
+    for (let i = 0; i < chargeTicks; i += 1) {
+      sendInput(striker, tick + 2, held);
+      snapshot = await nextSnapshot(striker);
+      tick = snapshot.state.tick;
+    }
+    sendInput(striker, tick + 2, releaseInput);
+    snapshot = await nextSnapshot(striker);
+    tick = snapshot.state.tick;
+
+    // A few more idle ticks for the queued Impact's state transition to land
+    // (the same one-tick-plus latency `RapierSimulation.test.ts`'s own Hit
+    // tests already account for).
+    let finalMotionState = snapshot.state.characters[targetId]!.motionState;
+    for (let i = 0; i < 5 && finalMotionState !== "Ragdoll"; i += 1) {
+      sendInput(striker, tick + 2, { ...releaseInput, hitHeld: false });
+      snapshot = await nextSnapshot(striker);
+      tick = snapshot.state.tick;
+      finalMotionState = snapshot.state.characters[targetId]!.motionState;
+    }
+
+    expect(finalMotionState).toBe("Ragdoll");
+    striker.close();
+    target.close();
+  }, 15_000);
 });
 
