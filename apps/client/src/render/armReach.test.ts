@@ -118,15 +118,15 @@ describe("findArmReachNodes", () => {
   const buildRig = (): THREE.Object3D => {
     const root = new THREE.Object3D();
     const shoulderL = new THREE.Object3D();
-    shoulderL.name = "Shoulder.L";
+    shoulderL.name = "ShoulderL";
     const upperArmL = new THREE.Object3D();
-    upperArmL.name = "UpperArm.L";
+    upperArmL.name = "UpperArmL";
     shoulderL.add(upperArmL);
     root.add(shoulderL);
     const shoulderR = new THREE.Object3D();
-    shoulderR.name = "Shoulder.R";
+    shoulderR.name = "ShoulderR";
     const upperArmR = new THREE.Object3D();
-    upperArmR.name = "UpperArm.R";
+    upperArmR.name = "UpperArmR";
     shoulderR.add(upperArmR);
     root.add(shoulderR);
     return root;
@@ -138,7 +138,7 @@ describe("findArmReachNodes", () => {
 
   it("skips a side missing either of its own nodes rather than throwing", () => {
     const root = buildRig();
-    const shoulderR = root.getObjectByName("Shoulder.R")!;
+    const shoulderR = root.getObjectByName("ShoulderR")!;
     root.remove(shoulderR);
 
     const nodes = findArmReachNodes(root);
@@ -152,9 +152,9 @@ describe("findArmReachNodes", () => {
   it("captures the lower arm and its current (bind-pose) rotation when present", () => {
     const root = buildRig();
     const lowerArmL = new THREE.Object3D();
-    lowerArmL.name = "LowerArm.L";
+    lowerArmL.name = "LowerArmL";
     lowerArmL.quaternion.setFromEuler(new THREE.Euler(0.3, 0, 0));
-    root.getObjectByName("UpperArm.L")!.add(lowerArmL);
+    root.getObjectByName("UpperArmL")!.add(lowerArmL);
 
     const [left] = findArmReachNodes(root);
     expect(left!.lowerArm).toBe(lowerArmL);

@@ -4,22 +4,31 @@ import { RAGDOLL_BONES, type BoneSnapshot } from "@dont-fall/shared";
 /**
  * Which rig node each ragdoll bone drives (M6.1 ticket 02, ADR 0048). The
  * MushroomKing rig has 43 joints and the ragdoll has 11, so the mapping is
- * deliberately partial: everything unlisted (`Abdomen`, `Neck`, `Shoulder.*`,
- * the fingers, `Foot.*`, the IK poles) keeps its bind pose and comes along
+ * deliberately partial: everything unlisted (`Abdomen`, `Neck`, `Shoulder*`,
+ * the fingers, `Foot*`, the IK poles) keeps its bind pose and comes along
  * inside whichever mapped parent it hangs from.
+ *
+ * Node names here have no `.` (`UpperArmL`, not `UpperArm.L`) even though the
+ * source .gltf's own `nodes[].name` field does use a dot — code review, M6.1
+ * ticket 05: `GLTFLoader` strips it from bone names when constructing the
+ * scene graph (almost certainly because `AnimationClip`/`PropertyBinding`
+ * track paths are themselves dot-separated `nodeName.property` strings, so a
+ * dot inside the node name itself would be ambiguous). Confirmed against the
+ * actual loaded model, not just the raw file, after this exact mismatch left
+ * `armReach.ts` silently matching nothing.
  */
 const BONE_TO_NODE: Readonly<Record<string, string>> = {
   pelvis: "Body",
   chest: "Torso",
   head: "Head",
-  upperArmL: "UpperArm.L",
-  lowerArmL: "LowerArm.L",
-  upperArmR: "UpperArm.R",
-  lowerArmR: "LowerArm.R",
-  upperLegL: "UpperLeg.L",
-  lowerLegL: "LowerLeg.L",
-  upperLegR: "UpperLeg.R",
-  lowerLegR: "LowerLeg.R",
+  upperArmL: "UpperArmL",
+  lowerArmL: "LowerArmL",
+  upperArmR: "UpperArmR",
+  lowerArmR: "LowerArmR",
+  upperLegL: "UpperLegL",
+  lowerLegL: "LowerLegL",
+  upperLegR: "UpperLegR",
+  lowerLegR: "LowerLegR",
 };
 
 /** `RAGDOLL_BONES` order is parents-first, which is what makes a single pass enough. */

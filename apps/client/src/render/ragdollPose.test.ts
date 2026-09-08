@@ -3,11 +3,20 @@ import { describe, expect, it } from "vitest";
 import { RAGDOLL_BONES, type BoneSnapshot } from "@dont-fall/shared";
 import { createRagdollPose } from "./ragdollPose.js";
 
-/** The rig node names `ragdollPose` drives, in the order the ragdoll reports them. */
+/**
+ * The rig node names `ragdollPose` drives, in the order the ragdoll reports
+ * them. No `.` — code review, M6.1 ticket 05: the source .gltf's own
+ * `nodes[].name` does use one (`UpperArm.L`), but `GLTFLoader` strips it when
+ * building the scene graph, so the real node is `UpperArmL`. This file's own
+ * fixture used to build a synthetic rig with the dotted (wrong) names, which
+ * matched `BONE_TO_NODE`'s own mistake closely enough that every test here
+ * passed while the real model silently drove nothing — self-consistent, but
+ * never actually exercising the real naming.
+ */
 const NODES = [
   "Body", "Torso", "Head",
-  "UpperArm.L", "LowerArm.L", "UpperArm.R", "LowerArm.R",
-  "UpperLeg.L", "LowerLeg.L", "UpperLeg.R", "LowerLeg.R",
+  "UpperArmL", "LowerArmL", "UpperArmR", "LowerArmR",
+  "UpperLegL", "LowerLegL", "UpperLegR", "LowerLegR",
 ];
 
 /**
@@ -30,16 +39,16 @@ const buildRig = () => {
   const torso = make("Torso", abdomen, 0.3);
   make("Head", torso, 0.59);
   for (const side of ["L", "R"] as const) {
-    const shoulder = make(`Shoulder.${side}`, torso, 0.26); // unmapped too
-    const upperArm = make(`UpperArm.${side}`, shoulder, 0.26);
-    make(`LowerArm.${side}`, upperArm, 0.84);
-    const upperLeg = make(`UpperLeg.${side}`, body, 0);
-    make(`LowerLeg.${side}`, upperLeg, 0.42);
+    const shoulder = make(`Shoulder${side}`, torso, 0.26); // unmapped too
+    const upperArm = make(`UpperArm${side}`, shoulder, 0.26);
+    make(`LowerArm${side}`, upperArm, 0.84);
+    const upperLeg = make(`UpperLeg${side}`, body, 0);
+    make(`LowerLeg${side}`, upperLeg, 0.42);
   }
   // Give the rig a bind pose that is *not* the ragdoll's upright rest, which
   // is the whole reason the anchor exists: arms out to the sides.
-  placed.getObjectByName("UpperArm.L")!.rotation.z = -1.2;
-  placed.getObjectByName("UpperArm.R")!.rotation.z = 1.2;
+  placed.getObjectByName("UpperArmL")!.rotation.z = -1.2;
+  placed.getObjectByName("UpperArmR")!.rotation.z = 1.2;
   placed.updateMatrixWorld(true);
   return placed;
 };

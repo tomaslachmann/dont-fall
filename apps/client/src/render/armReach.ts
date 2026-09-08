@@ -1,9 +1,17 @@
 import * as THREE from "three";
 
-/** Shoulder → upper-arm → lower-arm node-name triples this pose drives — the same rig nodes `ragdollPose.ts` already maps. */
+/**
+ * Shoulder → upper-arm → lower-arm node-name triples this pose drives — the
+ * same rig nodes `ragdollPose.ts` already maps. No `.` (`UpperArmL`, not
+ * `UpperArm.L`): the source .gltf's own `nodes[].name` field does carry a
+ * dot, but `GLTFLoader` strips it when building the scene graph — confirmed
+ * by loading the real model directly and printing every node name, after
+ * these dotted names left this file silently matching nothing (found live:
+ * Grab visibly did nothing at all).
+ */
 const ARM_TRIPLES = [
-  { shoulder: "Shoulder.L", upperArm: "UpperArm.L", lowerArm: "LowerArm.L" },
-  { shoulder: "Shoulder.R", upperArm: "UpperArm.R", lowerArm: "LowerArm.R" },
+  { shoulder: "ShoulderL", upperArm: "UpperArmL", lowerArm: "LowerArmL" },
+  { shoulder: "ShoulderR", upperArm: "UpperArmR", lowerArm: "LowerArmR" },
 ] as const;
 
 export interface ArmReachNodes {
