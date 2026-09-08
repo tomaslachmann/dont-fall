@@ -83,6 +83,15 @@ interface CharacterProgress {
    * Character in it always gets a fresh simulation before it plays again.
    */
   eliminated: boolean;
+  /**
+   * The Tick {@link eliminated} was set, or `null` while it hasn't been (M7
+   * ticket 02) — the Tick elimination was *marked*, not the Tick of whatever
+   * Fall or shove doomed it (`detectFall`'s own comment: the kill plane can
+   * fire one or more Ticks late). Rides the snapshot so a Survival Round can
+   * rank its non-Qualified Characters by it; never cleared, same lifecycle
+   * as `eliminated` itself.
+   */
+  eliminatedTick: number | null;
 }
 
 /** One in-progress Grab hold (M6 ticket 04) — see `RapierSimulation`'s own `activeGrabs`. */
@@ -381,6 +390,7 @@ export class RapierSimulation {
       touchedLaunchPadIndex: undefined,
       finishTick: null,
       eliminated: false,
+      eliminatedTick: null,
     });
   }
 
@@ -735,6 +745,7 @@ export class RapierSimulation {
     const progress = this.progress.get(id);
     if (!progress || progress.eliminated) return;
     progress.eliminated = true;
+    progress.eliminatedTick = this.tickCount;
     const character = this.character(id);
     character.eliminate();
     // Same bookkeeping `tick`'s own per-Character loop does right after a
@@ -847,6 +858,7 @@ export class RapierSimulation {
       // Character (nothing to predict), and a Fall-triggered misprediction
       // must not stay locally "still in it" for the rest of the Round.
       progress.eliminated = base.eliminated;
+      progress.eliminatedTick = base.eliminatedTick;
     }
   }
 
@@ -1263,7 +1275,14 @@ export class RapierSimulation {
     // never cleared. Outside a running Round a Fall does what it has always
     // done and respawns, in either Round type.
     const eliminates = roundRunning && this.roundRules.fallBehavior === "eliminate";
-    if (eliminates) progress.eliminated = true;
+    if (eliminates) {
+      progress.eliminated = true;
+      // The Tick elimination was *marked* (this one, post-`world.step()` —
+      // see `tick`'s own call site), not the Tick of the Fall that doomed
+      // it: the kill plane can fire one or more Ticks late, and ranking by
+      // when it was marked is the honest read of "how long they lasted."
+      progress.eliminatedTick = this.tickCount;
+    }
     character.fall(eliminates ? null : progress.respawnPoint, progress.fallCount);
   }
 
@@ -1278,6 +1297,7 @@ export class RapierSimulation {
         phaseStartTick: progress.phaseStartTick,
         finishTick: progress.finishTick,
         eliminated: progress.eliminated,
+        eliminatedTick: progress.eliminatedTick,
       });
     }
     return {

@@ -102,6 +102,53 @@ describe("buildResults", () => {
   });
 });
 
+describe("buildResults — a Survival Round's elimination order (M7 ticket 02)", () => {
+  it("ranks the non-Qualified by eliminatedTick, latest elimination first", () => {
+    const rows = buildResults(
+      {
+        first: { finishTick: null, checkpointIndex: null, fallCount: 1, eliminatedTick: 30 },
+        second: { finishTick: null, checkpointIndex: null, fallCount: 1, eliminatedTick: 90 },
+        third: { finishTick: null, checkpointIndex: null, fallCount: 1, eliminatedTick: 60 },
+        fourth: { finishTick: null, checkpointIndex: null, fallCount: 1, eliminatedTick: 120 },
+      },
+      [],
+      [],
+    );
+
+    expect(rows.map((r) => r.id)).toEqual(["fourth", "second", "third", "first"]);
+    expect(rows.every((r) => !r.qualified && r.placement === null)).toBe(true);
+  });
+
+  it("lets everyone who survived to the Round's end share first place (qualifySurvivors gives them the same finishTick)", () => {
+    const rows = buildResults(
+      {
+        survivorA: { finishTick: 300, checkpointIndex: null, fallCount: 0 },
+        survivorB: { finishTick: 300, checkpointIndex: null, fallCount: 0 },
+        fellEarly: { finishTick: null, checkpointIndex: null, fallCount: 1, eliminatedTick: 50 },
+      },
+      [],
+      [],
+    );
+
+    expect(rows.map((r) => r.id)).toEqual(["survivorA", "survivorB", "fellEarly"]);
+    expect(rows[0]!.placement).toBe(1);
+    expect(rows[1]!.placement).toBe(1);
+  });
+
+  it("falls back to Checkpoint progress where there is no eliminatedTick — a Race, where nobody is eliminated at all", () => {
+    const rows = buildResults(
+      {
+        a: { finishTick: null, checkpointIndex: 1, fallCount: 3 },
+        b: { finishTick: null, checkpointIndex: 3, fallCount: 0 },
+      },
+      [],
+      [],
+    );
+
+    expect(rows.map((r) => r.id)).toEqual(["b", "a"]);
+  });
+});
+
 describe("buildResults — a DNF'd Player whose Character is still in the world (M5 ticket 08, found live)", () => {
   // Since M5 ticket 04 a mid-Round drop *marks* the Character eliminated
   // rather than removing it (ADR 0042), so `characters` and `dnfEntries` now

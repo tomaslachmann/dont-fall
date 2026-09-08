@@ -1316,6 +1316,7 @@ describe("RapierSimulation — dash", () => {
       speedPadCapMultiplier: midBurst.speedPadCapMultiplier,
       finishTick: midBurst.finishTick,
       eliminated: midBurst.eliminated,
+      eliminatedTick: midBurst.eliminatedTick,
     });
 
     const afterReconcile = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -1373,6 +1374,7 @@ describe("RapierSimulation — dash", () => {
       speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
       finishTick: ackedSnapshot.finishTick,
       eliminated: ackedSnapshot.eliminated,
+      eliminatedTick: ackedSnapshot.eliminatedTick,
     });
     client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unackedInputs);
 
@@ -1455,6 +1457,7 @@ describe("RapierSimulation — dash", () => {
           speedPadCapMultiplier: acked.speedPadCapMultiplier,
           finishTick: acked.finishTick,
           eliminated: acked.eliminated,
+          eliminatedTick: acked.eliminatedTick,
         });
         client.replayLocalCharacter(DEFAULT_CHARACTER_ID, inputHistory.slice(ackedIdx + 1));
         const afterSnap = client.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -2285,6 +2288,7 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
         speedPadCapMultiplier: 1,
         finishTick: null,
         eliminated: false,
+        eliminatedTick: null,
       });
       sim.reconcileCharacter(DEFAULT_CHARACTER_ID, gettingUp({ x: 5, y: RESTING_SPAWN.y, z: 5 }));
       const afterEntry = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
@@ -2364,6 +2368,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     speedPadCapMultiplier: 1,
     finishTick: null,
     eliminated: false,
+    eliminatedTick: null,
   });
 
   it("snaps a locally-Controlled Character into Ragdoll the client never predicted (ADR 0015)", () => {
@@ -2385,6 +2390,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       speedPadCapMultiplier: 1,
       finishTick: null,
       eliminated: false,
+      eliminatedTick: null,
     });
 
     // Immediate — the discrete state is never delayed or smoothed (ADR 0013).
@@ -2418,6 +2424,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       speedPadCapMultiplier: 1,
       finishTick: null,
       eliminated: false,
+      eliminatedTick: null,
     });
 
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
@@ -2509,6 +2516,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
         speedPadCapMultiplier: 1,
         finishTick: null,
         eliminated: false,
+        eliminatedTick: null,
       });
       tick(sim, 0.1); // a few local ticks between snapshots
 
@@ -2574,6 +2582,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       speedPadCapMultiplier: 1,
       finishTick: null,
       eliminated: false,
+      eliminatedTick: null,
     });
     sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Sliding");
@@ -2907,6 +2916,7 @@ describe("RapierSimulation — Hit (M6 ticket 03)", () => {
       speedPadCapMultiplier: base.speedPadCapMultiplier,
       finishTick: base.finishTick,
       eliminated: base.eliminated,
+      eliminatedTick: base.eliminatedTick,
     });
 
     expect(sim.snapshot().characters[STRIKER]!.hitCooldownMs).toBe(0);
@@ -2954,6 +2964,7 @@ describe("RapierSimulation — Hit (M6 ticket 03)", () => {
         speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
         finishTick: ackedSnapshot.finishTick,
         eliminated: ackedSnapshot.eliminated,
+        eliminatedTick: ackedSnapshot.eliminatedTick,
       });
       client.replayLocalCharacter(STRIKER, unackedInputs);
 
@@ -3001,6 +3012,7 @@ describe("RapierSimulation — Hit (M6 ticket 03)", () => {
         speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
         finishTick: ackedSnapshot.finishTick,
         eliminated: ackedSnapshot.eliminated,
+        eliminatedTick: ackedSnapshot.eliminatedTick,
       });
       const release = input({ facing: NORTH_FACING, hitHeld: false });
       client.replayLocalCharacter(STRIKER, [held, held, release]);
@@ -3323,6 +3335,7 @@ describe("RapierSimulation — Grab (M6 ticket 04)", () => {
       speedPadCapMultiplier: base.speedPadCapMultiplier,
       finishTick: base.finishTick,
       eliminated: base.eliminated,
+      eliminatedTick: base.eliminatedTick,
     });
 
     expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0);
@@ -3370,6 +3383,7 @@ describe("RapierSimulation — Grab (M6 ticket 04)", () => {
         speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
         finishTick: ackedSnapshot.finishTick,
         eliminated: ackedSnapshot.eliminated,
+        eliminatedTick: ackedSnapshot.eliminatedTick,
       });
       client.replayLocalCharacter(GRABBER, unackedInputs);
 
@@ -3408,6 +3422,7 @@ describe("RapierSimulation — Grab (M6 ticket 04)", () => {
       speedPadCapMultiplier: base.speedPadCapMultiplier,
       finishTick: base.finishTick,
       eliminated: base.eliminated,
+      eliminatedTick: base.eliminatedTick,
     });
 
     sim.tick({ [GRABBER]: reach() });
@@ -3584,6 +3599,7 @@ describe("RapierSimulation — speed/slow pads (M3.7 ticket 01, ADR 0035): one-s
       speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
       finishTick: firedSnap.finishTick,
       eliminated: firedSnap.eliminated,
+      eliminatedTick: firedSnap.eliminatedTick,
     });
     sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, buffered);
 
@@ -4073,6 +4089,7 @@ describe("RapierSimulation — launch pads (M3.7 ticket 02): one-shot full-veloc
       speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
       finishTick: firedSnap.finishTick,
       eliminated: firedSnap.eliminated,
+      eliminatedTick: firedSnap.eliminatedTick,
     });
     sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, buffered);
 
@@ -4645,6 +4662,7 @@ describe("RapierSimulation — Character facing (M6 ticket 01, ADR 0045)", () =>
       speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
       finishTick: ackedSnapshot.finishTick,
       eliminated: ackedSnapshot.eliminated,
+      eliminatedTick: ackedSnapshot.eliminatedTick,
     });
     client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unackedInputs);
 

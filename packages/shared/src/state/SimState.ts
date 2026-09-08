@@ -187,6 +187,15 @@ export interface CharacterSnapshot {
    * Character that can't finish.
    */
   eliminated: boolean;
+  /**
+   * The Tick {@link eliminated} was set, or `null` while it hasn't been (M7
+   * ticket 02) — the Tick elimination was *marked*, not necessarily the Tick
+   * of the Fall or disconnect that caused it (a Fall can cross the kill
+   * plane one or more Ticks after the shove that doomed it). Lets a
+   * Survival Round rank its non-Qualified Characters by how long they
+   * lasted, the same way `finishTick` orders the Qualified.
+   */
+  eliminatedTick: number | null;
 }
 
 /**
@@ -236,6 +245,7 @@ export interface CharacterSnapshotFields {
   bones?: BoneSnapshot[];
   finishTick?: number | null;
   eliminated?: boolean;
+  eliminatedTick?: number | null;
 }
 
 /**
@@ -268,6 +278,7 @@ export type ReconcileBase = Pick<
   // — the server's answer wins here for the same reason it does for
   // `finishTick`.
   | "eliminated"
+  | "eliminatedTick"
 >;
 
 export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSnapshot => ({
@@ -300,4 +311,5 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   bones: fields.bones ?? [],
   finishTick: fields.finishTick ?? null,
   eliminated: fields.eliminated ?? false,
+  eliminatedTick: fields.eliminatedTick ?? null,
 });

@@ -305,6 +305,7 @@ class FaithfulClient {
       speedPadCapMultiplier: 1,
       finishTick: null, // this harness's Track has no Finish Zone
       eliminated: false,
+      eliminatedTick: null,
     });
     this.sim.syncTick(serverTick);
     const replayed = this.sim.replayLocalCharacter(

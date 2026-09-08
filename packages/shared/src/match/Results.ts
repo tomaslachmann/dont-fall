@@ -21,6 +21,8 @@ export interface ResultsCharacter {
   finishTick: number | null;
   checkpointIndex: number | null;
   fallCount: number;
+  /** See `CharacterSnapshot.eliminatedTick` (M7 ticket 02) — `null` for a Race, where nobody is eliminated at all. */
+  eliminatedTick?: number | null;
 }
 
 /**
@@ -47,8 +49,11 @@ export interface DnfEntry {
  *    already uses client-side: a tie shares a placement and the next one
  *    skips, rather than inventing a tie-break the simulation doesn't have
  *    (a Finish Zone is an area, not a line).
- * 2. Everyone still connected but not Qualified, furthest Checkpoint
- *    progress first.
+ * 2. Everyone still connected but not Qualified, latest `eliminatedTick`
+ *    first (M7 ticket 02) — "how long you lasted" is the whole content of a
+ *    Survival Round's own ranking. A Race never sets it (nobody is
+ *    eliminated there), so this tier falls back to furthest Checkpoint
+ *    progress first, exactly as before.
  * 3. Everyone who DNF'd (M4 ticket 05) — always last, and unranked: leaving
  *    is not a result to place among the ones that were played out. Where
  *    their Character is still in the world (M5 ticket 04), the row carries
@@ -98,7 +103,14 @@ export const buildResults = (
 
   const eliminatedRows: ResultsRow[] = Object.entries(characters)
     .filter(([id, c]) => c.finishTick === null && !dnfIds.has(id))
-    .sort(([, a], [, b]) => (b.checkpointIndex ?? -1) - (a.checkpointIndex ?? -1))
+    .sort(([, a], [, b]) => {
+      const tickA = a.eliminatedTick ?? null;
+      const tickB = b.eliminatedTick ?? null;
+      if (tickA === null && tickB === null) return (b.checkpointIndex ?? -1) - (a.checkpointIndex ?? -1);
+      if (tickA === null) return 1;
+      if (tickB === null) return -1;
+      return tickB - tickA;
+    })
     .map(([id, c]) => ({
       id,
       nickname: nicknameFor(id),
