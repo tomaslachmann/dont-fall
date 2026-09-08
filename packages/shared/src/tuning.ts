@@ -513,6 +513,36 @@ export const BUMP_IMPULSE_SCALE = 0.6;
  */
 export const BUMP_LIFT_RATIO = 0.3;
 
+// --- Hit (M6 ticket 03) ------------------------------------------------------
+
+/** Minimum time between swings (ms) — mirrors {@link DASH_COOLDOWN_MS}'s idiom, just with no duration of its own to also wait out (a swing is instant, not a burst). */
+export const HIT_COOLDOWN_MS = 800;
+
+/** {@link HIT_COOLDOWN_MS} in whole ticks. */
+export const HIT_COOLDOWN_TICKS = msToTicks(HIT_COOLDOWN_MS);
+
+/** How far (units, centre to centre) a swing reaches — short-range, comfortably beyond two capsules merely touching ({@link CAPSULE_RADIUS} × 2). */
+export const HIT_RANGE = 1.8;
+
+/**
+ * Cosine of the half-angle of the forward cone a target must fall within to
+ * be swung at — `0.5` = 60° either side of dead-ahead (120° total), generous
+ * enough to feel responsive without landing on someone beside or behind you.
+ */
+export const HIT_FACING_COS_MIN = 0.5;
+
+/**
+ * Fixed Impact magnitude a landed swing delivers, unlike Bump's
+ * closing-speed-scaled one — a Hit has no "how fast was I moving" to derive
+ * from; it is a deliberate, static punch. Tuned to reliably clear
+ * {@link IMPACT_STAGGER_MIN} but stay under {@link IMPACT_RAGDOLL_MIN} on its
+ * own: one Hit always staggers, never immediately knocks someone down outright.
+ */
+export const HIT_IMPACT_MAGNITUDE = 6;
+
+/** Upward bias mixed into a Hit's knockback direction — same idea as {@link BUMP_LIFT_RATIO}. */
+export const HIT_LIFT_RATIO = 0.3;
+
 // --- Client reconciliation (M2 ticket 05, ADR 0013) ------------------------
 
 /**

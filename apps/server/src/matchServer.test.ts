@@ -84,7 +84,7 @@ const publishTrack = async (
 const nextClose = (socket: WebSocket): Promise<{ code: number; reason: string }> =>
   new Promise((resolve) => socket.once("close", (code, reason) => resolve({ code, reason: reason.toString() })));
 
-const NORTH: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false, facing: 0 };
+const NORTH: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false };
 
 const sendInput = (socket: WebSocket, tick: number, input: SimInputs): void =>
   socket.send(JSON.stringify({ type: "input", inputs: [{ tick, input }] } satisfies ClientMessage));

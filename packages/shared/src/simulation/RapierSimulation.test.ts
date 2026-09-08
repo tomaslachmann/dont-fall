@@ -10,6 +10,8 @@ import {
   DASH_DURATION_MS,
   DASH_SPEED,
   GROUND_STICK_SPEED,
+  HIT_COOLDOWN_MS,
+  HIT_RANGE,
   IMPACT_RAGDOLL_MIN,
   IMPACT_STAGGER_MIN,
   RAGDOLL_MAX_MS,
@@ -1303,6 +1305,7 @@ describe("RapierSimulation — dash", () => {
       motionState: midBurst.motionState,
       dashCooldownMs: midBurst.dashCooldownMs,
       dashing: midBurst.dashing,
+      hitCooldownMs: 0,
       speedPadMsLeft: midBurst.speedPadMsLeft,
       speedPadCapMultiplier: midBurst.speedPadCapMultiplier,
       finishTick: midBurst.finishTick,
@@ -1357,6 +1360,7 @@ describe("RapierSimulation — dash", () => {
       motionState: ackedSnapshot.motionState,
       dashCooldownMs: ackedSnapshot.dashCooldownMs,
       dashing: ackedSnapshot.dashing,
+      hitCooldownMs: 0,
       speedPadMsLeft: ackedSnapshot.speedPadMsLeft,
       speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
       finishTick: ackedSnapshot.finishTick,
@@ -1436,6 +1440,7 @@ describe("RapierSimulation — dash", () => {
           motionState: acked.motionState,
           dashCooldownMs: acked.dashCooldownMs,
           dashing: acked.dashing,
+          hitCooldownMs: 0,
           speedPadMsLeft: acked.speedPadMsLeft,
           speedPadCapMultiplier: acked.speedPadCapMultiplier,
           finishTick: acked.finishTick,
@@ -2263,6 +2268,7 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
         motionState: "GettingUp" as const,
         dashCooldownMs: 0,
         dashing: false,
+        hitCooldownMs: 0,
         speedPadMsLeft: 0,
         speedPadCapMultiplier: 1,
         finishTick: null,
@@ -2339,6 +2345,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     motionState: "Controlled" as const,
     dashCooldownMs: 0,
     dashing: false,
+    hitCooldownMs: 0,
     speedPadMsLeft: 0,
     speedPadCapMultiplier: 1,
     finishTick: null,
@@ -2357,6 +2364,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       motionState: "Ragdoll",
       dashCooldownMs: 0,
       dashing: false,
+      hitCooldownMs: 0,
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
       finishTick: null,
@@ -2387,6 +2395,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       motionState: "Ragdoll",
       dashCooldownMs: 0,
       dashing: false,
+      hitCooldownMs: 0,
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
       finishTick: null,
@@ -2475,6 +2484,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
         motionState: "Ragdoll",
         dashCooldownMs: 0,
         dashing: false,
+        hitCooldownMs: 0,
         speedPadMsLeft: 0,
         speedPadCapMultiplier: 1,
         finishTick: null,
@@ -2537,6 +2547,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       motionState: "Sliding",
       dashCooldownMs: 0,
       dashing: false,
+      hitCooldownMs: 0,
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
       finishTick: null,
@@ -2721,6 +2732,161 @@ describe("RapierSimulation — Character-to-Character Bump (ticket 04)", () => {
   });
 });
 
+describe("RapierSimulation — Hit (M6 ticket 03)", () => {
+  const STRIKER = DEFAULT_CHARACTER_ID;
+  const TARGET = "target";
+  // forward(0) = (sin 0, 0, -cos 0) = (0, 0, -1) — dead north, the movementDirection convention ADR 0045's facing shares.
+  const NORTH_FACING = 0;
+  const onGround = (z: number) => ({ x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z });
+
+  /** Striker at z=0 facing north, target at the given z; both settled on the ground. */
+  const twoCharacters = (targetZ: number): RapierSimulation => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(targetZ));
+    for (let n = 0; n < 10; n += 1) sim.tick({}); // settle both
+    return sim;
+  };
+
+  const swing = (facingYaw: number = NORTH_FACING): SimInputs => input({ facing: facingYaw, hitHeld: true });
+
+  it("connects with a Character within range, directly ahead by facing — applying an Impact and bumping both Epochs", () => {
+    const sim = twoCharacters(-1); // north of the striker, within HIT_RANGE
+    sim.tick({ [STRIKER]: swing() });
+    expect(sim.snapshot().characters[STRIKER]!.hitEpoch).toBe(1); // the swing itself always fires
+    sim.tick({}); // one tick of latency before the queued Impact's state transition lands (same as Bump)
+    expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Stagger");
+    expect(sim.snapshot().characters[TARGET]!.hitReactEpoch).toBe(1);
+    expect(sim.snapshot().characters[STRIKER]!.motionState).toBe("Controlled"); // the striker is untouched
+  });
+
+  it("misses a Character outside HIT_RANGE, even directly ahead", () => {
+    const sim = twoCharacters(-(HIT_RANGE + 1));
+    sim.tick({ [STRIKER]: swing() });
+    sim.tick({});
+    expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Controlled");
+    expect(sim.snapshot().characters[TARGET]!.hitReactEpoch).toBe(0);
+  });
+
+  it("misses a Character within range but behind the striker, outside the facing cone", () => {
+    const sim = twoCharacters(1); // south of the striker — behind, while facing north
+    sim.tick({ [STRIKER]: swing() });
+    sim.tick({});
+    expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Controlled");
+    expect(sim.snapshot().characters[TARGET]!.hitReactEpoch).toBe(0);
+  });
+
+  it("cancels an in-progress Dash for BOTH the striker and the target the instant it connects", () => {
+    const sim = twoCharacters(-1);
+    // Get both Characters mid-Dash burst first — each needs its own direction
+    // to actually start one (a dash with nothing to dash toward never fires).
+    sim.tick({
+      [STRIKER]: input({ ...NORTH, dashHeld: true }),
+      [TARGET]: input({ moveDirection: { x: 0, y: 0, z: 1 }, dashHeld: true }),
+    });
+    expect(sim.snapshot().characters[STRIKER]!.dashing).toBe(true);
+    expect(sim.snapshot().characters[TARGET]!.dashing).toBe(true);
+
+    sim.tick({ [STRIKER]: swing() });
+
+    expect(sim.snapshot().characters[STRIKER]!.dashing).toBe(false);
+    expect(sim.snapshot().characters[TARGET]!.dashing).toBe(false);
+  });
+
+  it("respects its own cooldown — a second press before it expires does not fire again", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [STRIKER]: swing() });
+    expect(sim.snapshot().characters[STRIKER]!.hitEpoch).toBe(1);
+    expect(sim.snapshot().characters[STRIKER]!.hitCooldownMs).toBeGreaterThan(0);
+
+    sim.tick({ [STRIKER]: swing() }); // pressed again, still on cooldown
+    expect(sim.snapshot().characters[STRIKER]!.hitEpoch).toBe(1); // unchanged — did not fire again
+  });
+
+  it("fires again once the cooldown has fully elapsed", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [STRIKER]: swing() });
+    expect(sim.snapshot().characters[STRIKER]!.hitEpoch).toBe(1);
+
+    const ticks = Math.ceil(HIT_COOLDOWN_MS / TICK_MS);
+    for (let n = 0; n < ticks; n += 1) sim.tick({});
+    sim.tick({ [STRIKER]: swing() });
+    expect(sim.snapshot().characters[STRIKER]!.hitEpoch).toBe(2);
+  });
+
+  it("resets alongside Dash's own cooldown the instant Ragdoll begins, however it was forced (code review)", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [STRIKER]: swing() });
+    const base = sim.snapshot().characters[STRIKER]!;
+    expect(base.hitCooldownMs).toBeGreaterThan(0);
+
+    // `beginRagdoll()` (the down-branch of `reconcileTo`, exactly like a real
+    // knockdown from a Fall/Bump/another Hit) calls `resetMovementControllers`
+    // unconditionally — this pins that it resets Hit's cooldown too, not just
+    // Dash's, regardless of what the reconcile base itself reports for either.
+    sim.reconcileCharacter(STRIKER, {
+      position: { ...base.position },
+      velocity: { ...base.velocity },
+      grounded: base.grounded,
+      motionState: "Ragdoll",
+      dashCooldownMs: base.dashCooldownMs,
+      dashing: base.dashing,
+      hitCooldownMs: base.hitCooldownMs,
+      speedPadMsLeft: base.speedPadMsLeft,
+      speedPadCapMultiplier: base.speedPadCapMultiplier,
+      finishTick: base.finishTick,
+      eliminated: base.eliminated,
+    });
+
+    expect(sim.snapshot().characters[STRIKER]!.hitCooldownMs).toBe(0);
+    expect(sim.snapshot().characters[STRIKER]!.dashCooldownMs).toBe(0); // Dash's own, unchanged precedent
+  });
+
+  it(
+    "survives a reconcile-then-replay without double-firing — a client reconciled to an older snapshot and " +
+      "replayed forward lands on the exact same hitEpoch/hitCooldownMs the undisturbed ground truth has " +
+      "(regression: hitCooldownMs must round-trip through ReconcileBase, or a replay would see the cooldown " +
+      "as expired and fire the swing a second time)",
+    () => {
+      const truth = twoCharacters(-1);
+      const client = twoCharacters(-1);
+      const K = 10;
+      const ACKED_LAG = 4;
+
+      let ackedSnapshot: ReturnType<typeof truth.snapshot>["characters"][string] | null = null;
+      const unackedInputs: SimInputs[] = [];
+      for (let t = 1; t <= K; t += 1) {
+        const strikerInput = t === 1 ? swing() : input({ facing: NORTH_FACING });
+        truth.tick({ [STRIKER]: strikerInput });
+        client.tick({ [STRIKER]: strikerInput });
+        if (t === K - ACKED_LAG) ackedSnapshot = truth.snapshot().characters[STRIKER]!;
+        if (t > K - ACKED_LAG) unackedInputs.push(strikerInput);
+      }
+      if (!ackedSnapshot) throw new Error("unreachable");
+
+      client.reconcileCharacter(STRIKER, {
+        position: { ...ackedSnapshot.position },
+        velocity: { ...ackedSnapshot.velocity },
+        grounded: ackedSnapshot.grounded,
+        motionState: ackedSnapshot.motionState,
+        dashCooldownMs: ackedSnapshot.dashCooldownMs,
+        dashing: ackedSnapshot.dashing,
+        hitCooldownMs: ackedSnapshot.hitCooldownMs,
+        speedPadMsLeft: ackedSnapshot.speedPadMsLeft,
+        speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
+        finishTick: ackedSnapshot.finishTick,
+        eliminated: ackedSnapshot.eliminated,
+      });
+      client.replayLocalCharacter(STRIKER, unackedInputs);
+
+      const truthNow = truth.snapshot().characters[STRIKER]!;
+      const clientNow = client.snapshot().characters[STRIKER]!;
+      expect(clientNow.hitEpoch).toBe(truthNow.hitEpoch);
+      expect(clientNow.hitEpoch).toBe(1); // the one swing on tick 1, never a second one
+      expect(clientNow.hitCooldownMs).toBeCloseTo(truthNow.hitCooldownMs, 0);
+    },
+  );
+});
+
 describe("RapierSimulation — speed/slow pads (M3.7 ticket 01, ADR 0035): one-shot Epoch-latched write plus a fading speed cap", () => {
   const LONG_GROUND: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 10, y: 0.5, z: 100 } };
   // 6 units wide (z -13..-7) — a full second's worth of WALK_SPEED travel, comfortably "a wide pad touched across several ticks."
@@ -2851,6 +3017,7 @@ describe("RapierSimulation — speed/slow pads (M3.7 ticket 01, ADR 0035): one-s
       motionState: firedSnap.motionState,
       dashCooldownMs: firedSnap.dashCooldownMs,
       dashing: firedSnap.dashing,
+      hitCooldownMs: 0,
       speedPadMsLeft: firedSnap.speedPadMsLeft,
       speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
       finishTick: firedSnap.finishTick,
@@ -3337,6 +3504,7 @@ describe("RapierSimulation — launch pads (M3.7 ticket 02): one-shot full-veloc
       motionState: firedSnap.motionState,
       dashCooldownMs: firedSnap.dashCooldownMs,
       dashing: firedSnap.dashing,
+      hitCooldownMs: 0,
       speedPadMsLeft: firedSnap.speedPadMsLeft,
       speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
       finishTick: firedSnap.finishTick,
@@ -3893,6 +4061,7 @@ describe("RapierSimulation — Character facing (M6 ticket 01, ADR 0045)", () =>
       motionState: ackedSnapshot.motionState,
       dashCooldownMs: ackedSnapshot.dashCooldownMs,
       dashing: ackedSnapshot.dashing,
+      hitCooldownMs: 0,
       speedPadMsLeft: ackedSnapshot.speedPadMsLeft,
       speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
       finishTick: ackedSnapshot.finishTick,

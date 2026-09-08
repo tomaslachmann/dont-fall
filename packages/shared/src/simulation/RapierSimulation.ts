@@ -1,7 +1,7 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { pointInOrientedBox, type OrientedBox } from "../math/box.js";
 import { IDENTITY_QUAT } from "../math/quat.js";
-import { normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
+import { dotVec3, lengthVec3, normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
 import { phaseLocksInput, type MatchPhase } from "../match/MatchPhase.js";
 import { DEFAULT_ROUND_RULES, type RoundRules } from "../match/RoundRules.js";
 import { characterSnapshot, type CharacterSnapshot, type ReconcileBase, type SimState } from "../state/SimState.js";
@@ -11,6 +11,10 @@ import {
   BUMP_LIFT_RATIO,
   DEFAULT_KILL_PLANE_Y,
   GRAVITY_Y,
+  HIT_FACING_COS_MIN,
+  HIT_IMPACT_MAGNITUDE,
+  HIT_LIFT_RATIO,
+  HIT_RANGE,
 } from "../tuning.js";
 import { DEFAULT_SURFACE, surfaceConfig, type SurfaceId } from "../track/Surface.js";
 import { CharacterController, type CollisionListener } from "./CharacterController.js";
@@ -372,6 +376,59 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
     bumped.applyImpact(scaleVec3(direction, magnitude), "Bump");
   }
 
+  /**
+   * Hit (M6 ticket 03): a player-initiated melee swing, resolved once every
+   * Character's `beginTick` has run this tick but before `world.step()` —
+   * the same pre-step timing Bump's own `resolveBump` gets "for free" from
+   * firing inside `beginTick`'s collision sweep, so a target's `applyImpact`
+   * here lands before anyone's post-step bookkeeping (`updateCheckpoint` etc.)
+   * runs for *any* Character this tick, exactly like Bump's own ordering.
+   *
+   * Targets the nearest OTHER Character within {@link HIT_RANGE} and within
+   * {@link HIT_FACING_COS_MIN} of the striker's own replicated `facing` —
+   * reusing the exact Impact-application pipeline Bump already uses
+   * (`applyImpact` / `IMPACT_STAGGER_MIN` / `IMPACT_RAGDOLL_MIN`), just with
+   * different targeting: a plain geometric proximity+facing check against
+   * positions this class already tracks, not a new Rapier hitbox/sensor.
+   *
+   * Connecting cancels an in-progress Dash for BOTH the striker and the
+   * target (CONTEXT.md's own Hit/Grab definition) — always, regardless of
+   * whether the resulting Impact clears `IMPACT_STAGGER_MIN`, so this is
+   * explicit here rather than left to ride along with whatever motion-state
+   * transition the Impact happens to cause.
+   */
+  private resolveHit(strikerId: string): void {
+    const striker = this.characters.get(strikerId);
+    if (!striker) return;
+    const strikerPos = striker.position;
+    // `forward(yaw) = (sin, 0, -cos)` — `movementDirection`'s own convention
+    // (ADR 0045's `facing` is sent in exactly this space).
+    const forward = vec3(Math.sin(striker.facing), 0, -Math.cos(striker.facing));
+
+    let bestId: string | undefined;
+    let bestDistance = HIT_RANGE;
+    for (const [id, other] of this.characters) {
+      if (id === strikerId) continue;
+      const toOther = subVec3(other.position, strikerPos);
+      toOther.y = 0;
+      const distance = lengthVec3(toOther);
+      if (distance === 0 || distance > bestDistance) continue;
+      const facingDot = dotVec3(forward, normalizeVec3(toOther));
+      if (facingDot < HIT_FACING_COS_MIN) continue;
+      bestDistance = distance;
+      bestId = id;
+    }
+    if (bestId === undefined) return;
+
+    const target = this.characters.get(bestId)!;
+    const toTarget = normalizeVec3(vec3(target.position.x - strikerPos.x, 0, target.position.z - strikerPos.z));
+    const direction = normalizeVec3(vec3(toTarget.x, HIT_LIFT_RATIO, toTarget.z));
+    target.applyImpact(scaleVec3(direction, HIT_IMPACT_MAGNITUDE), "Hit");
+    target.registerHitReceived();
+    target.cancelDash();
+    striker.cancelDash();
+  }
+
   /** Remove a Character from the Match and free its Rapier bodies (ticket 01). */
   removeCharacter(id: string): void {
     const character = this.characters.get(id);
@@ -625,6 +682,14 @@ export class RapierSimulation implements FixedSimulation<Record<string, SimInput
       const progress = this.progress.get(id)!;
       if (progress.eliminated) continue;
       character.beginTick(matchLocked || progress.finishTick !== null ? IDLE_INPUTS : (inputs[id] ?? IDLE_INPUTS));
+    }
+    // Resolved here — after every Character's `beginTick` has run this tick,
+    // but before `world.step()` — the same pre-step timing Bump's own
+    // `resolveBump` gets "for free" from firing inside `beginTick`'s own
+    // collision sweep (see `resolveHit`'s own doc comment for why this
+    // ordering matters).
+    for (const [id, character] of this.characters) {
+      if (character.hitFiredThisTick) this.resolveHit(id);
     }
     this.world.step();
     this.tickCount += 1;

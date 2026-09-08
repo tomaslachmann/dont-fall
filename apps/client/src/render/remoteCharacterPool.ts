@@ -11,6 +11,7 @@ import {
   type CharacterModel,
 } from "./characterModel.js";
 import { planDeathClip } from "./deathClipPlan.js";
+import { HitReactionPlayer } from "./hitReactionPlayer.js";
 import { selectLocomotion } from "./locomotionAnimation.js";
 import { tintHueForId } from "./playerTint.js";
 
@@ -38,6 +39,8 @@ interface RemoteRig {
   everEnteredRagdoll: boolean;
   /** True only until this rig's first `updateRig` call — see `planDeathClip`'s `isFirstObservation`. */
   isFirstObservation: boolean;
+  /** Drives this rig's own Punch/HitReact one-shot overlays (M6 ticket 03). */
+  hitReactionPlayer: HitReactionPlayer;
 }
 
 /**
@@ -126,11 +129,12 @@ export const createRemoteCharacterPool = (scene: THREE.Scene, characterModel: Ch
       visualState: "Controlled",
       everEnteredRagdoll: false,
       isFirstObservation: true,
+      hitReactionPlayer: new HitReactionPlayer(),
     };
   };
 
   const updateRig = (rig: RemoteRig, rc: RenderCharacter, deltaSeconds: number): void => {
-    const { position, motionState, velocity, grounded, dashing, facing } = rc;
+    const { position, motionState, velocity, grounded, dashing, facing, hitEpoch, hitReactEpoch } = rc;
     const plan = planDeathClip(motionState, rig.visualState, rig.isFirstObservation, rig.everEnteredRagdoll);
     rig.visualState = motionState;
     rig.isFirstObservation = false;
@@ -209,6 +213,16 @@ export const createRemoteCharacterPool = (scene: THREE.Scene, characterModel: Ch
 
     if (isDownMotionState(motionState)) {
       rig.mixer.update(deltaSeconds);
+      return;
+    }
+
+    // M6 ticket 03: Punch/HitReact take priority over ordinary locomotion
+    // while playing — mirrors `scene.ts`'s own local handling exactly.
+    const reacting = rig.hitReactionPlayer.update(hitEpoch, hitReactEpoch, rig.actions, LOCOMOTION_CROSSFADE_SECONDS);
+    if (reacting) {
+      rig.activeAction = reacting;
+      rig.mixer.update(deltaSeconds);
+      rig.root.rotation.y = Math.PI - facing;
       return;
     }
 

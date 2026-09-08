@@ -30,14 +30,9 @@ import type { ReconcileBase, RagdollCause } from "../state/SimState.js";
 import type { SurfaceBounceConfig } from "../track/Surface.js";
 import { CharacterStateMachine, isDownMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
 import { CHARACTER_GROUPS, GROUP_CHARACTER } from "./collisionGroups.js";
-import {
-  accelerateVelocity,
-  applyVolumeForce,
-  DashController,
-  JumpController,
-  slopeSpeedMultiplier,
-  SpeedPadController,
-} from "./movementVerbs.js";
+import { DashController } from "./DashController.js";
+import { HitController } from "./HitController.js";
+import { accelerateVelocity, applyVolumeForce, JumpController, slopeSpeedMultiplier, SpeedPadController } from "./movementVerbs.js";
 import { Ragdoll } from "./Ragdoll.js";
 import { blendGettingUpBones, type BoneSnapshot } from "./ragdollSkeleton.js";
 import type { SimInputs } from "./SimInputs.js";
@@ -112,9 +107,15 @@ export interface CharacterState {
   ragdollEpoch: number;
   /** Why the current / most recent knockdown happened (ADR 0023). */
   ragdollCause: RagdollCause;
+  /** Rises every time this Character's own Hit swing fires, connects or not (M6 ticket 03). */
+  hitEpoch: number;
+  /** Rises every time this Character is on the receiving end of a landed Hit (M6 ticket 03). */
+  hitReactEpoch: number;
   dashCooldownMs: number;
   /** Whether a Dash burst is currently playing out (for the renderer to speed up the movement animation). */
   dashing: boolean;
+  /** Milliseconds left on the Hit cooldown; 0 means a swing is ready (M6 ticket 03). */
+  hitCooldownMs: number;
   /** Current horizontal speed (units/s) contributed by an active Dash burst; 0 when not dashing. Drives the speed-lines effect directly — no noisy derivation from position needed. */
   dashSpeed: number;
   /** Rises every time a speed/slow pad fires (M3.7 ticket 01, ADR 0035). */
@@ -209,12 +210,28 @@ export class CharacterController {
   /** Cause latched on the last Ragdoll entry; `pendingCause` is what the next entry will latch. */
   private ragdollCause: RagdollCause = "Fall";
   private pendingCause: RagdollCause = "Fall";
+  /** Rises every time this Character's own Hit swing fires (M6 ticket 03) — the Epoch idiom, same as {@link ragdollEpoch}. */
+  private hitEpoch = 0;
+  /** Rises every time this Character is on the receiving end of a landed Hit (M6 ticket 03) — set by `RapierSimulation` via {@link registerHitReceived}. */
+  private hitReactEpoch = 0;
   /** Set by {@link beginTick}, read by {@link endTick} once the shared `world.step()` has run. */
   private tickingRagdoll = false;
 
   private readonly machine = new CharacterStateMachine();
   private readonly jump = new JumpController();
   private readonly dash = new DashController();
+  /** Hit's cooldown (M6 ticket 03) — see {@link HitController}. */
+  private readonly hit = new HitController();
+  /**
+   * Whether a swing actually fired THIS tick — set fresh at the top of every
+   * {@link beginTick} (never stale across a tick where {@link beginCapsuleTick}
+   * doesn't run, e.g. pure Ragdoll) and read once by `RapierSimulation`,
+   * right after every Character's `beginTick` has run and before
+   * `world.step()`, to resolve who (if anyone) it actually landed on — a
+   * cross-Character question only `RapierSimulation` can answer.
+   */
+  private pendingHitFired = false;
+  private hitHeldLastTick = false;
   /**
    * Current horizontal speed (units/s) contributed by an active Dash burst —
    * the exact `dashEnvelope` curve already driving the physics, exposed
@@ -280,9 +297,12 @@ export class CharacterController {
    * 0045) — mirrored straight from `input.facing` every {@link beginTick},
    * the same way `moveDirection` is, never restored on {@link reconcileTo}
    * (it's an input mirror, not simulation-owned state; a correction's own
-   * replay re-derives it from the replayed inputs' own facing).
+   * replay re-derives it from the replayed inputs' own facing). Exposed via
+   * the {@link facing} getter so `RapierSimulation` can read it for Hit's
+   * own targeting (M6 ticket 03), the same way {@link position}/
+   * {@link currentVelocity} already expose per-Character state it needs.
    */
-  private facing = 0;
+  private currentFacing = 0;
 
   /** Strongest Impact queued since the last tick, with the shove to apply if it ragdolls. */
   private pendingImpact: PendingImpact | null = null;
@@ -346,6 +366,11 @@ export class CharacterController {
     return { ...this.velocity };
   }
 
+  /** This Character's current facing, world-space yaw in radians (M6, ADR 0045). Used by `RapierSimulation` for Hit's own targeting (ticket 03). */
+  get facing(): number {
+    return this.currentFacing;
+  }
+
   /** Handle of this Character's capsule collider, so `RapierSimulation` can recognise it as the thing another Character bumped into (ticket 04). */
   get colliderHandle(): number {
     return this.collider.handle;
@@ -354,6 +379,25 @@ export class CharacterController {
   /** Handle of the floor collider this tick's ground contact was against, or `undefined` if not grounded (ticket 01) — see {@link currentGroundColliderHandle}. */
   get groundColliderHandle(): number | undefined {
     return this.currentGroundColliderHandle;
+  }
+
+  /** Whether a swing fired THIS tick (M6 ticket 03) — see {@link pendingHitFired}. */
+  get hitFiredThisTick(): boolean {
+    return this.pendingHitFired;
+  }
+
+  /**
+   * Cancels an in-progress Dash burst outright, leaving its cooldown
+   * untouched (M6 tickets 03/04: Hit and Grab both do this to both
+   * participants the instant they connect). A no-op if no burst is active.
+   */
+  cancelDash(): void {
+    this.dash.cancelBurst();
+  }
+
+  /** Registers that this Character was just on the receiving end of a landed Hit (M6 ticket 03) — bumps {@link hitReactEpoch}, called by `RapierSimulation.resolveHit`. */
+  registerHitReceived(): void {
+    this.hitReactEpoch += 1;
   }
 
   /** Sets this tick's Surface-driven top-speed multiplier (ticket 01) — see {@link surfaceTopSpeedMultiplier}. */
@@ -514,9 +558,14 @@ export class CharacterController {
 
     const jumpPressed = input.jumpHeld && !this.jumpHeldLastTick;
     const dashPressed = input.dashHeld && !this.dashHeldLastTick;
+    const hitPressed = input.hitHeld && !this.hitHeldLastTick;
     this.jumpHeldLastTick = input.jumpHeld;
     this.dashHeldLastTick = input.dashHeld;
-    this.facing = input.facing;
+    this.hitHeldLastTick = input.hitHeld;
+    this.currentFacing = input.facing;
+    // Reset every tick, unconditionally — never stale across a tick where
+    // `beginCapsuleTick` (below) doesn't run at all (pure Ragdoll).
+    this.pendingHitFired = false;
 
     // Order matters: read prevState before the machine ticks; compute `settled`
     // from last tick's physics before this tick's world.step().
@@ -556,7 +605,7 @@ export class CharacterController {
 
     this.tickingRagdoll = state === "Ragdoll";
     if (!this.tickingRagdoll) {
-      this.beginCapsuleTick(input, jumpPressed, dashPressed);
+      this.beginCapsuleTick(input, jumpPressed, dashPressed, hitPressed);
     }
   }
 
@@ -624,7 +673,7 @@ export class CharacterController {
   }
 
   /** Controlled / Stagger / Sliding / GettingUp: queue the kinematic capsule's movement, input scaled by the state. */
-  private beginCapsuleTick(input: SimInputs, jumpPressed: boolean, dashPressed: boolean): void {
+  private beginCapsuleTick(input: SimInputs, jumpPressed: boolean, dashPressed: boolean, hitPressed: boolean): void {
     // Stagger/Sliding both dampen *all* movement input — walk, jump and dash
     // — not just walk.
     const fullControl = this.machine.inputScale >= 1;
@@ -641,6 +690,15 @@ export class CharacterController {
     // unify how a burst's momentum carries across a state change).
     const dashBurst = this.dash.beginTick(move, fullControl && dashPressed && this.grounded);
     this.dashSpeed = sliding ? 0 : lengthVec3(dashBurst);
+    // M6 ticket 03: `fullControl` alone already excludes Sliding/Stagger (both
+    // scale `inputScale` below 1) as well as Ragdoll/GettingUp (0) — no
+    // separate "not sliding" check needed, unlike Dash's own extra `grounded`
+    // requirement (a punch doesn't need to be grounded the way a burst does).
+    // Whether it actually *connects* with anyone is `RapierSimulation`'s job,
+    // resolved once every Character's `beginTick` has run this tick — this
+    // only decides "may I swing," exactly like Dash only decides "may I burst."
+    this.pendingHitFired = this.hit.beginTick(fullControl && hitPressed);
+    if (this.pendingHitFired) this.hitEpoch += 1;
     // Ticks down (and, while active, decides this tick's own {@link
     // SpeedPadController.capMultiplier}) regardless of Sliding/Stagger —
     // mirrors Dash's own cooldown, which likewise only advances whenever this
@@ -1009,6 +1067,12 @@ export class CharacterController {
     this.jump.reset();
     this.dash.reset();
     this.dashSpeed = 0;
+    // M6 ticket 03 (code review): Hit mirrors Dash's own cooldown idiom, so
+    // it must also mirror Dash's own reset-on-knockdown behavior — without
+    // this, a Character's Hit stayed locked out for whatever was left of its
+    // cooldown after getting up, while Dash always came back instantly, a
+    // surprising inconsistency between two verbs deliberately built the same way.
+    this.hit.reset();
     this.speedPad.reset();
     this.pendingSpeedPadCapMultiplier = undefined;
     this.pendingLaunchVelocity = undefined;
@@ -1052,15 +1116,18 @@ export class CharacterController {
       motionState: state,
       respawnCount: this.respawnCount,
       ragdollEpoch: this.ragdollEpoch,
+      hitEpoch: this.hitEpoch,
+      hitReactEpoch: this.hitReactEpoch,
       ragdollCause: this.ragdollCause,
       dashCooldownMs: this.dash.cooldownMs,
       dashing: this.dash.isActive,
       dashSpeed: this.dashSpeed,
+      hitCooldownMs: this.hit.cooldownMs,
       speedPadEpoch: this.speedPadEpoch,
       speedPadMsLeft: this.speedPad.msLeft,
       speedPadCapMultiplier: this.speedPad.peak,
       launchPadEpoch: this.launchPadEpoch,
-      facing: this.facing,
+      facing: this.currentFacing,
       bones,
     };
   }
@@ -1166,6 +1233,7 @@ export class CharacterController {
     this.airbornePeakFallSpeed = 0;
     this.machine.snapTo(base.motionState);
     this.dash.restoreCooldownMs(base.dashCooldownMs, base.dashing);
+    this.hit.restoreCooldownMs(base.hitCooldownMs);
     this.speedPad.restoreFromMs(base.speedPadMsLeft, base.speedPadCapMultiplier);
     // The one-shot write itself is never replayed here — only the decay
     // curve above. Whether the replay that follows fires a *fresh* one-shot

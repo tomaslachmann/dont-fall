@@ -1,0 +1,63 @@
+import type * as THREE from "three";
+import { isOneShotFinished, type CharacterActions } from "./characterModel.js";
+
+/**
+ * Drives the Punch/HitReact one-shot overlays (M6 ticket 03) from a
+ * Character's `hitEpoch`/`hitReactEpoch` — one instance per rig (local and
+ * every real remote one, ADR 0046), mirroring how each rig already tracks
+ * its own Ragdoll/GettingUp state independently.
+ *
+ * Deliberately ignores the epochs it sees on its own first `update` call,
+ * seeding them as a baseline instead of reacting — the same cold-start class
+ * of bug `deathClipPlan.ts`'s `snapDown`/`coldReverse` cases exist to fix
+ * (code review, M6 ticket 02): a rig built for a Character that already has
+ * a nonzero `hitEpoch`/`hitReactEpoch` (joining a Match in progress) must
+ * never treat that as "a fresh swing just happened."
+ */
+export class HitReactionPlayer {
+  private lastHitEpoch: number | null = null;
+  private lastHitReactEpoch: number | null = null;
+  private active: THREE.AnimationAction | null = null;
+
+  /**
+   * Call once per frame, before deciding ordinary locomotion. Returns the
+   * reaction currently playing, or `null` if none is active (or it just
+   * finished) — the caller treats a non-null return as "skip locomotion
+   * selection this frame, this overlay owns the model."
+   */
+  update(hitEpoch: number, hitReactEpoch: number, actions: CharacterActions, crossfadeSeconds: number): THREE.AnimationAction | null {
+    if (this.lastHitEpoch === null || this.lastHitReactEpoch === null) {
+      this.lastHitEpoch = hitEpoch;
+      this.lastHitReactEpoch = hitReactEpoch;
+    } else {
+      const hitChanged = hitEpoch !== this.lastHitEpoch;
+      const hitReactChanged = hitReactEpoch !== this.lastHitReactEpoch;
+      this.lastHitEpoch = hitEpoch;
+      this.lastHitReactEpoch = hitReactEpoch;
+      // Code review, M6 ticket 03: starting both in the same call (a mutual
+      // exchange — this Character's own swing lands on someone the same
+      // tick it's also hit) used to start Punch, then immediately fade it
+      // back out again to start HitReact, before Punch ever played a frame
+      // — correct by accident of check order, not by design. Being hit is
+      // the more urgent, forced reaction; a voluntary swing's effect on the
+      // target already landed regardless of whether this Character's own
+      // Punch clip gets to play, so HitReact wins outright and Punch is
+      // never started at all when both happen together.
+      if (hitReactChanged && actions.hitReact) {
+        this.start(actions.hitReact, crossfadeSeconds);
+      } else if (hitChanged && actions.punch) {
+        this.start(actions.punch, crossfadeSeconds);
+      }
+    }
+
+    if (this.active && isOneShotFinished(this.active)) this.active = null;
+    return this.active;
+  }
+
+  private start(action: THREE.AnimationAction, crossfadeSeconds: number): void {
+    if (this.active === action) return; // already playing this exact reaction — don't restart it
+    action.reset().fadeIn(crossfadeSeconds).play();
+    this.active?.fadeOut(crossfadeSeconds);
+    this.active = action;
+  }
+}

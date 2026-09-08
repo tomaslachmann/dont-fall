@@ -37,6 +37,10 @@ export interface RenderCharacter {
   velocity: Vec3;
   grounded: boolean;
   dashing: boolean;
+  /** Not interpolated — the Epoch idiom, diffed against the last-seen value to trigger the Punch animation exactly once (M6 ticket 03, ADR 0046). */
+  hitEpoch: number;
+  /** Not interpolated — same idiom, triggers the HitReact animation exactly once. */
+  hitReactEpoch: number;
 }
 
 export interface RenderState {
@@ -86,6 +90,8 @@ export const interpolateState = (
       velocity: { ...n.velocity },
       grounded: n.grounded,
       dashing: n.dashing,
+      hitEpoch: n.hitEpoch,
+      hitReactEpoch: n.hitReactEpoch,
     };
   }
 

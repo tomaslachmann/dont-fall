@@ -585,6 +585,7 @@ const boot = async (
       moveDirection: movementDirection(keyboard.movementKeys(), look.yaw),
       jumpHeld: keyboard.jumpHeld(),
       dashHeld: keyboard.dashHeld(),
+      hitHeld: keyboard.hitHeld(),
       // M6, ADR 0045: the plain angle the camera already resolved to, not the
       // camera itself — the simulation stays exactly as camera-agnostic as
       // moveDirection already keeps it (ADR 0009).
@@ -757,6 +758,8 @@ const boot = async (
       c.grounded,
       c.dashing,
       c.dashSpeed,
+      c.hitEpoch,
+      c.hitReactEpoch,
     );
     // Spinner phase is a pure function of the tick and the client can compute
     // it at any tick exactly — so render it at the *prediction* tick, matching
@@ -824,6 +827,7 @@ const boot = async (
         qualified,
         placement,
         dashCooldownMs: c.dashCooldownMs,
+        hitCooldownMs: c.hitCooldownMs,
         netMetricsText: netMetrics.format(),
       }),
     );

@@ -46,6 +46,10 @@ export interface CharacterActions {
   jump: THREE.AnimationAction | null;
   /** Doubles for both Ragdoll (forward) and GettingUp (reverse) — see `scene.ts`'s own Death-clip driving logic. */
   death: THREE.AnimationAction | null;
+  /** Plays once on the striker the instant their own Hit swing fires (M6 ticket 03) — see `HitReactionPlayer`. */
+  punch: THREE.AnimationAction | null;
+  /** Plays once on a Character the instant it's on the receiving end of a landed Hit (M6 ticket 03) — see `HitReactionPlayer`. */
+  hitReact: THREE.AnimationAction | null;
 }
 
 /**
@@ -65,8 +69,26 @@ export const loadCharacterActions = (mixer: THREE.AnimationMixer, animations: TH
     death.setLoop(THREE.LoopOnce, 1);
     death.clampWhenFinished = true;
   }
-  return { idle: clipAction("Idle"), walk: clipAction("Walk"), run: clipAction("Run"), jump: clipAction("Jump_Idle"), death };
+  // Punch/HitReact (M6 ticket 03): one-shot overlays, but unlike Death they
+  // hand back to ordinary locomotion the instant they finish rather than
+  // holding on the last frame — `clampWhenFinished: false`.
+  const punch = clipAction("Punch");
+  if (punch) punch.setLoop(THREE.LoopOnce, 1);
+  const hitReact = clipAction("HitReact");
+  if (hitReact) hitReact.setLoop(THREE.LoopOnce, 1);
+  return {
+    idle: clipAction("Idle"),
+    walk: clipAction("Walk"),
+    run: clipAction("Run"),
+    jump: clipAction("Jump_Idle"),
+    death,
+    punch,
+    hitReact,
+  };
 };
+
+/** Whether a one-shot action (Punch, HitReact — never looping) has finished playing out. */
+export const isOneShotFinished = (action: THREE.AnimationAction): boolean => action.time >= action.getClip().duration;
 
 /**
  * The actual clip for a {@link LocomotionState} — `run` falls back to `walk`

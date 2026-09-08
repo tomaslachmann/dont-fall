@@ -58,9 +58,9 @@ beforeAll(async () => {
   await initPhysics();
 });
 
-const NORTH: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false, facing: 0 };
-const EAST: SimInputs = { moveDirection: { x: 1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0 };
-const IDLE: SimInputs = { moveDirection: { x: 0, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0 };
+const NORTH: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false };
+const EAST: SimInputs = { moveDirection: { x: 1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false };
+const IDLE: SimInputs = { moveDirection: { x: 0, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false };
 const SERVER_CLOCK_OFFSET = 5000; // server performance.now() leads the client's by this
 
 interface HarnessOpts {
@@ -601,7 +601,7 @@ class Harness {
 
   get currentInput(): SimInputs {
     if (this.inputForNow) return this.inputForNow(this.now);
-    if (this.o.walkIntoWall) return { moveDirection: { x: -1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0 };
+    if (this.o.walkIntoWall) return { moveDirection: { x: -1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false };
     return this.o.walkDir === "east" ? EAST : NORTH;
   }
 
@@ -829,8 +829,8 @@ describe("PROPOSAL — tested against the baseline (research §5)", () => {
   });
 
   it("does the capsule offset add lag on a direction change? (open ground, N→W turn at t=2s)", () => {
-    const N: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false, facing: 0 };
-    const W: SimInputs = { moveDirection: { x: -1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0 };
+    const N: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false };
+    const W: SimInputs = { moveDirection: { x: -1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false };
     for (const [label, opts] of [
       ["baseline", {}],
       ["PROPOSAL", PROPOSAL],
@@ -970,8 +970,8 @@ describe("60 fps render cap — proposal must hold here", () => {
   });
 
   it("PROPOSAL @60 fps — a direction change adds no input lag", () => {
-    const N: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false, facing: 0 };
-    const W: SimInputs = { moveDirection: { x: -1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0 };
+    const N: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false };
+    const W: SimInputs = { moveDirection: { x: -1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false };
     const lag = (opts: Partial<HarnessOpts>): number => {
       const h = new Harness(at60({ ...CAPABLE, owdMs: 45, jitterMs: 20, ...opts }));
       h.inputForNow = (t) => (t < 2500 ? N : W);

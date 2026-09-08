@@ -14,9 +14,11 @@ export type { CharacterMotionState, BoneSnapshot, PropSnapshot };
  * pad, an updraft), never a separate rule of its own. `"Disconnect"` (M5
  * ticket 04): a mid-Round drop, distinct from `"Fall"` since nothing fell —
  * plain JSON today, so a fifth value costs nothing; needs 3 bits instead of
- * 2 whenever binary encoding lands.
+ * 2 whenever binary encoding lands. `"Hit"` (M6 ticket 03): a landed swing —
+ * distinct from `"Bump"` even though both feed the identical Impact
+ * pipeline, since one was thrown on purpose and the other wasn't.
  */
-export type RagdollCause = "Bump" | "Fall" | "WallImpact" | "Spinner" | "Disconnect";
+export type RagdollCause = "Bump" | "Fall" | "WallImpact" | "Spinner" | "Disconnect" | "Hit";
 
 export interface CharacterSnapshot {
   /** The point the camera follows: capsule centre while upright, pelvis while ragdolling. */
@@ -43,6 +45,8 @@ export interface CharacterSnapshot {
   dashing: boolean;
   /** Current horizontal speed (units/s) contributed by an active Dash burst; 0 when not dashing. */
   dashSpeed: number;
+  /** Milliseconds left on the Hit cooldown (M6 ticket 03); 0 means a swing is ready. */
+  hitCooldownMs: number;
   /**
    * Rises every time a speed/slow pad fires (M3.7 ticket 01, ADR 0035) — the
    * Epoch idiom (CONTEXT.md), same as {@link ragdollEpoch}/{@link respawnCount}.
@@ -114,6 +118,23 @@ export interface CharacterSnapshot {
   /** Why the current / most recent knockdown happened (ADR 0023). */
   ragdollCause: RagdollCause;
   /**
+   * Rises every time this Character's own Hit swing fires (M6 ticket 03) —
+   * the Epoch idiom, same as {@link ragdollEpoch}. Whether or not it actually
+   * connects with anyone (a separate, cross-Character question): pressing
+   * the button and being off cooldown is enough for this to rise, exactly
+   * like `speedPadEpoch` cares only about this Character's own trigger, not
+   * an outcome. Drives the Punch animation.
+   */
+  hitEpoch: number;
+  /**
+   * Rises every time this Character is on the receiving end of a landed Hit
+   * (M6 ticket 03) — unlike `hitEpoch`, this is authoritative, cross-Character
+   * state only the server (or a full multi-Character sim) can ever actually
+   * resolve, never re-derivable locally the way `speedPadEpoch` is. Drives
+   * the HitReact animation.
+   */
+  hitReactEpoch: number;
+  /**
    * The sim tick the current `motionState` phase began. The client derives the
    * GettingUp blend from it locally (anchor-tick + local derivation, the
    * `spinnerAngleAt` pattern) rather than the server sending a progress float.
@@ -166,6 +187,7 @@ export interface CharacterSnapshotFields {
   dashCooldownMs?: number;
   dashing?: boolean;
   dashSpeed?: number;
+  hitCooldownMs?: number;
   speedPadEpoch?: number;
   speedPadMsLeft?: number;
   speedPadCapMultiplier?: number;
@@ -173,6 +195,8 @@ export interface CharacterSnapshotFields {
   facing?: number;
   lastInputTick?: number;
   ragdollEpoch?: number;
+  hitEpoch?: number;
+  hitReactEpoch?: number;
   ragdollCause?: RagdollCause;
   phaseStartTick?: number;
   bones?: BoneSnapshot[];
@@ -197,6 +221,7 @@ export type ReconcileBase = Pick<
   | "motionState"
   | "dashCooldownMs"
   | "dashing"
+  | "hitCooldownMs"
   | "speedPadMsLeft"
   | "speedPadCapMultiplier"
   // M4 ticket 02: Qualification is latched and locks input, so the client
@@ -220,6 +245,7 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   dashCooldownMs: fields.dashCooldownMs ?? 0,
   dashing: fields.dashing ?? false,
   dashSpeed: fields.dashSpeed ?? 0,
+  hitCooldownMs: fields.hitCooldownMs ?? 0,
   speedPadEpoch: fields.speedPadEpoch ?? 0,
   speedPadMsLeft: fields.speedPadMsLeft ?? 0,
   speedPadCapMultiplier: fields.speedPadCapMultiplier ?? 1,
@@ -227,6 +253,8 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   facing: fields.facing ?? 0,
   lastInputTick: fields.lastInputTick ?? 0,
   ragdollEpoch: fields.ragdollEpoch ?? 0,
+  hitEpoch: fields.hitEpoch ?? 0,
+  hitReactEpoch: fields.hitReactEpoch ?? 0,
   ragdollCause: fields.ragdollCause ?? "Fall",
   phaseStartTick: fields.phaseStartTick ?? 0,
   bones: fields.bones ?? [],

@@ -34,10 +34,12 @@ describe("KeyboardInput", () => {
     target.dispatch("keydown", { code: "KeyW", preventDefault: () => {} });
     target.dispatch("keydown", { code: "Space", preventDefault: () => {} });
     target.dispatch("keydown", { code: "ShiftLeft", preventDefault: () => {} });
+    target.dispatch("keydown", { code: "KeyF", preventDefault: () => {} });
 
     expect(keyboard.movementKeys()).toEqual({ forward: true, back: false, left: false, right: false });
     expect(keyboard.jumpHeld()).toBe(true);
     expect(keyboard.dashHeld()).toBe(true);
+    expect(keyboard.hitHeld()).toBe(true);
   });
 
   it("clears held keys on blur, so a key held while the tab loses focus doesn't stick", () => {

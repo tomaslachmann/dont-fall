@@ -34,6 +34,7 @@ import {
 } from "../input/camera/springArm.js";
 import { listen } from "../lib/listeners.js";
 import { disposeSceneGraph } from "./disposeSceneGraph.js";
+import { HitReactionPlayer } from "./hitReactionPlayer.js";
 import { selectLocomotion } from "./locomotionAnimation.js";
 import { createRemoteCharacterPool } from "./remoteCharacterPool.js";
 import { createSpeedLines } from "./speedLines.js";
@@ -116,7 +117,9 @@ export interface Stage {
    * `dashSpeed` are read straight from input/the latest snapshot, never fed
    * back into the sim. `dashSpeed` (0 when not dashing) drives the
    * speed-lines effect directly — a simulation-owned value, not derived from
-   * position, so it is immune to reconciliation noise/pops.
+   * position, so it is immune to reconciliation noise/pops. `hitEpoch`/
+   * `hitReactEpoch` (M6 ticket 03) drive the Punch/HitReact one-shot
+   * overlays, which take priority over ordinary locomotion while playing.
    */
   updateCharacterAnimation: (
     deltaSeconds: number,
@@ -124,6 +127,8 @@ export interface Stage {
     grounded: boolean,
     dashing: boolean,
     dashSpeed: number,
+    hitEpoch: number,
+    hitReactEpoch: number,
   ) => void;
   /**
    * Give back everything this Stage took: the canvas, its WebGL context, every
@@ -300,6 +305,8 @@ export const createStage = ({
 
   /** The last `motionState` seen, to detect the Ragdoll/GettingUp/Controlled edges. */
   let visualState: CharacterMotionState = "Controlled";
+  /** Drives the Punch/HitReact one-shot overlays (M6 ticket 03). */
+  const hitReactionPlayer = new HitReactionPlayer();
 
   let wobbleState = initialWobbleState;
   // Seeded lazily on the first updateCharacterAnimation call (null here would
@@ -413,7 +420,7 @@ export const createStage = ({
         mesh.updateMatrixWorld();
       }
     },
-    updateCharacterAnimation: (deltaSeconds, moveDirection, grounded, dashing, dashSpeed) => {
+    updateCharacterAnimation: (deltaSeconds, moveDirection, grounded, dashing, dashSpeed, hitEpoch, hitReactEpoch) => {
       const currentPosition: Vec3 = { x: character.position.x, y: character.position.y, z: character.position.z };
       // Lazily seeded so the very first call (before any real movement) reads
       // as zero velocity rather than a jump from an arbitrary creation-time value.
@@ -437,6 +444,16 @@ export const createStage = ({
       // Ragdoll (forward Death) and GettingUp (reverse Death) are both driven
       // from applyRenderState and fully own the model's pose while they hold.
       if (isDownMotionState(visualState)) {
+        mixer.update(deltaSeconds);
+        return;
+      }
+
+      // M6 ticket 03: Punch/HitReact take priority over ordinary locomotion
+      // while playing — the caller (this method) never picks a locomotion
+      // clip on a frame where a reaction is still in progress.
+      const reacting = hitReactionPlayer.update(hitEpoch, hitReactEpoch, actions, LOCOMOTION_CROSSFADE_SECONDS);
+      if (reacting) {
+        activeAction = reacting;
         mixer.update(deltaSeconds);
         return;
       }
