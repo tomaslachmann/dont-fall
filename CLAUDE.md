@@ -122,9 +122,29 @@ last Player dropped mid-Round (which also meant no later Race could end by every
 pick freezing everyone already in the Lobby by restarting the Tick epoch under their already-seeded
 prediction tick (ADR 0027), and a DNF'd Player listed twice on the Results Screen.
 
-**Next:** M6 — Hit and Grab, and a real remote Character. Reordered ahead of multi-Round
-advancement: Survival (M5) is only as good as the shoving it enables, and every Character
-but your own still renders as a capsule (ADR 0045, ADR 0046).
+**M6 + M6.1 done** — Hit and Grab, and a real remote Character (`docs/milestones/M6.md`,
+`M6.1.md`). Reordered ahead of multi-Round advancement: Survival (M5) is only as good as the
+shoving it enables, and every Character but your own still rendered as a capsule. Tickets in
+`.scratch/m6-hit-grab-real-character/` and `.scratch/m6.1-hit-that-lands/`: replicated `facing`
+(01, ADR 0045); the capsule placeholder retired for a real oriented, animated model (02, ADR 0046);
+Hit (03); Grab (04); a ragdoll that holds its shape — joint limits plus self-collision, after
+measuring pelvis-to-head collapse at `0.07` under gravity alone with free ball joints (05, ADR
+0047). M6.1 then made a Hit able to knock down at all (hold-to-charge, superseding an approach-speed
+design that let a swing fire from a Dash) and replaced the reversed-`Death`-clip knockdown with one
+posed from the ragdoll's own eleven bones (ADR 0048), plus Grab's procedural arm-reach and a facing
+lock so a held pair strafes instead of spinning.
+
+Live verification found what the suites did not: `Ragdoll.activate` applied its impulse to a body
+Rapier had not yet given a mass (`chest.mass() === 0` after the bone had sat `Fixed`), so
+`applyImpulse` was a silent no-op and a full-charge Hit knocked nobody down. Both milestones'
+end-of-milestone verification tickets had sat unfinished while that reached the player — which is
+why M7 has no such ticket.
+
+**Next:** M7 — a Match, not a Round (`docs/milestones/M7.md`). Design settled in a grilling session
+and recorded as **ADR 0049**: elimination stops being a property of the Match and becomes a property
+of a Round, every Round pays Score by placement, and the highest total after a fixed number of
+Rounds wins. This closes the oldest contradiction in the repo — `CONTEXT.md` has always defined a
+Match as running "to a single winner, made of several Rounds", and the code has only ever run one.
 
 ## Tech stack
 
@@ -182,7 +202,8 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 | **M5** | Two Round types on one engine — a Round type becomes shared data (ADR 0041/0042/0043), proven by building Survival. |
 | **M6** | Hit and Grab, and a real remote Character — replicated `facing` (ADR 0045), the capsule placeholder retired (ADR 0046). |
 | **M6.1** | A Hit that lands, and a fall you can watch — a Hit that can knock down, and a knockdown drawn from the ragdoll's own bones. |
-| later | Multi-Round advancement, collapsing terrain, Power-ups, Betting/Spectator, level themes, the Skyfall final. |
+| **M7** | A Match, not a Round — several Rounds back to back, scored by placement, ending with a winner (ADR 0049). |
+| later | Collapsing terrain, Power-ups, Betting/Spectator, reconnection, level themes, the Skyfall final. |
 
 ## Working agreements
 

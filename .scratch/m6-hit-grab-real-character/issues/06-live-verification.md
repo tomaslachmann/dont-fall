@@ -6,7 +6,8 @@ Characters, Hit, and Grab, together, plus the 12-player performance bar ADR 0011
 **Blocked by:** 02 — A real, oriented, animated remote Character; 03 — Hit; 04 — Grab (Hold);
 05 — Ragdoll, které drží tvar těla
 
-**Status:** ready-for-agent
+**Status:** done — every item below was verified and ticked; only the status line was never
+flipped. Closed 2026-09-08 while planning M7.
 
 - [x] Two real browsers: one Player Hits another, both see the Impact and the Dash
       cancellation land correctly on the real, correctly-oriented remote model

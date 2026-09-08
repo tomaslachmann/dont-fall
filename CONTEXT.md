@@ -21,14 +21,26 @@ _Avoid_: avatar, player (when you mean the body), pawn
 ### Match structure
 
 **Match**:
-One full session from Lobby to a single winner, made of several Rounds.
+One full session from Lobby to a single winner, made of several Rounds. The winner
+is whoever holds the highest Score when the last Round ends — nobody is knocked out
+of a Match along the way (ADR 0049).
 _Avoid_: game, session
+
+**Match length**:
+How many Rounds a Match runs. Set in the Lobby before it starts, and fixed for its
+duration — a Match never ends early because someone reached a Score.
 
 **Round**:
 One run through a single obstacle course within a Match, played by one Round type.
-Ends when that Round type's condition is met or the Time Limit expires; whoever
-Qualified advances to the next Round.
+Ends when that Round type's condition is met or the Time Limit expires. Every Player
+plays every Round; what a Round decides is Score, not who continues.
 _Avoid_: level, stage, kolo, heat
+
+**Score**:
+What a Player has earned across the Rounds of a Match so far. Match-scoped: it is
+built from the Rounds already played and ceases to exist when the Match ends.
+Distinct from XP and coins, which persist across Matches.
+_Avoid_: points, score total, rating
 
 **Round type**:
 The rules a Round runs by: what Qualifies you, what eliminates you, and what ends
@@ -55,17 +67,21 @@ A Round type where Players are split into teams and advance by team result.
 
 **Final Race**:
 The last Round of a Match. May be a special mode (see Skyfall) rather than a
-plain Race.
+plain Race. _Intended, not built_: since ADR 0049 the last Round is an ordinary
+Round that pays ordinary Score, and making it decisive needs an answer to "what if
+someone is already uncatchable" that scoring alone does not give.
 
 **Qualification**:
-The condition for advancing out of a Round — reaching the Finish Zone, or being
-among the survivors, before the Round ends.
+The condition for finishing a Round well — reaching the Finish Zone, or being among
+the survivors, before the Round ends. It is the top scoring tier, not a gate: since
+ADR 0049 everyone plays the next Round regardless, and Qualifying pays a bonus.
 _Avoid_: passing, promotion
 
 **Elimination**:
-A Player who did not Qualify before the Round ended. What eliminates you is the
-Round type's rule: in a Race a Fall never eliminates, it only costs time through
-Respawn with a penalty; in Survival it is exactly what does.
+A Player who did not Qualify before the Round ended. Applies to that Round only —
+they play the next one. What eliminates you is the Round type's rule: in a Race a
+Fall never eliminates, it only costs time through Respawn with a penalty; in
+Survival it is exactly what does.
 _Avoid_: death, KO
 
 **Time Limit**:
@@ -92,9 +108,16 @@ their input is locked.
 _Avoid_: warmup
 
 **Results**:
-The Screen after a Round ends — rank with Qualified ordered by finish time and the rest
-by Track progress, and a way back to the Lobby.
+The rank a single Round produced — Qualified ordered by finish time and the rest by
+how far they got. What the Standings shows for the Round just played.
 _Avoid_: scoreboard, leaderboard
+
+**Standings**:
+The Screen between Rounds and at the end of a Match — the Results of the Round just
+played, next to every Player's running Score. Between Rounds it advances into the
+next Countdown on its own; at the end of a Match it names the winner and waits for
+the host to return everyone to the Lobby.
+_Avoid_: scoreboard, leaderboard, table
 
 ### Track
 
@@ -271,8 +294,10 @@ _Avoid_: item, ability, buff
 ### Meta
 
 **Spectator Mode**:
-The camera state a Player enters after a Fall that eliminates them — they watch
-the remaining Players.
+The camera state a Player enters after a Fall that eliminates them — they follow a
+Player still in the Round, and may switch between them. Lasts until the Round ends,
+never longer: since ADR 0049 elimination is a Round's business, so the next Round
+starts them playing again.
 
 **Bet**:
 A prediction an eliminated Player makes in Spectator Mode about who wins the
