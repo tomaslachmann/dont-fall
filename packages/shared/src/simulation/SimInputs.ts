@@ -15,6 +15,20 @@ export interface SimInputs {
   jumpHeld: boolean;
   /** Whether the dash button is held this tick. */
   dashHeld: boolean;
+  /** Whether the Hit button is held this tick (M6 ticket 03). */
+  hitHeld: boolean;
+  /** Whether the Grab button is held this tick (M6 ticket 04). */
+  grabHeld: boolean;
+  /**
+   * Which way this Character is looking, world-space yaw in radians (M6, ADR
+   * 0045). Sent from the owning client's own camera every tick, exactly like
+   * {@link moveDirection} — the simulation never needs to know about the
+   * camera itself, only the plain angle it resolved to. Unlike moveDirection,
+   * this is not derived from movement: a Character can face one way while
+   * walking another (strafing, backpedaling), which is exactly the case Hit
+   * and Grab need to aim correctly.
+   */
+  facing: number;
 }
 
 /** "The Player is not doing anything this tick." */
@@ -22,4 +36,7 @@ export const IDLE_INPUTS: SimInputs = {
   moveDirection: vec3(),
   jumpHeld: false,
   dashHeld: false,
+  hitHeld: false,
+  grabHeld: false,
+  facing: 0,
 };

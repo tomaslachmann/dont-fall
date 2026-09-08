@@ -1,3 +1,4 @@
+import { lerpAngle } from "../math/angle.js";
 import { slerpQuat, type Quat } from "../math/quat.js";
 import { lerpVec3, type Vec3 } from "../math/vec3.js";
 import type { CharacterMotionState } from "../simulation/CharacterStateMachine.js";
@@ -20,6 +21,30 @@ export interface RenderCharacter {
   bones: BoneSnapshot[];
   /** Not interpolated — a discrete state, taken straight from `next`. */
   motionState: CharacterMotionState;
+  /**
+   * World-space yaw in radians (M6, ADR 0045) — interpolated by the shortest
+   * arc (never a plain lerp, which would spin the long way around the +/-PI
+   * seam), on the same discontinuities `position` snaps on. Orients a remote
+   * Character's rendered model (ADR 0046).
+   */
+  facing: number;
+  /**
+   * Not interpolated — taken straight from `next`, like `motionState`. Drives
+   * a remote Character's locomotion animation selection (ADR 0046); no
+   * visual quantity needs it smoothed, only the discrete idle/walk/run/jump
+   * decision it feeds.
+   */
+  velocity: Vec3;
+  grounded: boolean;
+  dashing: boolean;
+  /** Not interpolated — the Epoch idiom, diffed against the last-seen value to trigger the Punch animation exactly once (M6 ticket 03, ADR 0046). */
+  hitEpoch: number;
+  /** Not interpolated — same idiom, triggers the HitReact animation exactly once. */
+  hitReactEpoch: number;
+  /** Not interpolated — taken straight from `next`, like `dashing`. Drives a grabbing Character's arm-reach pose (M6.1); `null` for everyone not currently grabbing someone. */
+  grabbingId: string | null;
+  /** Not interpolated — the reverse of {@link grabbingId} (M6.1): whether (and by whom) this Character is currently held, which locks its own rendered facing to the server's frozen value instead of steering it from movement input. */
+  heldByGrabberId: string | null;
 }
 
 export interface RenderState {
@@ -65,6 +90,14 @@ export const interpolateState = (
         ? n.bones.map((b) => ({ position: { ...b.position }, rotation: { ...b.rotation } }))
         : interpolatePosed(p.bones, n.bones, t),
       motionState: n.motionState,
+      facing: lerpAngle(p.facing, n.facing, t),
+      velocity: { ...n.velocity },
+      grounded: n.grounded,
+      dashing: n.dashing,
+      hitEpoch: n.hitEpoch,
+      hitReactEpoch: n.hitReactEpoch,
+      grabbingId: n.grabbingId,
+      heldByGrabberId: n.heldByGrabberId,
     };
   }
 

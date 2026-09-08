@@ -40,10 +40,10 @@ describe("arena (M5 ticket 06) — one open platform over the void, no walls", (
   });
 
   it("has no walls, no bridges — you can fall off it in every direction", () => {
-    const NORTH = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false };
-    const SOUTH = { moveDirection: { x: 0, y: 0, z: 1 }, jumpHeld: false, dashHeld: false };
-    const EAST = { moveDirection: { x: 1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false };
-    const WEST = { moveDirection: { x: -1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false };
+    const NORTH = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false, grabHeld: false };
+    const SOUTH = { moveDirection: { x: 0, y: 0, z: 1 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false, grabHeld: false };
+    const EAST = { moveDirection: { x: 1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false, grabHeld: false };
+    const WEST = { moveDirection: { x: -1, y: 0, z: 0 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false, grabHeld: false };
 
     for (const [label, input] of [
       ["north", NORTH],

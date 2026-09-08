@@ -1,10 +1,6 @@
 import {
   CAPSULE_BOTTOM_OFFSET,
-  CAPSULE_HALF_HEIGHT,
-  CAPSULE_RADIUS,
   DASH_SPEED,
-  GETUP_MS,
-  RAGDOLL_BONES,
   IDENTITY_QUAT,
   isDownMotionState,
   spinnerAngleAt,
@@ -20,7 +16,16 @@ import {
   type Vec3,
 } from "@dont-fall/shared";
 import * as THREE from "three";
-import type { CharacterModel } from "./characterModel.js";
+import { ARM_REACH_TARGET_HEIGHT, createArmReachPlayer } from "./armReach.js";
+import { nextModelYaw } from "./modelFacing.js";
+import {
+  actionFor,
+  crossfadeLocomotion,
+  loadCharacterActions,
+  LOCOMOTION_CROSSFADE_SECONDS,
+  RAGDOLL_PELVIS_TO_FEET,
+  type CharacterModel,
+} from "./characterModel.js";
 import {
   CAMERA_DISTANCE,
   CAMERA_MIN_DISTANCE,
@@ -29,6 +34,11 @@ import {
   springArmPosition,
 } from "../input/camera/springArm.js";
 import { listen } from "../lib/listeners.js";
+import { disposeSceneGraph } from "./disposeSceneGraph.js";
+import { HitReactionPlayer } from "./hitReactionPlayer.js";
+import { selectLocomotion } from "./locomotionAnimation.js";
+import { createRagdollPose } from "./ragdollPose.js";
+import { createRemoteCharacterPool } from "./remoteCharacterPool.js";
 import { createSpeedLines } from "./speedLines.js";
 import { initialWobbleState, stepWobble } from "./wobble.js";
 
@@ -36,12 +46,6 @@ const BACKGROUND_COLOR = 0x0b0e14;
 
 /** Standing height (units) the loaded model is rescaled to, a touch taller than the capsule. */
 const CHARACTER_VISUAL_HEIGHT = 2 * CAPSULE_BOTTOM_OFFSET + 0.35;
-
-/** How fast (rad/s) the model turns to face its movement direction. */
-const FACING_TURN_SPEED = 14;
-
-/** Locomotion clip crossfade duration (s). */
-const ANIMATION_CROSSFADE = 0.15;
 
 /**
  * Procedural Wobble lean (ticket 07), temporarily OFF. It derives acceleration
@@ -52,16 +56,6 @@ const ANIMATION_CROSSFADE = 0.15;
  * velocity instead of position deltas (the same fix speed-lines already got).
  */
 const WOBBLE_ENABLED = false;
-
-/**
- * Vertical distance from the ragdoll's pelvis (its `RenderState.character.position`
- * while Ragdoll/GettingUp) down to the feet — the pelvis rest offset from the
- * capsule centre plus the capsule's own centre-to-feet distance. Lets the
- * Ragdoll collapse anchor be derived from the pelvis alone, correct whether it
- * came from a live Impact or a Fall's Respawn teleport (both activate the
- * ragdoll the same way, at the capsule-centre convention).
- */
-const RAGDOLL_PELVIS_TO_FEET = CAPSULE_BOTTOM_OFFSET + RAGDOLL_BONES.find((b) => b.name === "pelvis")!.restCenter.y;
 
 export interface StageConfig {
   /**
@@ -98,13 +92,23 @@ export interface Stage {
   /** Place the local player's Character mesh from an interpolated snapshot. Presentation only (ADR 0009). */
   applyRenderState: (state: StageRenderState) => void;
   /**
-   * Place every OTHER player's Character (ticket 04), keyed by session ID and
-   * interpolated from server snapshots — never predicted (ADR 0003). Meshes
-   * are pooled per ID and removed when an ID drops out of the set (a
-   * disconnect). Drawn as a plain tinted capsule, tipped over while the player
-   * is Ragdoll/GettingUp so a Bump reads at a glance.
+   * Place and animate every OTHER player's Character (M2 ticket 04, real
+   * model since M6 ticket 02 / ADR 0046), keyed by session ID and
+   * interpolated from server snapshots — never predicted (ADR 0003). Rigs
+   * are pooled per ID (one real, tinted clone of the shared model each) and
+   * torn down when an ID drops out of the set (a disconnect). `deltaSeconds`
+   * advances each rig's own `AnimationMixer`, exactly like the local
+   * Character's own `updateCharacterAnimation`.
+   * `localId`/`localPosition` (M6.1) let a remote rig's own arm-reach pose
+   * target the LOCAL player when it's the one being grabbed — see
+   * `RemoteCharacterPool.apply`.
    */
-  applyRemoteCharacters: (characters: Record<string, RenderCharacter>) => void;
+  applyRemoteCharacters: (
+    characters: Record<string, RenderCharacter>,
+    deltaSeconds: number,
+    localId: string,
+    localPosition: Vec3,
+  ) => void;
   /** Position the camera on a collision-resolved spring arm around `target`. */
   updateCamera: (target: Vec3, yaw: number, pitch: number) => void;
   /**
@@ -120,7 +124,17 @@ export interface Stage {
    * `dashSpeed` are read straight from input/the latest snapshot, never fed
    * back into the sim. `dashSpeed` (0 when not dashing) drives the
    * speed-lines effect directly — a simulation-owned value, not derived from
-   * position, so it is immune to reconciliation noise/pops.
+   * position, so it is immune to reconciliation noise/pops. `hitEpoch`/
+   * `hitReactEpoch` (M6 ticket 03) drive the Punch/HitReact one-shot
+   * overlays, which take priority over ordinary locomotion while playing.
+   * `grabTargetPosition` (M6.1), given whenever this Character is currently
+   * grabbing someone, is that Character's own world position — the rig has
+   * no Grab clip, so the arms procedurally reach toward it instead
+   * (`armReach.ts`); `undefined` leaves the arms at whatever the ordinary
+   * locomotion clip already has them doing. `facingLocked` (M6.1) freezes the
+   * model's cosmetic yaw outright for as long as this Character is in a Grab
+   * hold, in either role — see `nextModelYaw`'s own doc comment for why a
+   * held Character must strafe rather than turn.
    */
   updateCharacterAnimation: (
     deltaSeconds: number,
@@ -128,6 +142,10 @@ export interface Stage {
     grounded: boolean,
     dashing: boolean,
     dashSpeed: number,
+    hitEpoch: number,
+    hitReactEpoch: number,
+    grabTargetPosition: Vec3 | undefined,
+    facingLocked: boolean,
   ) => void;
   /**
    * Give back everything this Stage took: the canvas, its WebGL context, every
@@ -154,29 +172,6 @@ const boxMesh = (box: OrientedBox, material: THREE.Material): THREE.Mesh => {
   const q = box.rotation ?? IDENTITY_QUAT;
   mesh.quaternion.set(q.x, q.y, q.z, q.w);
   return mesh;
-};
-
-/**
- * Release every GPU resource reachable from `root`. Three.js uploads
- * geometries, materials and textures to the GPU and holds them there until
- * `dispose` is called explicitly — dropping the JS reference frees nothing.
- */
-const disposeSceneGraph = (root: THREE.Object3D): void => {
-  root.traverse((object) => {
-    const mesh = object as Partial<THREE.Mesh> & Partial<THREE.SkinnedMesh>;
-    mesh.geometry?.dispose();
-    mesh.skeleton?.dispose();
-    const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
-    for (const material of materials) {
-      // A material's textures hang off it under names that vary by material
-      // type (`map`, `normalMap`, `emissiveMap`, …) — walking its own values
-      // catches them all without enumerating each type's slots.
-      for (const value of Object.values(material)) {
-        if (value instanceof THREE.Texture) value.dispose();
-      }
-      material.dispose();
-    }
-  });
 };
 
 export const createStage = ({
@@ -304,40 +299,32 @@ export const createStage = ({
   character.position.y = CAPSULE_BOTTOM_OFFSET; // arbitrary until the first applyRenderState
   scene.add(character);
 
-  // Other players (ticket 04): one pooled capsule per session ID. Kept
-  // deliberately plain — a different silhouette from the local MushroomKing so
-  // "that's someone else" reads instantly, and cheap enough to scale toward
-  // ADR 0011's 12-player ceiling without cloning a skinned rig per player.
-  const remoteGeometry = new THREE.CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_HALF_HEIGHT * 2, 6, 12);
-  const remoteMaterial = new THREE.MeshStandardMaterial({ color: 0x6ab0ff, roughness: 0.7 });
-  const remoteMeshes = new Map<string, THREE.Mesh>();
+  // Other players (M6 ticket 02, ADR 0046): the same real, animated model the
+  // local Character uses, one clone per session ID, tinted to tell them
+  // apart — retires the flat placeholder capsule M2 ticket 04 stood in with.
+  // Built only after the local model setup above has already scaled/
+  // repositioned `characterModel.scene` in place, so every clone inherits
+  // that same transform (see `remoteCharacterPool.ts`'s own `buildRig`).
+  const remotePool = createRemoteCharacterPool(scene, characterModel);
+  const ragdollPose = createRagdollPose(character);
 
   const mixer = new THREE.AnimationMixer(characterModel.scene);
-  const clipAction = (name: string): THREE.AnimationAction | null => {
-    const clip = THREE.AnimationClip.findByName(characterModel.animations, name);
-    return clip ? mixer.clipAction(clip) : null;
-  };
-  const idleAction = clipAction("Idle");
-  const walkAction = clipAction("Walk");
-  const runAction = clipAction("Run");
-  const jumpAction = clipAction("Jump_Idle");
-  // MushroomKing's own "Death" clip doubles for both Ragdoll and GettingUp:
-  // played forward (then held on the last frame) the moment the Character goes
-  // down, and in reverse to stand back up — no compatible dedicated "get up"
-  // clip exists for this rig (see the Universal Animation Library skeleton
-  // mismatch noted ahead of ticket 07). The physics ragdoll still simulates
-  // underneath for real (Impact response, settle position); only its capsule-
-  // bone visualisation is replaced by this animated model.
-  const deathAction = clipAction("Death");
-  if (deathAction) {
-    deathAction.setLoop(THREE.LoopOnce, 1);
-    deathAction.clampWhenFinished = true;
-  }
+  // A knockdown is drawn from the physics ragdoll's own bones (M6.1 ticket
+  // 02, ADR 0048), retiring the "Death" clip's double duty — it used to play
+  // forward for Ragdoll and in reverse for GettingUp, purely because this rig
+  // has no get-up clip. The ragdoll was always simulating underneath for real;
+  // now it is what you see, so a Character falls the way it was actually hit.
+  const actions = loadCharacterActions(mixer, characterModel.animations);
+  const { idle: idleAction, walk: walkAction } = actions;
   let activeAction: THREE.AnimationAction | null = idleAction;
   activeAction?.play();
 
   /** The last `motionState` seen, to detect the Ragdoll/GettingUp/Controlled edges. */
   let visualState: CharacterMotionState = "Controlled";
+  /** Drives the Punch/HitReact one-shot overlays (M6 ticket 03). */
+  const hitReactionPlayer = new HitReactionPlayer();
+  /** Looked up once — the rig's own arm bones, for Grab's arm-reach pose (M6.1). */
+  const armReachPlayer = createArmReachPlayer(character);
 
   let wobbleState = initialWobbleState;
   // Seeded lazily on the first updateCharacterAnimation call (null here would
@@ -383,45 +370,36 @@ export const createStage = ({
       const leavingDown = !fallingRagdoll && !gettingUp && wasDown;
       visualState = motionState;
 
-      if (enteringRagdoll && deathAction) {
-        // Freeze the model at the impact point, converting the ragdoll's pelvis
-        // (what `position` is while Ragdoll/GettingUp) down to the feet — this
-        // holds whether the ragdoll was just activated by a live Impact or by a
-        // Fall's Respawn teleport, since both activate it the same way. The
-        // physics ragdoll still simulates for real underneath (Impact response,
-        // settle position); only its visual is this canned collapse instead of
-        // the bone puppet.
+      if (fallingRagdoll || gettingUp) {
+        // The knockdown is the ragdoll's own, drawn from its eleven bones
+        // (M6.1 ticket 02, ADR 0048) — the same bones the simulation already
+        // replicates and interpolates, and the same ones GettingUp's own
+        // blend fills, so both phases are one path with no clip to wind
+        // forward or unwind. `position` is the ragdoll's pelvis while down;
+        // seating the rig near it first keeps `apply`'s own correction small.
+        if (enteringRagdoll || enteringGettingUp) {
+          activeAction?.stop();
+          activeAction = null;
+          hitReactionPlayer.stop(actions);
+        }
         character.position.set(position.x, position.y - RAGDOLL_PELVIS_TO_FEET, position.z);
-        activeAction?.fadeOut(0);
-        activeAction = null;
-        deathAction.reset();
-        deathAction.timeScale = 1;
-        deathAction.play();
-      } else if (enteringGettingUp && deathAction) {
-        // Reverse from wherever the forward collapse actually got to — Ragdoll
-        // can end (settled, or RAGDOLL_MAX_MS) before the Death clip finishes
-        // playing forward, and snapping to the final frame here would pop the
-        // pose. Scaled to land back on Controlled within GETUP_MS regardless.
-        const fallen = deathAction.time;
-        deathAction.timeScale = fallen > 0 ? -fallen / (GETUP_MS / 1000) : -1;
-        deathAction.paused = false;
+        ragdollPose.apply(state.character.bones);
       } else if (leavingDown) {
-        // Fully hand the model back to locomotion — stop the Death clip, place
-        // the rig at the real capsule position, and start idle so the next
-        // `updateCharacterAnimation` has a live `activeAction` to cross-fade
-        // from instead of a null it left behind on the way into Ragdoll (ticket 08).
-        deathAction?.stop();
+        // Back on its feet: drop the anchor so the next knockdown takes a
+        // fresh one, put the rig at the real capsule position, and start idle
+        // so the next `updateCharacterAnimation` has a live `activeAction` to
+        // cross-fade from instead of the null left behind on the way down.
+        ragdollPose.release();
         character.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
         const resume = idleAction ?? walkAction;
         if (resume) {
-          resume.reset().fadeIn(ANIMATION_CROSSFADE).play();
+          resume.reset().fadeIn(LOCOMOTION_CROSSFADE_SECONDS).play();
           activeAction = resume;
         }
-      } else if (!fallingRagdoll && !gettingUp) {
+      } else {
         // `position` is the capsule centre; the model rig is placed at the feet.
         character.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
       }
-      // While Ragdoll/GettingUp continue, `character` stays put at the frozen anchor.
 
       // Recomputed immediately (not left for the next render()) since `updateCamera`
       // raycasts against these meshes — via `collidables` — before this frame renders.
@@ -434,29 +412,8 @@ export const createStage = ({
         mesh.updateMatrixWorld();
       }
     },
-    applyRemoteCharacters: (characters) => {
-      for (const [id, rc] of Object.entries(characters)) {
-        let mesh = remoteMeshes.get(id);
-        if (!mesh) {
-          mesh = new THREE.Mesh(remoteGeometry, remoteMaterial);
-          scene.add(mesh);
-          remoteMeshes.set(id, mesh);
-        }
-        const down = isDownMotionState(rc.motionState);
-        // `position` is the capsule centre while upright and the ragdoll pelvis
-        // (near the ground) while down — so tipping the capsule flat and
-        // dropping it to that lower point reads correctly as a floored body.
-        mesh.position.set(rc.position.x, rc.position.y, rc.position.z);
-        mesh.rotation.z = down ? Math.PI / 2 : 0;
-        mesh.updateMatrixWorld();
-      }
-      for (const [id, mesh] of remoteMeshes) {
-        if (!(id in characters)) {
-          scene.remove(mesh);
-          remoteMeshes.delete(id);
-        }
-      }
-    },
+    applyRemoteCharacters: (characters, deltaSeconds, localId, localPosition) =>
+      remotePool.apply(characters, deltaSeconds, localId, localPosition),
     updateCamera: (target, yaw, pitch) => {
       const desired = springArmPosition(target, yaw, pitch, CAMERA_DISTANCE);
       const resolved = resolveArm(target, desired, castArm, CAMERA_MIN_DISTANCE, CAMERA_SKIN);
@@ -473,7 +430,17 @@ export const createStage = ({
         mesh.updateMatrixWorld();
       }
     },
-    updateCharacterAnimation: (deltaSeconds, moveDirection, grounded, dashing, dashSpeed) => {
+    updateCharacterAnimation: (
+      deltaSeconds,
+      moveDirection,
+      grounded,
+      dashing,
+      dashSpeed,
+      hitEpoch,
+      hitReactEpoch,
+      grabTargetPosition,
+      facingLocked,
+    ) => {
       const currentPosition: Vec3 = { x: character.position.x, y: character.position.y, z: character.position.z };
       // Lazily seeded so the very first call (before any real movement) reads
       // as zero velocity rather than a jump from an arbitrary creation-time value.
@@ -494,9 +461,26 @@ export const createStage = ({
         speedLines.setIntensity(0);
       }
 
-      // Ragdoll (forward Death) and GettingUp (reverse Death) are both driven
-      // from applyRenderState and fully own the model's pose while they hold.
+      // While down the bones own the pose outright (M6.1 ticket 02) — and the
+      // mixer must not run afterward. `applyRenderState` poses the rig earlier
+      // in the same frame than this method is called, so a mixer update here
+      // would write over it: three.js restores a bound property to its bind
+      // value the moment nothing weighted is driving it, which is exactly the
+      // state every action is in once the knockdown faded them out.
       if (isDownMotionState(visualState)) {
+        // Code review, M6.1: keeps the reaction baseline current even though
+        // the down-state pose (drawn by `applyRenderState`) owns the model
+        // and the mixer isn't advanced — see `observeBaseline`'s own doc.
+        hitReactionPlayer.observeBaseline(hitEpoch, hitReactEpoch);
+        return;
+      }
+
+      // M6 ticket 03: Punch/HitReact take priority over ordinary locomotion
+      // while playing — the caller (this method) never picks a locomotion
+      // clip on a frame where a reaction is still in progress.
+      const reacting = hitReactionPlayer.update(hitEpoch, hitReactEpoch, actions, LOCOMOTION_CROSSFADE_SECONDS, activeAction);
+      if (reacting) {
+        activeAction = reacting;
         mixer.update(deltaSeconds);
         return;
       }
@@ -504,21 +488,28 @@ export const createStage = ({
       const moving = moveDirection.x !== 0 || moveDirection.z !== 0;
       // A Dash with no direction held plays from lastMoveDir (see DashController),
       // so it must still select a locomotion clip even though moveDirection is zero.
-      const locomotion = dashing ? (runAction ?? walkAction) : walkAction;
-      const next = grounded ? (moving || dashing ? locomotion : idleAction) : jumpAction;
-      if (next && next !== activeAction) {
-        next.reset().fadeIn(ANIMATION_CROSSFADE).play();
-        activeAction?.fadeOut(ANIMATION_CROSSFADE);
-        activeAction = next;
-      }
+      const next = actionFor(selectLocomotion(moving, grounded, dashing), actions);
+      activeAction = crossfadeLocomotion(next, activeAction, LOCOMOTION_CROSSFADE_SECONDS);
       mixer.update(deltaSeconds);
 
-      if (moving) {
-        const targetYaw = Math.atan2(moveDirection.x, moveDirection.z);
-        const delta = THREE.MathUtils.euclideanModulo(targetYaw - character.rotation.y + Math.PI, Math.PI * 2) - Math.PI;
-        const maxStep = FACING_TURN_SPEED * deltaSeconds;
-        character.rotation.y += THREE.MathUtils.clamp(delta, -maxStep, maxStep);
-      }
+      character.rotation.y = nextModelYaw({
+        currentYaw: character.rotation.y,
+        moveDirection,
+        deltaSeconds,
+        facingLocked,
+      });
+
+      // M6.1: no Grab clip exists on the rig, so a hold's own "reaching" read
+      // comes from procedurally aiming the upper arms instead — after the
+      // turn above, so it reaches toward where the Character is actually
+      // facing this frame, not last frame's. Called every frame regardless
+      // of grab state — `armReachPlayer` eases the pose in and out itself.
+      armReachPlayer.update(
+        grabTargetPosition
+          ? new THREE.Vector3(grabTargetPosition.x, grabTargetPosition.y + ARM_REACH_TARGET_HEIGHT, grabTargetPosition.z)
+          : undefined,
+        deltaSeconds,
+      );
 
       if (visualState === "Controlled") {
         if (WOBBLE_ENABLED) {
@@ -550,11 +541,12 @@ export const createStage = ({
       mixer.stopAllAction();
       mixer.uncacheRoot(characterModel.scene);
       speedLines.dispose();
+      // Before the blanket scene-graph sweep below: each remote rig removes
+      // itself from `scene` as it's disposed, so the sweep never double-frees
+      // a clone's already-released geometry/material.
+      remotePool.dispose();
       disposeSceneGraph(scene);
-      remoteGeometry.dispose();
-      remoteMaterial.dispose();
       scene.clear();
-      remoteMeshes.clear();
       collidables.length = 0;
       renderer.domElement.remove();
       renderer.dispose();

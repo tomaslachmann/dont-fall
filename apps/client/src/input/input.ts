@@ -16,6 +16,8 @@ const MOVEMENT_CODES: Record<string, keyof MovementKeys> = {
 
 const JUMP_CODES = ["Space"];
 const DASH_CODES = ["ShiftLeft", "ShiftRight"];
+const HIT_CODES = ["KeyF"];
+const GRAB_CODES = ["KeyG"];
 /** Codes whose default (page scroll) we swallow while playing. */
 const SWALLOW_DEFAULT = new Set([...Object.keys(MOVEMENT_CODES), ...JUMP_CODES]);
 
@@ -58,6 +60,16 @@ export class KeyboardInput {
 
   dashHeld(): boolean {
     return DASH_CODES.some((code) => this.held.has(code));
+  }
+
+  /** Whether the Hit button is held this tick (M6 ticket 03). */
+  hitHeld(): boolean {
+    return HIT_CODES.some((code) => this.held.has(code));
+  }
+
+  /** Whether the Grab button is held this tick (M6 ticket 04). */
+  grabHeld(): boolean {
+    return GRAB_CODES.some((code) => this.held.has(code));
   }
 
   /**

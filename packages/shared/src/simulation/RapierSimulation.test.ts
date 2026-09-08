@@ -9,7 +9,13 @@ import {
   DASH_COOLDOWN_TICKS,
   DASH_DURATION_MS,
   DASH_SPEED,
+  GRAB_HOLD_MAX_TICKS,
+  GRAB_RANGE,
+  GRAB_STRUGGLE_FREE_TICKS,
   GROUND_STICK_SPEED,
+  HIT_CHARGE_MAX_TICKS,
+  HIT_COOLDOWN_MS,
+  HIT_RANGE,
   IMPACT_RAGDOLL_MIN,
   IMPACT_STAGGER_MIN,
   RAGDOLL_MAX_MS,
@@ -1303,6 +1309,9 @@ describe("RapierSimulation — dash", () => {
       motionState: midBurst.motionState,
       dashCooldownMs: midBurst.dashCooldownMs,
       dashing: midBurst.dashing,
+      hitCooldownMs: 0,
+      hitChargeMs: 0,
+      grabCooldownMs: 0,
       speedPadMsLeft: midBurst.speedPadMsLeft,
       speedPadCapMultiplier: midBurst.speedPadCapMultiplier,
       finishTick: midBurst.finishTick,
@@ -1357,6 +1366,9 @@ describe("RapierSimulation — dash", () => {
       motionState: ackedSnapshot.motionState,
       dashCooldownMs: ackedSnapshot.dashCooldownMs,
       dashing: ackedSnapshot.dashing,
+      hitCooldownMs: 0,
+      hitChargeMs: 0,
+      grabCooldownMs: 0,
       speedPadMsLeft: ackedSnapshot.speedPadMsLeft,
       speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
       finishTick: ackedSnapshot.finishTick,
@@ -1436,6 +1448,9 @@ describe("RapierSimulation — dash", () => {
           motionState: acked.motionState,
           dashCooldownMs: acked.dashCooldownMs,
           dashing: acked.dashing,
+          hitCooldownMs: 0,
+          hitChargeMs: 0,
+      grabCooldownMs: 0,
           speedPadMsLeft: acked.speedPadMsLeft,
           speedPadCapMultiplier: acked.speedPadCapMultiplier,
           finishTick: acked.finishTick,
@@ -2263,6 +2278,9 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
         motionState: "GettingUp" as const,
         dashCooldownMs: 0,
         dashing: false,
+        hitCooldownMs: 0,
+        hitChargeMs: 0,
+      grabCooldownMs: 0,
         speedPadMsLeft: 0,
         speedPadCapMultiplier: 1,
         finishTick: null,
@@ -2339,6 +2357,9 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     motionState: "Controlled" as const,
     dashCooldownMs: 0,
     dashing: false,
+    hitCooldownMs: 0,
+    hitChargeMs: 0,
+      grabCooldownMs: 0,
     speedPadMsLeft: 0,
     speedPadCapMultiplier: 1,
     finishTick: null,
@@ -2357,6 +2378,9 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       motionState: "Ragdoll",
       dashCooldownMs: 0,
       dashing: false,
+      hitCooldownMs: 0,
+      hitChargeMs: 0,
+      grabCooldownMs: 0,
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
       finishTick: null,
@@ -2387,6 +2411,9 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       motionState: "Ragdoll",
       dashCooldownMs: 0,
       dashing: false,
+      hitCooldownMs: 0,
+      hitChargeMs: 0,
+      grabCooldownMs: 0,
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
       finishTick: null,
@@ -2475,6 +2502,9 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
         motionState: "Ragdoll",
         dashCooldownMs: 0,
         dashing: false,
+        hitCooldownMs: 0,
+        hitChargeMs: 0,
+      grabCooldownMs: 0,
         speedPadMsLeft: 0,
         speedPadCapMultiplier: 1,
         finishTick: null,
@@ -2537,6 +2567,9 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       motionState: "Sliding",
       dashCooldownMs: 0,
       dashing: false,
+      hitCooldownMs: 0,
+      hitChargeMs: 0,
+      grabCooldownMs: 0,
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
       finishTick: null,
@@ -2721,6 +2754,699 @@ describe("RapierSimulation — Character-to-Character Bump (ticket 04)", () => {
   });
 });
 
+describe("RapierSimulation — Hit (M6 ticket 03)", () => {
+  const STRIKER = DEFAULT_CHARACTER_ID;
+  const TARGET = "target";
+  // forward(0) = (sin 0, 0, -cos 0) = (0, 0, -1) — dead north, the movementDirection convention ADR 0045's facing shares.
+  const NORTH_FACING = 0;
+  const onGround = (z: number) => ({ x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z });
+
+  /** Striker at z=0 facing north, target at the given z; both settled on the ground. */
+  const twoCharacters = (targetZ: number): RapierSimulation => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(TARGET, onGround(targetZ));
+    for (let n = 0; n < 10; n += 1) sim.tick({}); // settle both
+    return sim;
+  };
+
+  /** A bare tap: one held tick, released the next — near-zero charge. */
+  const tap = (sim: RapierSimulation, id: string, facingYaw: number = NORTH_FACING): void => {
+    sim.tick({ [id]: input({ facing: facingYaw, hitHeld: true }) });
+    sim.tick({ [id]: input({ facing: facingYaw, hitHeld: false }) });
+  };
+
+  /** Holds Hit for `ticks` ticks, then releases on the following tick — the charge/release cycle a real press-and-hold produces. */
+  const holdAndRelease = (sim: RapierSimulation, id: string, ticks: number, facingYaw: number = NORTH_FACING): void => {
+    for (let n = 0; n < ticks; n += 1) sim.tick({ [id]: input({ facing: facingYaw, hitHeld: true }) });
+    sim.tick({ [id]: input({ facing: facingYaw, hitHeld: false }) });
+  };
+
+  it("connects with a Character within range, directly ahead by facing — applying an Impact and bumping both Epochs the instant it's released", () => {
+    const sim = twoCharacters(-1); // north of the striker, within HIT_RANGE
+    sim.tick({ [STRIKER]: input({ facing: NORTH_FACING, hitHeld: true }) }); // charging — nothing fires yet
+    expect(sim.snapshot().characters[STRIKER]!.hitEpoch).toBe(0);
+    sim.tick({ [STRIKER]: input({ facing: NORTH_FACING, hitHeld: false }) }); // released — fires now
+    expect(sim.snapshot().characters[STRIKER]!.hitEpoch).toBe(1);
+    sim.tick({}); // one tick of latency before the queued Impact's state transition lands (same as Bump)
+    expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Stagger");
+    expect(sim.snapshot().characters[TARGET]!.hitReactEpoch).toBe(1);
+    expect(sim.snapshot().characters[STRIKER]!.motionState).toBe("Controlled"); // the striker is untouched
+  });
+
+  it("knocks the target down at a full charge (M6.1: hold-to-charge)", () => {
+    const sim = twoCharacters(-1);
+    holdAndRelease(sim, STRIKER, HIT_CHARGE_MAX_TICKS);
+    sim.tick({});
+
+    expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Ragdoll");
+    // Not the Bump of running into them: at a standstill a Bump is only
+    // worth a Stagger, so the knockdown is the Hit's and says so.
+    expect(sim.snapshot().characters[TARGET]!.ragdollCause).toBe("Hit");
+  });
+
+  it("still only Staggers on a bare tap — a knockdown costs a real hold, not a tap", () => {
+    const sim = twoCharacters(-1);
+    tap(sim, STRIKER);
+    sim.tick({});
+
+    expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Stagger");
+  });
+
+  it(
+    "gains no charge from time spent Dashing — Dash locks Hit out entirely until it finishes (M6.1: this is the " +
+      "bug report itself, 'hit shouldn't come from a dash')",
+    () => {
+      // Target placed farther than a full Dash's own ~13.5-unit reach (empirically
+      // measured) — a full-speed Dash must never approach it at all, so the
+      // sole effect under test is Hit's own charge, uncontaminated by a Bump
+      // into the target along the way.
+      const sim = twoCharacters(-18);
+      const dashTicks = Math.round(DASH_DURATION_MS / TICK_MS);
+      // Hold Hit through the ENTIRE Dash burst — if any of that counted
+      // toward the charge, this would already read a real, accumulated one.
+      for (let n = 0; n < dashTicks; n += 1) sim.tick({ [STRIKER]: input({ ...NORTH, dashHeld: true, hitHeld: true }) });
+      expect(sim.snapshot().characters[STRIKER]!.dashing).toBe(false); // the burst has run its course
+      // At most the one tick where the burst ended and the gate opened
+      // within the very same tick — never the whole Dash's worth of holding.
+      expect(sim.snapshot().characters[STRIKER]!.hitChargeMs).toBeLessThan(TICK_MS * 2);
+    },
+  );
+
+  it("misses a Character outside HIT_RANGE, even directly ahead", () => {
+    const sim = twoCharacters(-(HIT_RANGE + 1));
+    tap(sim, STRIKER);
+    sim.tick({});
+    expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Controlled");
+    expect(sim.snapshot().characters[TARGET]!.hitReactEpoch).toBe(0);
+  });
+
+  it("misses a Character within range but behind the striker, outside the facing cone", () => {
+    const sim = twoCharacters(1); // south of the striker — behind, while facing north
+    tap(sim, STRIKER);
+    sim.tick({});
+    expect(sim.snapshot().characters[TARGET]!.motionState).toBe("Controlled");
+    expect(sim.snapshot().characters[TARGET]!.hitReactEpoch).toBe(0);
+  });
+
+  it(
+    "cancels the target's own in-progress Dash the instant a swing connects — the striker's own Dash can never " +
+      "be in progress here (M6.1 gates it out entirely)",
+    () => {
+      const sim = twoCharacters(-1);
+      sim.tick({ [TARGET]: input({ moveDirection: { x: 0, y: 0, z: 1 }, dashHeld: true }) });
+      expect(sim.snapshot().characters[TARGET]!.dashing).toBe(true);
+
+      tap(sim, STRIKER);
+
+      expect(sim.snapshot().characters[TARGET]!.dashing).toBe(false);
+    },
+  );
+
+  it("respects its own cooldown — pressing again before it expires does not fire again", () => {
+    const sim = twoCharacters(-1);
+    tap(sim, STRIKER);
+    expect(sim.snapshot().characters[STRIKER]!.hitEpoch).toBe(1);
+    expect(sim.snapshot().characters[STRIKER]!.hitCooldownMs).toBeGreaterThan(0);
+
+    tap(sim, STRIKER); // pressed again, still on cooldown
+    expect(sim.snapshot().characters[STRIKER]!.hitEpoch).toBe(1); // unchanged — did not fire again
+  });
+
+  it("fires again once the cooldown has fully elapsed", () => {
+    const sim = twoCharacters(-1);
+    tap(sim, STRIKER);
+    expect(sim.snapshot().characters[STRIKER]!.hitEpoch).toBe(1);
+
+    const ticks = Math.ceil(HIT_COOLDOWN_MS / TICK_MS);
+    for (let n = 0; n < ticks; n += 1) sim.tick({});
+    tap(sim, STRIKER);
+    expect(sim.snapshot().characters[STRIKER]!.hitEpoch).toBe(2);
+  });
+
+  it("resets alongside Dash's own cooldown the instant Ragdoll begins, however it was forced (code review)", () => {
+    const sim = twoCharacters(-1);
+    tap(sim, STRIKER);
+    const base = sim.snapshot().characters[STRIKER]!;
+    expect(base.hitCooldownMs).toBeGreaterThan(0);
+
+    // `beginRagdoll()` (the down-branch of `reconcileTo`, exactly like a real
+    // knockdown from a Fall/Bump/another Hit) calls `resetMovementControllers`
+    // unconditionally — this pins that it resets Hit's cooldown too, not just
+    // Dash's, regardless of what the reconcile base itself reports for either.
+    sim.reconcileCharacter(STRIKER, {
+      position: { ...base.position },
+      velocity: { ...base.velocity },
+      grounded: base.grounded,
+      motionState: "Ragdoll",
+      dashCooldownMs: base.dashCooldownMs,
+      dashing: base.dashing,
+      hitCooldownMs: base.hitCooldownMs,
+      hitChargeMs: base.hitChargeMs,
+      grabCooldownMs: 0,
+      speedPadMsLeft: base.speedPadMsLeft,
+      speedPadCapMultiplier: base.speedPadCapMultiplier,
+      finishTick: base.finishTick,
+      eliminated: base.eliminated,
+    });
+
+    expect(sim.snapshot().characters[STRIKER]!.hitCooldownMs).toBe(0);
+    expect(sim.snapshot().characters[STRIKER]!.dashCooldownMs).toBe(0); // Dash's own, unchanged precedent
+  });
+
+  it(
+    "survives a reconcile-then-replay without double-firing — a client reconciled to an older snapshot and " +
+      "replayed forward lands on the exact same hitEpoch/hitCooldownMs the undisturbed ground truth has " +
+      "(regression: hitCooldownMs must round-trip through ReconcileBase, or a replay would see the cooldown " +
+      "as expired and fire the swing a second time)",
+    () => {
+      const truth = twoCharacters(-1);
+      const client = twoCharacters(-1);
+      const K = 10;
+      const ACKED_LAG = 4;
+
+      let ackedSnapshot: ReturnType<typeof truth.snapshot>["characters"][string] | null = null;
+      const unackedInputs: SimInputs[] = [];
+      for (let t = 1; t <= K; t += 1) {
+        const strikerInput =
+          t === 1
+            ? input({ facing: NORTH_FACING, hitHeld: true })
+            : t === 2
+              ? input({ facing: NORTH_FACING, hitHeld: false })
+              : input({ facing: NORTH_FACING });
+        truth.tick({ [STRIKER]: strikerInput });
+        client.tick({ [STRIKER]: strikerInput });
+        if (t === K - ACKED_LAG) ackedSnapshot = truth.snapshot().characters[STRIKER]!;
+        if (t > K - ACKED_LAG) unackedInputs.push(strikerInput);
+      }
+      if (!ackedSnapshot) throw new Error("unreachable");
+
+      client.reconcileCharacter(STRIKER, {
+        position: { ...ackedSnapshot.position },
+        velocity: { ...ackedSnapshot.velocity },
+        grounded: ackedSnapshot.grounded,
+        motionState: ackedSnapshot.motionState,
+        dashCooldownMs: ackedSnapshot.dashCooldownMs,
+        dashing: ackedSnapshot.dashing,
+        hitCooldownMs: ackedSnapshot.hitCooldownMs,
+        hitChargeMs: ackedSnapshot.hitChargeMs,
+      grabCooldownMs: 0,
+        speedPadMsLeft: ackedSnapshot.speedPadMsLeft,
+        speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
+        finishTick: ackedSnapshot.finishTick,
+        eliminated: ackedSnapshot.eliminated,
+      });
+      client.replayLocalCharacter(STRIKER, unackedInputs);
+
+      const truthNow = truth.snapshot().characters[STRIKER]!;
+      const clientNow = client.snapshot().characters[STRIKER]!;
+      expect(clientNow.hitEpoch).toBe(truthNow.hitEpoch);
+      expect(clientNow.hitEpoch).toBe(1); // the one swing released on tick 2, never a second one
+      expect(clientNow.hitCooldownMs).toBeCloseTo(truthNow.hitCooldownMs, 0);
+    },
+  );
+
+  it(
+    "survives a reconcile mid-charge without losing progress (M6.1) — a client reconciled to an in-progress " +
+      "charge and replayed forward reaches the same charge, and fires at the same fraction on release, as the " +
+      "undisturbed ground truth",
+    () => {
+      const truth = twoCharacters(-1);
+      const client = twoCharacters(-1);
+      const HOLD_TICKS = 5; // a real, partial charge — short of HIT_CHARGE_MAX_TICKS
+      const held = input({ facing: NORTH_FACING, hitHeld: true });
+      for (let n = 0; n < HOLD_TICKS; n += 1) {
+        truth.tick({ [STRIKER]: held });
+        client.tick({ [STRIKER]: held });
+      }
+      const ackedSnapshot = truth.snapshot().characters[STRIKER]!;
+      expect(ackedSnapshot.hitChargeMs).toBeGreaterThan(0);
+
+      // The client keeps predicting ahead before the ack arrives — two more
+      // held ticks the reconcile below must discard in favour of the
+      // server's own count, exactly like Dash's own `ticksLeft` restore.
+      client.tick({ [STRIKER]: held });
+      client.tick({ [STRIKER]: held });
+
+      client.reconcileCharacter(STRIKER, {
+        position: { ...ackedSnapshot.position },
+        velocity: { ...ackedSnapshot.velocity },
+        grounded: ackedSnapshot.grounded,
+        motionState: ackedSnapshot.motionState,
+        dashCooldownMs: ackedSnapshot.dashCooldownMs,
+        dashing: ackedSnapshot.dashing,
+        hitCooldownMs: ackedSnapshot.hitCooldownMs,
+        hitChargeMs: ackedSnapshot.hitChargeMs,
+        grabCooldownMs: 0,
+        speedPadMsLeft: ackedSnapshot.speedPadMsLeft,
+        speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
+        finishTick: ackedSnapshot.finishTick,
+        eliminated: ackedSnapshot.eliminated,
+      });
+      const release = input({ facing: NORTH_FACING, hitHeld: false });
+      client.replayLocalCharacter(STRIKER, [held, held, release]);
+      truth.tick({ [STRIKER]: held });
+      truth.tick({ [STRIKER]: held });
+      truth.tick({ [STRIKER]: release });
+
+      const truthNow = truth.snapshot().characters[STRIKER]!;
+      const clientNow = client.snapshot().characters[STRIKER]!;
+      expect(clientNow.hitEpoch).toBe(truthNow.hitEpoch);
+      expect(clientNow.hitEpoch).toBe(1);
+      expect(clientNow.hitCooldownMs).toBeCloseTo(truthNow.hitCooldownMs, 0);
+    },
+  );
+
+  it(
+    "stops re-firing forever once the striker is eliminated right after its swing connects (code review) — " +
+      "an eliminated Character never gets another beginTick, so hitFiredThisTick (only ever reset there) would " +
+      "otherwise stay stuck true and re-resolve every subsequent tick",
+    () => {
+      const sim = twoCharacters(-1);
+      tap(sim, STRIKER);
+      expect(sim.snapshot().characters[TARGET]!.hitReactEpoch).toBe(1); // connected once, as normal
+
+      sim.eliminateCharacter(STRIKER);
+      for (let n = 0; n < 5; n += 1) sim.tick({});
+
+      expect(sim.snapshot().characters[TARGET]!.hitReactEpoch).toBe(1); // never fired again
+    },
+  );
+
+  it("never targets an eliminated Character — inert by design (ADR 0042), same invariant Bump already enforces (code review)", () => {
+    const sim = twoCharacters(-1);
+    sim.eliminateCharacter(TARGET);
+    tap(sim, STRIKER);
+    expect(sim.snapshot().characters[TARGET]!.hitReactEpoch).toBe(0);
+  });
+});
+
+describe("RapierSimulation — Grab (M6 ticket 04)", () => {
+  const GRABBER = DEFAULT_CHARACTER_ID;
+  const HELD = "held";
+  const NORTH_FACING = 0; // forward(0) = (0, 0, -1) — dead north
+  const onGround = (z: number) => ({ x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z });
+
+  /** Grabber at z=0 facing north, held at the given z; both settled on the ground. */
+  const twoCharacters = (heldZ: number): RapierSimulation => {
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(HELD, onGround(heldZ));
+    for (let n = 0; n < 10; n += 1) sim.tick({}); // settle both
+    return sim;
+  };
+
+  const reach = (facingYaw: number = NORTH_FACING): SimInputs => input({ facing: facingYaw, grabHeld: true });
+
+  it("latches onto a Character within range/facing — both move at GRAB_SPEED_MULTIPLIER after one tick of lag", () => {
+    const sim = twoCharacters(-1); // north of the grabber, within GRAB_RANGE
+    sim.tick({ [GRABBER]: reach() });
+    sim.tick({}); // one tick of lag — the same lag Surface/Volume multipliers already have
+
+    const zBefore = { grabber: sim.snapshot().characters[GRABBER]!.position.z, held: sim.snapshot().characters[HELD]!.position.z };
+    sim.tick({ [GRABBER]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
+    const zAfter = sim.snapshot().characters[GRABBER]!.position.z;
+    const walked = Math.abs(zAfter - zBefore.grabber);
+    expect(walked).toBeLessThan((WALK_SPEED / TICK_RATE_HZ) * 1.5); // nowhere near full WALK_SPEED
+    expect(zBefore.held).toBeDefined();
+  });
+
+  it(
+    "freezes each participant's own facing at whatever it was the instant the hold started, never recomputed " +
+      "toward each other or disturbed by later camera input (M6.1, revised from an earlier 'always face each " +
+      "other' design after live feedback)",
+    () => {
+      const sim = twoCharacters(-1); // held is north of the grabber
+      sim.tick({ [GRABBER]: reach() }); // engages this tick — freezes the grabber's facing at NORTH_FACING
+
+      // From here on the grabber's own camera claims to look south — dead
+      // away from the held Character — but the replicated facing must stay
+      // frozen at whatever it was when the hold started.
+      sim.tick({ [GRABBER]: input({ facing: Math.PI }) });
+      sim.tick({ [GRABBER]: input({ facing: Math.PI }) });
+
+      const grabberFacing = sim.snapshot().characters[GRABBER]!.facing;
+      expect(Math.cos(grabberFacing)).toBeCloseTo(Math.cos(NORTH_FACING), 5);
+      expect(Math.sin(grabberFacing)).toBeCloseTo(Math.sin(NORTH_FACING), 5);
+
+      // The held Character's own facing is frozen too, at whatever it
+      // naturally already was before being grabbed (NORTH_FACING, from
+      // `twoCharacters`' own settle loop) — never forced to face the
+      // grabber instead.
+      const heldFacing = sim.snapshot().characters[HELD]!.facing;
+      expect(Math.cos(heldFacing)).toBeCloseTo(Math.cos(NORTH_FACING), 5);
+      expect(Math.sin(heldFacing)).toBeCloseTo(Math.sin(NORTH_FACING), 5);
+    },
+  );
+
+  it(
+    "drags a Character standing still exactly as fast as the other pulls — a rigid tether, not two independently " +
+      "slowed Characters (M6.1, revised from an earlier distance-threshold spring-pull design after live feedback)",
+    () => {
+      const sim = twoCharacters(-1); // held is north of the grabber
+      sim.tick({ [GRABBER]: reach() });
+      sim.tick({}); // one tick of lag before the tether/multiplier take effect
+
+      const grabberZBefore = sim.snapshot().characters[GRABBER]!.position.z;
+      const heldZBefore = sim.snapshot().characters[HELD]!.position.z;
+      // The grabber walks north; the held sends no input at all.
+      sim.tick({ [GRABBER]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
+      const grabberMoved = grabberZBefore - sim.snapshot().characters[GRABBER]!.position.z;
+      const heldMoved = heldZBefore - sim.snapshot().characters[HELD]!.position.z;
+
+      expect(grabberMoved).toBeGreaterThan(0); // the grabber actually walked
+      expect(heldMoved).toBeCloseTo(grabberMoved, 5); // dragged by exactly the same amount, despite zero input of its own
+    },
+  );
+
+  it("sums both participants' own wish-velocities when they pull the same way, rather than averaging them (M6.1: CONTEXT.md doesn't ask for one side to always win)", () => {
+    const north = input({ moveDirection: { x: 0, y: 0, z: -1 } });
+
+    const solo = twoCharacters(-1);
+    solo.tick({ [GRABBER]: reach() });
+    solo.tick({});
+    const soloZBefore = solo.snapshot().characters[GRABBER]!.position.z;
+    solo.tick({ [GRABBER]: north }); // only the grabber pulls this tick
+    const soloMoved = soloZBefore - solo.snapshot().characters[GRABBER]!.position.z;
+
+    const both = twoCharacters(-1);
+    both.tick({ [GRABBER]: reach() });
+    both.tick({});
+    const bothZBefore = both.snapshot().characters[GRABBER]!.position.z;
+    both.tick({ [GRABBER]: north, [HELD]: north }); // both pull the same way this time
+    const bothMoved = bothZBefore - both.snapshot().characters[GRABBER]!.position.z;
+
+    expect(bothMoved).toBeGreaterThan(soloMoved * 1.5); // meaningfully more than one side alone — summed, not averaged
+  });
+
+  it("reports grabbingId on the grabber's own snapshot the instant a hold engages — never on the held Character's own row (M6.1: the renderer's own arm-reach pose)", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [GRABBER]: reach() });
+
+    expect(sim.snapshot().characters[GRABBER]!.grabbingId).toBe(HELD);
+    expect(sim.snapshot().characters[HELD]!.grabbingId).toBeNull(); // the held side never grabs anyone
+  });
+
+  it("reports heldByGrabberId on the held Character's own snapshot, the mirror of grabbingId — and clears it when the hold ends (M6.1: each client locks its own Character's rendered facing off these two)", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [GRABBER]: reach() });
+
+    expect(sim.snapshot().characters[HELD]!.heldByGrabberId).toBe(GRABBER);
+    expect(sim.snapshot().characters[GRABBER]!.heldByGrabberId).toBeNull(); // the grabber isn't the one being held
+
+    for (let n = 0; n < GRAB_HOLD_MAX_TICKS + 1; n += 1) sim.tick({}); // release via timeout
+
+    expect(sim.snapshot().characters[HELD]!.heldByGrabberId).toBeNull();
+  });
+
+  it("clears grabbingId the instant a hold ends, however it ends (M6.1)", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [GRABBER]: reach() });
+    sim.tick({});
+    expect(sim.snapshot().characters[GRABBER]!.grabbingId).toBe(HELD);
+
+    for (let n = 0; n < GRAB_HOLD_MAX_TICKS + 1; n += 1) sim.tick({}); // release via timeout
+
+    expect(sim.snapshot().characters[GRABBER]!.grabbingId).toBeNull();
+  });
+
+  it("misses a Character outside GRAB_RANGE, even directly ahead", () => {
+    const sim = twoCharacters(-(GRAB_RANGE + 1));
+    sim.tick({ [GRABBER]: reach() });
+    sim.tick({});
+    sim.tick({ [GRABBER]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
+    const walked = Math.abs(sim.snapshot().characters[GRABBER]!.position.z - onGround(0).z);
+    // Not slowed at all — moved close to a full walk step, not a crawl.
+    expect(walked).toBeGreaterThan((WALK_SPEED / TICK_RATE_HZ) * 0.5);
+  });
+
+  it(
+    "cancels the held Character's own in-progress Dash the instant a hold connects — the grabber's own Dash can " +
+      "never be in progress here (M6.1 gates it out entirely)",
+    () => {
+      const sim = twoCharacters(-1);
+      sim.tick({ [HELD]: input({ moveDirection: { x: 0, y: 0, z: 1 }, dashHeld: true }) });
+      expect(sim.snapshot().characters[HELD]!.dashing).toBe(true);
+
+      sim.tick({ [GRABBER]: reach() });
+
+      expect(sim.snapshot().characters[HELD]!.dashing).toBe(false);
+    },
+  );
+
+  it("cannot latch on while the grabber is mid-Dash — Dash locks Grab out entirely until it finishes (M6.1)", () => {
+    // HELD placed farther than a full Dash's own ~13.5-unit reach (empirically
+    // measured) — a full-speed Dash must never approach it at all, so the
+    // sole effect under test is whether Grab engages, uncontaminated by a
+    // Bump into HELD along the way.
+    const sim = twoCharacters(-18);
+    const dashTicks = Math.round(DASH_DURATION_MS / TICK_MS);
+    for (let n = 0; n < dashTicks; n += 1) sim.tick({ [GRABBER]: input({ ...NORTH, dashHeld: true, grabHeld: true }) });
+    sim.tick({});
+    // Never engaged — the held Character still moves at full speed.
+    const zBefore = sim.snapshot().characters[HELD]!.position.z;
+    sim.tick({ [HELD]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
+    const walked = Math.abs(sim.snapshot().characters[HELD]!.position.z - zBefore);
+    expect(walked).toBeGreaterThan((WALK_SPEED / TICK_RATE_HZ) * 0.5);
+  });
+
+  it("the grabber cannot Dash while holding — CONTEXT.md: \"the grabber cannot run while holding\"", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [GRABBER]: reach() });
+    sim.tick({}); // let the multiplier take effect
+
+    sim.tick({ [GRABBER]: input({ ...NORTH, dashHeld: true }) });
+    expect(sim.snapshot().characters[GRABBER]!.dashing).toBe(false);
+  });
+
+  it("auto-releases once the hold's max duration elapses, and starts the grabber's cooldown only then", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [GRABBER]: reach() });
+    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0); // not yet — only release starts it
+
+    for (let n = 0; n < GRAB_HOLD_MAX_TICKS + 1; n += 1) sim.tick({});
+
+    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBeGreaterThan(0);
+    // The multiplier is lifted — a fresh walk covers real ground again.
+    const zBefore = sim.snapshot().characters[GRABBER]!.position.z;
+    sim.tick({ [GRABBER]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
+    const walked = Math.abs(sim.snapshot().characters[GRABBER]!.position.z - zBefore);
+    expect(walked).toBeGreaterThan((WALK_SPEED / TICK_RATE_HZ) * 0.5);
+  });
+
+  it("the held Character breaks free by moving away from the grabber for the struggle-free duration", () => {
+    const sim = twoCharacters(-1); // held is north of the grabber
+    sim.tick({ [GRABBER]: reach() });
+    sim.tick({}); // engage
+
+    // Held moves further north — directly away from the grabber.
+    const away = input({ moveDirection: { x: 0, y: 0, z: -1 } });
+    for (let n = 0; n < GRAB_STRUGGLE_FREE_TICKS - 1; n += 1) {
+      sim.tick({ [HELD]: away });
+      expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0); // still held, not released yet
+    }
+    sim.tick({ [HELD]: away }); // the tick that reaches the full struggle duration
+
+    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBeGreaterThan(0);
+  });
+
+  it("struggling resets the instant the held Character stops actively resisting — no partial progress carries over", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [GRABBER]: reach() });
+    sim.tick({});
+
+    const away = input({ moveDirection: { x: 0, y: 0, z: -1 } });
+    for (let n = 0; n < GRAB_STRUGGLE_FREE_TICKS - 1; n += 1) sim.tick({ [HELD]: away });
+    sim.tick({ [HELD]: IDLE_INPUTS }); // stops resisting for exactly one tick
+    for (let n = 0; n < GRAB_STRUGGLE_FREE_TICKS - 1; n += 1) sim.tick({ [HELD]: away });
+
+    // Still held — the reset means this many further ticks of struggling isn't enough yet.
+    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0);
+  });
+
+  it("cannot grab a Character already engaged in another hold", () => {
+    const SOUTH_FACING = Math.PI; // forward(π) = (0, 0, 1) — dead south
+    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
+    sim.addCharacter(HELD, onGround(-1));
+    sim.addCharacter("third", onGround(-2)); // north of HELD, facing south — HELD is directly ahead of THIRD too
+    for (let n = 0; n < 10; n += 1) sim.tick({});
+
+    sim.tick({ [GRABBER]: reach() }); // grabs HELD (nearest to GRABBER)
+    sim.tick({});
+    // THIRD tries to grab HELD too — but HELD is already engaged, so this must be a no-op for THIRD.
+    sim.tick({ third: input({ facing: SOUTH_FACING, grabHeld: true }) });
+    sim.tick({});
+
+    // If the exclusion failed, THIRD would now ALSO be registered as a
+    // grabber (a second, bogus ActiveGrab entry) and get slowed to
+    // GRAB_SPEED_MULTIPLIER itself — the only Character-visible signal that
+    // distinguishes "never engaged" from "silently engaged a second time",
+    // since Grab's cooldown never starts on press either way (only on
+    // release), so checking THIRD's own cooldown here would prove nothing.
+    const zBefore = sim.snapshot().characters.third!.position.z;
+    sim.tick({ third: input({ moveDirection: { x: 0, y: 0, z: 1 } }) });
+    const walked = Math.abs(sim.snapshot().characters.third!.position.z - zBefore);
+    expect(walked).toBeGreaterThan((WALK_SPEED / TICK_RATE_HZ) * 0.5);
+  });
+
+  it("respects its own cooldown after release — pressing again before it expires does not fire", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [GRABBER]: reach() });
+    for (let n = 0; n < GRAB_HOLD_MAX_TICKS + 1; n += 1) sim.tick({}); // release via timeout
+    const cooldownAfterRelease = sim.snapshot().characters[GRABBER]!.grabCooldownMs;
+    expect(cooldownAfterRelease).toBeGreaterThan(0);
+
+    sim.tick({ [GRABBER]: reach() }); // pressed again, still on cooldown
+    // The held Character never got re-engaged — still moves at full speed.
+    const zBefore = sim.snapshot().characters[HELD]!.position.z;
+    sim.tick({ [HELD]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
+    const walked = Math.abs(sim.snapshot().characters[HELD]!.position.z - zBefore);
+    expect(walked).toBeGreaterThan((WALK_SPEED / TICK_RATE_HZ) * 0.5);
+  });
+
+  it("resets alongside Dash's/Hit's own cooldown the instant Ragdoll begins, and ends the hold outright (code review precedent, tickets 03/04)", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [GRABBER]: reach() });
+    sim.tick({});
+    expect(sim.snapshot().characters[HELD]!.grounded).toBeDefined(); // sanity: HELD exists and is engaged
+
+    const base = sim.snapshot().characters[GRABBER]!;
+    sim.reconcileCharacter(GRABBER, {
+      position: { ...base.position },
+      velocity: { ...base.velocity },
+      grounded: base.grounded,
+      motionState: "Ragdoll",
+      dashCooldownMs: base.dashCooldownMs,
+      dashing: base.dashing,
+      hitCooldownMs: base.hitCooldownMs,
+      hitChargeMs: base.hitChargeMs,
+      grabCooldownMs: base.grabCooldownMs,
+      speedPadMsLeft: base.speedPadMsLeft,
+      speedPadCapMultiplier: base.speedPadCapMultiplier,
+      finishTick: base.finishTick,
+      eliminated: base.eliminated,
+    });
+
+    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0);
+
+    // The hold itself also ends from RapierSimulation's own side on the very
+    // next tick's `updateGrabs` pass — the held Character walks at full speed again.
+    sim.tick({});
+    const zBefore = sim.snapshot().characters[HELD]!.position.z;
+    sim.tick({ [HELD]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
+    const walked = Math.abs(sim.snapshot().characters[HELD]!.position.z - zBefore);
+    expect(walked).toBeGreaterThan((WALK_SPEED / TICK_RATE_HZ) * 0.5);
+  });
+
+  it(
+    "survives a reconcile-then-replay without desyncing grabCooldownMs — a client reconciled to an older " +
+      "snapshot and replayed forward lands on the exact same value the undisturbed ground truth has",
+    () => {
+      const truth = twoCharacters(-1);
+      const client = twoCharacters(-1);
+      const K = 10;
+      const ACKED_LAG = 4;
+
+      let ackedSnapshot: ReturnType<typeof truth.snapshot>["characters"][string] | null = null;
+      const unackedInputs: SimInputs[] = [];
+      for (let t = 1; t <= K; t += 1) {
+        const grabberInput = t === 1 ? reach() : input({ facing: NORTH_FACING });
+        truth.tick({ [GRABBER]: grabberInput });
+        client.tick({ [GRABBER]: grabberInput });
+        if (t === K - ACKED_LAG) ackedSnapshot = truth.snapshot().characters[GRABBER]!;
+        if (t > K - ACKED_LAG) unackedInputs.push(grabberInput);
+      }
+      if (!ackedSnapshot) throw new Error("unreachable");
+
+      client.reconcileCharacter(GRABBER, {
+        position: { ...ackedSnapshot.position },
+        velocity: { ...ackedSnapshot.velocity },
+        grounded: ackedSnapshot.grounded,
+        motionState: ackedSnapshot.motionState,
+        dashCooldownMs: ackedSnapshot.dashCooldownMs,
+        dashing: ackedSnapshot.dashing,
+        hitCooldownMs: ackedSnapshot.hitCooldownMs,
+        hitChargeMs: ackedSnapshot.hitChargeMs,
+        grabCooldownMs: ackedSnapshot.grabCooldownMs,
+        speedPadMsLeft: ackedSnapshot.speedPadMsLeft,
+        speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
+        finishTick: ackedSnapshot.finishTick,
+        eliminated: ackedSnapshot.eliminated,
+      });
+      client.replayLocalCharacter(GRABBER, unackedInputs);
+
+      const truthNow = truth.snapshot().characters[GRABBER]!;
+      const clientNow = client.snapshot().characters[GRABBER]!;
+      expect(clientNow.grabCooldownMs).toBeCloseTo(truthNow.grabCooldownMs, 0);
+    },
+  );
+
+  it("never targets an eliminated Character — inert by design (ADR 0042), same invariant Hit already enforces (code review)", () => {
+    const sim = twoCharacters(-1);
+    sim.eliminateCharacter(HELD);
+    sim.tick({ [GRABBER]: reach() });
+    sim.tick({});
+    // Never engaged — the grabber's own Dash still works freely.
+    sim.tick({ [GRABBER]: input({ ...NORTH, dashHeld: true }) });
+    expect(sim.snapshot().characters[GRABBER]!.dashing).toBe(true);
+  });
+
+  it("never targets a Character that's merely down (Ragdoll/GettingUp, not eliminated) — a phantom one-tick hold would waste the grabber's own Dash-cancel/cooldown for nothing (code review)", () => {
+    const sim = twoCharacters(-1);
+    // Force TARGET-equivalent (HELD) into Ragdoll via a direct reconcile — the exact
+    // same deterministic approach the Hit/Dash-cooldown-reset tests already use.
+    const base = sim.snapshot().characters[HELD]!;
+    sim.reconcileCharacter(HELD, {
+      position: { ...base.position },
+      velocity: { ...base.velocity },
+      grounded: base.grounded,
+      motionState: "Ragdoll",
+      dashCooldownMs: base.dashCooldownMs,
+      dashing: base.dashing,
+      hitCooldownMs: base.hitCooldownMs,
+      hitChargeMs: base.hitChargeMs,
+      grabCooldownMs: base.grabCooldownMs,
+      speedPadMsLeft: base.speedPadMsLeft,
+      speedPadCapMultiplier: base.speedPadCapMultiplier,
+      finishTick: base.finishTick,
+      eliminated: base.eliminated,
+    });
+
+    sim.tick({ [GRABBER]: reach() });
+    sim.tick({});
+    // Never engaged — the grabber's own Dash still works freely, and its cooldown never started.
+    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0);
+    sim.tick({ [GRABBER]: input({ ...NORTH, dashHeld: true }) });
+    expect(sim.snapshot().characters[GRABBER]!.dashing).toBe(true);
+  });
+
+  it("starts the grabber's own cooldown when the held Character disconnects mid-hold, not just on the usual release paths (code review)", () => {
+    const sim = twoCharacters(-1);
+    sim.tick({ [GRABBER]: reach() });
+    sim.tick({});
+    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0);
+
+    sim.removeCharacter(HELD);
+
+    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBeGreaterThan(0);
+  });
+
+  it(
+    "the struggle-free check judges the SAME input the held Character's own movement actually used this tick — " +
+      "a locked phase substitutes idle movement for the sim itself, so a real 'moving away' keypress sent during " +
+      "a lock must not silently accumulate struggle progress (code review)",
+    () => {
+      const sim = twoCharacters(-1);
+      sim.tick({ [GRABBER]: reach() });
+      sim.tick({});
+
+      const away = input({ moveDirection: { x: 0, y: 0, z: -1 } });
+      for (let n = 0; n < GRAB_STRUGGLE_FREE_TICKS + 2; n += 1) sim.tick({ [HELD]: away }, "LOBBY");
+
+      // Still held — none of those locked ticks counted toward struggling free.
+      expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0);
+    },
+  );
+});
+
 describe("RapierSimulation — speed/slow pads (M3.7 ticket 01, ADR 0035): one-shot Epoch-latched write plus a fading speed cap", () => {
   const LONG_GROUND: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 10, y: 0.5, z: 100 } };
   // 6 units wide (z -13..-7) — a full second's worth of WALK_SPEED travel, comfortably "a wide pad touched across several ticks."
@@ -2851,6 +3577,9 @@ describe("RapierSimulation — speed/slow pads (M3.7 ticket 01, ADR 0035): one-s
       motionState: firedSnap.motionState,
       dashCooldownMs: firedSnap.dashCooldownMs,
       dashing: firedSnap.dashing,
+      hitCooldownMs: 0,
+      hitChargeMs: 0,
+      grabCooldownMs: 0,
       speedPadMsLeft: firedSnap.speedPadMsLeft,
       speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
       finishTick: firedSnap.finishTick,
@@ -3337,6 +4066,9 @@ describe("RapierSimulation — launch pads (M3.7 ticket 02): one-shot full-veloc
       motionState: firedSnap.motionState,
       dashCooldownMs: firedSnap.dashCooldownMs,
       dashing: firedSnap.dashing,
+      hitCooldownMs: 0,
+      hitChargeMs: 0,
+      grabCooldownMs: 0,
       speedPadMsLeft: firedSnap.speedPadMsLeft,
       speedPadCapMultiplier: firedSnap.speedPadCapMultiplier,
       finishTick: firedSnap.finishTick,
@@ -3834,5 +4566,91 @@ describe("dispose (M4 ticket 01)", () => {
 
     expect(second.snapshot().characters[DEFAULT_CHARACTER_ID]).toBeDefined();
     second.dispose();
+  });
+});
+
+describe("RapierSimulation — Character facing (M6 ticket 01, ADR 0045)", () => {
+  const settled = () => {
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
+    tick(sim, 0.5);
+    return sim;
+  };
+
+  it("reports back whatever facing this tick's input carried", () => {
+    const sim = settled();
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ facing: Math.PI / 2 }) });
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.facing).toBeCloseTo(Math.PI / 2, 10);
+  });
+
+  it("defaults to 0 — IDLE_INPUTS carries no facing opinion", () => {
+    const sim = settled();
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.facing).toBe(0);
+  });
+
+  it("resets to 0 on a tick with no input entry, exactly like moveDirection does — holding the last real input across a gap is the server's own queue behavior, not this layer's", () => {
+    const sim = settled();
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ facing: 1.23 }) });
+    sim.tick({}); // no entry for this Character this tick — idles on IDLE_INPUTS
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.facing).toBe(0);
+  });
+
+  it(
+    "preserves the last real facing across a Match-phase lock or a finished Character, unlike a genuine missing " +
+      "packet just above — every OTHER remote client renders this Character's model orientation from this exact " +
+      "field, and snapping it to a fixed direction the instant a lock/finish happens would visibly spin it for " +
+      "everyone watching (code review, M6 ticket 04)",
+    () => {
+      const sim = settled();
+      sim.tick({ [DEFAULT_CHARACTER_ID]: input({ facing: 1.23 }) }, "RUNNING");
+      sim.tick({ [DEFAULT_CHARACTER_ID]: input({ facing: 1.9 }) }, "LOBBY"); // locked — a real entry IS present, just substituted
+      expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.facing).toBeCloseTo(1.23, 10);
+    },
+  );
+
+  it("survives a reconcile-then-replay untouched — it is re-derived from the replayed inputs' own facing, never reset by the correction (regression)", () => {
+    // Mirrors the dash suite's own "reconcile-then-replay" shape above: `truth`
+    // plays out uninterrupted, `client` predicts the same ticks, gets
+    // reconciled to `truth`'s OLDER snapshot (ReconcileBase deliberately
+    // excludes facing — it's an input mirror, not simulation-owned state to
+    // restore) and replays the unacked inputs forward. If facing were
+    // accidentally zeroed or frozen by reconcileTo instead of left for replay
+    // to re-derive, this would catch it.
+    const truth = settled();
+    const client = settled();
+    const K = 10;
+    const ACKED_LAG = 4;
+
+    let ackedSnapshot: ReturnType<typeof truth.snapshot>["characters"][string] | null = null;
+    const unackedInputs: SimInputs[] = [];
+    for (let t = 1; t <= K; t += 1) {
+      const facingInput = input({ facing: t * 0.1 });
+      truth.tick({ [DEFAULT_CHARACTER_ID]: facingInput });
+      client.tick({ [DEFAULT_CHARACTER_ID]: facingInput });
+      if (t === K - ACKED_LAG) ackedSnapshot = truth.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      if (t > K - ACKED_LAG) unackedInputs.push(facingInput);
+    }
+    if (!ackedSnapshot) throw new Error("unreachable");
+
+    client.reconcileCharacter(DEFAULT_CHARACTER_ID, {
+      position: { ...ackedSnapshot.position },
+      velocity: { ...ackedSnapshot.velocity },
+      grounded: ackedSnapshot.grounded,
+      motionState: ackedSnapshot.motionState,
+      dashCooldownMs: ackedSnapshot.dashCooldownMs,
+      dashing: ackedSnapshot.dashing,
+      hitCooldownMs: 0,
+      hitChargeMs: 0,
+      grabCooldownMs: 0,
+      speedPadMsLeft: ackedSnapshot.speedPadMsLeft,
+      speedPadCapMultiplier: ackedSnapshot.speedPadCapMultiplier,
+      finishTick: ackedSnapshot.finishTick,
+      eliminated: ackedSnapshot.eliminated,
+    });
+    client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unackedInputs);
+
+    const truthNow = truth.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    const clientNow = client.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(clientNow.facing).toBeCloseTo(truthNow.facing, 10);
+    expect(clientNow.facing).toBeCloseTo(K * 0.1, 10);
   });
 });

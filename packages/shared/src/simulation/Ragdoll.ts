@@ -27,8 +27,9 @@ interface Bone {
 }
 
 /**
- * The Character's articulated ragdoll: 11 dynamic bones joined by spherical
- * joints (ADR 0006, ticket 05). Built once; while inactive the bones are `Fixed`
+ * The Character's articulated ragdoll: 11 dynamic bones (ADR 0006, ticket
+ * 05), hinged where a body hinges and ball-jointed where it doesn't (M6
+ * ticket 05, ADR 0047). Built once; while inactive the bones are `Fixed`
  * with their colliders disabled (the renderer hides them). {@link activate} snaps
  * it into the standing pose and lets physics take over, {@link deactivate} freezes
  * it. `SimState` never holds any of these handles (ADR 0009).
@@ -77,12 +78,30 @@ export class Ragdoll {
         y: joint.y - spec.restCenter.y,
         z: joint.z - spec.restCenter.z,
       };
-      world.createImpulseJoint(
-        RAPIER.JointData.spherical(anchorParent, anchorChild),
+      // A hinge where the body actually hinges, a ball joint where it doesn't
+      // (M6 ticket 05, ADR 0047) — see `BoneSpec.hinge`. Without the limits
+      // the skeleton has nothing holding its shape and settles as a lump.
+      const link = world.createImpulseJoint(
+        spec.hinge
+          ? RAPIER.JointData.revolute(anchorParent, anchorChild, spec.hinge.axis)
+          : RAPIER.JointData.spherical(anchorParent, anchorChild),
         this.byName.get(spec.parent)!,
         this.byName.get(spec.name)!,
         true,
       );
+      if (spec.hinge) {
+        // Loud rather than silent: a revolute joint whose limits never got set
+        // is a hinge that still swings freely, which holds *less* shape than
+        // the ball joint it replaced while looking like it works.
+        if (!(link instanceof RAPIER.RevoluteImpulseJoint)) {
+          throw new Error(`Ragdoll: "${spec.name}" wanted a limited hinge but Rapier returned an unlimitable joint`);
+        }
+        link.setLimits(spec.hinge.min, spec.hinge.max);
+      }
+      // Bones that share a joint always overlap at it, so now that bones see
+      // each other at all (`RAGDOLL_GROUPS`) their contact would be a
+      // permanent shove pushing the skeleton apart from the inside.
+      link.setContactsEnabled(false);
     }
   }
 
@@ -109,6 +128,18 @@ export class Ragdoll {
       body.setLinvel(velocity, true);
       body.setAngvel(ZERO, true);
       collider.setEnabled(true);
+      // M6.1, found live ("a full Hit knocks nobody down"): Rapier derives a
+      // body's mass from its colliders at the *next* step, so a bone that has
+      // been sitting `Fixed` — which is every bone of every ragdoll in a
+      // Match that has run for more than one tick — still reports
+      // `mass() === 0` right here. `applyImpulse` divides the impulse by that
+      // mass, so the shove below was silently discarded and the knockdown got
+      // whatever `setLinvel` gave it and nothing else. That hid for a long
+      // time because the impulse-carrying knockdowns (a dash into a wall, a
+      // Spinner) also carry velocity of their own and tumbled anyway; a Hit
+      // on a Character standing perfectly still carries none, so it just
+      // stood there. Recomputing here is Rapier's own documented remedy.
+      body.recomputeMassPropertiesFromColliders();
     }
     this.byName.get("chest")!.applyImpulse(impulse, true);
     this.active = true;

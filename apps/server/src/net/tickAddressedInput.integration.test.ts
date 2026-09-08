@@ -101,8 +101,8 @@ afterEach(async () => {
   server = undefined;
 });
 
-const NORTH: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false };
-const SOUTH: SimInputs = { moveDirection: { x: 0, y: 0, z: 1 }, jumpHeld: false, dashHeld: false };
+const NORTH: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false, grabHeld: false };
+const SOUTH: SimInputs = { moveDirection: { x: 0, y: 0, z: 1 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false, grabHeld: false };
 /** Ticks between direction flips — keeps the oscillation well within the ~4-unit clearance to the first narrow bridge. */
 const OSCILLATE_TICKS = 10;
 const simConfig = {
@@ -296,7 +296,10 @@ class FaithfulClient {
       grounded: true,
       motionState: "Controlled",
       dashCooldownMs: 0,
-      dashing: false, // this client never dashes — walks only (north/south)
+      dashing: false,
+      hitCooldownMs: 0,
+      hitChargeMs: 0,
+      grabCooldownMs: 0, // this client never dashes — walks only (north/south)
       speedPadMsLeft: 0,
       speedPadCapMultiplier: 1,
       finishTick: null, // this harness's Track has no Finish Zone
