@@ -91,3 +91,42 @@ describe("interpolateState", () => {
     expect(render.characters[ID]!.position).toEqual({ x: 10, y: 20, z: 30 });
   });
 });
+
+describe("interpolateState — facing and locomotion fields (M6 ticket 02, ADR 0046)", () => {
+  const facingStateAt = (facing: number, respawnCount = 0): SimState => ({
+    tick: 0,
+    characters: { [ID]: characterSnapshot({ position: { x: 0, y: 0, z: 0 }, facing, respawnCount }) },
+    props: [],
+  });
+
+  it("interpolates facing by the shortest arc, not a plain lerp", () => {
+    const a = Math.PI - 0.1;
+    const b = -Math.PI + 0.1;
+    const render = interpolateState(facingStateAt(a), facingStateAt(b), 0.5);
+    expect(Math.abs(Math.abs(render.characters[ID]!.facing) - Math.PI)).toBeLessThan(1e-9);
+  });
+
+  it("snaps facing to next (no blend) on the same discontinuities position snaps on", () => {
+    const render = interpolateState(facingStateAt(0, 0), facingStateAt(Math.PI, 1), 0.5);
+    expect(render.characters[ID]!.facing).toBeCloseTo(Math.PI, 10);
+  });
+
+  const locomotionStateAt = (fields: {
+    velocity?: { x: number; y: number; z: number };
+    grounded?: boolean;
+    dashing?: boolean;
+  }): SimState => ({
+    tick: 0,
+    characters: { [ID]: characterSnapshot({ position: { x: 0, y: 0, z: 0 }, ...fields }) },
+    props: [],
+  });
+
+  it("carries velocity, grounded and dashing straight from next, uninterpolated — like motionState", () => {
+    const prev = locomotionStateAt({ velocity: { x: 1, y: 0, z: 0 }, grounded: false, dashing: false });
+    const next = locomotionStateAt({ velocity: { x: 5, y: 0, z: 2 }, grounded: true, dashing: true });
+    const render = interpolateState(prev, next, 0.5);
+    expect(render.characters[ID]!.velocity).toEqual({ x: 5, y: 0, z: 2 });
+    expect(render.characters[ID]!.grounded).toBe(true);
+    expect(render.characters[ID]!.dashing).toBe(true);
+  });
+});

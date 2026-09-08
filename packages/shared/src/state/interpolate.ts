@@ -1,3 +1,4 @@
+import { lerpAngle } from "../math/angle.js";
 import { slerpQuat, type Quat } from "../math/quat.js";
 import { lerpVec3, type Vec3 } from "../math/vec3.js";
 import type { CharacterMotionState } from "../simulation/CharacterStateMachine.js";
@@ -20,6 +21,22 @@ export interface RenderCharacter {
   bones: BoneSnapshot[];
   /** Not interpolated — a discrete state, taken straight from `next`. */
   motionState: CharacterMotionState;
+  /**
+   * World-space yaw in radians (M6, ADR 0045) — interpolated by the shortest
+   * arc (never a plain lerp, which would spin the long way around the +/-PI
+   * seam), on the same discontinuities `position` snaps on. Orients a remote
+   * Character's rendered model (ADR 0046).
+   */
+  facing: number;
+  /**
+   * Not interpolated — taken straight from `next`, like `motionState`. Drives
+   * a remote Character's locomotion animation selection (ADR 0046); no
+   * visual quantity needs it smoothed, only the discrete idle/walk/run/jump
+   * decision it feeds.
+   */
+  velocity: Vec3;
+  grounded: boolean;
+  dashing: boolean;
 }
 
 export interface RenderState {
@@ -65,6 +82,10 @@ export const interpolateState = (
         ? n.bones.map((b) => ({ position: { ...b.position }, rotation: { ...b.rotation } }))
         : interpolatePosed(p.bones, n.bones, t),
       motionState: n.motionState,
+      facing: lerpAngle(p.facing, n.facing, t),
+      velocity: { ...n.velocity },
+      grounded: n.grounded,
+      dashing: n.dashing,
     };
   }
 

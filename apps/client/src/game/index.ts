@@ -746,7 +746,7 @@ const boot = async (
     }
 
     stage.applyRenderState({ character: visualCharacter, props });
-    stage.applyRemoteCharacters(remoteCharacters);
+    stage.applyRemoteCharacters(remoteCharacters, Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000);
     // Cosmetic only, not a second lock: the sim itself already refused to
     // move the Character while locked (M5 ticket 01), so this just picks the
     // idle stance over animating legs toward a `moveDirection` it never

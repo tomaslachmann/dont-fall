@@ -1,10 +1,7 @@
 import {
   CAPSULE_BOTTOM_OFFSET,
-  CAPSULE_HALF_HEIGHT,
-  CAPSULE_RADIUS,
   DASH_SPEED,
   GETUP_MS,
-  RAGDOLL_BONES,
   IDENTITY_QUAT,
   isDownMotionState,
   spinnerAngleAt,
@@ -20,7 +17,14 @@ import {
   type Vec3,
 } from "@dont-fall/shared";
 import * as THREE from "three";
-import type { CharacterModel } from "./characterModel.js";
+import {
+  actionFor,
+  crossfadeLocomotion,
+  loadCharacterActions,
+  LOCOMOTION_CROSSFADE_SECONDS,
+  RAGDOLL_PELVIS_TO_FEET,
+  type CharacterModel,
+} from "./characterModel.js";
 import {
   CAMERA_DISTANCE,
   CAMERA_MIN_DISTANCE,
@@ -29,6 +33,9 @@ import {
   springArmPosition,
 } from "../input/camera/springArm.js";
 import { listen } from "../lib/listeners.js";
+import { disposeSceneGraph } from "./disposeSceneGraph.js";
+import { selectLocomotion } from "./locomotionAnimation.js";
+import { createRemoteCharacterPool } from "./remoteCharacterPool.js";
 import { createSpeedLines } from "./speedLines.js";
 import { initialWobbleState, stepWobble } from "./wobble.js";
 
@@ -40,9 +47,6 @@ const CHARACTER_VISUAL_HEIGHT = 2 * CAPSULE_BOTTOM_OFFSET + 0.35;
 /** How fast (rad/s) the model turns to face its movement direction. */
 const FACING_TURN_SPEED = 14;
 
-/** Locomotion clip crossfade duration (s). */
-const ANIMATION_CROSSFADE = 0.15;
-
 /**
  * Procedural Wobble lean (ticket 07), temporarily OFF. It derives acceleration
  * from render-frame `character.position` deltas, which a predicted + reconciled
@@ -52,16 +56,6 @@ const ANIMATION_CROSSFADE = 0.15;
  * velocity instead of position deltas (the same fix speed-lines already got).
  */
 const WOBBLE_ENABLED = false;
-
-/**
- * Vertical distance from the ragdoll's pelvis (its `RenderState.character.position`
- * while Ragdoll/GettingUp) down to the feet — the pelvis rest offset from the
- * capsule centre plus the capsule's own centre-to-feet distance. Lets the
- * Ragdoll collapse anchor be derived from the pelvis alone, correct whether it
- * came from a live Impact or a Fall's Respawn teleport (both activate the
- * ragdoll the same way, at the capsule-centre convention).
- */
-const RAGDOLL_PELVIS_TO_FEET = CAPSULE_BOTTOM_OFFSET + RAGDOLL_BONES.find((b) => b.name === "pelvis")!.restCenter.y;
 
 export interface StageConfig {
   /**
@@ -98,13 +92,15 @@ export interface Stage {
   /** Place the local player's Character mesh from an interpolated snapshot. Presentation only (ADR 0009). */
   applyRenderState: (state: StageRenderState) => void;
   /**
-   * Place every OTHER player's Character (ticket 04), keyed by session ID and
-   * interpolated from server snapshots — never predicted (ADR 0003). Meshes
-   * are pooled per ID and removed when an ID drops out of the set (a
-   * disconnect). Drawn as a plain tinted capsule, tipped over while the player
-   * is Ragdoll/GettingUp so a Bump reads at a glance.
+   * Place and animate every OTHER player's Character (M2 ticket 04, real
+   * model since M6 ticket 02 / ADR 0046), keyed by session ID and
+   * interpolated from server snapshots — never predicted (ADR 0003). Rigs
+   * are pooled per ID (one real, tinted clone of the shared model each) and
+   * torn down when an ID drops out of the set (a disconnect). `deltaSeconds`
+   * advances each rig's own `AnimationMixer`, exactly like the local
+   * Character's own `updateCharacterAnimation`.
    */
-  applyRemoteCharacters: (characters: Record<string, RenderCharacter>) => void;
+  applyRemoteCharacters: (characters: Record<string, RenderCharacter>, deltaSeconds: number) => void;
   /** Position the camera on a collision-resolved spring arm around `target`. */
   updateCamera: (target: Vec3, yaw: number, pitch: number) => void;
   /**
@@ -154,29 +150,6 @@ const boxMesh = (box: OrientedBox, material: THREE.Material): THREE.Mesh => {
   const q = box.rotation ?? IDENTITY_QUAT;
   mesh.quaternion.set(q.x, q.y, q.z, q.w);
   return mesh;
-};
-
-/**
- * Release every GPU resource reachable from `root`. Three.js uploads
- * geometries, materials and textures to the GPU and holds them there until
- * `dispose` is called explicitly — dropping the JS reference frees nothing.
- */
-const disposeSceneGraph = (root: THREE.Object3D): void => {
-  root.traverse((object) => {
-    const mesh = object as Partial<THREE.Mesh> & Partial<THREE.SkinnedMesh>;
-    mesh.geometry?.dispose();
-    mesh.skeleton?.dispose();
-    const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
-    for (const material of materials) {
-      // A material's textures hang off it under names that vary by material
-      // type (`map`, `normalMap`, `emissiveMap`, …) — walking its own values
-      // catches them all without enumerating each type's slots.
-      for (const value of Object.values(material)) {
-        if (value instanceof THREE.Texture) value.dispose();
-      }
-      material.dispose();
-    }
-  });
 };
 
 export const createStage = ({
@@ -304,23 +277,15 @@ export const createStage = ({
   character.position.y = CAPSULE_BOTTOM_OFFSET; // arbitrary until the first applyRenderState
   scene.add(character);
 
-  // Other players (ticket 04): one pooled capsule per session ID. Kept
-  // deliberately plain — a different silhouette from the local MushroomKing so
-  // "that's someone else" reads instantly, and cheap enough to scale toward
-  // ADR 0011's 12-player ceiling without cloning a skinned rig per player.
-  const remoteGeometry = new THREE.CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_HALF_HEIGHT * 2, 6, 12);
-  const remoteMaterial = new THREE.MeshStandardMaterial({ color: 0x6ab0ff, roughness: 0.7 });
-  const remoteMeshes = new Map<string, THREE.Mesh>();
+  // Other players (M6 ticket 02, ADR 0046): the same real, animated model the
+  // local Character uses, one clone per session ID, tinted to tell them
+  // apart — retires the flat placeholder capsule M2 ticket 04 stood in with.
+  // Built only after the local model setup above has already scaled/
+  // repositioned `characterModel.scene` in place, so every clone inherits
+  // that same transform (see `remoteCharacterPool.ts`'s own `buildRig`).
+  const remotePool = createRemoteCharacterPool(scene, characterModel);
 
   const mixer = new THREE.AnimationMixer(characterModel.scene);
-  const clipAction = (name: string): THREE.AnimationAction | null => {
-    const clip = THREE.AnimationClip.findByName(characterModel.animations, name);
-    return clip ? mixer.clipAction(clip) : null;
-  };
-  const idleAction = clipAction("Idle");
-  const walkAction = clipAction("Walk");
-  const runAction = clipAction("Run");
-  const jumpAction = clipAction("Jump_Idle");
   // MushroomKing's own "Death" clip doubles for both Ragdoll and GettingUp:
   // played forward (then held on the last frame) the moment the Character goes
   // down, and in reverse to stand back up — no compatible dedicated "get up"
@@ -328,11 +293,8 @@ export const createStage = ({
   // mismatch noted ahead of ticket 07). The physics ragdoll still simulates
   // underneath for real (Impact response, settle position); only its capsule-
   // bone visualisation is replaced by this animated model.
-  const deathAction = clipAction("Death");
-  if (deathAction) {
-    deathAction.setLoop(THREE.LoopOnce, 1);
-    deathAction.clampWhenFinished = true;
-  }
+  const actions = loadCharacterActions(mixer, characterModel.animations);
+  const { idle: idleAction, walk: walkAction, death: deathAction } = actions;
   let activeAction: THREE.AnimationAction | null = idleAction;
   activeAction?.play();
 
@@ -414,7 +376,7 @@ export const createStage = ({
         character.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
         const resume = idleAction ?? walkAction;
         if (resume) {
-          resume.reset().fadeIn(ANIMATION_CROSSFADE).play();
+          resume.reset().fadeIn(LOCOMOTION_CROSSFADE_SECONDS).play();
           activeAction = resume;
         }
       } else if (!fallingRagdoll && !gettingUp) {
@@ -434,29 +396,7 @@ export const createStage = ({
         mesh.updateMatrixWorld();
       }
     },
-    applyRemoteCharacters: (characters) => {
-      for (const [id, rc] of Object.entries(characters)) {
-        let mesh = remoteMeshes.get(id);
-        if (!mesh) {
-          mesh = new THREE.Mesh(remoteGeometry, remoteMaterial);
-          scene.add(mesh);
-          remoteMeshes.set(id, mesh);
-        }
-        const down = isDownMotionState(rc.motionState);
-        // `position` is the capsule centre while upright and the ragdoll pelvis
-        // (near the ground) while down — so tipping the capsule flat and
-        // dropping it to that lower point reads correctly as a floored body.
-        mesh.position.set(rc.position.x, rc.position.y, rc.position.z);
-        mesh.rotation.z = down ? Math.PI / 2 : 0;
-        mesh.updateMatrixWorld();
-      }
-      for (const [id, mesh] of remoteMeshes) {
-        if (!(id in characters)) {
-          scene.remove(mesh);
-          remoteMeshes.delete(id);
-        }
-      }
-    },
+    applyRemoteCharacters: (characters, deltaSeconds) => remotePool.apply(characters, deltaSeconds),
     updateCamera: (target, yaw, pitch) => {
       const desired = springArmPosition(target, yaw, pitch, CAMERA_DISTANCE);
       const resolved = resolveArm(target, desired, castArm, CAMERA_MIN_DISTANCE, CAMERA_SKIN);
@@ -504,13 +444,8 @@ export const createStage = ({
       const moving = moveDirection.x !== 0 || moveDirection.z !== 0;
       // A Dash with no direction held plays from lastMoveDir (see DashController),
       // so it must still select a locomotion clip even though moveDirection is zero.
-      const locomotion = dashing ? (runAction ?? walkAction) : walkAction;
-      const next = grounded ? (moving || dashing ? locomotion : idleAction) : jumpAction;
-      if (next && next !== activeAction) {
-        next.reset().fadeIn(ANIMATION_CROSSFADE).play();
-        activeAction?.fadeOut(ANIMATION_CROSSFADE);
-        activeAction = next;
-      }
+      const next = actionFor(selectLocomotion(moving, grounded, dashing), actions);
+      activeAction = crossfadeLocomotion(next, activeAction, LOCOMOTION_CROSSFADE_SECONDS);
       mixer.update(deltaSeconds);
 
       if (moving) {
@@ -550,11 +485,12 @@ export const createStage = ({
       mixer.stopAllAction();
       mixer.uncacheRoot(characterModel.scene);
       speedLines.dispose();
+      // Before the blanket scene-graph sweep below: each remote rig removes
+      // itself from `scene` as it's disposed, so the sweep never double-frees
+      // a clone's already-released geometry/material.
+      remotePool.dispose();
       disposeSceneGraph(scene);
-      remoteGeometry.dispose();
-      remoteMaterial.dispose();
       scene.clear();
-      remoteMeshes.clear();
       collidables.length = 0;
       renderer.domElement.remove();
       renderer.dispose();

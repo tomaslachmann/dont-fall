@@ -1,3 +1,4 @@
+export * from "./math/angle.js";
 export * from "./math/vec3.js";
 export * from "./math/quat.js";
 export * from "./math/box.js";
