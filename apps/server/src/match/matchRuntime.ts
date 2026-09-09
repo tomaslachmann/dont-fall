@@ -82,6 +82,15 @@ export class MatchRuntime {
    */
   readonly lobbyPlayers = new Map<string, LobbyPlayer>();
 
+  /**
+   * Players who connected mid-Match and sit out its Rounds (M7 ticket 08) —
+   * in the Lobby's list, not in the Round: they get no Character until a
+   * fresh Match seats everyone again. Match-scoped like `roundResults`:
+   * cleared by {@link resetToFreshLobby}, never per Round, so a spectator
+   * waits out the whole Match rather than joining Round two halfway.
+   */
+  readonly spectators = new Set<string>();
+
   readonly inputs = new InputRouter();
 
   /** The world. Replaced wholesale by a Playtest reload or a Lobby Track pick. */
@@ -432,6 +441,12 @@ export class MatchRuntime {
     // past. No-op at construction, where `serverTick` is 0.
     simulation.syncTick(this.serverTick);
     for (const [playerId, player] of this.lobbyPlayers) {
+      // A mid-Match spectator is in the Lobby's list, not in the Round (M7
+      // ticket 08) — seating them here would drop a fresh Character into a
+      // Race already in progress (M4 ticket 05's own refusal) or hand them
+      // Score for Rounds they never played. They are seated by the next
+      // fresh Match instead, once `resetToFreshLobby` has cleared the set.
+      if (this.spectators.has(playerId)) continue;
       simulation.addCharacter(playerId, trackSpawn(track, player.joinOrder));
     }
     return { simulation, roundRules, trackHasFinishZone: resolved.finishZones.length > 0 };
@@ -505,16 +520,22 @@ export class MatchRuntime {
    * `matchStructurePromise`/`usedTrackIds` are Match-scoped the same way
    * (ticket 05) — cleared here too, for the identical reason.
    *
-   * **Known gap (code review, left for ticket 08):** `advanceMatchPhase`'s
-   * `connectedPlayers === 0` check routes here unconditionally, including
-   * mid-Match — a brief all-sockets-blip between Rounds (not just the last
-   * Player truly leaving) wipes every Round's Score played so far, with no
-   * way back since reconnection (`reclaim`) is still unimplemented (ADR
-   * 0024). Ticket 08 ("a disconnect does not corrupt the standings") is
-   * where a Player's Score gets a lifetime independent of the socket that
-   * earned it; until then, this is the honest behaviour, not a silent one.
+   * **Ticket 08 resolution of the known gap above:** the wipe stands, but it
+   * is a Match boundary now, not corruption. A dropped Player's Score has a
+   * lifetime independent of their socket *within* a Match — the union of
+   * `roundResults` rows, Match-scoped and attached to neither `dnf` (cleared
+   * every Countdown) nor `eliminated` (per-Character), so later Rounds score
+   * zero for the absence while earlier ones keep paying. Only an empty
+   * server wipes, and then there is nobody left to read the Score: without
+   * reconnection (`reclaim`, still unimplemented per ADR 0024) a returning
+   * Player is a new id anyway, so preserving rows across an empty Lobby
+   * would only leak stale totals into whatever Match starts next.
    */
   resetToFreshLobby(track: Track): void {
+    // Cleared before the rebuild below, not after it: a fresh Match seats
+    // everyone waiting (M7 ticket 08 — a mid-Match spectator plays from the
+    // next Match), and the rebuild is what does the seating.
+    this.spectators.clear();
     this.rebuildSimulation(track);
     this.match = { phase: "LOBBY", phaseStartTick: this.serverTick };
     this.startRequested = false;

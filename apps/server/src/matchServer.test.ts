@@ -7,6 +7,8 @@ import {
   MIN_TIME_LIMIT_MS,
   RapierSimulation,
   TICK_MS,
+  matchScore,
+  roundScore,
   type ClientMessage,
   type RoundType,
   type ServerMessage,
@@ -1784,6 +1786,197 @@ describe("startServer — a Match runs several Rounds (M7 ticket 04, ADR 0049)",
     const secondResults = await snapshotUntil(socket, (s) => s.phase === "RESULTS");
     expect(secondResults.roundResults).toHaveLength(1); // not 2 — the first Match's result is gone
     socket.close();
+  });
+});
+
+describe("startServer — a disconnect does not corrupt the standings (M7 ticket 08, ADR 0049)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+    max = 800,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (let i = 0; i < max; i += 1) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+    throw new Error("condition never held");
+  };
+
+  /** A Track whose Finish Zone is right on the spawn, so a Character Qualifies as soon as it is RUNNING. */
+  const INSTANT_FINISH: Track = [{ moduleId: "finish", position: { x: 0, y: 0, z: 10 }, rotation: 0 }];
+
+  const welcomeId = async (socket: WebSocket): Promise<string> => {
+    const welcome = await nextMessage(socket);
+    if (welcome.type !== "welcome") throw new Error("unreachable");
+    return welcome.playerId;
+  };
+
+  it("keeps a Player who drops after Round one in the standings with exactly their Round-one Score", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, roundEndMs: 0 }); // default matchLength: 3
+    const a = connect(server.port, `?track=${trackId}`);
+    const aId = await welcomeId(a);
+    const b = connect(server.port, `?track=${trackId}`);
+    const bId = await welcomeId(b);
+    const c = connect(server.port, `?track=${trackId}`);
+    const cId = await welcomeId(c);
+
+    // Pin Rounds 2 and 3 to the same instant-finish Track (M7 ticket 05) —
+    // otherwise the server draws from the shared pool, which is not reliably
+    // instant-finish and would make this test about the draw, not the drop.
+    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
+    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 2, trackId, roundType: null } satisfies ClientMessage));
+
+    await startMatch(a, b, c);
+    const afterR1 = await snapshotUntil(a, (s) => s.roundResults.length === 1 && s.phase === "RESULTS");
+    // Whether c's close lands in these RESULTS, the next COUNTDOWN, or even
+    // mid-Round two, the assertions below hold either way: outside RUNNING no
+    // DNF is recorded, inside RUNNING the DNF row is filtered out of the
+    // Round's result — absent from it, scoring zero for it.
+    const cRow = afterR1.roundResults[0]!.rows.find((r) => r.id === cId);
+    if (!cRow) throw new Error("unreachable");
+    const parked = roundScore(cRow.placement, afterR1.roundResults[0]!.rows.length, cRow.qualified);
+
+    c.close();
+    await snapshotUntil(a, (s) => s.lobby.players.length === 2);
+
+    const final = await snapshotUntil(a, (s) => s.roundResults.length === 3 && s.phase === "RESULTS");
+    // The remaining Rounds are scored over the field that actually played
+    // them (N = 2), not the field that started (N = 3).
+    expect(final.roundResults.map((r) => r.rows.length)).toEqual([3, 2, 2]);
+
+    const totals = matchScore(final.roundResults);
+    expect(Object.keys(totals).sort()).toEqual([aId, bId, cId].sort());
+    expect(totals[cId]).toBeCloseTo(parked, 10);
+    a.close();
+    b.close();
+  });
+
+  it("ends the Match in a fresh Lobby when everyone drops mid-Match, and keeps serving", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, roundEndMs: 0 });
+    const a = connect(server.port, `?track=${trackId}`);
+    await welcomeId(a);
+    const b = connect(server.port, `?track=${trackId}`);
+    await welcomeId(b);
+
+    await startMatch(a, b);
+    await snapshotUntil(a, (s) => s.roundResults.length === 1 && s.phase === "RESULTS");
+
+    // Both closes observed client-side, so the server has processed them —
+    // the next connection cannot land in the pre-tick RESULTS window with a
+    // stale socket still counted.
+    a.close();
+    await nextClose(a);
+    b.close();
+    await nextClose(b);
+
+    const c = connect(server.port);
+    const cId = await welcomeId(c);
+    const lobby = await snapshotUntil(c, (s) => s.phase === "LOBBY");
+    expect(lobby.roundResults).toEqual([]);
+    expect(lobby.lobby.players.map((p) => p.id)).toEqual([cId]);
+
+    // No looping over an empty field: it stays a fresh Lobby.
+    const later = await snapshotUntil(c, (s) => s.state.tick > lobby.state.tick + 10);
+    expect(later.phase).toBe("LOBBY");
+    c.close();
+  });
+
+  it("finishes the Match when the host drops mid-way, and the successor host can return it to the Lobby", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, roundEndMs: 0 });
+    const a = connect(server.port, `?track=${trackId}`);
+    await welcomeId(a);
+    const b = connect(server.port, `?track=${trackId}`);
+    const bId = await welcomeId(b);
+    const c = connect(server.port, `?track=${trackId}`);
+    await welcomeId(c);
+
+    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
+    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 2, trackId, roundType: null } satisfies ClientMessage));
+
+    await startMatch(a, b, c);
+    await snapshotUntil(a, (s) => s.roundResults.length === 1 && s.phase === "RESULTS");
+
+    // The host leaves mid-Match. The Match still has to finish: the phase
+    // machine is the server's (ADR 0040), and nothing about advancing needs
+    // the host — only the final return to the Lobby does, and that passes
+    // to whoever has been here longest next.
+    a.close();
+    await nextClose(a);
+
+    const withoutHost = await snapshotUntil(b, (s) => s.lobby.players.length === 2);
+    expect(withoutHost.lobby.hostId).toBe(bId);
+
+    const final = await snapshotUntil(b, (s) => s.roundResults.length === 3 && s.phase === "RESULTS");
+    expect(final.roundResults.map((r) => r.rows.length)).toEqual([3, 2, 2]);
+
+    b.send(JSON.stringify({ type: "returnToLobby" } satisfies ClientMessage));
+    const lobby = await snapshotUntil(b, (s) => s.phase === "LOBBY");
+    expect(lobby.roundResults).toEqual([]);
+    b.close();
+    c.close();
+  });
+
+  it("lets a Player who connects mid-Match spectate from the Lobby list, and seats them from the next Match", async () => {
+    const trackId = await publishTrack(M1_TRACK);
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 1, timeLimitMsOverride: 2500 });
+    const a = connect(server.port, `?track=${trackId}`);
+    const aId = await welcomeId(a);
+    const b = connect(server.port, `?track=${trackId}`);
+    const bId = await welcomeId(b);
+
+    // M1: idle Characters never Qualify, so this Round runs out its clock —
+    // a long enough RUNNING window to join into, and a guaranteed ending.
+    await startMatch(a, b);
+    await snapshotUntil(a, (s) => s.phase === "RUNNING");
+
+    // Accepted, not refused: a welcome, not a 4002 close.
+    const c = connect(server.port);
+    const cId = await welcomeId(c);
+
+    // In the Lobby's list, not in the Round.
+    const listed = await snapshotUntil(c, (s) => s.lobby.players.length === 3);
+    expect(listed.lobby.players.map((p) => p.id).sort()).toEqual([aId, bId, cId].sort());
+    expect(listed.state.characters[cId]).toBeUndefined();
+    expect(Object.keys(listed.state.characters).sort()).toEqual([aId, bId].sort());
+
+    // Their inputs ride along harmlessly — the simulation has no Character
+    // under that id, so there is nothing to drive and nothing to disturb.
+    sendInput(c, listed.state.tick + 2, NORTH);
+
+    // A second spectator who leaves mid-Round leaves no DNF trace behind.
+    const d = connect(server.port);
+    const dId = await welcomeId(d);
+    await snapshotUntil(d, (s) => s.lobby.players.length === 4);
+    d.close();
+
+    const final = await snapshotUntil(a, (s) => s.phase === "RESULTS");
+    expect(final.roundResults).toHaveLength(1);
+    expect(final.roundResults[0]!.rows.map((r) => r.id).sort()).toEqual([aId, bId].sort());
+    expect(final.dnf.map((e) => e.id)).not.toContain(dId);
+
+    // ...and the waiting spectator plays from the next Match, not its next Round.
+    a.send(JSON.stringify({ type: "returnToLobby" } satisfies ClientMessage));
+    await snapshotUntil(a, (s) => s.phase === "LOBBY");
+    await startMatch(a, b, c);
+    const reseated = await snapshotUntil(a, (s) => s.phase === "RUNNING" && cId in s.state.characters);
+    expect(reseated.state.characters[cId]).toBeDefined();
+    a.close();
+    b.close();
+    c.close();
   });
 });
 

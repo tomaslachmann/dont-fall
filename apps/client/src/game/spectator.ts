@@ -11,6 +11,17 @@ export const isSpectating = (phase: MatchPhase, ownEliminated: boolean): boolean
   phase === "RUNNING" && ownEliminated;
 
 /**
+ * Whether a mid-Match joiner spectates (M7 ticket 08): they are in the
+ * Lobby's list but the Round has no Character for them, so there is nothing
+ * of their own to aim the camera at. Distinct from elimination-spectating
+ * above — nothing about them was eliminated — but it feeds the same camera
+ * and banner path. LOBBY is excluded: a fresh Lobby seats everyone waiting,
+ * so nobody is characterless there.
+ */
+export const isMatchSpectator = (phase: MatchPhase, serverHasMe: boolean): boolean =>
+  phase !== "LOBBY" && !serverHasMe;
+
+/**
  * Who this client may follow: everyone still in the Round but itself, in a
  * stable order so the cycle key walks the same list on every frame. Read off
  * the authoritative snapshot's own `eliminated` flags (ADR 0042) — the

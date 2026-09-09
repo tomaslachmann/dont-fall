@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSpectating, livingIds, nextSpectatorTarget, SpectatorController } from "./spectator.js";
+import { isMatchSpectator, isSpectating, livingIds, nextSpectatorTarget, SpectatorController } from "./spectator.js";
 
 const chars = (entries: [id: string, eliminated: boolean][]): Record<string, { eliminated: boolean }> =>
   Object.fromEntries(entries.map(([id, eliminated]) => [id, { eliminated }]));
@@ -18,6 +18,21 @@ describe("isSpectating", () => {
     expect(isSpectating("RESULTS", true)).toBe(false);
     expect(isSpectating("COUNTDOWN", true)).toBe(false);
     expect(isSpectating("LOBBY", true)).toBe(false);
+  });
+});
+
+describe("isMatchSpectator", () => {
+  it("is true while the Round has no Character for this client, in any non-Lobby phase", () => {
+    expect(isMatchSpectator("RUNNING", false)).toBe(true);
+    expect(isMatchSpectator("ROUND_END", false)).toBe(true);
+    expect(isMatchSpectator("RESULTS", false)).toBe(true);
+    expect(isMatchSpectator("COUNTDOWN", false)).toBe(true);
+  });
+
+  it("is false once the Round has a Character for this client, or back in a fresh Lobby", () => {
+    expect(isMatchSpectator("RUNNING", true)).toBe(false);
+    expect(isMatchSpectator("LOBBY", false)).toBe(false);
+    expect(isMatchSpectator("LOBBY", true)).toBe(false);
   });
 });
 

@@ -117,6 +117,41 @@ describe("matchScore", () => {
     expect(totals.a).toBeCloseTo(roundScore(1, 2, true) * 2, 10);
     expect(totals.b).toBeCloseTo(roundScore(2, 2, false), 10);
   });
+
+  it("parks a dropper's total at their last played Round across a three-Round Match with shrinking fields (M7 ticket 08)", () => {
+    // b drops after Round one: Rounds two and three are scored over the
+    // field that actually played them (N = 2, not 3), and b's total is
+    // exactly their Round-one Score — verified here, not re-implemented
+    // (the ticket's own instruction), since `matchScore` already falls out
+    // this way for a Player absent from a Round's rows.
+    const results: RoundResult[] = [
+      {
+        rows: [
+          { id: "a", placement: 1, qualified: true },
+          { id: "b", placement: 2, qualified: true },
+          { id: "c", placement: 3, qualified: false },
+        ],
+      },
+      {
+        rows: [
+          { id: "a", placement: 1, qualified: true },
+          { id: "c", placement: 2, qualified: false },
+        ],
+      },
+      {
+        rows: [
+          { id: "c", placement: 1, qualified: true },
+          { id: "a", placement: 2, qualified: false },
+        ],
+      },
+    ];
+
+    const totals = matchScore(results);
+    expect(Object.keys(totals).sort()).toEqual(["a", "b", "c"]);
+    expect(totals.b).toBeCloseTo(roundScore(2, 3, true), 10);
+    expect(totals.a).toBeCloseTo(roundScore(1, 3, true) + roundScore(1, 2, true) + roundScore(2, 2, false), 10);
+    expect(totals.c).toBeCloseTo(roundScore(3, 3, false) + roundScore(2, 2, false) + roundScore(1, 2, true), 10);
+  });
 });
 
 describe("matchWinner", () => {

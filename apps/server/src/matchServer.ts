@@ -211,10 +211,18 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         }
       }
 
-      // No mid-Round join, and so no mid-Round *re*join (M4 ticket 05):
-      // dropping a fresh Character into a Race already in progress is neither
-      // fair to them nor to the people racing. Refused with a reason the
-      // client can show, the same way a Playtest Track clash is.
+      // Joining mid-Match spectates (M7 ticket 08) — M4 ticket 05's refusal
+      // stood here before it: dropping a fresh Character into a Race already
+      // in progress is neither fair to them nor to the people racing, so a
+      // connection landing outside LOBBY/COUNTDOWN while someone is here
+      // joins the Lobby's list but not the Round — registered and welcomed
+      // exactly like everyone else, but seated by no simulation until a
+      // fresh Match does it (`MatchRuntime.spectators`, cleared only by
+      // `resetToFreshLobby`, so they wait out the whole Match rather than
+      // joining its next Round halfway).
+      //
+      // COUNTDOWN still seats: the Round hasn't begun racing, so arriving
+      // before it starts is joining the Round, not the middle of one.
       //
       // Gated on someone actually being here, not on the phase alone: the
       // return to LOBBY is decided by the tick loop, so between the last
@@ -224,20 +232,10 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       //
       // This does not (and should not) make a reload *during* a Round work:
       // the server may not have processed the old socket's close yet, and
-      // even once it has, that is exactly the mid-Round rejoin this ticket
-      // exists to refuse. Whoever left is a DNF; they come back for the next
-      // Round.
-      //
-      // The refusal reason is deliberately "a Match," not "a Round" (code
-      // review, M7 ticket 04/05): RESULTS can now be a brief auto-advancing
-      // interlude between Rounds rather than only "the Match is over," and
-      // "a Round is already under way" would be a literally false claim to
-      // show someone connecting in that window. A real "join mid-Match to
-      // spectate" is ticket 08's own scope, not this refusal's.
-      if (rt.sockets.size > 0 && rt.match.phase !== "LOBBY" && rt.match.phase !== "COUNTDOWN") {
-        socket.close(4002, truncateForCloseReason("a Match is already under way — wait for it to finish"));
-        return;
-      }
+      // even once it has, that is exactly the mid-Round rejoin this path
+      // exists to refuse as a Player. Whoever left is a DNF; they come back
+      // for the next Match — as a spectator first if it is still running.
+      const spectating = rt.sockets.size > 0 && rt.match.phase !== "LOBBY" && rt.match.phase !== "COUNTDOWN";
 
       const id = randomUUID();
       // Spawn in the loaded Track's own start frame (free placement puts the
@@ -251,7 +249,12 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       // is what `resolveHostId` reads to decide that, recomputed from
       // whoever is still connected rather than stored.
       rt.lobbyPlayers.set(id, { id, nickname: "Player", ready: false, joinOrder });
-      rt.simulation.addCharacter(id, spawn);
+      // A mid-Match spectator is in the Lobby's list, not in the Round (M7
+      // ticket 08): registered and welcomed above, but seated by no
+      // simulation — `buildSimulationFor` seats everyone else, and only a
+      // fresh Match seats them.
+      if (spectating) rt.spectators.add(id);
+      else rt.simulation.addCharacter(id, spawn);
 
       send(socket, {
         type: "welcome",
@@ -307,20 +310,26 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         // before `lobbyPlayers.delete` below removes the only place this
         // nickname lives — the Results screen (ticket 08) has nothing else
         // to call this Player once their Character is gone.
+        //
+        // Never for a mid-Match spectator (M7 ticket 08): they never raced,
+        // so there is nothing to record — and no body to eliminate or
+        // remove below, since none was ever seated for them.
+        const spectating = rt.spectators.has(id);
         const midRound = rt.match.phase === "RUNNING";
-        if (midRound && !rt.dnf.some((entry) => entry.id === id)) {
+        if (midRound && !spectating && !rt.dnf.some((entry) => entry.id === id)) {
           rt.dnf.push({ id, nickname: rt.lobbyPlayers.get(id)?.nickname ?? "Player" });
         }
         rt.sockets.delete(id);
         rt.inputs.remove(id);
         rt.lobbyPlayers.delete(id);
+        rt.spectators.delete(id);
         // A mid-Round disconnect is eliminated, not removed (M5 ticket 04,
         // ADR 0042) — pulling a rigid body out of the world mid-Round would
         // disturb contact resolution for everyone still racing. Outside
         // RUNNING nobody else is relying on this Character's body for
         // anything, so a plain removal is still correct and cheaper.
-        if (midRound) rt.simulation.eliminateCharacter(id);
-        else rt.simulation.removeCharacter(id);
+        if (!spectating && midRound) rt.simulation.eliminateCharacter(id);
+        else if (!spectating) rt.simulation.removeCharacter(id);
       });
     })();
   });

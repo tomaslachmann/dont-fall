@@ -43,7 +43,7 @@ import { createStage } from "../render/scene.js";
 import { NetMetrics } from "../net/netMetrics.js";
 import { PropPredictionController, graceTicksForRtt } from "../net/propPrediction.js";
 import { matchBanner } from "../hud/matchBanner.js";
-import { isSpectating, livingIds, SpectatorController } from "./spectator.js";
+import { isMatchSpectator, isSpectating, livingIds, SpectatorController } from "./spectator.js";
 import { PredictionLoop } from "../net/predictionLoop.js";
 import { formatRoundClock } from "../lib/roundTimer.js";
 import { SnapshotInterpolator } from "../net/snapshotInterpolation.js";
@@ -854,7 +854,12 @@ const boot = async (
     // never a frozen or null camera. Input needs no change: an eliminated
     // Character is never stepped (ADR 0042/0044), so spectating can't drive.
     const ownEliminated = latestServerSnapshot?.characters[myId]?.eliminated ?? c.eliminated;
-    const spectating = isSpectating(phase, ownEliminated);
+    // A mid-Match joiner has no Character in the Round at all (M7 ticket
+    // 08) — no elimination, just nothing of their own to aim at — so they
+    // follow the field through the same path, until a fresh Match seats
+    // them and the snapshots start carrying them again.
+    const serverHasMe = latestServerSnapshot?.characters[myId] !== undefined;
+    const spectating = isSpectating(phase, ownEliminated) || isMatchSpectator(phase, serverHasMe);
     // Drained every frame either way, so a `C` typed while playing can't
     // bank a stale cycle for the next time you're out.
     const spectatePresses = keyboard.consumeSpectateNext();
@@ -889,8 +894,11 @@ const boot = async (
     const connectedPlayers = serverCharacters.length || 1;
     const qualifiedCount = serverCharacters.filter((character) => character.finishTick !== null).length;
     // Elimination is derived, never replicated — "the Round ended and I have
-    // no finishTick" is something both sides can already see.
-    const eliminated = isEliminated(phase, latestServerSnapshot?.characters[myId]?.finishTick ?? null);
+    // no finishTick" is something both sides can already see. A mid-Match
+    // spectator (M7 ticket 08) has no finishTick because they never played,
+    // not because they were eliminated — the banner must not say otherwise.
+    const eliminated =
+      serverHasMe && isEliminated(phase, latestServerSnapshot?.characters[myId]?.finishTick ?? null);
     hud.setBanner(
       matchBanner({
         phase,
