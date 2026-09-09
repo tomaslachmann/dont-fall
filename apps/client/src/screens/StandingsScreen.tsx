@@ -1,20 +1,29 @@
 import type { MatchWinner, ResultsRow } from "@dont-fall/shared";
-import { Button, ExtrudedText, Panel, Row, Screen } from "@dont-fall/ui";
+import { ActivityDot, Button, ExtrudedText, Panel, Row, Screen } from "@dont-fall/ui";
 import type { StandingsRow } from "../game/index.js";
 import styles from "./StandingsScreen.module.css";
 
 export interface StandingsScreenProps {
   /** The Round just played, already ranked (`buildResults`, `packages/shared`) — identical shape to the pre-M7 Results Screen. */
   results: ResultsRow[];
-  /** This Match's running total per Player, already tie-ranked and sorted (`game/index.ts` — never recomputed here, see the module docstring below). */
+  /** This Match's running total per Player, already tie-ranked and sorted, each carrying whether they've confirmed Ready (`game/index.ts` — never recomputed here, see the module docstring below). */
   standings: StandingsRow[];
   /** Whoever has the highest total once the Match ends (`matchWinner`) — empty while `roundsRemaining`, length > 1 on a genuine tie. */
   winners: MatchWinner[];
-  /** Whether this Match has more Rounds after this one (M7 ticket 04, ADR 0049) — while true, the server auto-advances and there is nothing to click. */
+  /** Whether this Match has more Rounds after this one (M7 ticket 04, ADR 0049) — while true, the footer is the Ready button below, not a Match-end action. */
   roundsRemaining: boolean;
-  /** Only the host's `returnToLobby` is honored server-side, and only once no Rounds remain — mirrors `LobbyScreen`'s own host/guest split. */
-  isHost: boolean;
-  onReturnToLobby: () => void;
+  /**
+   * Confirms this Player's own Ready for the next Round (M7 ticket 10/12,
+   * ADR 0051) — every connected Player sends their own, no host gate.
+   * Meaningless once `!roundsRemaining`.
+   */
+  onStandingsReady: () => void;
+  /**
+   * Leaves for the Main Menu (M7 ticket 12, ADR 0051) — available to every
+   * Player independently at Match end, not a synchronized group action and
+   * not host-gated. Meaningless while `roundsRemaining`.
+   */
+  onMainMenu: () => void;
 }
 
 /** `#1`/`#2`/`#3` get a medal color class; everyone else just gets the plain number (design-system.md §1.1's ranking role). */
@@ -35,25 +44,29 @@ const winnerLabel = (winners: MatchWinner[], standings: StandingsRow[]): string 
 };
 
 /**
- * The Standings Screen (M7 ticket 06, ADR 0049) — the Screen between Rounds
- * and at the end of a Match, shown while `phase === "RESULTS"`. Absorbs the
- * pre-M7 Results Screen's own ranked-list panel (the Round just played)
- * rather than showing the same table on two Screens, and adds a second
- * panel for the Match's running Score (`standings`, computed client-side
- * from the replicated `roundResults` — `matchScore`, `packages/shared`).
+ * The Standings Screen (M7 ticket 06, redone ticket 12, ADR 0049/0051) —
+ * the Screen between Rounds and at the end of a Match, shown while
+ * `phase === "RESULTS"`. Absorbs the pre-M7 Results Screen's own
+ * ranked-list panel (the Round just played) rather than showing the same
+ * table on two Screens, and adds a second panel for the Match's running
+ * Score (`standings`, computed client-side from the replicated
+ * `roundResults` — `matchScore`, `packages/shared`).
  *
- * One component renders both states this Screen ever shows: between Rounds
- * (`roundsRemaining`, no winner, no action — the server advances on its
- * own once the next Track has loaded) and Match end (`!roundsRemaining`,
- * `winners` populated, host gets "Back to Lobby").
+ * One component renders both states this Screen ever shows: between
+ * Rounds (`roundsRemaining`, no winner, a "Ready for next Round" button
+ * gating the advance — ADR 0051) and Match end (`!roundsRemaining`,
+ * `winners` populated, an unconditional per-Player "Main Menu" action).
+ * Once this Player's own Ready click fires, `GameCanvas` swaps this Screen
+ * for `LoadingScreen` (ticket 11) — there is no "waiting for others" state
+ * to render here at all.
  */
 export function StandingsScreen({
   results,
   standings,
   winners,
   roundsRemaining,
-  isHost,
-  onReturnToLobby,
+  onStandingsReady,
+  onMainMenu,
 }: StandingsScreenProps) {
   return (
     <Screen>
@@ -113,6 +126,8 @@ export function StandingsScreen({
               trailing={
                 <span className={styles.stats}>
                   {row.gone && <span className={styles.progress}>Left the Match</span>}
+                  {/* Confirmed/not-yet, Lobby's own presence-dot language (M7 ticket 12) — meaningless once the Match has ended. */}
+                  {roundsRemaining && !row.gone && <ActivityDot active={row.confirmed} />}
                   <span className={styles.score}>{Math.round(row.score)}</span>
                 </span>
               }
@@ -121,15 +136,9 @@ export function StandingsScreen({
         </Panel>
 
         {roundsRemaining ? (
-          // The server auto-advances into the next Round on its own once
-          // the next Track has loaded (ADR 0049) — a "Back to Lobby" click
-          // here is silently refused (`lobby.ts`: Match-end only), so
-          // there is nothing for either the host or anyone else to press.
-          <p className={styles.hint}>More Rounds to play — advancing automatically…</p>
-        ) : isHost ? (
-          <Button onClick={onReturnToLobby}>Back to Lobby</Button>
+          <Button onClick={onStandingsReady}>Ready for next Round</Button>
         ) : (
-          <p className={styles.hint}>Waiting for the host to return to the Lobby…</p>
+          <Button onClick={onMainMenu}>Main Menu</Button>
         )}
       </div>
     </Screen>

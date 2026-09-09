@@ -172,7 +172,7 @@ describe("GameCanvas", () => {
           setReady: vi.fn(),
           selectTrack: vi.fn(),
           start: vi.fn(),
-          returnToLobby: vi.fn(),
+          standingsReady: vi.fn(),
         };
       },
     );
@@ -194,7 +194,7 @@ describe("GameCanvas", () => {
     reportStandings({
       results: [{ id: "me", nickname: "Player", qualified: true, placement: 1, checkpointIndex: 4, fallCount: 0, dnf: false }],
       roundsRemaining: false,
-      standings: [{ id: "me", nickname: "Player", score: 100, placement: 1, gone: false }],
+      standings: [{ id: "me", nickname: "Player", score: 100, placement: 1, gone: false, confirmed: false }],
       winners: [{ id: "me", score: 100 }],
     });
     expect(await screen.findByText("Final Standings")).toBeInTheDocument();
@@ -211,6 +211,45 @@ describe("GameCanvas", () => {
       roundPicks: [],
     });
     await waitFor(() => expect(screen.queryByText("Final Standings")).not.toBeInTheDocument());
+  });
+
+  it("swaps Standings for the Loading screen once this Player confirms Ready between Rounds (M7 ticket 11, ADR 0051)", async () => {
+    let reportLobby!: (state: unknown) => void;
+    let reportStandings!: (snapshot: unknown) => void;
+    const standingsReady = vi.fn();
+    startGame.mockImplementationOnce(
+      async (config: { onLobbyState?: (state: unknown) => void; onStandings?: (snapshot: unknown) => void }) => {
+        reportLobby = config.onLobbyState!;
+        reportStandings = config.onStandings!;
+        return { stop: vi.fn(), setNickname: vi.fn(), setReady: vi.fn(), selectTrack: vi.fn(), start: vi.fn(), standingsReady };
+      },
+    );
+
+    renderAtPlayRoute();
+    await waitFor(() => expect(startGame).toHaveBeenCalledTimes(1));
+
+    reportLobby({
+      myId: "me",
+      phase: "RESULTS",
+      hostId: "me",
+      players: [{ id: "me", nickname: "Player", ready: true, joinOrder: 0 }],
+      trackId: "t1",
+      trackRevision: 1,
+      timeLimitMs: 180_000,
+      matchLength: 2,
+      roundPicks: [],
+    });
+    reportStandings({
+      results: [{ id: "me", nickname: "Player", qualified: true, placement: 1, checkpointIndex: 4, fallCount: 0, dnf: false }],
+      roundsRemaining: true,
+      standings: [{ id: "me", nickname: "Player", score: 100, placement: 1, gone: false, confirmed: false }],
+      winners: [],
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Ready for next Round" }));
+
+    expect(standingsReady).toHaveBeenCalledOnce();
+    expect(await screen.findByText("Loading next Round…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ready for next Round" })).not.toBeInTheDocument();
   });
 
   it("tears down the old game and boots a new one when trackId changes", async () => {
@@ -232,5 +271,77 @@ describe("GameCanvas", () => {
 
     await waitFor(() => expect(startGame).toHaveBeenCalledTimes(2));
     expect(stopFirst).toHaveBeenCalledOnce();
+  });
+});
+
+describe("GameCanvas practice mode (m8.1 tickets 01+03)", () => {
+  it("boots a practice session — practice flag plus onPracticeState, never a Lobby", async () => {
+    startGame.mockResolvedValue({ stop: vi.fn() });
+
+    renderAtPlayRoute({ trackId: "abc123", practice: true });
+    await waitFor(() => expect(startGame).toHaveBeenCalledTimes(1));
+
+    const config = startGame.mock.calls[0]![0];
+    expect(config.trackId).toBe("abc123");
+    expect(config.practice).toBe(true);
+    expect(typeof config.onPracticeState).toBe("function");
+    // No Lobby overlay in a practice session — nothing match-shaped renders.
+    expect(screen.queryByText("Lobby")).not.toBeInTheDocument();
+  });
+
+  it("renders the practice hint bar once the session reports its Track, then the finish toast", async () => {
+    let reportPractice!: (snapshot: { trackName: string; finished: boolean }) => void;
+    startGame.mockImplementationOnce(
+      async (config: { onPracticeState?: (snapshot: { trackName: string; finished: boolean }) => void }) => {
+        reportPractice = config.onPracticeState!;
+        return { stop: vi.fn() };
+      },
+    );
+
+    renderAtPlayRoute({ trackId: "abc123", practice: true });
+    await waitFor(() => expect(startGame).toHaveBeenCalledTimes(1));
+
+    reportPractice({ trackName: "Asset demo", finished: false });
+    expect(await screen.findByText("Asset demo")).toBeInTheDocument();
+    expect(screen.getByText(/WASD move/)).toBeInTheDocument();
+    expect(screen.queryByText(/Finished — keep running/)).not.toBeInTheDocument();
+
+    reportPractice({ trackName: "Asset demo", finished: true });
+    expect(await screen.findByText("Finished — keep running")).toBeInTheDocument();
+  });
+
+  it("leaves through the existing onExit path on Back click and on Esc, disposing the session on unmount", async () => {
+    const onExit = vi.fn();
+    const stop = vi.fn();
+    let reportPractice!: (snapshot: { trackName: string; finished: boolean }) => void;
+    startGame.mockImplementationOnce(
+      async (config: { onPracticeState?: (snapshot: { trackName: string; finished: boolean }) => void }) => {
+        reportPractice = config.onPracticeState!;
+        return { stop };
+      },
+    );
+
+    const { unmount } = renderAtPlayRoute({ trackId: "abc123", practice: true, onExit });
+    await waitFor(() => expect(startGame).toHaveBeenCalledTimes(1));
+    reportPractice({ trackName: "Asset demo", finished: false });
+    expect(await screen.findByText("Asset demo")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(onExit).toHaveBeenCalledWith("disconnected");
+
+    fireEvent.keyDown(window, { code: "Escape" });
+    expect(onExit).toHaveBeenCalledTimes(2);
+
+    unmount();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("reports a practice boot failure as a Track load error, not a connection error", async () => {
+    startGame.mockRejectedValueOnce(new Error("could not fetch Track abc123 from track-service: HTTP 404"));
+
+    renderAtPlayRoute({ trackId: "abc123", practice: true });
+
+    expect(await screen.findByText(/failed to load Track/)).toBeInTheDocument();
+    expect(screen.getByText(/could not fetch Track/)).toBeInTheDocument();
   });
 });

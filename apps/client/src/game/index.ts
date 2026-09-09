@@ -1,12 +1,10 @@
 import {
-  ASSET_MODULE_DEFS,
   DEFAULT_KILL_PLANE_Y,
   INITIAL_LEAD_TICKS_MAX,
   INITIAL_LEAD_TICKS_MIN,
   INPUT_REDUNDANCY,
   LEAD_DRAIN_FRACTION,
   IDLE_INPUTS,
-  MODULE_LIBRARY,
   RapierSimulation,
   TICK_MS,
   TICK_RATE_HZ,
@@ -17,7 +15,6 @@ import {
   isEliminated,
   interpolateState,
   lengthVec3,
-  loadAssetLibrary,
   matchScore,
   matchWinner,
   movementDirection,
@@ -47,6 +44,9 @@ import { createHud } from "../hud/hud.js";
 import { formatHudText } from "../hud/hudText.js";
 import { FreeLookCamera, KeyboardInput } from "../input/input.js";
 import { listen } from "../lib/listeners.js";
+import { startPracticeGame } from "./practice.js";
+import type { PracticeSnapshot } from "./practice.js";
+import { createTrackLoading } from "./trackLoading.js";
 import { createStage } from "../render/scene.js";
 import { NetMetrics } from "../net/netMetrics.js";
 import { PropPredictionController, graceTicksForRtt } from "../net/propPrediction.js";
@@ -138,6 +138,11 @@ export interface LobbySnapshot {
  * some `RoundResult`'s rows (so it has Score to show) but is no longer in
  * `lobby.players` (so it isn't here to see it) — a Player who dropped
  * mid-Match, parked rather than erased.
+ *
+ * `confirmed` (M7 ticket 10/12, ADR 0051) — whether this Player has clicked
+ * Ready for the next Round yet, read straight off the replicated
+ * `standingsReady` list. Meaningless (always `false`) once the Match has
+ * ended — there is no confirmation to gate at that point.
  */
 export interface StandingsRow {
   id: string;
@@ -145,6 +150,7 @@ export interface StandingsRow {
   score: number;
   placement: number;
   gone: boolean;
+  confirmed: boolean;
 }
 
 /**
@@ -174,6 +180,19 @@ export interface GameConfig {
   host?: string;
   /** A specific Track to play — Track Builder's Playtest (ADR 0028). Omitted: whatever the server chose. */
   trackId?: string;
+  /**
+   * Free-roam practice instead of a Match (m8.1): the Track simulated
+   * locally, no socket, no Lobby, no Rounds. Requires `trackId` — with no
+   * server there is nothing to default to.
+   */
+  practice?: boolean;
+  /**
+   * Raised once at practice boot (so the hint bar has a Track name
+   * immediately) and again on the finish crossing (m8.1 ticket 03) — the
+   * whole React surface of a practice session. Never raised in a Match;
+   * `onLobbyState`/`onStandings` are never raised in practice.
+   */
+  onPracticeState?: (snapshot: PracticeSnapshot) => void;
   /**
    * Declared because ADR 0008 names it as half of the game's boundary
    * ("config in, `onMatchEnd`/`onExit` out"), but nothing raises it: Results
@@ -241,8 +260,14 @@ export interface GameHandle {
   pickRoundSlot: (roundIndex: number, trackId: string | null, roundType: RoundType | null) => void;
   /** Host-only: asks the server to start the Round (M4 ticket 07). Ignored unless the server's own gate passes. */
   start: () => void;
-  /** Host-only: asks the server to return to the Lobby from Results (M4 ticket 08). Ignored outside RESULTS. */
-  returnToLobby: () => void;
+  /**
+   * Confirms this Player's own Ready for the next Round, from the
+   * Standings Screen (M7 ticket 10, ADR 0051) — not host-only, unlike
+   * every other action here. Ignored outside RESULTS. Retired
+   * `returnToLobby` (M4 ticket 08): there is no group action left to send
+   * at Match end, only this Round's own confirmation between Rounds.
+   */
+  standingsReady: () => void;
 }
 
 /**
@@ -252,6 +277,15 @@ export interface GameHandle {
  * acquired, so a failed start leaks nothing either.
  */
 export const startGame = async (config: GameConfig): Promise<GameHandle> => {
+  if (config.practice) {
+    if (config.trackId === undefined) throw new Error("practice mode needs a Track (?track=) — with no server there is nothing to default to");
+    return startPracticeGame({
+      mount: config.mount,
+      trackId: config.trackId,
+      ...(config.host === undefined ? {} : { host: config.host }),
+      ...(config.onPracticeState === undefined ? {} : { onPracticeState: config.onPracticeState }),
+    });
+  }
   const teardown = createTeardown();
   try {
     return await boot(config, teardown);
@@ -280,70 +314,11 @@ const boot = async (
   let serverInterp = new SnapshotInterpolator();
   serverInterp.setSnapshotHz(welcome.config.snapshotHz);
 
-  const fetchTrack = async (trackId: string, trackRevision: number): Promise<Track> => {
-    const res = await fetch(`${endpoints.trackServiceUrl}/tracks/${trackId}?revision=${trackRevision}`);
-    if (!res.ok) {
-      throw new Error(`could not fetch Track ${trackId}@${trackRevision} from track-service: HTTP ${res.status}`);
-    }
-    const { track: fetched } = (await res.json()) as { track: Track };
-    return fetched;
-  };
+  // Track-service reads shared with the practice session (m8.1 ticket 01)
+  // — one pipe, one cache, no fork to drift.
+  const { fetchTrack, loadLibrary, loadVisualTemplates } = createTrackLoading(host);
 
-  // Asset art loads once per session and is cached (M8 ticket 02, ADR 0050
-  // as amended) — fetch-once-per-loader, so a mid-Match edit on
-  // track-service cannot split this client's prediction from the server's
-  // world mid-Round. Four tiny files; correctness of the library beats
-  // fetching per Track.
-  //
-  // One `fetchBytes` serves both loaders (M8 ticket 03): the collision half
-  // (`loadAssetLibrary`) and the visual half (`loadAssetVisuals`) parse the
-  // same bytes twice with different code — "two loaders, one truth" — so
-  // they share one promise cache and no URL is ever fetched twice per
-  // session, however the two loads interleave.
-  const fetchedBytes = new Map<string, Promise<Uint8Array>>();
-  const fetchBytes = (url: string): Promise<Uint8Array> => {
-    const cached = fetchedBytes.get(url);
-    if (cached) return cached;
-    const pending = (async (): Promise<Uint8Array> => {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`GET ${url} answered ${res.status}`);
-      return new Uint8Array(await res.arrayBuffer());
-    })();
-    fetchedBytes.set(url, pending);
-    return pending;
-  };
-  const assetsBaseUrl = `${endpoints.trackServiceUrl}/assets`;
-  let assetLibrary: Record<string, Module> | null = null;
-  const loadLibrary = async (): Promise<Record<string, Module>> => {
-    if (!assetLibrary) {
-      const assets = await loadAssetLibrary(
-        fetchBytes,
-        assetsBaseUrl,
-        ASSET_MODULE_DEFS,
-        // Ticket 01's visual-escapes-collision check, surfaced where a
-        // developer will see it (a dev warning, never an error).
-        (moduleId, warning) => console.warn(`DON'T FALL: asset "${moduleId}": ${warning}`),
-      );
-      assetLibrary = { ...MODULE_LIBRARY, ...assets };
-    }
-    return assetLibrary;
-  };
-  // Visual templates, cached alongside the library above (M8 ticket 03) —
-  // parsed once per session, cloned once per placed Segment, freed with the
-  // stage on Track reload while the templates survive for the next Track.
-  let assetTemplates: Awaited<ReturnType<typeof loadAssetVisuals>> | null = null;
-  const loadVisualTemplates = async (): Promise<Awaited<ReturnType<typeof loadAssetVisuals>>> => {
-    if (!assetTemplates) {
-      assetTemplates = await loadAssetVisuals(
-        fetchBytes,
-        assetsBaseUrl,
-        ASSET_MODULE_DEFS.map((def) => def.id),
-      );
-    }
-    return assetTemplates;
-  };
-
-  const track = await fetchTrack(welcome.trackId, welcome.trackRevision);
+  const { track } = await fetchTrack(welcome.trackId, welcome.trackRevision);
   const library = await loadLibrary();
   const { statics, staticSurfaces, staticTrimeshes, checkpoints, finishZones, spinners, props, speedPads, launchPads, volumes } =
     resolveTrack(library, track);
@@ -506,7 +481,7 @@ const boot = async (
    * and re-seeded around.
    */
   const loadTrack = async (trackId: string, trackRevision: number, spawn: Vec3): Promise<void> => {
-    const nextTrack = await fetchTrack(trackId, trackRevision);
+    const { track: nextTrack } = await fetchTrack(trackId, trackRevision);
     const nextLibrary = await loadLibrary();
     const resolved = resolveTrack(nextLibrary, nextTrack);
 
@@ -609,9 +584,10 @@ const boot = async (
         }
         if (onStandings && message.phase === "RESULTS") {
           const results = buildResults(message.state.characters, message.lobby.players, message.dnf);
-          // M7 ticket 04, ADR 0049: whether the server will auto-advance
-          // into another Round rather than wait for `returnToLobby` —
-          // folded into the same dedupe as `results` so a change in this
+          // M7 ticket 10, ADR 0051: whether more Rounds are configured at
+          // all — the *advance* itself now also waits on every connected
+          // Player's own confirmation (`standingsReady`), not just this.
+          // Folded into the same dedupe as `results` so a change in this
           // alone (the last Round finishing, say) still reaches the Screen.
           const roundsRemaining = message.roundResults.length < message.lobby.matchLength;
 
@@ -622,12 +598,14 @@ const boot = async (
           // contract: scored in some Round, absent from `lobby.players` now.
           const totals = matchScore(message.roundResults);
           const connectedIds = new Set(message.lobby.players.map((player) => player.id));
+          const confirmedIds = new Set(message.standingsReady);
           const rowIds = new Set([...Object.keys(totals), ...connectedIds]);
           const unranked = Array.from(rowIds, (id) => ({
             id,
             nickname: knownNicknames.get(id) ?? id,
             score: totals[id] ?? 0,
             gone: !connectedIds.has(id),
+            confirmed: confirmedIds.has(id),
           })).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
           const placements = rankWithTies(unranked, (prev, curr) => prev.score === curr.score);
           const standings: StandingsRow[] = unranked.map((row, i) => ({ ...row, placement: placements[i]! }));
@@ -1101,6 +1079,6 @@ const boot = async (
     setMatchLength: (matchLength) => sendLobbyMessage({ type: "setMatchLength", matchLength }),
     pickRoundSlot: (roundIndex, trackId, roundType) => sendLobbyMessage({ type: "pickRoundSlot", roundIndex, trackId, roundType }),
     start: () => sendLobbyMessage({ type: "start" }),
-    returnToLobby: () => sendLobbyMessage({ type: "returnToLobby" }),
+    standingsReady: () => sendLobbyMessage({ type: "standingsReady" }),
   };
 };

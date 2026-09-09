@@ -124,6 +124,14 @@ export interface SnapshotMessage {
    */
   dnf: { id: string; nickname: string }[];
   /**
+   * Ids who have confirmed Ready on the current Standings Screen (M7 ticket
+   * 10/12, ADR 0051) — Round-scoped exactly like `dnf`, cleared on every
+   * fresh COUNTDOWN. What the Standings Screen renders its per-Player
+   * confirmed/not-yet indicator from, and how a client learns its own
+   * click actually registered.
+   */
+  standingsReady: string[];
+  /**
    * The Track this server currently has loaded, and who's connected to the
    * Lobby around it (M4 ticket 07, ADR 0040). Sent every snapshot — not just
    * once at `welcome` — because both can change live during LOBBY: the host

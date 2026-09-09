@@ -1,0 +1,61 @@
+.hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.bar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font: 12px/1.4 ui-monospace, monospace;
+  color: #8ba0b8;
+  pointer-events: auto;
+}
+
+.mode {
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #cdd9e5;
+}
+
+.track {
+  font-weight: 700;
+  color: #cdd9e5;
+}
+
+.hint {
+  margin-left: auto;
+}
+
+.toast {
+  position: absolute;
+  top: 22%;
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
+  font: 800 28px/1.2 ui-monospace, monospace;
+  color: #cdd9e5;
+  letter-spacing: 0.04em;
+  animation: toast-fade 4s ease forwards;
+}
+
+@keyframes toast-fade {
+  0% {
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}

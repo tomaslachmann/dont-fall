@@ -78,8 +78,3 @@
   white-space: nowrap;
 }
 
-.hint {
-  margin: 0;
-  color: var(--df-color-ink-secondary);
-  font-size: var(--df-type-body);
-}

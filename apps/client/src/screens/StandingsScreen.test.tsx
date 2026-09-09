@@ -22,6 +22,7 @@ const standingsRow = (overrides: Partial<StandingsRow> = {}): StandingsRow => ({
   score: 100,
   placement: 1,
   gone: false,
+  confirmed: false,
   ...overrides,
 });
 
@@ -33,8 +34,8 @@ describe("StandingsScreen", () => {
         standings={[standingsRow({ id: "a", nickname: "Alice" }), standingsRow({ id: "b", nickname: "Bob", placement: 2, score: 50 })]}
         winners={[]}
         roundsRemaining={true}
-        isHost={true}
-        onReturnToLobby={() => {}}
+        onStandingsReady={() => {}}
+        onMainMenu={() => {}}
       />,
     );
 
@@ -49,8 +50,8 @@ describe("StandingsScreen", () => {
         standings={[standingsRow()]}
         winners={[]}
         roundsRemaining={true}
-        isHost={true}
-        onReturnToLobby={() => {}}
+        onStandingsReady={() => {}}
+        onMainMenu={() => {}}
       />,
     );
 
@@ -65,8 +66,8 @@ describe("StandingsScreen", () => {
         standings={[standingsRow({ id: "a", nickname: "Casey" })]}
         winners={[]}
         roundsRemaining={true}
-        isHost={true}
-        onReturnToLobby={() => {}}
+        onStandingsReady={() => {}}
+        onMainMenu={() => {}}
       />,
     );
 
@@ -83,8 +84,8 @@ describe("StandingsScreen", () => {
         ]}
         winners={[]}
         roundsRemaining={true}
-        isHost={true}
-        onReturnToLobby={() => {}}
+        onStandingsReady={() => {}}
+        onMainMenu={() => {}}
       />,
     );
 
@@ -102,8 +103,8 @@ describe("StandingsScreen", () => {
         ]}
         winners={[]}
         roundsRemaining={true}
-        isHost={true}
-        onReturnToLobby={() => {}}
+        onStandingsReady={() => {}}
+        onMainMenu={() => {}}
       />,
     );
 
@@ -117,8 +118,8 @@ describe("StandingsScreen", () => {
         standings={[standingsRow({ id: "a", nickname: "Casey", score: 42, placement: 1, gone: true })]}
         winners={[]}
         roundsRemaining={true}
-        isHost={true}
-        onReturnToLobby={() => {}}
+        onStandingsReady={() => {}}
+        onMainMenu={() => {}}
       />,
     );
 
@@ -128,75 +129,47 @@ describe("StandingsScreen", () => {
   });
 });
 
-describe("StandingsScreen — between Rounds (M7 ticket 06, ADR 0049)", () => {
-  it("does not offer Back to Lobby, shows no winner, and says it is advancing automatically", () => {
+describe("StandingsScreen — between Rounds (M7 ticket 10/12, ADR 0051)", () => {
+  it("offers a Ready button, not an auto-advance message, and shows no winner", () => {
+    const onStandingsReady = vi.fn();
     render(
       <StandingsScreen
         results={[row()]}
         standings={[standingsRow()]}
         winners={[]}
         roundsRemaining={true}
-        isHost={true}
-        onReturnToLobby={() => {}}
+        onStandingsReady={onStandingsReady}
+        onMainMenu={() => {}}
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "Back to Lobby" })).not.toBeInTheDocument();
-    expect(screen.getByText("More Rounds to play — advancing automatically…")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ready for next Round" }));
+    expect(onStandingsReady).toHaveBeenCalledOnce();
     expect(screen.queryByText(/wins the Match/)).not.toBeInTheDocument();
-  });
-
-  it("shows the same auto-advance message to a non-host too", () => {
-    render(
-      <StandingsScreen
-        results={[row()]}
-        standings={[standingsRow()]}
-        winners={[]}
-        roundsRemaining={true}
-        isHost={false}
-        onReturnToLobby={() => {}}
-      />,
-    );
-
-    expect(screen.getByText("More Rounds to play — advancing automatically…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Main Menu" })).not.toBeInTheDocument();
   });
 });
 
-describe("StandingsScreen — Match end (M7 ticket 06, ADR 0049)", () => {
+describe("StandingsScreen — Match end (M7 ticket 10/12, ADR 0051)", () => {
   const winner: MatchWinner = { id: "a", score: 137 };
 
-  it("names the winner and lets the host return to the Lobby", () => {
-    const onReturnToLobby = vi.fn();
+  it("names the winner and lets any Player go to the Main Menu independently", () => {
+    const onMainMenu = vi.fn();
     render(
       <StandingsScreen
         results={[row()]}
         standings={[standingsRow({ id: "a", nickname: "Alice", score: 137 })]}
         winners={[winner]}
         roundsRemaining={false}
-        isHost={true}
-        onReturnToLobby={onReturnToLobby}
+        onStandingsReady={() => {}}
+        onMainMenu={onMainMenu}
       />,
     );
 
     expect(screen.getByText("Alice wins the Match!")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Back to Lobby" }));
-    expect(onReturnToLobby).toHaveBeenCalledOnce();
-  });
-
-  it("does not offer the Back to Lobby action to a non-host, and says so", () => {
-    render(
-      <StandingsScreen
-        results={[row()]}
-        standings={[standingsRow({ id: "a", nickname: "Alice", score: 137 })]}
-        winners={[winner]}
-        roundsRemaining={false}
-        isHost={false}
-        onReturnToLobby={() => {}}
-      />,
-    );
-
-    expect(screen.queryByRole("button", { name: "Back to Lobby" })).not.toBeInTheDocument();
-    expect(screen.getByText("Waiting for the host to return to the Lobby…")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Main Menu" }));
+    expect(onMainMenu).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Ready for next Round" })).not.toBeInTheDocument();
   });
 
   it("names both Players on a genuine tie", () => {
@@ -212,8 +185,8 @@ describe("StandingsScreen — Match end (M7 ticket 06, ADR 0049)", () => {
           { id: "b", score: 137 },
         ]}
         roundsRemaining={false}
-        isHost={true}
-        onReturnToLobby={() => {}}
+        onStandingsReady={() => {}}
+        onMainMenu={() => {}}
       />,
     );
 

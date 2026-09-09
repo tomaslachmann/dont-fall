@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { App } from "./App";
+import { App, parsePlayParams } from "./App";
 
 const { startGame } = vi.hoisted(() => ({ startGame: vi.fn() }));
 vi.mock("./game/index.js", () => ({ startGame }));
@@ -70,5 +70,54 @@ describe("App", () => {
 
     await waitFor(() => expect(startGame).toHaveBeenCalledTimes(1));
     expect(startGame.mock.calls[0]![0].trackId).toBeUndefined();
+  });
+});
+
+describe("parsePlayParams (m8.1 ticket 01)", () => {
+  it("selects a Match boot by default — no practice flag without ?freeroam=1", () => {
+    expect(parsePlayParams(new URLSearchParams("track=abc123"))).toEqual({ trackId: "abc123", practice: false });
+    expect(parsePlayParams(new URLSearchParams(""))).toEqual({ practice: false });
+  });
+
+  it("selects the practice boot only on ?freeroam=1 — any other value stays a Match", () => {
+    expect(parsePlayParams(new URLSearchParams("track=abc123&freeroam=1"))).toEqual({
+      trackId: "abc123",
+      practice: true,
+    });
+    expect(parsePlayParams(new URLSearchParams("track=abc123&freeroam=0"))).toEqual({
+      trackId: "abc123",
+      practice: false,
+    });
+    expect(parsePlayParams(new URLSearchParams("track=abc123&freeroam=yes"))).toEqual({
+      trackId: "abc123",
+      practice: false,
+    });
+  });
+
+  it("boots the game in practice mode on /play?track=X&freeroam=1", async () => {
+    startGame.mockResolvedValue({ stop: vi.fn() });
+
+    render(
+      <MemoryRouter initialEntries={["/play?track=abc123&freeroam=1"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(startGame).toHaveBeenCalledTimes(1));
+    expect(startGame.mock.calls[0]![0].trackId).toBe("abc123");
+    expect(startGame.mock.calls[0]![0].practice).toBe(true);
+  });
+
+  it("leaves a plain /play?track=X as a Match boot — no practice flag", async () => {
+    startGame.mockResolvedValue({ stop: vi.fn() });
+
+    render(
+      <MemoryRouter initialEntries={["/play?track=abc123"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(startGame).toHaveBeenCalledTimes(1));
+    expect(startGame.mock.calls[0]![0].practice).not.toBe(true);
   });
 });

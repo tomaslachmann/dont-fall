@@ -287,6 +287,7 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
             roundRules: rt.roundRules,
             countdownMsLeft: countdown,
             dnf: rt.dnf,
+            standingsReady: [...rt.standingsReady],
             trackId: rt.fetched.id,
             trackRevision: rt.fetched.revision,
             lobby: lobbySnapshot,

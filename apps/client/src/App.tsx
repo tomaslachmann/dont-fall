@@ -3,16 +3,37 @@ import { MainMenuScreen } from "./screens/MainMenuScreen";
 import { GameCanvas } from "./components/GameCanvas";
 
 /**
+ * `/play` query params (m8.1 ticket 01): `?track=` selects a specific Track
+ * (Track Builder's own Playtest link, opened straight at this route; absent
+ * for an ordinary Player, who connects to whatever the server chose) and
+ * `?freeroam=1` boots a local practice session instead of a Match — one
+ * route, explicit param, bookmarkable. Pure so tests can pin the
+ * practice-vs-match choice without mounting a router.
+ */
+export const parsePlayParams = (searchParams: URLSearchParams): { trackId?: string; practice: boolean } => {
+  const trackId = searchParams.get("track") ?? undefined;
+  return {
+    ...(trackId === undefined ? {} : { trackId }),
+    practice: searchParams.get("freeroam") === "1",
+  };
+};
+
+/**
  * `/play` — the only place `<GameCanvas>` mounts, so leaving it always
- * tears the game down. `?track=` (Track Builder's own Playtest link,
- * opened straight at this route) selects a specific Track; absent for an
- * ordinary Player, who connects to whatever the server chose.
+ * tears the game down.
  */
 function PlayRoute() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const trackId = searchParams.get("track") ?? undefined;
-  return <GameCanvas {...(trackId === undefined ? {} : { trackId })} onExit={() => navigate("/")} />;
+  const { trackId, practice } = parsePlayParams(searchParams);
+  return (
+    <GameCanvas
+      {...(trackId === undefined ? {} : { trackId })}
+      {...(practice ? { practice: true as const } : {})}
+      onExit={() => navigate("/")}
+      onMatchEnd={() => navigate("/")}
+    />
+  );
 }
 
 /**
