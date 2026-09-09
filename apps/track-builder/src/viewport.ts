@@ -15,17 +15,42 @@ import {
 export type { SegmentTransform };
 
 /**
+ * Shared offscreen thumbnail renderer — every palette preview rasterizes
+ * through this ONE renderer instead of owning one each. Fifteen palette
+ * entries plus four asset entries plus the main viewport needed 20 live
+ * WebGL contexts against the browser's 16-context ceiling; past it the
+ * browser kills contexts, which blanked the viewport canvas entirely (grid
+ * included) the moment the Assets tab opened. One viewport plus one
+ * thumbnail renderer is two contexts, forever.
+ */
+let thumbnailRenderer: THREE.WebGLRenderer | null = null;
+let thumbnailCanvas: HTMLCanvasElement | null = null;
+
+/**
  * A small, self-contained preview of one Module — the palette's "visual
  * preview of every Module" requirement (ticket 04). Framed automatically from
  * the Module's own bounding box, with a slow auto-rotate so the shape reads
  * as 3D even from a single still frame.
+ *
+ * Implementation: a single WebGLRenderer can only ever draw into its own
+ * canvas, so the shared renderer draws offscreen and each entry keeps a
+ * plain 2D still, refreshed by the returned per-frame closure exactly like
+ * before (same auto-rotate, same framing — only where the pixels come from
+ * changed).
  */
 export const createModulePreview = (canvas: HTMLCanvasElement, module: Module, template?: THREE.Group): (() => void) => {
+  const target = canvas.getContext("2d");
+  if (!target) throw new Error("module preview needs a fresh canvas (one already bound to WebGL cannot take a 2D copy)");
+  if (!thumbnailRenderer || !thumbnailCanvas) {
+    thumbnailCanvas = document.createElement("canvas");
+    thumbnailCanvas.width = 96;
+    thumbnailCanvas.height = 96;
+    thumbnailRenderer = new THREE.WebGLRenderer({ canvas: thumbnailCanvas, antialias: true, alpha: true });
+  }
+  const renderer = thumbnailRenderer;
+  const offscreen = thumbnailCanvas;
   const width = canvas.width || canvas.clientWidth || 96;
   const height = canvas.height || canvas.clientHeight || 96;
-
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  renderer.setSize(width, height, false);
 
   const scene = new THREE.Scene();
   // An asset Module previews its authored visual (M8 ticket 05) — what the
@@ -47,7 +72,9 @@ export const createModulePreview = (canvas: HTMLCanvasElement, module: Module, t
   return () => {
     angle += 0.008;
     group.rotation.y = angle;
+    renderer.setSize(width, height, false);
     renderer.render(scene, camera);
+    target.drawImage(offscreen, 0, 0, width, height);
   };
 };
 
