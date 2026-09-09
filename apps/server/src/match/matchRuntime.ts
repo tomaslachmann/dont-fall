@@ -33,6 +33,8 @@ export interface MatchConfig {
   trackFetchRetryOptions: { maxWaitMs?: number; retryDelayMs?: number; attemptTimeoutMs?: number };
   countdownMs: number;
   roundEndMs: number;
+  /** Ceiling on how long Standings waits for every connected Player to confirm Ready (M7 ticket 10, ADR 0051) before advancing anyway. */
+  standingsReadyTimeoutMs: number;
   playersToStart: number;
   timeLimitMsOverride?: number | undefined;
   /**
@@ -137,6 +139,16 @@ export class MatchRuntime {
   dnf: { id: string; nickname: string }[] = [];
 
   /**
+   * Ids who have confirmed Ready on the current Standings Screen (M7 ticket
+   * 10, ADR 0051) — Round-scoped exactly like `dnf`: cleared on every fresh
+   * COUNTDOWN (`matchLoop.ts`), never carried across Rounds. Checked against
+   * `sockets` live (`allStandingsConfirmed`), never a snapshot of who was
+   * connected when RESULTS began, so a mid-Standings disconnect can't block
+   * the rest.
+   */
+  readonly standingsReady = new Set<string>();
+
+  /**
    * How many Rounds this Match runs before it ends (M7 ticket 04/05, ADR
    * 0049) — Lobby-scoped, like `roundType`: a host who set it for one Match
    * set it for this Lobby, not for one Match, so it survives
@@ -183,9 +195,8 @@ export class MatchRuntime {
    */
   nextRoundReady = false;
 
-  /** One-shot edges, set by a Lobby handler and spent by the next tick. */
+  /** One-shot edge, set by a Lobby handler and spent by the next tick. */
   startRequested = false;
-  returnToLobbyRequested = false;
   /** Guards a `selectTrack` whose fetch is still in flight against a newer pick. */
   selectTrackSeq = 0;
   /**
@@ -322,9 +333,9 @@ export class MatchRuntime {
    * Whether this Match has more Rounds scheduled after the one that just
    * ended (M7 ticket 04/05, ADR 0049) — one accessor instead of
    * `roundResults.length < matchLength` written out at every call site
-   * (code review): `advanceMatchPhase`'s own gate, the round-result-push
-   * gate, and `returnToLobby`'s refusal must never be able to disagree
-   * about what "the Match is over" means.
+   * (code review): `advanceMatchPhase`'s own gate and the round-result-push
+   * gate must never be able to disagree about what "the Match is over"
+   * means.
    */
   roundsRemaining(): boolean {
     return this.roundResults.length < this.matchLength;
@@ -342,12 +353,27 @@ export class MatchRuntime {
    * bar for starting one in the first place.
    *
    * `false` here makes RESULTS terminal exactly as it is with no Rounds
-   * left (`returnToLobbyRequested` starts working) — the Match can't
-   * silently deadlock waiting for players who, with no reconnection built
-   * yet (ADR 0024), are never coming back this Match.
+   * left — the Match can't silently deadlock waiting for players who, with
+   * no reconnection built yet (ADR 0024), are never coming back this Match.
    */
   canContinueMatch(): boolean {
     return this.roundsRemaining() && this.sockets.size >= this.config.playersToStart;
+  }
+
+  /**
+   * Whether every currently connected Player has confirmed Ready on the
+   * Standings Screen (M7 ticket 10, ADR 0051) — read live against `sockets`,
+   * not a roster captured when RESULTS began, so a Player who disconnects
+   * mid-Standings drops out of the gate the instant they leave rather than
+   * blocking the rest forever. Vacuously `true` with nobody connected, same
+   * as the Lobby's own `allReady` over an empty roster — never the deciding
+   * factor, since `connectedPlayers === 0` already forces LOBBY first.
+   */
+  allStandingsConfirmed(): boolean {
+    for (const id of this.sockets.keys()) {
+      if (!this.standingsReady.has(id)) return false;
+    }
+    return true;
   }
 
   /**

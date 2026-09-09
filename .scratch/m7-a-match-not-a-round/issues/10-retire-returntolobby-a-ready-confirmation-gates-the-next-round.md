@@ -8,7 +8,7 @@ outright.
 
 **Blocked by:** nothing. Independent of ticket 09.
 
-**Status:** not started
+**Status:** server-side implemented — client plumbing lands with ticket 12 (same commit pass); live verification pending
 
 ## Why
 
@@ -57,6 +57,43 @@ server tick — indistinguishable from no Standings Screen at all.
       RESULTS.
 - [ ] **Live:** a Match with Rounds remaining sits on Standings until every connected Player has
       clicked ready (or the timeout fires), then genuinely advances — visibly, not in one tick.
+
+## Implementation notes
+
+Server-side landed as designed: `standingsReady` replaces `returnToLobby` in `protocol.ts`;
+`MatchPhase.ts`'s `RESULTS → COUNTDOWN` now reads `standingsConfirmed || (tick - phaseStartTick) >=
+standingsReadyTimeoutMs`, both caller-computed levels (`allStandingsConfirmed()`,
+`STANDINGS_READY_TIMEOUT_MS`); RESULTS at Match end is simply terminal now — no transition out of it
+exists in the machine at all, matching "each Player leaves independently." `standingsReady` (the new
+`Set<string>`) is Round-scoped exactly like `dnf`, cleared at the same two call sites in
+`matchLoop.ts`. `allStandingsConfirmed()` reads live against `sockets`, not a roster snapshot, so a
+mid-Standings disconnect can't block the rest — mirrors `canContinueMatch()`'s own discipline.
+
+**Found and fixed during this pass, not scoped by the ticket originally:** a population drop below
+`playersToStart` mid-Match (the case ticket 04's own code review wired through
+`returnToLobbyRequested`) had no escape left once that message was retired outright — `roundsRemaining`
+(fed from `canContinueMatch()`) goes false, so RESULTS→COUNTDOWN's gate never fires, and with
+`connectedPlayers` still > 0 the `connectedPlayers === 0` branch doesn't fire either: the Match would
+sit in RESULTS forever with a field too small to race and no way out but every remaining Player also
+disconnecting. Confirmed this is the *intended* new shape (nobody gets a "return to Lobby" button
+anymore, under-population or not — they leave, same as any Match end) rather than a bug, and covered
+it with a dedicated server test.
+
+**Test rewrite, not just new tests:** every existing socket test that drove a multi-Round Match
+(`matchServer.test.ts`) previously relied on the old bare-timer auto-advance and would otherwise hang
+on the new confirmation gate. Added a shared `autoConfirmStandings(...sockets)` helper (stands in for
+each Player's own Ready click on every RESULTS snapshot) and wired it into every such test. The whole
+"Results, and going again (M4 ticket 08)" describe block — built entirely around the retired
+`returnToLobby` — is replaced by "Standings gates the next Round on confirmation (M7 ticket 10, ADR
+0051)"; three other tests ("a Match runs several Rounds," "a disconnect does not corrupt the
+standings" ×2) had their `returnToLobby`-dependent tails trimmed or rewritten to the new
+disconnect/reconnect equivalent where the thing under test was still real.
+
+**Verification actually run here:** `packages/shared`/`apps/server` typecheck clean; `packages/shared`
+full suite green (652 tests, including 12 new `MatchPhase` tests for the confirmation gate);
+`matchRuntime.test.ts` green (5 tests, no sockets). The rewritten/new `matchServer.test.ts` socket
+tests are **written, not run** — this sandbox denies loopback `listen` for any socket test in this
+repo (same limitation ticket 08 hit) — needs a real run to verify.
 
 ## Watch out for
 

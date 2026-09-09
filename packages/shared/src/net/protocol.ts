@@ -317,13 +317,17 @@ export interface StartMessage {
 }
 
 /**
- * Client → server: the host asks to go back to the Lobby from Results (M4
- * ticket 08) — there is no auto-rematch timer, so this is the only way out
- * of RESULTS. Host-only and RESULTS-only, enforced by the server the same
- * way `start` is: a non-host or a premature request is simply ignored.
+ * Client → server: this Player confirms Ready for the next Round, from the
+ * Standings Screen (M7 ticket 10, ADR 0051). RESULTS-only, enforced by the
+ * server; unlike `start`, **not** host-only — every connected Player sends
+ * their own. Retired `ReturnToLobbyMessage` (M4 ticket 08): Standings no
+ * longer waits on a single actor, between Rounds or at Match end — the
+ * server advances between Rounds once every connected Player has confirmed
+ * (or a timeout ceiling passes), and Match end has no group action at all,
+ * each Player independently leaving for the Main Menu on their own.
  */
-export interface ReturnToLobbyMessage {
-  type: "returnToLobby";
+export interface StandingsReadyMessage {
+  type: "standingsReady";
 }
 
 export type ClientMessage =
@@ -337,7 +341,7 @@ export type ClientMessage =
   | SetMatchLengthMessage
   | PickRoundSlotMessage
   | StartMessage
-  | ReturnToLobbyMessage;
+  | StandingsReadyMessage;
 
 /** A nickname longer than this is truncated (M4 ticket 07) — long enough for a real name, short enough not to blow out a Lobby row. */
 export const NICKNAME_MAX_LENGTH = 24;

@@ -68,9 +68,10 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
         roundEndMs: rt.config.roundEndMs,
         allQualified: rt.roundEnding.allQualified,
         timeExpired: rt.roundEnding.timeExpired,
-        returnToLobbyRequested: rt.returnToLobbyRequested,
         roundsRemaining: rt.canContinueMatch(),
         nextRoundReady: rt.nextRoundReady,
+        standingsConfirmed: rt.allStandingsConfirmed(),
+        standingsReadyTimeoutMs: rt.config.standingsReadyTimeoutMs,
       });
       // Whether input is actually applied — locked outside RUNNING (ADR
       // 0040), locked per-Character on Qualification (ADR 0039), and every
@@ -93,12 +94,11 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       // Spent *here*, with `serverTick`, and not before the step above: that
       // step is exactly what the surrounding try/catch exists to survive, and
       // it deliberately leaves `serverTick` and `match` uncommitted so the
-      // same tick retries. Clearing the flags earlier would let a single
-      // failed tick swallow the host's start — the retry would read
+      // same tick retries. Clearing it earlier would let a single failed
+      // tick swallow the host's start — the retry would read
       // `startRequested: false`, the Match would sit in LOBBY, and the click
       // would have done nothing with no indication why.
       rt.startRequested = false;
-      rt.returnToLobbyRequested = false;
       // The Round's clock starts the Tick the Countdown ends, not when the
       // server did (M4 ticket 03's anchor, now owned by this transition).
       if (nextMatch.phase === "RUNNING" && rt.match.phase !== "RUNNING") rt.roundStartTick = thisTick;
@@ -145,8 +145,13 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       }
       // A fresh Countdown is a fresh Round: last Round's DNFs are not this
       // Round's (M4 ticket 05) — true whether the fresh Countdown came from
-      // the Lobby or from Results (M7 ticket 04).
-      if (nextMatch.phase === "COUNTDOWN" && rt.match.phase !== "COUNTDOWN") rt.dnf = [];
+      // the Lobby or from Results (M7 ticket 04). `standingsReady` is the
+      // same lifetime (M7 ticket 10, ADR 0051) — a Ready click confirms one
+      // Round's own Standings, not the next one's.
+      if (nextMatch.phase === "COUNTDOWN" && rt.match.phase !== "COUNTDOWN") {
+        rt.dnf = [];
+        rt.standingsReady.clear();
+      }
       if (nextMatch.phase === "COUNTDOWN" && rt.match.phase === "RESULTS") {
         // M7 ticket 04/05: a Match's later Rounds go straight from Standings
         // into the next Countdown, never through the Lobby. Same "rebuild
@@ -190,6 +195,7 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
         // both Players necessarily left the last Round Ready.
         rt.resetToFreshLobby(rt.fetched.track);
         rt.dnf = [];
+        rt.standingsReady.clear();
         for (const player of rt.lobbyPlayers.values()) player.ready = false;
       } else {
         rt.match = nextMatch;

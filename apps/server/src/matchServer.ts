@@ -13,6 +13,7 @@ import {
   DEFAULT_TIME_LIMIT_MS,
   COUNTDOWN_MS,
   ROUND_END_MS,
+  STANDINGS_READY_TIMEOUT_MS,
   allQualified,
   allReady,
   resolveHostId,
@@ -85,6 +86,14 @@ export interface StartServerConfig {
   /** How long ROUND_END holds before RESULTS (M4 ticket 05). Defaults to {@link ROUND_END_MS}. Test-only, like `countdownMs`. */
   roundEndMs?: number;
   /**
+   * Ceiling on how long Standings waits for every connected Player to
+   * confirm Ready before advancing anyway (M7 ticket 10, ADR 0051).
+   * Defaults to {@link STANDINGS_READY_TIMEOUT_MS}. Test-only, like
+   * `countdownMs` — lets a test confirm the timeout fallback itself
+   * without sitting through the real one.
+   */
+  standingsReadyTimeoutMs?: number;
+  /**
    * Ignore the Revision's authored Time Limit and use this instead. Test-only
    * (ADR 0038 is explicit that the clock belongs to the Track): track-service
    * enforces a floor of ten seconds on a published Revision, which is far too
@@ -129,6 +138,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   // live reload (further down) — so a test can bound both the same way.
   const countdownMs = config.countdownMs ?? COUNTDOWN_MS;
   const roundEndMs = config.roundEndMs ?? ROUND_END_MS;
+  const standingsReadyTimeoutMs = config.standingsReadyTimeoutMs ?? STANDINGS_READY_TIMEOUT_MS;
   const envPlayersToStart = Number(process.env.PLAYERS_TO_START);
   const playersToStart =
     config.playersToStart ?? (Number.isInteger(envPlayersToStart) && envPlayersToStart > 0 ? envPlayersToStart : PLAYERS_TO_START);
@@ -153,6 +163,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       trackFetchRetryOptions,
       countdownMs,
       roundEndMs,
+      standingsReadyTimeoutMs,
       playersToStart,
       ...(config.timeLimitMsOverride !== undefined ? { timeLimitMsOverride: config.timeLimitMsOverride } : {}),
       ...(config.survivorTargetOverride !== undefined ? { survivorTargetOverride: config.survivorTargetOverride } : {}),

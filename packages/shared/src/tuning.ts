@@ -887,6 +887,18 @@ export const ROUND_END_MS = 2_500;
 /** {@link ROUND_END_MS} in Ticks — every Match duration is measured in Ticks (ADR 0004). */
 export const ROUND_END_TICKS = msToTicks(ROUND_END_MS);
 
+/**
+ * Ceiling on how long the Standings Screen waits for every connected Player
+ * to confirm Ready before advancing into the next Round anyway (M7 ticket
+ * 10, ADR 0051) — a safety net against one AFK Player freezing a
+ * multi-Round Match, not the expected path. A starting number, not a final
+ * one; re-feel it live, same as {@link ROUND_END_MS}'s own warning.
+ */
+export const STANDINGS_READY_TIMEOUT_MS = 10_000;
+
+/** {@link STANDINGS_READY_TIMEOUT_MS} in Ticks — every Match duration is measured in Ticks (ADR 0004). */
+export const STANDINGS_READY_TIMEOUT_TICKS = msToTicks(STANDINGS_READY_TIMEOUT_MS);
+
 // --- Score (M7 ticket 03, ADR 0049) -----------------------------------------
 
 /**

@@ -1,4 +1,4 @@
-import { COUNTDOWN_MS, ROUND_END_MS, TICK_MS, msToTicks } from "../tuning.js";
+import { COUNTDOWN_MS, ROUND_END_MS, STANDINGS_READY_TIMEOUT_MS, TICK_MS, msToTicks } from "../tuning.js";
 
 /**
  * Where a Match currently is (CONTEXT.md, ADR 0040). The server owns every
@@ -51,24 +51,11 @@ export interface MatchPhaseInputs {
   /** How long ROUND_END holds before RESULTS. Defaults to {@link ROUND_END_MS}; a parameter for the same reason `countdownMs` is. */
   roundEndMs?: number;
   /**
-   * Whether the host's request to return to the Lobby from Results has just
-   * been validated and handed in (M4 ticket 08) — host-only, RESULTS-only,
-   * checked once by the caller at the point the message arrived. Same
-   * one-shot-edge contract as `startRequested`: this function only asks
-   * "has it fired," and the caller clears it back to `false` once this
-   * returns LOBBY, the same way it clears `dnf` on a fresh Countdown.
-   *
-   * Only honoured once {@link roundsRemaining} is `false` (M7 ticket 04, ADR
-   * 0049) — `returnToLobby` is a Match-end action now, not a Round-end one.
-   */
-  returnToLobbyRequested?: boolean;
-  /**
    * Whether this Match has more Rounds scheduled after the one that just
    * ended (M7 ticket 04, ADR 0049) — `roundResults.length < matchLength`,
    * a level re-read every Tick like `allQualified`, not a one-shot edge.
-   * Defaults `false` so a caller that never passes it (every test and every
-   * call site before this ticket) keeps today's single-Round behaviour:
-   * RESULTS stays terminal until `returnToLobbyRequested`.
+   * Defaults `false` so a caller that never passes it keeps today's
+   * single-Round behaviour: RESULTS stays terminal.
    */
   roundsRemaining?: boolean;
   /**
@@ -78,6 +65,25 @@ export interface MatchPhaseInputs {
    * Meaningless unless {@link roundsRemaining} is `true`.
    */
   nextRoundReady?: boolean;
+  /**
+   * Whether every currently connected Player has confirmed Ready on the
+   * Standings Screen (M7 ticket 10, ADR 0051) — a level, recomputed by the
+   * caller every Tick from whoever is still connected (never a snapshot of
+   * who was connected when RESULTS began), the same discipline
+   * `roundsRemaining`/`nextRoundReady` already follow. Superseded ADR
+   * 0049's "advances on its own... not a button" line — confirmed live
+   * that a bare `nextRoundReady` alone left the between-Round Standings
+   * visible for about one Tick, indistinguishable from no Screen at all.
+   */
+  standingsConfirmed?: boolean;
+  /**
+   * Ceiling on how long RESULTS waits for {@link standingsConfirmed} once
+   * {@link nextRoundReady} is already true, before advancing anyway — an
+   * AFK-Player safety net, not the expected path. Defaults to
+   * {@link STANDINGS_READY_TIMEOUT_MS}; a parameter for the same reason
+   * `countdownMs`/`roundEndMs` are.
+   */
+  standingsReadyTimeoutMs?: number;
 }
 
 /**
@@ -115,14 +121,18 @@ export const phaseLocksInput = (phase: MatchPhase): boolean => phase !== "RUNNIN
  * whoever is left still gets their Round, and the DNF is recorded by the
  * server rather than changing the phase.
  *
- * And the one M4 ticket 08 adds, now split in two by M7 ticket 04 (ADR 0049):
- * - RESULTS → COUNTDOWN once more Rounds remain in this Match and the next
- *   one's world is ready — a Match's later Rounds never pass through the
- *   Lobby.
- * - RESULTS → LOBBY once the host's request to go again has been validated
- *   and handed in, same `startRequested` shape as before, but only once no
- *   Rounds remain: `returnToLobby` is a Match-end action now, not a
- *   Round-end one.
+ * And the one M7 ticket 04/10 adds (ADR 0049, ADR 0051):
+ * - RESULTS → COUNTDOWN once more Rounds remain in this Match, the next
+ *   one's world is ready, and every connected Player has confirmed Ready on
+ *   the Standings Screen — or the confirmation timeout has passed, whichever
+ *   comes first. A Match's later Rounds never pass through the Lobby.
+ *
+ * RESULTS at Match end (no Rounds remaining) is terminal — there is no
+ * transition out of it here at all. Each Player leaves independently, for
+ * the Main Menu, which the connection handler sees as an ordinary
+ * disconnect; the last one leaving is what the `connectedPlayers === 0`
+ * branch above already resets to a fresh LOBBY (M4 ticket 08's own
+ * `returnToLobby`/host-gated "go again" is retired, not repurposed).
  */
 export const advanceMatchPhase = (
   state: MatchState,
@@ -134,9 +144,10 @@ export const advanceMatchPhase = (
     allQualified = false,
     timeExpired = false,
     roundEndMs = ROUND_END_MS,
-    returnToLobbyRequested = false,
     roundsRemaining = false,
     nextRoundReady = false,
+    standingsConfirmed = false,
+    standingsReadyTimeoutMs = STANDINGS_READY_TIMEOUT_MS,
   }: MatchPhaseInputs,
 ): MatchState => {
   if (connectedPlayers === 0) {
@@ -154,11 +165,13 @@ export const advanceMatchPhase = (
   if (state.phase === "ROUND_END" && tick - state.phaseStartTick >= msToTicks(roundEndMs)) {
     return { phase: "RESULTS", phaseStartTick: tick };
   }
-  if (state.phase === "RESULTS" && roundsRemaining && nextRoundReady) {
+  if (
+    state.phase === "RESULTS" &&
+    roundsRemaining &&
+    nextRoundReady &&
+    (standingsConfirmed || tick - state.phaseStartTick >= msToTicks(standingsReadyTimeoutMs))
+  ) {
     return { phase: "COUNTDOWN", phaseStartTick: tick };
-  }
-  if (state.phase === "RESULTS" && !roundsRemaining && returnToLobbyRequested) {
-    return { phase: "LOBBY", phaseStartTick: tick };
   }
   return state;
 };

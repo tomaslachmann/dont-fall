@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COUNTDOWN_TICKS, ROUND_END_TICKS, TICK_RATE_HZ } from "../tuning.js";
+import { COUNTDOWN_TICKS, ROUND_END_TICKS, TICK_RATE_HZ, msToTicks } from "../tuning.js";
 import {
   advanceMatchPhase,
   countdownMsLeft,
@@ -149,29 +149,10 @@ describe("advanceMatchPhase — ending a Round (M4 ticket 05)", () => {
     ).toBe("RESULTS");
   });
 
-  it("stays on the Results however long it sits there — nothing but the host asking moves it on", () => {
+  it("stays on the Results however long it sits there at Match end — no Rounds remain, no transition out", () => {
     const results = at("RESULTS", 400);
 
     expect(advanceMatchPhase(results, { tick: 99_999, connectedPlayers: 2 })).toEqual(results);
-  });
-
-  it("returns to the Lobby from Results once the host asks (M4 ticket 08)", () => {
-    const next = advanceMatchPhase(at("RESULTS", 400), {
-      tick: 500,
-      connectedPlayers: 2,
-      returnToLobbyRequested: true,
-    });
-
-    expect(next.phase).toBe("LOBBY");
-    expect(next.phaseStartTick).toBe(500);
-  });
-
-  it("ignores a return-to-Lobby request from anywhere but Results — it is not a way to skip a Round", () => {
-    for (const phase of ["LOBBY", "COUNTDOWN", "RUNNING", "ROUND_END"] as const) {
-      expect(
-        advanceMatchPhase(at(phase, 100), { tick: 105, connectedPlayers: 2, returnToLobbyRequested: true }).phase,
-      ).toBe(phase);
-    }
   });
 
   it("still returns to the Lobby once everyone has gone, from any phase", () => {
@@ -195,51 +176,70 @@ describe("advanceMatchPhase — ending a Round (M4 ticket 05)", () => {
 describe("advanceMatchPhase — several Rounds without the Lobby (M7 ticket 04, ADR 0049)", () => {
   const results = at("RESULTS", 400);
 
-  it("advances RESULTS straight into COUNTDOWN once more Rounds remain and the next one's world is ready", () => {
-    const next = advanceMatchPhase(results, {
-      tick: 500,
-      connectedPlayers: 2,
-      roundsRemaining: true,
-      nextRoundReady: true,
-    });
-
-    expect(next.phase).toBe("COUNTDOWN");
-    expect(next.phaseStartTick).toBe(500);
-  });
-
-  it("holds on RESULTS while Rounds remain but the next one isn't ready yet", () => {
-    expect(
-      advanceMatchPhase(results, { tick: 500, connectedPlayers: 2, roundsRemaining: true, nextRoundReady: false }).phase,
-    ).toBe("RESULTS");
-  });
-
-  it("ignores returnToLobbyRequested while Rounds remain — it is a Standings screen advancing on its own, not a way out", () => {
+  it("holds on RESULTS while Rounds remain but the next one isn't ready yet, even with everyone confirmed", () => {
     expect(
       advanceMatchPhase(results, {
         tick: 500,
         connectedPlayers: 2,
         roundsRemaining: true,
-        nextRoundReady: true,
-        returnToLobbyRequested: true,
+        nextRoundReady: false,
+        standingsConfirmed: true,
       }).phase,
-    ).toBe("COUNTDOWN"); // the Match-continuing transition wins, not a return to the Lobby
-  });
-
-  it("still returns to the Lobby from Results once no Rounds remain and the host asks — this was the last one", () => {
-    const next = advanceMatchPhase(results, {
-      tick: 500,
-      connectedPlayers: 2,
-      roundsRemaining: false,
-      returnToLobbyRequested: true,
-    });
-
-    expect(next.phase).toBe("LOBBY");
-  });
-
-  it("does not advance into another Round on its own once nothing remains, even if nextRoundReady is stale-true", () => {
-    expect(
-      advanceMatchPhase(results, { tick: 500, connectedPlayers: 2, roundsRemaining: false, nextRoundReady: true }).phase,
     ).toBe("RESULTS");
+  });
+
+  it("does not advance into another Round on its own once nothing remains, even if nextRoundReady/standingsConfirmed are stale-true", () => {
+    expect(
+      advanceMatchPhase(results, {
+        tick: 500,
+        connectedPlayers: 2,
+        roundsRemaining: false,
+        nextRoundReady: true,
+        standingsConfirmed: true,
+      }).phase,
+    ).toBe("RESULTS");
+  });
+});
+
+describe("advanceMatchPhase — Standings gates on confirmation, not a bare timer (M7 ticket 10, ADR 0051)", () => {
+  const results = at("RESULTS", 400);
+  const ready = { roundsRemaining: true, nextRoundReady: true };
+
+  it("holds on RESULTS once the next Track is ready but nobody has confirmed yet", () => {
+    expect(advanceMatchPhase(results, { tick: 500, connectedPlayers: 2, ...ready }).phase).toBe("RESULTS");
+  });
+
+  it("advances into COUNTDOWN the instant everyone confirms, once the next Track is also ready", () => {
+    const next = advanceMatchPhase(results, { tick: 500, connectedPlayers: 2, ...ready, standingsConfirmed: true });
+
+    expect(next.phase).toBe("COUNTDOWN");
+    expect(next.phaseStartTick).toBe(500);
+  });
+
+  it("advances anyway once the confirmation timeout elapses, even with nobody confirmed", () => {
+    const timeoutTick = 400 + msToTicks(1_000);
+    expect(
+      advanceMatchPhase(results, { tick: timeoutTick, connectedPlayers: 2, ...ready, standingsReadyTimeoutMs: 1_000 })
+        .phase,
+    ).toBe("COUNTDOWN");
+  });
+
+  it("does not advance early — the timeout is a ceiling, not a floor", () => {
+    const beforeTimeout = 400 + msToTicks(1_000) - 1;
+    expect(
+      advanceMatchPhase(results, {
+        tick: beforeTimeout,
+        connectedPlayers: 2,
+        ...ready,
+        standingsReadyTimeoutMs: 1_000,
+      }).phase,
+    ).toBe("RESULTS");
+  });
+
+  it("honours a configured confirmation timeout, so a test needn't sit through the real one", () => {
+    expect(
+      advanceMatchPhase(results, { tick: 401, connectedPlayers: 2, ...ready, standingsReadyTimeoutMs: 0 }).phase,
+    ).toBe("COUNTDOWN");
   });
 });
 

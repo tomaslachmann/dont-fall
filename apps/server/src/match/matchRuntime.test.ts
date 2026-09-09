@@ -33,6 +33,7 @@ const config: MatchConfig = {
   trackFetchRetryOptions: {},
   countdownMs: 0,
   roundEndMs: 0,
+  standingsReadyTimeoutMs: 0,
   playersToStart: 2,
 };
 

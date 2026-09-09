@@ -13,8 +13,9 @@ import type { MatchRuntime } from "./matchRuntime.js";
 
 /**
  * The Lobby's own messages (M4 ticket 07, ADR 0040) — nickname, Ready, Track
- * pick, start, and the return from Results — all travelling the same socket
- * every other message does, with no second transport.
+ * pick, start, and a Standings-Screen Ready confirmation (M7 ticket 10, ADR
+ * 0051) — all travelling the same socket every other message does, with no
+ * second transport.
  *
  * Every gate here is enforced by the server rather than by whichever client
  * happens to send the message: host-only and phase-only checks live in this
@@ -174,19 +175,15 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
     return true;
   }
 
-  if (message.type === "returnToLobby") {
-    // Host-only, RESULTS-only, same discipline as `start` (M4 ticket
-    // 08) — and Match-end only now (M7 ticket 04, ADR 0049): with
-    // Rounds still remaining, RESULTS is a Standings screen advancing
-    // into the next Countdown on its own, not a "go back" button.
-    // Refused the same silent way `start` refuses an unmet gate —
-    // `advanceMatchPhase` would ignore the flag anyway once Rounds
-    // remain, this just avoids setting a one-shot edge that could
-    // never fire.
-    if (rt.match.phase !== "RESULTS") return true;
-    if (resolveHostId([...rt.lobbyPlayers.values()]) !== id) return true;
-    if (rt.canContinueMatch()) return true;
-    rt.returnToLobbyRequested = true;
+  if (message.type === "standingsReady") {
+    // RESULTS-only, unlike every other Lobby/Match-structure message here —
+    // deliberately **not** host-gated (M7 ticket 10, ADR 0051): every
+    // connected Player confirms their own. `sockets.has` rather than
+    // `lobbyPlayers`, matching `allStandingsConfirmed`'s own read — the two
+    // stay in step one-for-one, but this is the one that actually matters
+    // for "is this a live connection."
+    if (rt.match.phase !== "RESULTS" || !rt.sockets.has(id)) return true;
+    rt.standingsReady.add(id);
     return true;
   }
   return false;
