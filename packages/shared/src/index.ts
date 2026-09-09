@@ -40,5 +40,6 @@ export * from "./track/Module.js";
 export * from "./track/Surface.js";
 export * from "./track/Track.js";
 export * from "./track/asset.js";
+export * from "./track/assetModules.js";
 export * from "./track/modules.js";
 export * from "./net/protocol.js";

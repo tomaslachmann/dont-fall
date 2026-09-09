@@ -10,6 +10,7 @@ import {
   trackSpawn,
   type LobbyPlayer,
   type MatchState,
+  type Module,
   type RoundResult,
   type RoundRules,
   type RoundType,
@@ -220,10 +221,20 @@ export class MatchRuntime {
    */
   closed = false;
 
+  /**
+   * Every Module either side may resolve (M8 ticket 02) — the static
+   * procedural registry composed with the fetched asset half. Instance
+   * state, not a module-level mutation: tests (and a future second runtime
+   * in one process) build their own world from their own bytes.
+   */
+  readonly library: Record<string, Module>;
+
   constructor(
     readonly config: MatchConfig,
     fetched: FetchedTrack,
+    library: Record<string, Module> = MODULE_LIBRARY,
   ) {
+    this.library = library;
     this.fetched = fetched;
     this.matchLength = config.matchLengthOverride ?? DEFAULT_MATCH_LENGTH;
     // The Match starts with no players; ticket 01's single-player default
@@ -429,7 +440,7 @@ export class MatchRuntime {
    */
   buildSimulationFor(track: Track): { simulation: RapierSimulation; roundRules: RoundRules; trackHasFinishZone: boolean } {
     const roundRules = this.resolveRules();
-    const resolved = resolveTrack(MODULE_LIBRARY, track);
+    const resolved = resolveTrack(this.library, track);
     const simulation = new RapierSimulation({
       ...resolved,
       withDefaultCharacter: false,

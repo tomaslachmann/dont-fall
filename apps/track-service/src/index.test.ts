@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -46,6 +46,38 @@ describe("track-service", () => {
     service = await startTrackService({ port: 0, dbPath });
     const res = await fetch(`http://localhost:${service.port}/health`);
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
+  // NOTE: binding tests — unrunnable where loopback listen is denied. The
+  // pure helpers they pin (`parseAssetFileName`, `readAssetFile`) run in
+  // `assets.test.ts` without sockets.
+  it("serves Module art byte-for-byte at /assets/:name (M8 ticket 02)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dont-fall-assets-route-"));
+    try {
+      const bytes = new Uint8Array([0x67, 0x6c, 0x54, 0x46, 9, 9, 9]);
+      writeFileSync(join(dir, "platform_straight.glb"), bytes);
+      service = await startTrackService({ port: 0, dbPath, assetsDir: dir });
+
+      const res = await fetch(`http://localhost:${service.port}/assets/platform_straight.glb`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("model/gltf-binary");
+      expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("answers a missing asset with a 404 naming it, never an HTML error page", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "dont-fall-assets-route-"));
+    try {
+      service = await startTrackService({ port: 0, dbPath, assetsDir: dir });
+
+      const res = await fetch(`http://localhost:${service.port}/assets/missing.glb`);
+      expect(res.status).toBe(404);
+      expect(((await res.json()) as { error: string }).error).toMatch(/missing\.glb/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("answers an OPTIONS preflight with 204 + CORS headers", async () => {

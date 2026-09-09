@@ -1,4 +1,17 @@
-import { initPhysics, M1_TRACK } from "@dont-fall/shared";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  IDLE_INPUTS,
+  MODULE_LIBRARY,
+  TICK_RATE_HZ,
+  initPhysics,
+  M1_TRACK,
+  RapierSimulation,
+  loadAssetLibrary,
+  resolveTrack,
+  type Track,
+} from "@dont-fall/shared";
 import { beforeAll, describe, expect, it } from "vitest";
 import { MatchRuntime, type MatchConfig } from "./matchRuntime.js";
 import type { FetchedTrack } from "../track/trackSource.js";
@@ -78,6 +91,46 @@ describe("MatchRuntime spectators (M7 ticket 08)", () => {
     expect(rt.match.phase).toBe("LOBBY");
     expect(rt.roundResults).toEqual([]);
     expect(characterIds(rt)).toEqual(["a", "b", "c"]);
+    rt.simulation.dispose();
+  });
+});
+
+describe("MatchRuntime asset worlds (M8 ticket 02)", () => {
+  const assetsRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "assets");
+
+  it("server-built and client-built worlds answer identically", async () => {
+    const assets = await loadAssetLibrary(async (url: string) => {
+      const fileName = url.substring(url.lastIndexOf("/") + 1);
+      return new Uint8Array(readFileSync(join(assetsRoot, fileName)));
+    }, "http://assets.test");
+    const library = { ...MODULE_LIBRARY, ...assets };
+    const track: Track = [
+      { moduleId: "platform_straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { moduleId: "stairs_4step", position: { x: 0, y: -0.375, z: -4 }, rotation: Math.PI },
+    ];
+
+    // Server path: the runtime builds (seats nobody — no lobby players yet).
+    const rt = new MatchRuntime(config, { ...fetched, track }, library);
+    const serverSim = rt.simulation;
+    serverSim.addCharacter("p", { x: 0, y: 3, z: 1.5 });
+
+    // Client path: resolve plus construct, the way prediction builds it.
+    const clientSim = new RapierSimulation({ ...resolveTrack(library, track), withDefaultCharacter: false });
+    clientSim.addCharacter("p", { x: 0, y: 3, z: 1.5 });
+
+    const walk = { ...IDLE_INPUTS, moveDirection: { x: 0, y: 0, z: -1 } };
+    for (let n = 0; n < Math.round(4 * TICK_RATE_HZ); n += 1) {
+      serverSim.tick({ p: walk });
+      clientSim.tick({ p: walk });
+    }
+
+    const a = serverSim.snapshot().characters["p"]!;
+    const b = clientSim.snapshot().characters["p"]!;
+    expect(a.position.x).toBeCloseTo(b.position.x, 10);
+    expect(a.position.y).toBeCloseTo(b.position.y, 10);
+    expect(a.position.z).toBeCloseTo(b.position.z, 10);
+    expect(a.grounded).toBe(b.grounded);
+    clientSim.dispose();
     rt.simulation.dispose();
   });
 });

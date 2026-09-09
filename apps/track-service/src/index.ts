@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { fileURLToPath } from "node:url";
 import type { Track } from "@dont-fall/shared";
 import { DEFAULT_TRACK_SERVICE_PORT, MODULE_LIBRARY, M1_TRACK } from "@dont-fall/shared";
+import { defaultAssetsDir, parseAssetFileName, readAssetFile } from "./assets.js";
 import { openDb, type TrackDb } from "./db.js";
 import { generateRandomTrack } from "./generate.js";
 import { getAnyTrack, getTrackById, listTracks, saveTrack, seedIfEmpty } from "./store.js";
@@ -27,6 +28,12 @@ export interface StartTrackServiceConfig {
   port?: number;
   /** SQLite file path. Defaults to `./data/track-service.sqlite` (Docker: a named-volume mount). */
   dbPath?: string;
+  /**
+   * Module art dir (M8 ticket 02). Defaults to the repo's `assets/`, located
+   * from source (Docker: `/app/assets` via `TRACK_ASSETS_DIR` + a COPY —
+   * binaries ride the image, never the database).
+   */
+  assetsDir?: string;
 }
 
 const readBody = (req: IncomingMessage): Promise<string> =>
@@ -93,7 +100,7 @@ const isSegment = (value: unknown): boolean => {
 
 const isTrack = (value: unknown): value is Track => Array.isArray(value) && value.every(isSegment);
 
-const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): Promise<void> => {
+const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse, assetsDir: string): Promise<void> => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, CORS_HEADERS);
     res.end();
@@ -104,6 +111,26 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
 
   if (req.method === "GET" && url.pathname === "/health") {
     json(res, 200, { ok: true });
+    return;
+  }
+
+  // Served Module art (M8 ticket 02, ADR 0050 as amended) — the one pipe
+  // every loader fetches GLB bytes through. Floating revisions, binary
+  // body, exact bytes; a missing file is a 404 naming it, never an
+  // HTML error page a GLB parser would choke on downstream.
+  if (req.method === "GET" && url.pathname.startsWith("/assets/")) {
+    const fileName = parseAssetFileName(url.pathname);
+    if (!fileName) {
+      json(res, 400, { error: "path must be /assets/<moduleId>.glb" });
+      return;
+    }
+    try {
+      const { bytes, contentType } = await readAssetFile(assetsDir, fileName);
+      res.writeHead(200, { ...CORS_HEADERS, "Content-Type": contentType, "Content-Length": bytes.length });
+      res.end(Buffer.from(bytes));
+    } catch (err) {
+      json(res, 404, { error: (err as Error).message });
+    }
     return;
   }
 
@@ -235,9 +262,10 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse): P
 export const startTrackService = async (config: StartTrackServiceConfig = {}): Promise<TrackService> => {
   const db = openDb(config.dbPath ?? "./data/track-service.sqlite");
   seedIfEmpty(db, M1_SEED_TRACK_ID, "M1 playground", M1_TRACK);
+  const assetsDir = config.assetsDir ?? process.env.TRACK_ASSETS_DIR ?? defaultAssetsDir();
 
   const server = createServer((req, res) => {
-    handle(db, req, res).catch((err: unknown) => {
+    handle(db, req, res, assetsDir).catch((err: unknown) => {
       // A single malformed/unlucky request must never take the always-on
       // service down for every other caller (same posture as ADR 0011's
       // per-socket `trySend` in apps/server).

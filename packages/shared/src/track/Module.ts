@@ -7,6 +7,7 @@ import type { PropConfig } from "../simulation/Prop.js";
 import type { SpeedPadConfig } from "../simulation/SpeedPad.js";
 import type { SpinnerConfig } from "../simulation/Spinner.js";
 import type { VolumeConfig } from "../simulation/Volume.js";
+import type { ValidatedAssetMesh } from "./asset.js";
 import type { SurfaceId } from "./Surface.js";
 
 /**
@@ -76,6 +77,15 @@ export interface FloorBox extends Box {
 export interface Module {
   id: string;
   statics: FloorBox[];
+  /**
+   * Authored collision geometry (M8 ticket 02, ADR 0050) — present exactly
+   * on asset Modules, whose `statics` stays empty. `resolveTrack` bakes
+   * these meshes into world-space trimeshes; a Module carrying both is an
+   * authoring error it refuses. Attached per-consumer by
+   * `attachAssetGeometry` (never shipped inside `M1_MODULES`), so the static
+   * registry never holds bytes.
+   */
+  asset?: { meshes: ValidatedAssetMesh[] };
   props?: PropConfig[];
   spinners?: SpinnerConfig[];
   checkpoint?: Checkpoint;

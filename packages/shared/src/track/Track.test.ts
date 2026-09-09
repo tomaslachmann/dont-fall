@@ -237,6 +237,7 @@ describe("resolveTrack", () => {
     expect(resolveTrack({}, [])).toEqual({
       statics: [],
       staticSurfaces: [],
+      staticTrimeshes: [],
       props: [],
       spinners: [],
       checkpoints: [],

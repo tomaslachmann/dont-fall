@@ -16,13 +16,19 @@ import {
   isEliminated,
   interpolateState,
   lengthVec3,
+  loadAssetLibrary,
+  matchScore,
+  matchWinner,
   movementDirection,
   phaseLocksInput,
   qualificationPlacement,
+  rankWithTies,
   resolveTrack,
   type ClientMessage,
   type LobbyPlayer,
   type MatchPhase,
+  type MatchWinner,
+  type Module,
   type PropSnapshot,
   type RenderCharacter,
   type ResultsRow,
@@ -120,6 +126,40 @@ export interface LobbySnapshot {
 }
 
 /**
+ * One Player's running Match total, ready to render (M7 ticket 06, ADR
+ * 0049) — computed here from the replicated `roundResults`, never sent:
+ * "Score is derived, never sent" (protocol.ts's own `roundResults` doc).
+ * `placement` is a tie-aware rank over `score` (`rankWithTies`), never a
+ * bare array index — two equal totals share a placement.
+ *
+ * `gone` is ticket 08's own data contract: true for an id that appears in
+ * some `RoundResult`'s rows (so it has Score to show) but is no longer in
+ * `lobby.players` (so it isn't here to see it) — a Player who dropped
+ * mid-Match, parked rather than erased.
+ */
+export interface StandingsRow {
+  id: string;
+  nickname: string;
+  score: number;
+  placement: number;
+  gone: boolean;
+}
+
+/**
+ * Everything a Standings Screen renders for one snapshot (M7 ticket 06) —
+ * the Round just played (`results`, identical to what a plain Results
+ * Screen showed pre-M7) alongside the Match's running `standings`.
+ * `winners` is empty while `roundsRemaining`, and only ever populated
+ * (length 1, or more on a genuine tie) once the Match has actually ended.
+ */
+export interface StandingsSnapshot {
+  results: ResultsRow[];
+  roundsRemaining: boolean;
+  standings: StandingsRow[];
+  winners: MatchWinner[];
+}
+
+/**
  * Everything the shell tells the game, and everything the game tells the shell
  * back — the "small typed boundary (config in, `onMatchEnd`/`onExit` out)" ADR
  * 0008 requires. Nothing is shared mutable state: the fixed-timestep loop
@@ -136,7 +176,7 @@ export interface GameConfig {
    * Declared because ADR 0008 names it as half of the game's boundary
    * ("config in, `onMatchEnd`/`onExit` out"), but nothing raises it: Results
    * (M4 ticket 08) turned out to be an overlay on this same, still-running
-   * `<GameCanvas>` — read `onResults`/`phase` below — rather than a reason to
+   * `<GameCanvas>` — read `onStandings`/`phase` below — rather than a reason to
    * leave the Match the way `onExit` does. Reserved for an actual "leave the
    * Match entirely" action, which nothing in the game yet offers.
    */
@@ -162,18 +202,14 @@ export interface GameConfig {
    */
   onLobbyState?: (lobby: LobbySnapshot) => void;
   /**
-   * Raised on every snapshot whose Results content actually changed (M4
-   * ticket 08), while `phase` is RESULTS — a Results Screen renders this the
-   * same way a Lobby Screen renders `onLobbyState`: an overlay on top of the
-   * already-rendering `<GameCanvas>`, not a route the shell navigates to.
-   * Deduped the same way, against the same snapshot-rate firehose.
-   *
-   * `roundsRemaining` (M7 ticket 04, ADR 0049): whether this Match has more
-   * Rounds scheduled after this one — `returnToLobby` is a Match-end action
-   * the server silently refuses while this is true, so a Results Screen
-   * needs it to know whether "Back to Lobby" is a real action right now.
+   * Raised on every snapshot whose Standings content actually changed (M4
+   * ticket 08, M7 ticket 06), while `phase` is RESULTS — a Standings Screen
+   * renders this the same way a Lobby Screen renders `onLobbyState`: an
+   * overlay on top of the already-rendering `<GameCanvas>`, not a route the
+   * shell navigates to. Deduped the same way, against the same
+   * snapshot-rate firehose.
    */
-  onResults?: (results: ResultsRow[], roundsRemaining: boolean) => void;
+  onStandings?: (snapshot: StandingsSnapshot) => void;
 }
 
 export interface GameHandle {
@@ -224,7 +260,7 @@ export const startGame = async (config: GameConfig): Promise<GameHandle> => {
 };
 
 const boot = async (
-  { mount, host, trackId, onExit, onLobbyState, onResults }: GameConfig,
+  { mount, host, trackId, onExit, onLobbyState, onStandings }: GameConfig,
   teardown: Teardown,
 ): Promise<GameHandle> => {
   const hud = createHud(mount);
@@ -251,9 +287,27 @@ const boot = async (
     return fetched;
   };
 
+  // Asset art loads once per session and is cached (M8 ticket 02, ADR 0050
+  // as amended) — fetch-once-per-loader, so a mid-Match edit on
+  // track-service cannot split this client's prediction from the server's
+  // world mid-Round. Four tiny files; correctness of the library beats
+  // fetching per Track.
+  let assetLibrary: Record<string, Module> | null = null;
+  const loadLibrary = async (): Promise<Record<string, Module>> => {
+    if (!assetLibrary) {
+      const assets = await loadAssetLibrary(async (url: string): Promise<Uint8Array> => {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`GET ${url} answered ${res.status}`);
+        return new Uint8Array(await res.arrayBuffer());
+      }, `${endpoints.trackServiceUrl}/assets`);
+      assetLibrary = { ...MODULE_LIBRARY, ...assets };
+    }
+    return assetLibrary;
+  };
+
   const track = await fetchTrack(welcome.trackId, welcome.trackRevision);
-  const { statics, staticSurfaces, checkpoints, finishZones, spinners, props, speedPads, launchPads, volumes } =
-    resolveTrack(MODULE_LIBRARY, track);
+  const { statics, staticSurfaces, staticTrimeshes, checkpoints, finishZones, spinners, props, speedPads, launchPads, volumes } =
+    resolveTrack(await loadLibrary(), track);
 
   let stage = createStage({
     mount,
@@ -292,6 +346,7 @@ const boot = async (
   let localSim: RapierSimulation = new RapierSimulation({
     statics,
     staticSurfaces,
+    staticTrimeshes,
     checkpoints,
     // Qualification is predicted locally (ADR 0039: a pure function of
     // position), so the input lock lands on the same Tick here as on the
@@ -349,9 +404,16 @@ const boot = async (
   const spectator = new SpectatorController();
   /** Latest Lobby roster, id → nickname — names the followed Player on the banner. */
   let playerNames: Record<string, string> = {};
+  /**
+   * Every nickname ever seen this session, id → nickname, never cleared
+   * (M7 ticket 06/08) — `playerNames` only knows who is connected *right
+   * now*, but a Standings row for a Player who dropped mid-Match still
+   * needs a name to show, not a bare id.
+   */
+  const knownNicknames = new Map<string, string>();
   /** Last `LobbySnapshot` handed to `onLobbyState`, as JSON — dedupes against the snapshot rate. */
   let lastLobbyJson: string | null = null;
-  /** Last Results rows handed to `onResults`, as JSON — same dedupe, same reason (M4 ticket 08). */
+  /** Last `StandingsSnapshot` handed to `onStandings`, as JSON — same dedupe, same reason (M4 ticket 08). */
   let lastResultsJson: string | null = null;
   const netMetrics = new NetMetrics();
   // NTP-style clock sync (ADR 0019) — feeds the interpolation buffer's clock
@@ -404,7 +466,7 @@ const boot = async (
    */
   const loadTrack = async (trackId: string, trackRevision: number, spawn: Vec3): Promise<void> => {
     const nextTrack = await fetchTrack(trackId, trackRevision);
-    const resolved = resolveTrack(MODULE_LIBRARY, nextTrack);
+    const resolved = resolveTrack(await loadLibrary(), nextTrack);
 
     look.dispose();
     stage.dispose();
@@ -424,6 +486,7 @@ const boot = async (
     localSim = new RapierSimulation({
       statics: resolved.statics,
       staticSurfaces: resolved.staticSurfaces,
+      staticTrimeshes: resolved.staticTrimeshes,
       checkpoints: resolved.checkpoints,
       finishZones: resolved.finishZones,
       spinners: resolved.spinners,
@@ -474,6 +537,8 @@ const boot = async (
         localSim.syncRoundRules(message.roundRules);
         countdownMsLeft = message.countdownMsLeft;
         playerNames = Object.fromEntries(message.lobby.players.map((player) => [player.id, player.nickname]));
+        for (const player of message.lobby.players) knownNicknames.set(player.id, player.nickname);
+        for (const dropped of message.dnf) knownNicknames.set(dropped.id, dropped.nickname);
         if (onLobbyState) {
           const lobbySnapshot: LobbySnapshot = {
             myId,
@@ -495,17 +560,38 @@ const boot = async (
             onLobbyState(lobbySnapshot);
           }
         }
-        if (onResults && message.phase === "RESULTS") {
+        if (onStandings && message.phase === "RESULTS") {
           const results = buildResults(message.state.characters, message.lobby.players, message.dnf);
           // M7 ticket 04, ADR 0049: whether the server will auto-advance
           // into another Round rather than wait for `returnToLobby` —
           // folded into the same dedupe as `results` so a change in this
           // alone (the last Round finishing, say) still reaches the Screen.
           const roundsRemaining = message.roundResults.length < message.lobby.matchLength;
-          const resultsJson = JSON.stringify([results, roundsRemaining]);
+
+          // `matchScore` (packages/shared, ADR 0049) is the only place this
+          // arithmetic lives — never re-derived here, only laid out for
+          // display. `connectedIds` covers a Player who has joined but not
+          // yet raced (score 0, still worth listing); `gone` is ticket 08's
+          // contract: scored in some Round, absent from `lobby.players` now.
+          const totals = matchScore(message.roundResults);
+          const connectedIds = new Set(message.lobby.players.map((player) => player.id));
+          const rowIds = new Set([...Object.keys(totals), ...connectedIds]);
+          const unranked = Array.from(rowIds, (id) => ({
+            id,
+            nickname: knownNicknames.get(id) ?? id,
+            score: totals[id] ?? 0,
+            gone: !connectedIds.has(id),
+          })).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+          const placements = rankWithTies(unranked, (prev, curr) => prev.score === curr.score);
+          const standings: StandingsRow[] = unranked.map((row, i) => ({ ...row, placement: placements[i]! }));
+
+          const winners = roundsRemaining ? [] : matchWinner(message.roundResults);
+
+          const snapshot: StandingsSnapshot = { results, roundsRemaining, standings, winners };
+          const resultsJson = JSON.stringify(snapshot);
           if (resultsJson !== lastResultsJson) {
             lastResultsJson = resultsJson;
-            onResults(results, roundsRemaining);
+            onStandings(snapshot);
           }
         }
         netMetrics.commandQueueDepth = message.commandQueueDepth;

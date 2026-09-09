@@ -17,8 +17,10 @@ RUN pnpm install --frozen-lockfile --filter @dont-fall/track-service...
 
 COPY packages/shared packages/shared
 COPY apps/track-service apps/track-service
+COPY assets assets
 
 ENV TRACK_DB_PATH=/data/track-service.sqlite
+ENV TRACK_ASSETS_DIR=/app/assets
 EXPOSE 8081
 VOLUME ["/data"]
 

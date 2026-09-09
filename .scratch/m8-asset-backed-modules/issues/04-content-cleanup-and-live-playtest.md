@@ -20,6 +20,11 @@ deliberately deferred.
       (re-export or patch GLB extras — whichever leaves byte-identical
       geometry), so `role` is the only signal and the next person isn't
       misled the way we were
+- [ ] Remodel `corner_lshape` into a real L (or rename it): measured
+      triangle-by-triangle in ticket 02, both its meshes are an 8x4 straight
+      slab. Until then it is honestly socketed as the straight piece it is —
+      shipping a "corner" that goes straight would be the lie; fix the file,
+      not the sockets
 - [ ] Builder presence moved to ticket 05 (Assets tab + viewport visuals) —
       this ticket keeps the game-side playtest below; the tab is where
       "the builder lists all four" is proven

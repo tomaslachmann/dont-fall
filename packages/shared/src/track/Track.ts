@@ -104,6 +104,19 @@ export interface TrackRoundDefaults {
 export const segmentOrientation = (segment: Pick<Segment, "rotation" | "pitch" | "roll">): Quat =>
   eulerQuat(segment.rotation, segment.pitch ?? 0, segment.roll ?? 0);
 
+/**
+ * One asset Module's collision mesh in world space (M8 ticket 02) — the
+ * trimesh half of what `resolveTrack` returns. `statics`/`staticSurfaces`
+ * stay the box half; the two never mix within one Module (one carrying
+ * both is refused), and `RapierSimulation` consumes both through the same
+ * `staticSurfaceByHandle` machinery, never a parallel one.
+ */
+export interface StaticTrimesh {
+  vertices: Vec3[];
+  indices: number[];
+  surface: SurfaceId;
+}
+
 /** A Socket's full local orientation as one quaternion (ADR 0034) — composes its yaw/pitch/roll fields. */
 const socketOrientation = (socket: Pick<Socket, "yaw" | "pitch" | "roll">): Quat =>
   eulerQuat(socket.yaw, socket.pitch ?? 0, socket.roll ?? 0);
@@ -229,6 +242,8 @@ export const resolveTrack = (
 ): {
   statics: OrientedBox[];
   staticSurfaces: SurfaceId[];
+  /** World-space asset collision, index-aligned with nothing — each entry carries its own Surface (M8 ticket 02). */
+  staticTrimeshes: StaticTrimesh[];
   props: PropConfig[];
   spinners: SpinnerConfig[];
   checkpoints: Checkpoint[];
@@ -246,6 +261,7 @@ export const resolveTrack = (
 } => {
   const statics: OrientedBox[] = [];
   const staticSurfaces: SurfaceId[] = [];
+  const staticTrimeshes: StaticTrimesh[] = [];
   const props: PropConfig[] = [];
   const spinners: SpinnerConfig[] = [];
   const checkpoints: Checkpoint[] = [];
@@ -265,6 +281,19 @@ export const resolveTrack = (
     for (const box of module.statics) {
       statics.push(placeBox(box));
       staticSurfaces.push(box.surface ?? module.surface ?? DEFAULT_SURFACE);
+    }
+
+    if (module.asset) {
+      if (module.statics.length > 0) {
+        throw new Error(`Module "${module.id}" carries both statics and asset geometry — exactly one may describe its collision`);
+      }
+      for (const mesh of module.asset.meshes) {
+        staticTrimeshes.push({
+          vertices: mesh.positions.map((p) => placePoint(p)),
+          indices: [...mesh.indices],
+          surface: mesh.surface ?? module.surface ?? DEFAULT_SURFACE,
+        });
+      }
     }
 
     // Props don't yet carry an initial rotation of their own (`PropConfig`
@@ -330,5 +359,5 @@ export const resolveTrack = (
     }
   }
 
-  return { statics, staticSurfaces, props, spinners, checkpoints, finishZones, speedPads, launchPads, volumes };
+  return { statics, staticSurfaces, staticTrimeshes, props, spinners, checkpoints, finishZones, speedPads, launchPads, volumes };
 };

@@ -22,6 +22,7 @@ import {
   WALK_SPEED,
 } from "../tuning.js";
 import { DEFAULT_SURFACE, surfaceConfig, type SurfaceId } from "../track/Surface.js";
+import type { StaticTrimesh } from "../track/Track.js";
 import { CharacterController, type CollisionListener } from "./CharacterController.js";
 import { hitImpactMagnitude } from "./HitController.js";
 import { isDownMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
@@ -127,6 +128,16 @@ export interface SimulationConfig {
    * {@link DEFAULT_SURFACE}.
    */
   staticSurfaces?: SurfaceId[];
+  /**
+   * Static asset collision (M8 ticket 02, ADR 0050) — `resolveTrack`'s
+   * `staticTrimeshes`, one entry per authored mesh. Each becomes a fixed
+   * trimesh collider exactly as authored (verbatim — hull-shrinking would
+   * only invent error at these vertex counts), surfaced through the same
+   * `staticSurfaceByHandle` map as the box half, never a parallel one.
+   * Trimeshes are static-only by engine contract; articulated asset parts
+   * are out of scope until a dynamic representation is designed.
+   */
+  staticTrimeshes?: StaticTrimesh[];
   /** Checkpoints the Character can walk through to move its respawn point. */
   checkpoints?: Checkpoint[];
   /** Speed/slow pads the Character can cross to fire a one-shot boost (M3.7 ticket 01). */
@@ -328,6 +339,22 @@ export class RapierSimulation {
       );
       this.staticSurfaceByHandle.set(collider.handle, config.staticSurfaces?.[i] ?? DEFAULT_SURFACE);
     });
+
+    for (const mesh of config.staticTrimeshes ?? []) {
+      const vertices = new Float32Array(mesh.vertices.flatMap((v) => [v.x, v.y, v.z]));
+      // ORIENTED (pseudo-normals for border contacts) is correct exactly
+      // when winding is consistently outward — verified per file by the
+      // signed-volume test in `assetModules.test.ts`, which fails on any
+      // future file that breaks the assumption instead of letting Players
+      // fall through its edges in-game.
+      const collider = this.world.createCollider(
+        RAPIER.ColliderDesc.trimesh(vertices, new Uint32Array(mesh.indices), RAPIER.TriMeshFlags.ORIENTED).setCollisionGroups(
+          STATIC_GROUPS,
+        ),
+        this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed()),
+      );
+      this.staticSurfaceByHandle.set(collider.handle, mesh.surface);
+    }
 
     this.spinners = (config.spinners ?? []).map((c) => new Spinner(this.world, c));
     for (const spinner of this.spinners) this.spinnerByHandle.set(spinner.collider.handle, spinner);

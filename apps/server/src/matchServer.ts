@@ -40,6 +40,7 @@ import { handleLobbyMessage } from "./match/lobby.js";
 import { startMatchLoop } from "./match/matchLoop.js";
 import { MatchRuntime } from "./match/matchRuntime.js";
 import { send, truncateForCloseReason, trySend } from "./net/wire.js";
+import { fetchAssetLibrary } from "./track/assetSource.js";
 import { fetchTrack, type FetchedTrack } from "./track/trackSource.js";
 
 /**
@@ -118,8 +119,9 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   await initPhysics();
 
   // ADR 0028: the Match server never holds Module data or generates a Track
-  // itself — it always just fetches one, resolved against every Module the
-  // shared package currently knows (`MODULE_LIBRARY`).
+  // itself — it always just fetches one, resolved against the procedural
+  // registry composed with the fetched asset half (`MODULE_LIBRARY` plus
+  // track-service art, M8 ticket 02, ADR 0050 as amended).
   const trackServiceUrl =
     config.trackServiceUrl ?? process.env.TRACK_SERVICE_URL ?? `http://localhost:${DEFAULT_TRACK_SERVICE_PORT}`;
   // Ticket 12's test-only knobs, shared by every `fetchTrack` call this
@@ -139,7 +141,12 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   // both with a freshly-fetched/rebuilt Track+simulation while the server is
   // The Track this server boots on. From here it lives on the runtime, which a
   // Playtest `?track=` reload or a Lobby Track pick can replace while running.
+  // Asset art loads once, here (M8 ticket 02) — fetch-once-per-loader, so a
+  // mid-Match edit on track-service cannot split this server from the world
+  // it already built. A boot with no asset Modules in any Track still pays
+  // four tiny fetches; correctness of the library beats saving them.
   const bootTrack = await fetchTrack(trackServiceUrl, trackFetchRetryOptions);
+  const library = { ...MODULE_LIBRARY, ...(await fetchAssetLibrary(trackServiceUrl)) };
   const rt = new MatchRuntime(
     {
       trackServiceUrl,
@@ -152,6 +159,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       ...(config.matchLengthOverride !== undefined ? { matchLengthOverride: config.matchLengthOverride } : {}),
     },
     bootTrack,
+    library,
   );
 
   const wss = new WebSocketServer({ port: config.port ?? DEFAULT_SERVER_PORT });
