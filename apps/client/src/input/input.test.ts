@@ -75,6 +75,51 @@ describe("KeyboardInput", () => {
   });
 });
 
+describe("KeyboardInput spectator cycle (M7 ticket 07)", () => {
+  it("counts one cycle press per keydown and drains on read", () => {
+    const target = fakeTarget();
+    const keyboard = new KeyboardInput(target);
+
+    target.dispatch("keydown", { code: "KeyC", preventDefault: () => {} });
+    target.dispatch("keydown", { code: "KeyC", preventDefault: () => {} });
+
+    expect(keyboard.consumeSpectateNext()).toBe(2);
+    expect(keyboard.consumeSpectateNext()).toBe(0);
+  });
+
+  it("ignores auto-repeat, so a held key cycles once", () => {
+    const target = fakeTarget();
+    const keyboard = new KeyboardInput(target);
+
+    target.dispatch("keydown", { code: "KeyC", repeat: true, preventDefault: () => {} });
+
+    expect(keyboard.consumeSpectateNext()).toBe(0);
+  });
+
+  it("does not mistake movement keys for the cycle key", () => {
+    const target = fakeTarget();
+    const keyboard = new KeyboardInput(target);
+
+    target.dispatch("keydown", { code: "KeyW", preventDefault: () => {} });
+
+    expect(keyboard.consumeSpectateNext()).toBe(0);
+  });
+
+  it("drops pending presses on blur and on dispose", () => {
+    const blurred = fakeTarget();
+    const keyboard = new KeyboardInput(blurred);
+    blurred.dispatch("keydown", { code: "KeyC", preventDefault: () => {} });
+    blurred.dispatch("blur");
+    expect(keyboard.consumeSpectateNext()).toBe(0);
+
+    const disposed = fakeTarget();
+    const disposedKeyboard = new KeyboardInput(disposed);
+    disposedKeyboard.dispose();
+    disposed.dispatch("keydown", { code: "KeyC", preventDefault: () => {} });
+    expect(disposedKeyboard.consumeSpectateNext()).toBe(0);
+  });
+});
+
 describe("FreeLookCamera", () => {
   const lockedElement = (element: unknown) => ({ pointerLockElement: element }) as unknown as Document;
 

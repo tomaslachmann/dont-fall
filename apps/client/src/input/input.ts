@@ -18,12 +18,19 @@ const JUMP_CODES = ["Space"];
 const DASH_CODES = ["ShiftLeft", "ShiftRight"];
 const HIT_CODES = ["KeyF"];
 const GRAB_CODES = ["KeyG"];
+/**
+ * Cycles the followed Character in Spectator Mode (M7 ticket 07) — free of
+ * every other binding above, and edge-triggered rather than held: one press
+ * steps one Character, never a held-key spin.
+ */
+const SPECTATE_NEXT_CODES = ["KeyC"];
 /** Codes whose default (page scroll) we swallow while playing. */
 const SWALLOW_DEFAULT = new Set([...Object.keys(MOVEMENT_CODES), ...JUMP_CODES]);
 
 /** Tracks held keys and reports them as framework-agnostic input for the sim. */
 export class KeyboardInput {
   private readonly held = new Set<string>();
+  private spectateNextPresses = 0;
   private readonly detach: () => void;
 
   constructor(target: ListenerTarget = window) {
@@ -31,11 +38,15 @@ export class KeyboardInput {
       const e = event as KeyboardEvent;
       if (SWALLOW_DEFAULT.has(e.code)) e.preventDefault();
       this.held.add(e.code);
+      if (!e.repeat && SPECTATE_NEXT_CODES.includes(e.code)) this.spectateNextPresses += 1;
     };
     const onKeyUp: EventListener = (event) => {
       this.held.delete((event as KeyboardEvent).code);
     };
-    const onBlur: EventListener = () => this.held.clear();
+    const onBlur: EventListener = () => {
+      this.held.clear();
+      this.spectateNextPresses = 0;
+    };
 
     const stops = [
       listen(target, "keydown", onKeyDown),
@@ -73,6 +84,18 @@ export class KeyboardInput {
   }
 
   /**
+   * How many Spectator Mode cycle presses landed since the last call, which
+   * drains the count (M7 ticket 07). Edge-triggered — auto-repeat never
+   * counts — and drained every frame even while not spectating, so a `C`
+   * typed elsewhere (a Lobby nickname, say) can't bank a stale cycle.
+   */
+  consumeSpectateNext(): number {
+    const presses = this.spectateNextPresses;
+    this.spectateNextPresses = 0;
+    return presses;
+  }
+
+  /**
    * Stop listening and forget every held key (M4 ticket 01). A game torn down
    * and started again in the same page session must not leave a second
    * keyboard listener behind, or one keypress reaches the sim twice.
@@ -80,6 +103,7 @@ export class KeyboardInput {
   dispose(): void {
     this.detach();
     this.held.clear();
+    this.spectateNextPresses = 0;
   }
 }
 

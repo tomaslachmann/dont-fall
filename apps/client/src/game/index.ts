@@ -43,6 +43,7 @@ import { createStage } from "../render/scene.js";
 import { NetMetrics } from "../net/netMetrics.js";
 import { PropPredictionController, graceTicksForRtt } from "../net/propPrediction.js";
 import { matchBanner } from "../hud/matchBanner.js";
+import { isSpectating, livingIds, SpectatorController } from "./spectator.js";
 import { PredictionLoop } from "../net/predictionLoop.js";
 import { formatRoundClock } from "../lib/roundTimer.js";
 import { SnapshotInterpolator } from "../net/snapshotInterpolation.js";
@@ -340,6 +341,14 @@ const boot = async (
    */
   let phase: MatchPhase = "LOBBY";
   let countdownMsLeft = 0;
+  /**
+   * Who this client follows in Spectator Mode (M7 ticket 07) — the client's
+   * own choice, never sent anywhere. Reset the moment spectating ends, so no
+   * stale target survives into the next Round.
+   */
+  const spectator = new SpectatorController();
+  /** Latest Lobby roster, id → nickname — names the followed Player on the banner. */
+  let playerNames: Record<string, string> = {};
   /** Last `LobbySnapshot` handed to `onLobbyState`, as JSON — dedupes against the snapshot rate. */
   let lastLobbyJson: string | null = null;
   /** Last Results rows handed to `onResults`, as JSON — same dedupe, same reason (M4 ticket 08). */
@@ -464,6 +473,7 @@ const boot = async (
         // default (which a Match-level override can disagree with).
         localSim.syncRoundRules(message.roundRules);
         countdownMsLeft = message.countdownMsLeft;
+        playerNames = Object.fromEntries(message.lobby.players.map((player) => [player.id, player.nickname]));
         if (onLobbyState) {
           const lobbySnapshot: LobbySnapshot = {
             myId,
@@ -833,7 +843,37 @@ const boot = async (
     // drawn at: `render` interpolates [previous, snapshot] by `localAlpha`, and
     // `previous` is one tick behind `snapshot` (captured before `localSim.tick`).
     stage.updateSpinners(snapshot.tick - 1 + localAlpha);
-    stage.updateCamera(visualCharacter.position, look.yaw, look.pitch);
+    // Spectator Mode (M7 ticket 07, CONTEXT.md): while eliminated and the
+    // Round is still RUNNING, the camera follows a Character still in it —
+    // the same collision-resolved spring arm, aimed at somebody else, not a
+    // second camera. The followed pose comes from the interpolated render
+    // world (`serverRender`, ADR 0025), never a raw snapshot position; who
+    // counts as living comes from the authoritative snapshot's own
+    // `eliminated` flags. Nobody living (all out on the same Tick, a solo
+    // Round) falls back to your own body — always a valid, live target,
+    // never a frozen or null camera. Input needs no change: an eliminated
+    // Character is never stepped (ADR 0042/0044), so spectating can't drive.
+    const ownEliminated = latestServerSnapshot?.characters[myId]?.eliminated ?? c.eliminated;
+    const spectating = isSpectating(phase, ownEliminated);
+    // Drained every frame either way, so a `C` typed while playing can't
+    // bank a stale cycle for the next time you're out.
+    const spectatePresses = keyboard.consumeSpectateNext();
+    let cameraTarget: Vec3 = visualCharacter.position;
+    let spectatingNickname: string | undefined;
+    if (spectating && serverRender && latestServerSnapshot) {
+      const living = livingIds(latestServerSnapshot.characters, myId);
+      spectator.update(living);
+      for (let i = 0; i < spectatePresses; i += 1) spectator.cycle(living);
+      const targetId = spectator.target;
+      const followed = targetId === null ? undefined : serverRender.characters[targetId];
+      if (targetId !== null && followed) {
+        cameraTarget = followed.position;
+        spectatingNickname = playerNames[targetId];
+      }
+    } else {
+      spectator.reset();
+    }
+    stage.updateCamera(cameraTarget, look.yaw, look.pitch);
 
     // The Qualification banner (M4 ticket 02). Shown the instant the local
     // prediction says we're in the zone — that's the same Tick the input lock
@@ -858,6 +898,7 @@ const boot = async (
         connectedPlayers,
         playersToStart: welcome.config.playersToStart,
         eliminated,
+        ...(spectatingNickname === undefined ? {} : { spectatingNickname }),
       }),
     );
     const qualified = c.finishTick !== null;

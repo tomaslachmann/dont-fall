@@ -10,6 +10,13 @@ export interface MatchBannerState {
   playersToStart: number;
   /** Whether the local Player was Eliminated — the Round ended and they never Qualified (M4 ticket 05). */
   eliminated: boolean;
+  /**
+   * Who this eliminated client is following in Spectator Mode (M7 ticket
+   * 07) — set only while the camera is on somebody else, `undefined`
+   * whenever it is on your own Character. A playing Round is still left
+   * alone to be played: only a spectator ever sees a banner here.
+   */
+  spectatingNickname?: string;
 }
 
 /**
@@ -27,6 +34,7 @@ export const matchBanner = ({
   connectedPlayers,
   playersToStart,
   eliminated,
+  spectatingNickname,
 }: MatchBannerState): string | null => {
   switch (phase) {
     case "LOBBY":
@@ -36,7 +44,7 @@ export const matchBanner = ({
       // should read as the release. The server has already stopped counting.
       return countdownMsLeft <= 0 ? "GO!" : String(Math.ceil(countdownMsLeft / 1000));
     case "RUNNING":
-      return null;
+      return spectatingNickname === undefined ? null : `SPECTATING ${spectatingNickname} · C for next`;
     // The Round is over, and the one thing a Player most needs told is that
     // they did not make it (CONTEXT.md: Elimination). Someone who Qualified
     // already has their placement on the HUD.

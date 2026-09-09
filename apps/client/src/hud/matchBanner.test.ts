@@ -50,4 +50,14 @@ describe("matchBanner", () => {
     expect(banner({ phase: "ROUND_END", eliminated: false })).not.toMatch(/ELIMINATED/);
     expect(banner({ phase: "RESULTS", eliminated: false })).not.toMatch(/ELIMINATED/);
   });
+
+  it("names the followed Player and the cycle key while spectating (M7 ticket 07)", () => {
+    const text = banner({ phase: "RUNNING", spectatingNickname: "Bob" });
+    expect(text).toMatch(/Bob/);
+    expect(text).toMatch(/C/);
+  });
+
+  it("stays out of the way once the Round is running for a Player still in it", () => {
+    expect(banner({ phase: "RUNNING" })).toBeNull();
+  });
 });
