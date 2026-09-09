@@ -159,13 +159,13 @@ describe("GameCanvas", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows the Results overlay once the game reports it's in RESULTS, and hides it once back in the Lobby", async () => {
+  it("shows the Standings overlay once the game reports it's in RESULTS, and hides it once back in the Lobby", async () => {
     let reportLobby!: (state: unknown) => void;
-    let reportResults!: (rows: unknown) => void;
+    let reportStandings!: (snapshot: unknown) => void;
     startGame.mockImplementationOnce(
-      async (config: { onLobbyState?: (state: unknown) => void; onResults?: (rows: unknown) => void }) => {
+      async (config: { onLobbyState?: (state: unknown) => void; onStandings?: (snapshot: unknown) => void }) => {
         reportLobby = config.onLobbyState!;
-        reportResults = config.onResults!;
+        reportStandings = config.onStandings!;
         return {
           stop: vi.fn(),
           setNickname: vi.fn(),
@@ -191,8 +191,13 @@ describe("GameCanvas", () => {
       matchLength: 1,
       roundPicks: [],
     });
-    reportResults([{ id: "me", nickname: "Player", qualified: true, placement: 1, checkpointIndex: 4, fallCount: 0, dnf: false }]);
-    expect(await screen.findByText("Results")).toBeInTheDocument();
+    reportStandings({
+      results: [{ id: "me", nickname: "Player", qualified: true, placement: 1, checkpointIndex: 4, fallCount: 0, dnf: false }],
+      roundsRemaining: false,
+      standings: [{ id: "me", nickname: "Player", score: 100, placement: 1, gone: false }],
+      winners: [{ id: "me", score: 100 }],
+    });
+    expect(await screen.findByText("Final Standings")).toBeInTheDocument();
 
     reportLobby({
       myId: "me",
@@ -205,7 +210,7 @@ describe("GameCanvas", () => {
       matchLength: 1,
       roundPicks: [],
     });
-    await waitFor(() => expect(screen.queryByText("Results")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Final Standings")).not.toBeInTheDocument());
   });
 
   it("tears down the old game and boots a new one when trackId changes", async () => {
