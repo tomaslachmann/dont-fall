@@ -9,6 +9,11 @@
       #app { display: grid; grid-template-columns: 220px 1fr; grid-template-rows: 1fr auto; height: 100%; }
       #palette { grid-row: 1 / 3; overflow-y: auto; background: #10141c; border-right: 1px solid #232a36; padding: 8px; }
       #palette h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #8ba0b8; margin: 4px 4px 8px; }
+      #palette-tabs { display: flex; gap: 4px; margin: 0 0 8px; }
+      #palette-tabs button { flex: 1; background: #1c2430; color: #cdd9e5; border: 1px solid #2f3b4c; border-radius: 3px; padding: 4px 8px; font: inherit; cursor: pointer; }
+      #palette-tabs button:hover { border-color: #4a90d9; }
+      #palette-tabs button.active { background: #2a4a72; border-color: #4a90d9; }
+      #palette-list[hidden], #assets-list[hidden] { display: none; }
       .module-entry { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 10px; cursor: pointer; border: 1px solid #232a36; border-radius: 4px; padding: 6px; }
       .module-entry:hover { border-color: #4a90d9; }
       .module-entry canvas { display: block; background: #05070b; border-radius: 3px; }
@@ -49,7 +54,12 @@
     <div id="app">
       <div id="palette">
         <h2>Modules</h2>
+        <div id="palette-tabs">
+          <button id="tab-procedural" class="active">Procedural</button>
+          <button id="tab-assets">Assets</button>
+        </div>
         <div id="palette-list"></div>
+        <div id="assets-list" hidden></div>
       </div>
       <div id="viewport">
         <div id="browse" hidden>

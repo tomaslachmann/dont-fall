@@ -6,11 +6,14 @@ import {
   MIN_SURVIVOR_TARGET,
   MIN_TIME_LIMIT_MS,
   MODULE_LIBRARY,
+  type Module,
   type Track,
   type TrackRoundDefaults,
   type Vec3,
 } from "@dont-fall/shared";
+import type * as THREE from "three";
 import { listTracks, loadTrack, publishPlaytestTrack, saveTrack } from "./api.js";
+import { assetTabModuleIds, builderLibrary, loadAssetVisuals } from "./assets.js";
 import { parseDraftSurvivorTarget } from "./survivorTargetField.js";
 import { parseDraftTimeLimitMs } from "./timeLimitField.js";
 import {
@@ -33,6 +36,38 @@ import { createModulePreview, createTrackViewport, type SegmentTransform, type T
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
 const paletteList = $("palette-list");
+const assetsList = $("assets-list");
+const tabProceduralButton = $<HTMLButtonElement>("tab-procedural");
+const tabAssetsButton = $<HTMLButtonElement>("tab-assets");
+
+/**
+ * Every Module anything here may place (M8 ticket 05) — the procedural
+ * registry composed with the asset defs' placement halves. `MODULE_LIBRARY`
+ * below is now only the *procedural tab's* listing source; every edit,
+ * snap, overlap and viewport path takes this instead, so asset Segments
+ * chain and overlap exactly like procedural ones ("verify, don't rebuild").
+ */
+const LIBRARY = builderLibrary();
+const ASSET_IDS = new Set(assetTabModuleIds());
+
+/**
+ * Visual templates by asset Module id, loaded once per session from
+ * track-service at Assets-tab open (M8 ticket 05, ADR 0050 as amended) —
+ * `null` until then. The viewport renders whatever is cached (possibly
+ * nothing on a procedural-only session); placing from the tab always
+ * follows a load, so its Segments never miss their visuals.
+ */
+let assetTemplates: Awaited<ReturnType<typeof loadAssetVisuals>> | null = null;
+const ensureAssetTemplates = async (): Promise<Awaited<ReturnType<typeof loadAssetVisuals>>> => {
+  if (!assetTemplates) {
+    assetTemplates = await loadAssetVisuals(async (url: string): Promise<Uint8Array> => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`GET ${url} answered ${res.status}`);
+      return new Uint8Array(await res.arrayBuffer());
+    }, `${serviceUrlInput.value}/assets`);
+  }
+  return assetTemplates;
+};
 const serviceUrlInput = $<HTMLInputElement>("service-url");
 const trackNameInput = $<HTMLInputElement>("track-name");
 const trackIdInput = $<HTMLInputElement>("track-id");
@@ -147,7 +182,7 @@ const toggleSelect = (index: number): void => {
 // anything but a tiny Track.
 const rerender = (transformOnly = false): void => {
   if (transformOnly) viewport.retransformSegments(history.track);
-  else viewport.setTrack(MODULE_LIBRARY, history.track);
+  else viewport.setTrack(LIBRARY, history.track, assetTemplates ?? {});
   undoButton.disabled = !history.canUndo;
   redoButton.disabled = !history.canRedo;
   setStatus(`${history.track.length} Segment(s)`);
@@ -169,7 +204,7 @@ const applyEdit = (next: Track, nextSelected: number | undefined, transformOnly 
 // step. Re-asserts the same Segments as selected afterward rather than
 // calling `select` (which would collapse a multi-selection to just one).
 const commitSegmentTransforms = (updates: { index: number; transform: SegmentTransform }[]): void => {
-  history.apply(setSegmentTransforms(history.track, MODULE_LIBRARY, updates));
+  history.apply(setSegmentTransforms(history.track, LIBRARY, updates));
   rerender(true);
   selectedIndices = new Set(updates.map((u) => u.index));
   applySelectionView();
@@ -177,10 +212,12 @@ const commitSegmentTransforms = (updates: { index: number; transform: SegmentTra
 
 viewport = createTrackViewport(viewportContainer, commitSegmentTransforms);
 
-// Module palette — one entry per Module in the library, each with its own
-// live visual preview (ticket 04). Clicking inserts it right after the
-// selected Segment, or appends at the end if nothing is selected.
-for (const [moduleId, module] of Object.entries(MODULE_LIBRARY)) {
+// One palette entry: a live visual preview plus click-to-place through the
+// existing insert flow (insert right after the selected Segment, or append
+// at the end if nothing is selected). Shared by both tabs — the Assets tab
+// below passes the loaded visual template so its previews show the authored
+// shape instead of an empty box group.
+const addPaletteEntry = (list: HTMLElement, moduleId: string, module: Module, template?: THREE.Group): void => {
   const entry = document.createElement("div");
   entry.className = "module-entry";
 
@@ -196,12 +233,53 @@ for (const [moduleId, module] of Object.entries(MODULE_LIBRARY)) {
   entry.addEventListener("click", () => {
     const primary = primaryIndex();
     const insertAt = primary !== undefined ? primary + 1 : history.track.length;
-    applyEdit(insertSegment(history.track, MODULE_LIBRARY, insertAt, moduleId), insertAt);
+    applyEdit(insertSegment(history.track, LIBRARY, insertAt, moduleId), insertAt);
   });
 
-  paletteList.appendChild(entry);
-  previewRenders.push(createModulePreview(canvas, module));
+  list.appendChild(entry);
+  previewRenders.push(createModulePreview(canvas, module, template));
+};
+
+// Module palette — one entry per procedural Module, each with its own live
+// visual preview (ticket 04). Asset Modules live on their own tab below.
+for (const [moduleId, module] of Object.entries(MODULE_LIBRARY)) {
+  addPaletteEntry(paletteList, moduleId, module);
 }
+
+// Assets tab (M8 ticket 05) — the registry's fixed asset set, each previewing
+// its authored visual. Bytes load once per session, on first tab open (ADR
+// 0050 as amended: from track-service, never a builder-local copy), through
+// the tab's own fetch — the same loader pattern as the game, not shared code.
+let assetsTabOpened = false;
+const setActiveTab = (tab: "procedural" | "assets"): void => {
+  tabProceduralButton.classList.toggle("active", tab === "procedural");
+  tabAssetsButton.classList.toggle("active", tab === "assets");
+  paletteList.hidden = tab !== "procedural";
+  assetsList.hidden = tab !== "assets";
+  if (tab === "assets" && !assetsTabOpened) {
+    assetsTabOpened = true;
+    void openAssetsTab();
+  }
+};
+tabProceduralButton.addEventListener("click", () => setActiveTab("procedural"));
+tabAssetsButton.addEventListener("click", () => setActiveTab("assets"));
+
+const openAssetsTab = async (): Promise<void> => {
+  try {
+    setStatus("loading asset visuals…");
+    const templates = await ensureAssetTemplates();
+    assetsList.replaceChildren();
+    for (const moduleId of assetTabModuleIds()) {
+      addPaletteEntry(assetsList, moduleId, LIBRARY[moduleId]!, templates[moduleId]);
+    }
+    rerender();
+    setStatus(`${history.track.length} Segment(s)`);
+  } catch (err) {
+    // Let the next tab click retry — track-service may just not be up yet.
+    assetsTabOpened = false;
+    setStatus(`assets failed: ${(err as Error).message}`);
+  }
+};
 
 // The inspector/browse overlays are DOM children of #viewport (positioned
 // over the canvas) — stop their own clicks from reaching the viewport's
@@ -239,13 +317,13 @@ viewportContainer.addEventListener("click", (e) => {
 $("rotate-left").addEventListener("click", () => {
   const index = primaryIndex();
   if (index === undefined) return;
-  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, index, Math.PI / 2), index, true);
+  applyEdit(rotateSegment(history.track, LIBRARY, index, Math.PI / 2), index, true);
 });
 
 $("rotate-right").addEventListener("click", () => {
   const index = primaryIndex();
   if (index === undefined) return;
-  applyEdit(rotateSegment(history.track, MODULE_LIBRARY, index, -Math.PI / 2), index, true);
+  applyEdit(rotateSegment(history.track, LIBRARY, index, -Math.PI / 2), index, true);
 });
 
 // On-canvas drag gizmo mode (ticket 03) — Move shows translate handles,
@@ -303,7 +381,7 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     const step = e.shiftKey ? MOVE_STEP_FINE : MOVE_STEP;
     const delta: Vec3 = { x: direction.x * step, y: direction.y * step, z: direction.z * step };
-    applyEdit(moveSegment(history.track, MODULE_LIBRARY, index, delta), index, true);
+    applyEdit(moveSegment(history.track, LIBRARY, index, delta), index, true);
     return;
   }
 
@@ -311,20 +389,20 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     const step = e.shiftKey ? ROTATE_STEP_FINE : ROTATE_STEP;
     const signedStep = e.code === "BracketRight" ? step : -step;
-    applyEdit(rotateSegment(history.track, MODULE_LIBRARY, index, signedStep, activeRotateAxis), index, true);
+    applyEdit(rotateSegment(history.track, LIBRARY, index, signedStep, activeRotateAxis), index, true);
   }
 });
 
 $("duplicate").addEventListener("click", () => {
   const index = primaryIndex();
   if (index === undefined) return;
-  applyEdit(duplicateSegment(history.track, MODULE_LIBRARY, index), index + 1);
+  applyEdit(duplicateSegment(history.track, LIBRARY, index), index + 1);
 });
 
 $("delete").addEventListener("click", () => {
   const index = primaryIndex();
   if (index === undefined) return;
-  applyEdit(deleteSegment(history.track, MODULE_LIBRARY, index), undefined);
+  applyEdit(deleteSegment(history.track, LIBRARY, index), undefined);
 });
 
 $("remove-last").addEventListener("click", () => {
@@ -366,9 +444,22 @@ const loadById = async (id: string): Promise<void> => {
     // keeps them rather than silently resetting every Track to the default.
     timeLimitInput.value = String(Math.round(stored.timeLimitMs / 1000));
     survivorTargetInput.value = String(stored.survivorTarget);
+    const loadedStatus = `loaded "${stored.id}" (${history.track.length} Segment(s))`;
+    // A loaded Track may place asset Segments before the Assets tab was ever
+    // opened (M8 ticket 05) — fetch their visuals in the background and
+    // re-render when they land, rather than leaving them invisible.
+    if (stored.track.some((segment) => ASSET_IDS.has(segment.moduleId))) {
+      void ensureAssetTemplates().then(
+        () => {
+          rerender();
+          setStatus(loadedStatus);
+        },
+        (err: unknown) => setStatus(`assets failed: ${(err as Error).message}`),
+      );
+    }
     rerender();
     select(undefined);
-    setStatus(`loaded "${stored.id}" (${history.track.length} Segment(s))`);
+    setStatus(loadedStatus);
   } catch (err) {
     setStatus(`load failed: ${(err as Error).message}`);
   }

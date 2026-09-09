@@ -7,11 +7,12 @@ import { M1_MODULES } from "./modules.js";
 /**
  * The code-authored half of an asset Module (M8 ticket 02, ADR 0050) —
  * everything a GLB file does *not* carry: footprint, Sockets, default
- * Surface. Geometry arrives per-consumer through {@link loadAssetLibrary}
- * (server at boot, client at track load, builder at tab open — all through
- * track-service, ADR 0050 as amended), measured numbers below kept honest
- * by `assetModules.test.ts`, which revalidates every footprint against its
- * real file.
+ * Surface. Collision geometry arrives per-consumer through
+ * {@link loadAssetLibrary} (server at boot, client at track load — all
+ * through track-service, ADR 0050 as amended); the builder never simulates
+ * and reads only these defs plus visual bytes. Measured numbers below kept
+ * honest by `assetModules.test.ts`, which revalidates every footprint
+ * against its real file.
  */
 
 /** Filename stem rule (ADR 0050): `<moduleId>.glb`, derived from the id — a mismatch is impossible by construction. */
@@ -125,23 +126,30 @@ export type AssetWarningHandler = (moduleId: string, warning: string) => void;
  */
 export const ASSET_DEMO_TRACK_ID = "asset-demo";
 
+/**
+ * The defs as chainable/placeable Modules (M8 ticket 05): id, Sockets,
+ * footprint and default Surface — everything short of geometry. Chaining,
+ * the builder's placement machinery and publish validation never read
+ * triangles, so they share this instead of each carrying its own
+ * def-to-Module mapping; anything that simulates resolves the same ids
+ * through {@link attachAssetGeometry} with real bytes instead.
+ */
+export const ASSET_PLACEMENT_MODULES: Record<string, Module> = Object.fromEntries(
+  ASSET_MODULE_DEFS.map((def) => [
+    def.id,
+    {
+      id: def.id,
+      statics: [],
+      sockets: def.sockets,
+      footprint: def.footprint,
+      ...(def.surface === undefined ? {} : { surface: def.surface }),
+    } satisfies Module,
+  ]),
+);
+
 export const ASSET_DEMO_TRACK: Track = chainTrack(
   ["platform_straight", "ramp_45", "stairs_4step", "corner_lshape", "finish"],
-  {
-    ...Object.fromEntries(
-      ASSET_MODULE_DEFS.map((def) => [
-        def.id,
-        {
-          id: def.id,
-          statics: [],
-          sockets: def.sockets,
-          footprint: def.footprint,
-          ...(def.surface === undefined ? {} : { surface: def.surface }),
-        } satisfies Module,
-      ]),
-    ),
-    finish: M1_MODULES.finish!,
-  },
+  { ...ASSET_PLACEMENT_MODULES, finish: M1_MODULES.finish! },
   { x: 0, y: 0, z: 10 },
 );
 

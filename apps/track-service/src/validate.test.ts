@@ -1,6 +1,7 @@
 import type { Module, Track } from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
-import { MAX_SURVIVOR_TARGET, MIN_SURVIVOR_TARGET } from "@dont-fall/shared";
+import { ASSET_DEMO_TRACK, MAX_SURVIVOR_TARGET, MIN_SURVIVOR_TARGET } from "@dont-fall/shared";
+import { PUBLISH_MODULES } from "./index.js";
 import { invalidSurvivorTargetReason, unknownModuleIds } from "./validate.js";
 
 const MODULES: Record<string, Module> = {
@@ -47,6 +48,17 @@ describe("unknownModuleIds", () => {
     expect(unknownModuleIds(track, MODULES)).toEqual(
       expect.arrayContaining(["toString", "constructor", "hasOwnProperty"]),
     );
+  });
+});
+
+describe("PUBLISH_MODULES (M8 ticket 05)", () => {
+  it("accepts every asset Module id — publishes from the Assets tab validate", () => {
+    expect(unknownModuleIds(ASSET_DEMO_TRACK, PUBLISH_MODULES)).toEqual([]);
+  });
+
+  it("still rejects a genuinely unknown id", () => {
+    const track: Track = [{ moduleId: "not-real", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+    expect(unknownModuleIds(track, PUBLISH_MODULES)).toEqual(["not-real"]);
   });
 });
 

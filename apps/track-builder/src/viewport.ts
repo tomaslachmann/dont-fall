@@ -2,7 +2,7 @@ import { orientBox, quatToEuler, type Module, type Track } from "@dont-fall/shar
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
-import { applySegmentTransform, boundingRadius, buildModuleGroup, disposeGroup } from "./render.js";
+import { applySegmentTransform, boundingRadius, buildModuleGroup, buildSegmentGroup, disposeGroup } from "./render.js";
 import {
   MOVE_STEP_FINE,
   ROTATE_STEP,
@@ -20,7 +20,7 @@ export type { SegmentTransform };
  * the Module's own bounding box, with a slow auto-rotate so the shape reads
  * as 3D even from a single still frame.
  */
-export const createModulePreview = (canvas: HTMLCanvasElement, module: Module): (() => void) => {
+export const createModulePreview = (canvas: HTMLCanvasElement, module: Module, template?: THREE.Group): (() => void) => {
   const width = canvas.width || canvas.clientWidth || 96;
   const height = canvas.height || canvas.clientHeight || 96;
 
@@ -28,7 +28,10 @@ export const createModulePreview = (canvas: HTMLCanvasElement, module: Module): 
   renderer.setSize(width, height, false);
 
   const scene = new THREE.Scene();
-  const group = buildModuleGroup(module);
+  // An asset Module previews its authored visual (M8 ticket 05) — what the
+  // author places is what the game plays. Everything else previews its
+  // boxes-and-markers group exactly as before.
+  const group = template ? template.clone(true) : buildModuleGroup(module);
   scene.add(group);
   scene.add(new THREE.AmbientLight(0xffffff, 0.7));
   const dir = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -51,7 +54,13 @@ export const createModulePreview = (canvas: HTMLCanvasElement, module: Module): 
 const SELECTION_COLOR = 0xfacc15;
 
 export interface TrackViewport {
-  setTrack: (modules: Record<string, Module>, track: Track) => void;
+  /**
+   * Rebuilds the whole-Track overview. `assetTemplates` (M8 ticket 05) holds
+   * the loaded visual template per asset Module id — placed asset Segments
+   * render a clone each, everything else its boxes-and-markers group.
+   * Optional and default-empty, so procedural-only callers pass nothing.
+   */
+  setTrack: (modules: Record<string, Module>, track: Track, assetTemplates?: Record<string, THREE.Group>) => void;
   /**
    * Re-applies every existing Segment group's position/orientation from
    * `track` without disposing/rebuilding any geometry (code review, ticket
@@ -310,7 +319,7 @@ export const createTrackViewport = (
   resize();
 
   return {
-    setTrack(nextModules, nextTrack) {
+    setTrack(nextModules, nextTrack, assetTemplates = {}) {
       modules = nextModules;
       track = nextTrack;
       scene.remove(trackGroup);
@@ -318,10 +327,8 @@ export const createTrackViewport = (
       trackGroup = new THREE.Group();
       groupByIndex = new Map();
       nextTrack.forEach((segment, index) => {
-        const module = nextModules[segment.moduleId];
-        if (!module) return;
-        const group = buildModuleGroup(module);
-        applySegmentTransform(group, segment);
+        const group = buildSegmentGroup(nextModules, segment, assetTemplates);
+        if (!group) return;
         group.userData.segmentIndex = index;
         trackGroup.add(group);
         groupByIndex.set(index, group);

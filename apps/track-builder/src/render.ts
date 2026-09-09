@@ -154,6 +154,32 @@ export const buildModuleGroup = (module: Module): THREE.Group => {
 };
 
 /**
+ * Builds one placed Segment's viewport Group (M8 ticket 05): an asset
+ * Segment renders a clone of its loaded visual template, every other
+ * Segment its boxes-and-markers group — then the Segment's own
+ * placement transform, through the one shared helper, never separate
+ * positioning code. Returns `undefined` for an unknown Module (the
+ * viewport skips it, as before).
+ *
+ * Clones share the template's geometry/materials, so `disposeGroup` on a
+ * rebuilt viewport frees GPU buffers the cached template re-uploads on
+ * its next render — correct, at the cost of one re-upload per edit, which
+ * four tiny files make noise.
+ */
+export const buildSegmentGroup = (
+  modules: Record<string, Module>,
+  segment: Segment,
+  assetTemplates: Record<string, THREE.Group> = {},
+): THREE.Group | undefined => {
+  const module = modules[segment.moduleId];
+  if (!module) return undefined;
+  const template = assetTemplates[segment.moduleId];
+  const group = template ? template.clone(true) : buildModuleGroup(module);
+  applySegmentTransform(group, segment);
+  return group;
+};
+
+/**
  * Applies a Segment's full placement (position + 3D orientation, ADR 0034)
  * to its Module group — the one place `viewport.ts` (the Track overview) and
  * `playtest.ts` (the local playtest scene) both do this, instead of each

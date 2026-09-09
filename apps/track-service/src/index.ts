@@ -1,7 +1,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { Track } from "@dont-fall/shared";
-import { ASSET_DEMO_TRACK, ASSET_DEMO_TRACK_ID, DEFAULT_TRACK_SERVICE_PORT, MODULE_LIBRARY, M1_TRACK } from "@dont-fall/shared";
+import {
+  ASSET_DEMO_TRACK,
+  ASSET_DEMO_TRACK_ID,
+  ASSET_PLACEMENT_MODULES,
+  DEFAULT_TRACK_SERVICE_PORT,
+  MODULE_LIBRARY,
+  M1_TRACK,
+  type Module,
+} from "@dont-fall/shared";
 import { defaultAssetsDir, parseAssetFileName, readAssetFile } from "./assets.js";
 import { openDb, type TrackDb } from "./db.js";
 import { generateRandomTrack } from "./generate.js";
@@ -18,6 +26,15 @@ import { invalidSurvivorTargetReason, invalidTimeLimitReason, unknownModuleIds }
  */
 export { DEFAULT_TRACK_SERVICE_PORT };
 export const M1_SEED_TRACK_ID = "m1-playground";
+
+/**
+ * Every Module id a publish may reference (M8 ticket 05): the procedural
+ * registry composed with the asset defs' placement halves. Publish
+ * validation is id-membership only — file geometry is validated at load
+ * (match server boot, client track load), never here, so placement halves
+ * are the complete input.
+ */
+export const PUBLISH_MODULES: Record<string, Module> = { ...MODULE_LIBRARY, ...ASSET_PLACEMENT_MODULES };
 
 export interface TrackService {
   port: number;
@@ -151,7 +168,7 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse, as
       });
       return;
     }
-    const unknown = unknownModuleIds(body.track, MODULE_LIBRARY);
+    const unknown = unknownModuleIds(body.track, PUBLISH_MODULES);
     if (unknown.length > 0) {
       json(res, 400, { error: `unknown Module id(s): ${unknown.join(", ")}` });
       return;
