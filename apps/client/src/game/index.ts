@@ -1,4 +1,5 @@
 import {
+  ASSET_MODULE_DEFS,
   DEFAULT_KILL_PLANE_Y,
   INITIAL_LEAD_TICKS_MAX,
   INITIAL_LEAD_TICKS_MIN,
@@ -40,6 +41,7 @@ import {
   type Vec3,
 } from "@dont-fall/shared";
 import { loadCharacterModel } from "../render/characterModel.js";
+import { assetPlacements, loadAssetVisuals } from "../render/assetVisuals.js";
 import { awaitWelcome, resolveEndpoints } from "../lib/connection.js";
 import { createHud } from "../hud/hud.js";
 import { formatHudText } from "../hud/hudText.js";
@@ -292,22 +294,59 @@ const boot = async (
   // track-service cannot split this client's prediction from the server's
   // world mid-Round. Four tiny files; correctness of the library beats
   // fetching per Track.
+  //
+  // One `fetchBytes` serves both loaders (M8 ticket 03): the collision half
+  // (`loadAssetLibrary`) and the visual half (`loadAssetVisuals`) parse the
+  // same bytes twice with different code — "two loaders, one truth" — so
+  // they share one promise cache and no URL is ever fetched twice per
+  // session, however the two loads interleave.
+  const fetchedBytes = new Map<string, Promise<Uint8Array>>();
+  const fetchBytes = (url: string): Promise<Uint8Array> => {
+    const cached = fetchedBytes.get(url);
+    if (cached) return cached;
+    const pending = (async (): Promise<Uint8Array> => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`GET ${url} answered ${res.status}`);
+      return new Uint8Array(await res.arrayBuffer());
+    })();
+    fetchedBytes.set(url, pending);
+    return pending;
+  };
+  const assetsBaseUrl = `${endpoints.trackServiceUrl}/assets`;
   let assetLibrary: Record<string, Module> | null = null;
   const loadLibrary = async (): Promise<Record<string, Module>> => {
     if (!assetLibrary) {
-      const assets = await loadAssetLibrary(async (url: string): Promise<Uint8Array> => {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`GET ${url} answered ${res.status}`);
-        return new Uint8Array(await res.arrayBuffer());
-      }, `${endpoints.trackServiceUrl}/assets`);
+      const assets = await loadAssetLibrary(
+        fetchBytes,
+        assetsBaseUrl,
+        ASSET_MODULE_DEFS,
+        // Ticket 01's visual-escapes-collision check, surfaced where a
+        // developer will see it (a dev warning, never an error).
+        (moduleId, warning) => console.warn(`DON'T FALL: asset "${moduleId}": ${warning}`),
+      );
       assetLibrary = { ...MODULE_LIBRARY, ...assets };
     }
     return assetLibrary;
   };
+  // Visual templates, cached alongside the library above (M8 ticket 03) —
+  // parsed once per session, cloned once per placed Segment, freed with the
+  // stage on Track reload while the templates survive for the next Track.
+  let assetTemplates: Awaited<ReturnType<typeof loadAssetVisuals>> | null = null;
+  const loadVisualTemplates = async (): Promise<Awaited<ReturnType<typeof loadAssetVisuals>>> => {
+    if (!assetTemplates) {
+      assetTemplates = await loadAssetVisuals(
+        fetchBytes,
+        assetsBaseUrl,
+        ASSET_MODULE_DEFS.map((def) => def.id),
+      );
+    }
+    return assetTemplates;
+  };
 
   const track = await fetchTrack(welcome.trackId, welcome.trackRevision);
+  const library = await loadLibrary();
   const { statics, staticSurfaces, staticTrimeshes, checkpoints, finishZones, spinners, props, speedPads, launchPads, volumes } =
-    resolveTrack(await loadLibrary(), track);
+    resolveTrack(library, track);
 
   let stage = createStage({
     mount,
@@ -318,6 +357,8 @@ const boot = async (
     spinners,
     props,
     characterModel,
+    assetTemplates: await loadVisualTemplates(),
+    assetPlacements: assetPlacements(track, library),
   });
   // These two close over the `let stage`/`let localSim` below and are
   // registered exactly once — a live Lobby Track pick (M4 ticket 07)
@@ -466,7 +507,8 @@ const boot = async (
    */
   const loadTrack = async (trackId: string, trackRevision: number, spawn: Vec3): Promise<void> => {
     const nextTrack = await fetchTrack(trackId, trackRevision);
-    const resolved = resolveTrack(await loadLibrary(), nextTrack);
+    const nextLibrary = await loadLibrary();
+    const resolved = resolveTrack(nextLibrary, nextTrack);
 
     look.dispose();
     stage.dispose();
@@ -479,6 +521,11 @@ const boot = async (
       spinners: resolved.spinners,
       props: resolved.props,
       characterModel,
+      // Templates are session-cached (never refetched here); the disposed
+      // stage already freed its own clones with its scene-graph sweep, so
+      // the new stage clones afresh from the same templates.
+      assetTemplates: await loadVisualTemplates(),
+      assetPlacements: assetPlacements(nextTrack, nextLibrary),
     });
     look = new FreeLookCamera(stage.domElement);
 

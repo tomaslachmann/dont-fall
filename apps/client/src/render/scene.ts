@@ -34,6 +34,7 @@ import {
   springArmPosition,
 } from "../input/camera/springArm.js";
 import { listen } from "../lib/listeners.js";
+import { buildAssetVisuals, type AssetVisualPlacement } from "./assetVisuals.js";
 import { disposeSceneGraph } from "./disposeSceneGraph.js";
 import { HitReactionPlayer } from "./hitReactionPlayer.js";
 import { selectLocomotion } from "./locomotionAnimation.js";
@@ -73,6 +74,15 @@ export interface StageConfig {
   spinners: SpinnerConfig[];
   props: PropConfig[];
   characterModel: CharacterModel;
+  /**
+   * Asset visual templates by Module id, plus one placement per asset Segment
+   * (M8 ticket 03, ADR 0050) — the eye's half of asset Modules. The collision
+   * half is baked into trimeshes by `resolveTrack` for the sim; the two share
+   * the Segment's own origin/transform (see `assetPlacements`), never separate
+   * positioning code. Empty on procedural-only Tracks.
+   */
+  assetTemplates?: Record<string, THREE.Group>;
+  assetPlacements?: AssetVisualPlacement[];
 }
 
 /**
@@ -183,6 +193,8 @@ export const createStage = ({
   spinners,
   props,
   characterModel,
+  assetTemplates = {},
+  assetPlacements = [],
 }: StageConfig): Stage => {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -213,6 +225,21 @@ export const createStage = ({
     const mesh = boxMesh(box, platformMaterial);
     scene.add(mesh);
     collidables.push(mesh);
+  }
+
+  // Asset visuals (M8 ticket 03): one clone per placed asset Segment, standing
+  // at the Segment's own origin/transform — the same placement `resolveTrack`
+  // baked the collision trimeshes at. Their meshes join `collidables` so the
+  // spring-arm camera treats authored shapes the way it treated the boxes
+  // they replace (only leaf meshes are pushed, so the non-recursive raycast
+  // below needs no change for the nested clones). Freed with the scene-graph
+  // sweep in `dispose`, like everything else added to the scene here.
+  if (assetPlacements.length > 0) {
+    const assetVisuals = buildAssetVisuals(assetTemplates, assetPlacements);
+    scene.add(assetVisuals);
+    assetVisuals.traverse((object) => {
+      if ((object as THREE.Mesh).isMesh) collidables.push(object);
+    });
   }
 
   const checkpointMaterial = new THREE.MeshBasicMaterial({

@@ -288,6 +288,110 @@ describe("asset physics (ticket 02 Done-when)", () => {
   });
 });
 
+describe("loadAssetLibrary warnings (M8 ticket 03)", () => {
+  // --- Minimal GLB assembler: a trimmed twin of asset.test.ts's own ---
+  // Only what warning-forwarding needs (two indexed float-VEC3 triangles
+  // under role-marked nodes); stride/byte-width/transform variants live
+  // with the fuller assembler, not duplicated here.
+  const assemblePair = (collisionPositions: number[], visualPositions: number[]): Uint8Array => {
+    const bin: number[] = [];
+    const bufferViews: { buffer: number; byteOffset: number; byteLength: number }[] = [];
+    const accessors: unknown[] = [];
+    const pushFloats = (floats: number[]): number => {
+      const offset = bin.length;
+      const view = new DataView(new ArrayBuffer(floats.length * 4));
+      floats.forEach((v, i) => view.setFloat32(i * 4, v, true));
+      for (let i = 0; i < view.byteLength; i += 1) bin.push(view.getUint8(i));
+      while (bin.length % 4 !== 0) bin.push(0);
+      bufferViews.push({ buffer: 0, byteOffset: offset, byteLength: floats.length * 4 });
+      return bufferViews.length - 1;
+    };
+    const prim = (positions: number[]): { attributes: { POSITION: number }; indices: number } => {
+      accessors.push({ bufferView: pushFloats(positions), componentType: 5126, count: positions.length / 3, type: "VEC3" });
+      const positionAccessor = accessors.length - 1;
+      const indexOffset = bin.length;
+      const indexView = new DataView(new ArrayBuffer(6));
+      for (let i = 0; i < 3; i += 1) indexView.setUint16(i * 2, i, true);
+      for (let i = 0; i < 6; i += 1) bin.push(indexView.getUint8(i));
+      while (bin.length % 4 !== 0) bin.push(0);
+      bufferViews.push({ buffer: 0, byteOffset: indexOffset, byteLength: 6 });
+      accessors.push({ bufferView: bufferViews.length - 1, componentType: 5123, count: 3, type: "SCALAR" });
+      return { attributes: { POSITION: positionAccessor }, indices: accessors.length - 1 };
+    };
+    const jsonText = JSON.stringify({
+      asset: { version: "2.0" },
+      scenes: [{ nodes: [0, 1] }],
+      nodes: [
+        { name: "col", mesh: 0, extras: { role: "collision" } },
+        { name: "vis", mesh: 1, extras: { role: "visual" } },
+      ],
+      meshes: [{ primitives: [prim(collisionPositions)] }, { primitives: [prim(visualPositions)] }],
+      accessors,
+      bufferViews,
+    });
+    const jsonBytes = new TextEncoder().encode(jsonText);
+    const jsonPadded = jsonBytes.length + ((4 - (jsonBytes.length % 4)) % 4);
+    const total = 12 + 8 + jsonPadded + 8 + bin.length;
+    const out = new Uint8Array(total);
+    const view = new DataView(out.buffer);
+    view.setUint32(0, 0x46546c67, true);
+    view.setUint32(4, 2, true);
+    view.setUint32(8, total, true);
+    view.setUint32(12, jsonPadded, true);
+    view.setUint32(16, 0x4e4f534a, true);
+    out.set(jsonBytes, 20);
+    out.fill(0x20, 20 + jsonBytes.length, 20 + jsonPadded);
+    view.setUint32(20 + jsonPadded, bin.length, true);
+    view.setUint32(20 + jsonPadded + 4, 0x004e4942, true);
+    out.set(bin, 20 + jsonPadded + 8);
+    return out;
+  };
+
+  const TRI = [0, 0, 0, 1, 0, 0, 0, 0, 1];
+  const defs = [
+    {
+      id: "warn_me",
+      footprint: {
+        bounds: { center: { x: 0, y: 0, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
+        clearance: 0.5,
+      },
+      sockets: [],
+    },
+  ];
+
+  it("forwards each file's validation warnings to onWarning, naming the module", async () => {
+    // Collision sits inside the footprint; the visual escapes it by 10 on x
+    // (past ASSET_VISUAL_WARN) — a warn, never an error, and the load still
+    // succeeds with the entry shaped.
+    const bytes = assemblePair(TRI, [10, 0, 0, 11, 0, 0, 10, 0, 1]);
+    const calls: [string, string][] = [];
+    const library = await loadAssetLibrary(async () => bytes, "http://assets.test", defs, (moduleId, warning) => {
+      calls.push([moduleId, warning]);
+    });
+
+    expect(library["warn_me"]).toBeDefined();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![0]).toBe("warn_me");
+    expect(calls[0]![1]).toMatch(/visual/i);
+  });
+
+  it("stays silent when everything fits — the real files warn nothing", async () => {
+    const calls: [string, string][] = [];
+    await loadAssetLibrary(realFetch([]), "http://assets.test", undefined, (moduleId, warning) => {
+      calls.push([moduleId, warning]);
+    });
+
+    expect(calls).toEqual([]);
+  });
+
+  it("warns nowhere by default — omitting the handler keeps ticket-02 behavior", async () => {
+    const bytes = assemblePair(TRI, [10, 0, 0, 11, 0, 0, 10, 0, 1]);
+    const library = await loadAssetLibrary(async () => bytes, "http://assets.test", defs);
+
+    expect(library["warn_me"]).toBeDefined();
+  });
+});
+
 describe("loadAssetLibrary failure", () => {
   it("fails the whole load on the first bad file, naming it", async () => {
     const bad: Record<string, Uint8Array> = {};

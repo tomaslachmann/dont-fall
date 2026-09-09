@@ -98,6 +98,15 @@ export const attachAssetGeometry = (def: AssetModuleDef, validated: ValidatedAss
 });
 
 /**
+ * Where one file's validation warnings go (M8 ticket 03) — `validateAssetModule`
+ * returns them without logging (shared code owns no console), so the caller
+ * decides where a developer sees them: the client's track load warns, the
+ * server stays quiet. Optional and default-off, so omitting it keeps
+ * ticket-02 behavior exactly.
+ */
+export type AssetWarningHandler = (moduleId: string, warning: string) => void;
+
+/**
  * Fetch every def's bytes and shape the asset half of a Module library
  * (M8 ticket 02). `fetchBytes` is injected — track-service over HTTP in
  * production, committed files (or tiny fixtures) in tests — so this stays
@@ -108,6 +117,7 @@ export const loadAssetLibrary = async (
   fetchBytes: (url: string) => Promise<Uint8Array>,
   baseUrl: string,
   defs: AssetModuleDef[] = ASSET_MODULE_DEFS,
+  onWarning?: AssetWarningHandler,
 ): Promise<Record<string, Module>> => {
   const entries: Record<string, Module> = {};
   for (const def of defs) {
@@ -127,6 +137,7 @@ export const loadAssetLibrary = async (
     } catch (err) {
       throw new Error(`asset "${def.id}": ${(err as Error).message}`);
     }
+    for (const warning of validated.warnings) onWarning?.(def.id, warning);
     entries[def.id] = attachAssetGeometry(def, validated);
   }
   return entries;
