@@ -143,6 +143,23 @@ A reusable template for a piece of Track (e.g. "Spinner", "Ice", "Moving
 Platforms", "Straight", "Gap"). Authored once.
 _Avoid_: prefab, block, piece
 
+**Asset**:
+One per-Module GLB file in `assets/`, named `<moduleId>.glb`, carrying that
+Module's Visual and Collision meshes. Authored once, like the Module itself.
+_Avoid_: model, mesh file
+
+**Collision mesh**:
+The authored `role: collision` node of an Asset. Baked verbatim into the
+Module's colliders — the one geometry every Player simulates, identical for
+all. Never rendered.
+_Avoid_: UCX, hitbox
+
+**Visual mesh**:
+The authored `role: visual` node of an Asset. Rendered, never simulated — it
+may differ from the Collision mesh (detail, LOD, compression) without
+changing gameplay.
+_Avoid_: render mesh, skin
+
 **Socket**:
 A Module's named local connection point (a position and rotation) that another
 Module can be placed against, so a Track builder can snap pieces together
