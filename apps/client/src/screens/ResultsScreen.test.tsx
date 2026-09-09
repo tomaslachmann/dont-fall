@@ -82,3 +82,25 @@ describe("ResultsScreen", () => {
     expect(screen.getByText("Waiting for the host to return to the Lobby…")).toBeInTheDocument();
   });
 });
+
+describe("ResultsScreen — a Match with Rounds still remaining (M7 ticket 04, ADR 0049)", () => {
+  it("does not offer Back to Lobby to the host — the server refuses it while Rounds remain", () => {
+    render(<ResultsScreen results={[row()]} isHost={true} onReturnToLobby={() => {}} roundsRemaining={true} />);
+
+    expect(screen.queryByRole("button", { name: "Back to Lobby" })).not.toBeInTheDocument();
+    expect(screen.getByText("More Rounds to play — advancing automatically…")).toBeInTheDocument();
+  });
+
+  it("shows the same auto-advance message to a non-host too", () => {
+    render(<ResultsScreen results={[row()]} isHost={false} onReturnToLobby={() => {}} roundsRemaining={true} />);
+
+    expect(screen.getByText("More Rounds to play — advancing automatically…")).toBeInTheDocument();
+    expect(screen.queryByText("Waiting for the host to return to the Lobby…")).not.toBeInTheDocument();
+  });
+
+  it("defaults roundsRemaining to false — an omitted prop behaves exactly like the Match-end Screen", () => {
+    render(<ResultsScreen results={[row()]} isHost={true} onReturnToLobby={() => {}} />);
+
+    expect(screen.getByRole("button", { name: "Back to Lobby" })).toBeInTheDocument();
+  });
+});

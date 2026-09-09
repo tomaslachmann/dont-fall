@@ -158,7 +158,7 @@ export class PredictionLoop {
    * prediction stop and start driving on the identical Tick the server does.
    */
   step(input: SimInputs, advanceMs: number, onBuffered?: () => void, phase: MatchPhase = "RUNNING"): void {
-    this.accumulatorMs = Math.min(this.accumulatorMs + advanceMs, TICK_MS * MAX_STEPS_PER_FRAME);
+    this.accumulatorMs += advanceMs;
     let steps = 0;
     while (this.accumulatorMs + FIXED_STEP_EPSILON_MS >= TICK_MS && steps < MAX_STEPS_PER_FRAME) {
       this.recordTick(this.tick + 1, input, onBuffered, phase);
@@ -166,6 +166,17 @@ export class PredictionLoop {
       steps += 1;
     }
     if (this.accumulatorMs < 0) this.accumulatorMs = 0;
+    // A stall so long that hitting the MAX_STEPS_PER_FRAME clamp above still
+    // leaves a whole tick or more banked discards that backlog rather than
+    // springing it on the very next frame (code review: pre-clamping
+    // `accumulatorMs` before the loop instead silently discarded a real,
+    // sub-tick remainder on every frame that merely grazed the clamp — not
+    // just a genuine multi-second stall — losing banked time on sustained
+    // low frame rates the deleted `advanceFixed` never lost). A frame whose
+    // leftover is under one tick keeps it, exactly like any ordinary frame.
+    if (this.accumulatorMs + FIXED_STEP_EPSILON_MS >= TICK_MS) {
+      this.accumulatorMs = this.accumulatorMs % TICK_MS;
+    }
     // No trim here: `recordTick` trims after every tick it runs, and nothing
     // else grows the buffers, so a second pass over up to 120 history keys
     // per frame would only ever be a no-op repeat.

@@ -1,4 +1,5 @@
 import type { LobbyPlayer } from "./Lobby.js";
+import { rankWithTies } from "./ranking.js";
 
 /**
  * One row of a Results Screen (M4 ticket 08, CONTEXT.md "Results"): a
@@ -80,23 +81,16 @@ export const buildResults = (
     .filter(([, c]) => c.finishTick !== null)
     .sort(([, a], [, b]) => a.finishTick! - b.finishTick!);
 
-  let lastTick: number | null = null;
-  let lastPlacement = 0;
-  const qualifiedRows: ResultsRow[] = qualified.map(([id, c], index) => {
-    if (c.finishTick !== lastTick) {
-      lastPlacement = index + 1;
-      lastTick = c.finishTick;
-    }
-    return {
-      id,
-      nickname: nicknameFor(id),
-      qualified: true,
-      placement: lastPlacement,
-      checkpointIndex: c.checkpointIndex,
-      fallCount: c.fallCount,
-      dnf: false,
-    };
-  });
+  const qualifiedPlacements = rankWithTies(qualified, ([, a], [, b]) => a.finishTick === b.finishTick);
+  const qualifiedRows: ResultsRow[] = qualified.map(([id, c], index) => ({
+    id,
+    nickname: nicknameFor(id),
+    qualified: true,
+    placement: qualifiedPlacements[index]!,
+    checkpointIndex: c.checkpointIndex,
+    fallCount: c.fallCount,
+    dnf: false,
+  }));
 
   const dnfIds = new Set(dnfEntries.map((entry) => entry.id));
   const qualifiedIds = new Set(qualifiedRows.map((row) => row.id));

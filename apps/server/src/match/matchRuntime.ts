@@ -1,4 +1,5 @@
 import {
+  DEFAULT_MATCH_LENGTH,
   DEFAULT_ROUND_TYPE,
   MODULE_LIBRARY,
   RapierSimulation,
@@ -9,13 +10,21 @@ import {
   trackSpawn,
   type LobbyPlayer,
   type MatchState,
+  type RoundResult,
   type RoundRules,
   type RoundType,
   type Track,
 } from "@dont-fall/shared";
 import type { WebSocket } from "ws";
 import { InputRouter } from "../net/inputRouter.js";
+import { drawRound, type RoundSlotPick } from "./roundDraw.js";
 import type { FetchedTrack } from "../track/trackSource.js";
+
+/** One Round's fully-resolved plan (M7 ticket 05) — what {@link MatchRuntime.matchStructure} holds per slot. */
+export interface MatchStructureEntry {
+  fetched: FetchedTrack;
+  roundType: RoundType;
+}
 
 /** Everything `startServer`'s config resolved to, fixed for the life of the process. */
 export interface MatchConfig {
@@ -37,6 +46,15 @@ export interface MatchConfig {
    * rather than left as a second way to decide the same thing.
    */
   survivorTargetOverride?: number | undefined;
+  /**
+   * Force this Match's own length over {@link DEFAULT_MATCH_LENGTH} (M7
+   * ticket 04, ADR 0049) — test-only, like `timeLimitMsOverride`: a test
+   * that wants to sit through a whole multi-Round Match, or pin one down to
+   * a single Round to keep testing pre-M7 single-Round behaviour, shouldn't
+   * have to wait out three real Rounds either way. Ticket 05 gives the
+   * Lobby a real, non-test-only way to set this.
+   */
+  matchLengthOverride?: number | undefined;
 }
 
 /**
@@ -108,11 +126,68 @@ export class MatchRuntime {
   /** Players who dropped while the Round was being raced (M4 ticket 05). */
   dnf: { id: string; nickname: string }[] = [];
 
+  /**
+   * How many Rounds this Match runs before it ends (M7 ticket 04/05, ADR
+   * 0049) — Lobby-scoped, like `roundType`: a host who set it for one Match
+   * set it for this Lobby, not for one Match, so it survives
+   * {@link resetToFreshLobby}. Host-settable via `setMatchLength` (ticket 05).
+   */
+  matchLength = DEFAULT_MATCH_LENGTH;
+  /**
+   * Every Round's result so far this Match (M7 ticket 04, ADR 0049) —
+   * Match-scoped: cleared on a fresh Match ({@link resetToFreshLobby}),
+   * never on a fresh Round. Score is a pure fold over this (`matchScore`),
+   * computed by whoever needs it rather than stored.
+   */
+  roundResults: RoundResult[] = [];
+  /**
+   * The host's own picks for Rounds after the one about to start (M7 ticket
+   * 05) — keyed by 0-based Round index (`1` is Round 2's slot; `0`, Round
+   * 1's own slot, is never a key here — see `PickRoundSlotMessage`).
+   * Match-scoped, like `roundResults`: a pick was about specific upcoming
+   * Rounds of *this* Match, which have either happened or been discarded by
+   * the time another one starts.
+   */
+  pendingRoundPicks = new Map<number, RoundSlotPick>();
+  /**
+   * Every Round's fully-resolved plan for this Match (M7 ticket 05), index
+   * matching `roundResults.length` at the Tick each Round starts — `[0]` is
+   * Round 1's, copied from `fetched`/`roundType` the instant `start` fires
+   * (Round 1 keeps its existing pick mechanism; this ticket adds no second
+   * one for it). `[1..matchLength-1]` are drawn by `buildMatchStructure`,
+   * kicked off the same instant, well before any of them are actually
+   * needed — Round 1 alone almost always outlasts the fetch. `undefined`
+   * until drawn; "do not reveal a drawn Track early" means this is
+   * deliberately never sent to a client before its Round is the current one.
+   */
+  matchStructure: (MatchStructureEntry | undefined)[] = [];
+  /** The in-flight (or already-settled) draw for every entry of `matchStructure` past `[0]` — `nextRoundReady` awaits this rather than polling. */
+  matchStructurePromise: Promise<void> | undefined;
+  /** Track ids already used this Match (M7 ticket 05) — mutated by `drawRound`; reset when the pool is exhausted. Match-scoped. */
+  usedTrackIds = new Set<string>();
+  /**
+   * Whether the next Round's world is built and waiting (M7 ticket 04) — a
+   * level, not an edge: set `false` the instant RESULTS begins with Rounds
+   * still remaining, and read by `advanceMatchPhase` every Tick after that
+   * until `matchStructure`'s draw (ticket 05) resolves and this is set `true`.
+   */
+  nextRoundReady = false;
+
   /** One-shot edges, set by a Lobby handler and spent by the next tick. */
   startRequested = false;
   returnToLobbyRequested = false;
   /** Guards a `selectTrack` whose fetch is still in flight against a newer pick. */
   selectTrackSeq = 0;
+  /**
+   * Guards an in-flight {@link buildMatchStructure} against a Match that
+   * ended before it finished (code review, M7 ticket 05) — bumped by
+   * {@link resetToFreshLobby}, the same `selectTrackSeq` idiom. Without
+   * this, a draw still running when the last Player left (`resetToFreshLobby`
+   * clears `matchStructure`/`usedTrackIds` for whatever Match starts next)
+   * would resolve later and write its stale result into that *new* Match's
+   * state — this `MatchRuntime` instance outlives any one Match.
+   */
+  matchStructureSeq = 0;
 
   /** Whether this Round has met either of its endings, as of the last Tick simulated (M4 ticket 05). */
   roundEnding = { allQualified: false, timeExpired: false };
@@ -122,11 +197,26 @@ export class MatchRuntime {
   /** Monotonic across the process so each joiner gets a distinct spawn slot. */
   joinCount = 0;
 
+  /**
+   * Set once `startServer`'s own `close()` runs (M7 ticket 05) — checked by
+   * {@link buildMatchStructure} between draws so a background Match-structure
+   * build stops making track-service requests the moment its server is gone,
+   * rather than continuing to draw for a Match nothing is listening to
+   * anymore. Without this, a closed-but-still-drawing runtime is real,
+   * indefinite background load on track-service — harmless in production
+   * (a process exit kills it outright) but real in a test suite that starts
+   * and closes many servers against one shared track-service instance in a
+   * single process, where it compounds across every test that ever called
+   * `start` without pinning `matchLengthOverride: 1`.
+   */
+  closed = false;
+
   constructor(
     readonly config: MatchConfig,
     fetched: FetchedTrack,
   ) {
     this.fetched = fetched;
+    this.matchLength = config.matchLengthOverride ?? DEFAULT_MATCH_LENGTH;
     // The Match starts with no players; ticket 01's single-player default
     // Character is opted out here rather than added and immediately disposed.
     const built = this.buildSimulationFor(fetched.track);
@@ -172,6 +262,33 @@ export class MatchRuntime {
   }
 
   /**
+   * The host set this Match's length (M7 ticket 05, ADR 0049). Trims any
+   * `pendingRoundPicks` for a slot that no longer exists — a pick for Round
+   * 4 of what is now a 3-Round Match means nothing, and a stale entry would
+   * otherwise resurface confusingly if the host raised the length again.
+   */
+  setMatchLength(matchLength: number): void {
+    this.matchLength = matchLength;
+    for (const roundIndex of [...this.pendingRoundPicks.keys()]) {
+      if (roundIndex >= matchLength) this.pendingRoundPicks.delete(roundIndex);
+    }
+  }
+
+  /**
+   * The host picked (or cleared) a Track/Round-type for a future Round slot
+   * (M7 ticket 05) — always the slot's full desired state, replacing
+   * whatever was there (`PickRoundSlotMessage`'s own contract). Storing
+   * `{ trackId: null, roundType: null }` rather than deleting the map entry
+   * for an all-cleared slot is deliberately the same either way here — both
+   * read back as "the server draws this" — so this can't drift from
+   * `pendingRoundPicks.get(roundIndex)` simply returning `undefined` for an
+   * index nobody has touched yet.
+   */
+  pickRoundSlot(roundIndex: number, pick: RoundSlotPick): void {
+    this.pendingRoundPicks.set(roundIndex, pick);
+  }
+
+  /**
    * Why this Lobby can't start right now, in words a Player can read, or
    * `undefined` when it can (M5 ticket 07). One expression, read by both the
    * `start` gate that refuses and the snapshot field that explains — so what
@@ -179,6 +296,96 @@ export class MatchRuntime {
    */
   startBlockedReason(): string | undefined {
     return roundStartBlockedReason(this.roundType, this.trackHasFinishZone);
+  }
+
+  /**
+   * Whether this Match has more Rounds scheduled after the one that just
+   * ended (M7 ticket 04/05, ADR 0049) — one accessor instead of
+   * `roundResults.length < matchLength` written out at every call site
+   * (code review): `advanceMatchPhase`'s own gate, the round-result-push
+   * gate, and `returnToLobby`'s refusal must never be able to disagree
+   * about what "the Match is over" means.
+   */
+  roundsRemaining(): boolean {
+    return this.roundResults.length < this.matchLength;
+  }
+
+  /**
+   * Whether the Match should keep running on its own — Rounds remain
+   * *and* enough Players are still here to run one (code review, M7 ticket
+   * 04): `advanceMatchPhase`'s original single-Round Lobby gate
+   * (`sockets.size >= playersToStart`, `lobby.ts`'s `start` handler) never
+   * had a sibling for the automatic RESULTS → COUNTDOWN this ticket added,
+   * so a population drop between Rounds (to 1, not to 0 — `advanceMatchPhase`'s
+   * own `connectedPlayers === 0` check already handles that) used to carry
+   * whoever was left into a fresh Round alone regardless of the Lobby's own
+   * bar for starting one in the first place.
+   *
+   * `false` here makes RESULTS terminal exactly as it is with no Rounds
+   * left (`returnToLobbyRequested` starts working) — the Match can't
+   * silently deadlock waiting for players who, with no reconnection built
+   * yet (ADR 0024), are never coming back this Match.
+   */
+  canContinueMatch(): boolean {
+    return this.roundsRemaining() && this.sockets.size >= this.config.playersToStart;
+  }
+
+  /**
+   * Draws every not-yet-drawn Round slot for this Match (M7 ticket 05, ADR
+   * 0049) — kicked off once, the instant `start` fires (`lobby.ts`), well
+   * before any Round but the first needs an answer: Round 1 alone almost
+   * always outlasts a track-service fetch. `matchStructure[0]` is filled in
+   * synchronously, right here, from whatever `fetched`/`roundType` already
+   * are — Round 1 keeps its existing pick mechanism (`selectTrack`/
+   * `setRoundType`), this adds no second one for it.
+   *
+   * Sequential, not `Promise.all`-parallel: each draw updates
+   * `usedTrackIds` before the next one runs, so "not drawn twice until the
+   * pool is exhausted" holds across the whole Match, not just within one
+   * batch of concurrent fetches.
+   *
+   * A single Round's draw failing (track-service unreachable mid-fetch, no
+   * published Track supports a forced Race) is caught and logged rather
+   * than left to reject the whole Promise — every other Round still gets
+   * its own attempt, and `matchLoop.ts`'s own COUNTDOWN transition falls
+   * back to replaying the current Track for whichever slot never resolved,
+   * rather than the Match silently stalling in RESULTS forever.
+   */
+  async buildMatchStructure(): Promise<void> {
+    // Captured once, not re-read from `this.matchLength` on every loop
+    // iteration (code review): a `setMatchLength` racing this draw — sent
+    // in the post-`start`, pre-tick window before this ran — used to
+    // desync the loop's own exit condition from the array `matchStructure`
+    // was already sized to. That window is now closed at the source
+    // (`lobby.ts` refuses `setMatchLength` once `startRequested`), but
+    // capturing here is what actually guarantees this draw always builds
+    // exactly the Match length it started with, regardless.
+    const matchLength = this.matchLength;
+    // Claims a fresh generation, invalidating whatever `buildMatchStructure`
+    // call (if any) was still running — see `matchStructureSeq`'s own doc.
+    // `resetToFreshLobby` bumps the same counter if this Match ends before
+    // this call finishes, which is the check below actually exists for.
+    const seq = ++this.matchStructureSeq;
+    this.matchStructure = new Array<MatchStructureEntry | undefined>(matchLength);
+    this.matchStructure[0] = { fetched: this.fetched, roundType: this.roundType };
+    this.usedTrackIds.add(this.fetched.id);
+    for (let i = 1; i < matchLength; i += 1) {
+      // The server closed, or this Match ended (a fresh Lobby, possibly a
+      // whole new Match already under way) — stop drawing for it either way.
+      if (this.closed || seq !== this.matchStructureSeq) return;
+      try {
+        const drawn = await drawRound(
+          { trackServiceUrl: this.config.trackServiceUrl, trackFetchRetryOptions: this.config.trackFetchRetryOptions, usedTrackIds: this.usedTrackIds },
+          this.pendingRoundPicks.get(i),
+        );
+        if (this.closed || seq !== this.matchStructureSeq) return;
+        this.matchStructure[i] = drawn;
+      } catch (err) {
+        if (!this.closed && seq === this.matchStructureSeq) {
+          console.error(`DON'T FALL: could not draw Round ${i + 1} of this Match — it will replay the current Track instead: ${(err as Error).message}`);
+        }
+      }
+    }
   }
 
   /**
@@ -231,10 +438,13 @@ export class MatchRuntime {
   }
 
   /**
-   * The one reset every "start a fresh Round on `track`" transition shares —
-   * the connect-time `?track=` reload, a live Lobby `selectTrack`, and M4
-   * ticket 08's return from Results: swap in a freshly-built simulation and
-   * restart the tick/phase bookkeeping it depends on.
+   * The world-rebuild every "start a fresh Round on `track`" transition
+   * shares (code review, M7 ticket 04) — {@link resetToFreshLobby} and
+   * {@link startNextRound} used to duplicate this five-line sequence, which
+   * is exactly the kind of drift the ticket's own "Watch out for" warns
+   * about: a future fix to eliminated-Character reseating applied to one
+   * copy and not the other would silently reintroduce the M5 ticket 08
+   * ghost-Character bug on whichever path was missed.
    *
    * The replacement is built before the old one is disposed
    * (`buildSimulationFor` can throw — an unknown Module id in a Track
@@ -245,7 +455,8 @@ export class MatchRuntime {
    * `state.tick` and `serverTick` must keep agreeing (ADR 0027 addresses
    * every input by Tick number), and the way to keep them agreeing across a
    * rebuild is to hand the new simulation the Tick the server is already on
-   * — `syncTick` — not to send both back to zero.
+   * — `syncTick`, inside `buildSimulationFor` — not to send both back to
+   * zero.
    *
    * Sending both to zero looks equivalent and is not, because a *connected*
    * client's own prediction tick is seeded into the server's Tick space
@@ -259,22 +470,78 @@ export class MatchRuntime {
    * — froze everyone who was already there, on a Track they could see and
    * not walk on.
    *
-   * Callers still own anything specific to their own trigger — which Track
-   * `fetched` now points at, clearing `dnf`, resetting Ready.
+   * Sets `roundStartTick` too, even though whichever phase the caller lands
+   * on next isn't RUNNING yet — harmless (the real RUNNING transition
+   * overwrites it again before it's ever read) and one less thing for a
+   * caller to remember.
    *
-   * Also clears `startRequested` — a live `selectTrack`'s own `await` leaves a
-   * window where a `start` sent right behind it can be validated and queued
-   * against the *old* Lobby before this reset lands, then get spent by the
-   * tick loop right after, starting a Round on the just-swapped-away Track.
+   * Callers own everything specific to their own trigger: the destination
+   * phase, and whatever else that transition means (`fetched`, `dnf`,
+   * `roundResults`, Ready state).
    */
-  resetToFreshLobby(track: Track): void {
+  private rebuildSimulation(track: Track): void {
     const built = this.buildSimulationFor(track);
     this.simulation.dispose();
     this.simulation = built.simulation;
     this.roundRules = built.roundRules;
     this.trackHasFinishZone = built.trackHasFinishZone;
     this.roundStartTick = this.serverTick;
+  }
+
+  /**
+   * The one reset every "return to the Lobby" transition shares — the
+   * connect-time `?track=` reload, a live Lobby `selectTrack`, and M4
+   * ticket 08's return from Results: {@link rebuildSimulation} plus landing
+   * in LOBBY and clearing everything Match-scoped.
+   *
+   * Also clears `startRequested` — a live `selectTrack`'s own `await` leaves a
+   * window where a `start` sent right behind it can be validated and queued
+   * against the *old* Lobby before this reset lands, then get spent by the
+   * tick loop right after, starting a Round on the just-swapped-away Track.
+   *
+   * Also clears `roundResults` (M7 ticket 04, ADR 0049) — every way back to
+   * a fresh Lobby is the end of whatever Match was running, if any, and a
+   * second Match must not inherit the first one's Score. `matchStructure`/
+   * `matchStructurePromise`/`usedTrackIds` are Match-scoped the same way
+   * (ticket 05) — cleared here too, for the identical reason.
+   *
+   * **Known gap (code review, left for ticket 08):** `advanceMatchPhase`'s
+   * `connectedPlayers === 0` check routes here unconditionally, including
+   * mid-Match — a brief all-sockets-blip between Rounds (not just the last
+   * Player truly leaving) wipes every Round's Score played so far, with no
+   * way back since reconnection (`reclaim`) is still unimplemented (ADR
+   * 0024). Ticket 08 ("a disconnect does not corrupt the standings") is
+   * where a Player's Score gets a lifetime independent of the socket that
+   * earned it; until then, this is the honest behaviour, not a silent one.
+   */
+  resetToFreshLobby(track: Track): void {
+    this.rebuildSimulation(track);
     this.match = { phase: "LOBBY", phaseStartTick: this.serverTick };
     this.startRequested = false;
+    this.roundResults = [];
+    this.pendingRoundPicks.clear();
+    this.matchStructure = [];
+    this.matchStructurePromise = undefined;
+    this.usedTrackIds.clear();
+    // Invalidates any `buildMatchStructure` still running for whatever
+    // Match just ended — see `matchStructureSeq`'s own doc.
+    this.matchStructureSeq += 1;
+  }
+
+  /**
+   * Rebuild the world for the Round following this one (M7 ticket 04, ADR
+   * 0049) — {@link rebuildSimulation}, landing in COUNTDOWN instead of
+   * LOBBY: a Match's later Rounds never pass through the Lobby.
+   *
+   * This is also where an eliminated Character comes back properly (M5
+   * ticket 08's own "world rebuilt, not just phase reset" fix applies here
+   * too — `buildSimulationFor` re-seats every connected Player fresh, so
+   * nobody carries a disabled collider or a stale `finishTick` into the
+   * next Round). `dnf` is deliberately left alone here — the tick loop
+   * already clears it on every entry into COUNTDOWN, this path included.
+   */
+  startNextRound(track: Track): void {
+    this.rebuildSimulation(track);
+    this.match = { phase: "COUNTDOWN", phaseStartTick: this.serverTick };
   }
 }

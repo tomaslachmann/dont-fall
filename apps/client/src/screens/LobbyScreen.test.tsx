@@ -28,6 +28,8 @@ const baseLobby = (overrides: Partial<LobbySnapshot> = {}): LobbySnapshot => ({
   roundType: "race",
   survivorTarget: 1,
   startBlockedReason: undefined,
+  matchLength: 1,
+  roundPicks: [],
   ...overrides,
 });
 
@@ -36,7 +38,7 @@ const noop = () => {};
 describe("LobbyScreen", () => {
   it("lists every connected Player, marking the host row", () => {
     render(
-      <LobbyScreen lobby={baseLobby()} onSetNickname={noop} onSetReady={noop} onSelectTrack={noop} onSetRoundType={noop} onStart={noop} />,
+      <LobbyScreen lobby={baseLobby()} onSetNickname={noop} onSetReady={noop} onSelectTrack={noop} onSetRoundType={noop} onSetMatchLength={noop} onPickRoundSlot={noop} onStart={noop} />,
     );
 
     expect(screen.getByText("Host Player")).toBeInTheDocument();
@@ -53,6 +55,8 @@ describe("LobbyScreen", () => {
         onSetReady={onSetReady}
         onSelectTrack={noop}
         onSetRoundType={noop}
+        onSetMatchLength={noop}
+        onPickRoundSlot={noop}
         onStart={noop}
       />,
     );
@@ -76,6 +80,8 @@ describe("LobbyScreen", () => {
         onSetReady={noop}
         onSelectTrack={noop}
         onSetRoundType={noop}
+        onSetMatchLength={noop}
+        onPickRoundSlot={noop}
         onStart={noop}
       />,
     );
@@ -89,7 +95,7 @@ describe("LobbyScreen", () => {
   it("disables Start until everyone connected is Ready, for the host", () => {
     const onStart = vi.fn();
     const { rerender } = render(
-      <LobbyScreen lobby={baseLobby()} onSetNickname={noop} onSetReady={noop} onSelectTrack={noop} onSetRoundType={noop} onStart={onStart} />,
+      <LobbyScreen lobby={baseLobby()} onSetNickname={noop} onSetReady={noop} onSelectTrack={noop} onSetRoundType={noop} onSetMatchLength={noop} onPickRoundSlot={noop} onStart={onStart} />,
     );
 
     expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
@@ -106,6 +112,8 @@ describe("LobbyScreen", () => {
         onSetReady={noop}
         onSelectTrack={noop}
         onSetRoundType={noop}
+        onSetMatchLength={noop}
+        onPickRoundSlot={noop}
         onStart={onStart}
       />,
     );
@@ -132,6 +140,8 @@ describe("LobbyScreen", () => {
         onSetReady={noop}
         onSelectTrack={onSelectTrack}
         onSetRoundType={noop}
+        onSetMatchLength={noop}
+        onPickRoundSlot={noop}
         onStart={noop}
       />,
     );
@@ -153,6 +163,8 @@ describe("LobbyScreen", () => {
         onSetReady={noop}
         onSelectTrack={noop}
         onSetRoundType={noop}
+        onSetMatchLength={noop}
+        onPickRoundSlot={noop}
         onStart={noop}
       />,
     );
@@ -171,6 +183,8 @@ describe("LobbyScreen", () => {
           onSetReady={noop}
           onSelectTrack={noop}
           onSetRoundType={noop}
+          onSetMatchLength={noop}
+          onPickRoundSlot={noop}
           onStart={noop}
         />,
       );
@@ -188,6 +202,8 @@ describe("LobbyScreen", () => {
           onSetReady={noop}
           onSelectTrack={noop}
           onSetRoundType={onSetRoundType}
+          onSetMatchLength={noop}
+          onPickRoundSlot={noop}
           onStart={noop}
         />,
       );
@@ -202,6 +218,8 @@ describe("LobbyScreen", () => {
           onSetReady={noop}
           onSelectTrack={noop}
           onSetRoundType={onSetRoundType}
+          onSetMatchLength={noop}
+          onPickRoundSlot={noop}
           onStart={noop}
         />,
       );
@@ -217,6 +235,8 @@ describe("LobbyScreen", () => {
           onSetReady={noop}
           onSelectTrack={noop}
           onSetRoundType={noop}
+          onSetMatchLength={noop}
+          onPickRoundSlot={noop}
           onStart={noop}
         />,
       );
@@ -230,6 +250,8 @@ describe("LobbyScreen", () => {
           onSetReady={noop}
           onSelectTrack={noop}
           onSetRoundType={noop}
+          onSetMatchLength={noop}
+          onPickRoundSlot={noop}
           onStart={noop}
         />,
       );
@@ -250,6 +272,8 @@ describe("LobbyScreen", () => {
           onSetReady={noop}
           onSelectTrack={noop}
           onSetRoundType={noop}
+          onSetMatchLength={noop}
+          onPickRoundSlot={noop}
           onStart={onStart}
         />,
       );
@@ -267,11 +291,198 @@ describe("LobbyScreen", () => {
           onSetReady={noop}
           onSelectTrack={noop}
           onSetRoundType={noop}
+          onSetMatchLength={noop}
+          onPickRoundSlot={noop}
           onStart={noop}
         />,
       );
 
       expect(screen.getByText("This Track has no Finish Zone.")).toBeInTheDocument();
+    });
+  });
+
+  describe("Match length (M7 ticket 05, ADR 0049)", () => {
+    it("lets the host raise and lower the Match length within bounds", () => {
+      const onSetMatchLength = vi.fn();
+      render(
+        <LobbyScreen
+          lobby={baseLobby({ matchLength: 3 })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onSetMatchLength={onSetMatchLength}
+          onPickRoundSlot={noop}
+          onStart={noop}
+        />,
+      );
+
+      expect(screen.getByText("3 Rounds")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "More Rounds" }));
+      expect(onSetMatchLength).toHaveBeenCalledWith(4);
+      fireEvent.click(screen.getByRole("button", { name: "Fewer Rounds" }));
+      expect(onSetMatchLength).toHaveBeenCalledWith(2);
+    });
+
+    it("disables lowering at the minimum and raising at the maximum", () => {
+      const { rerender } = render(
+        <LobbyScreen
+          lobby={baseLobby({ matchLength: 1 })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onSetMatchLength={noop}
+          onPickRoundSlot={noop}
+          onStart={noop}
+        />,
+      );
+      expect(screen.getByRole("button", { name: "Fewer Rounds" })).toBeDisabled();
+
+      rerender(
+        <LobbyScreen
+          lobby={baseLobby({ matchLength: 10 })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onSetMatchLength={noop}
+          onPickRoundSlot={noop}
+          onStart={noop}
+        />,
+      );
+      expect(screen.getByRole("button", { name: "More Rounds" })).toBeDisabled();
+    });
+
+    it("shows a non-host the Match length as plain text, with no way to change it", () => {
+      render(
+        <LobbyScreen
+          lobby={baseLobby({ myId: "guest-id", matchLength: 3 })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onSetMatchLength={noop}
+          onPickRoundSlot={noop}
+          onStart={noop}
+        />,
+      );
+
+      expect(screen.getByText("3 Rounds")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "More Rounds" })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Upcoming Rounds (M7 ticket 05, ADR 0049)", () => {
+    it("shows nothing for a single-Round Match", () => {
+      render(
+        <LobbyScreen
+          lobby={baseLobby({ matchLength: 1, roundPicks: [] })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onSetMatchLength={noop}
+          onPickRoundSlot={noop}
+          onStart={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Upcoming Rounds")).not.toBeInTheDocument();
+    });
+
+    it("lists a row for every Round after the first, labelled by its own number", () => {
+      render(
+        <LobbyScreen
+          lobby={baseLobby({
+            matchLength: 3,
+            roundPicks: [
+              { trackId: null, roundType: null },
+              { trackId: null, roundType: null },
+            ],
+          })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onSetMatchLength={noop}
+          onPickRoundSlot={noop}
+          onStart={noop}
+        />,
+      );
+
+      expect(screen.getByText("Upcoming Rounds")).toBeInTheDocument();
+      expect(screen.getByText("Round 2")).toBeInTheDocument();
+      expect(screen.getByText("Round 3")).toBeInTheDocument();
+    });
+
+    it("lets the host pick a Round type for a future slot, leaving its Track pick untouched", () => {
+      const onPickRoundSlot = vi.fn();
+      render(
+        <LobbyScreen
+          lobby={baseLobby({
+            matchLength: 2,
+            roundPicks: [{ trackId: "track-b", roundType: null }],
+          })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onSetMatchLength={noop}
+          onPickRoundSlot={onPickRoundSlot}
+          onStart={noop}
+        />,
+      );
+
+      const typeSelect = screen.getByDisplayValue("Random type");
+      fireEvent.change(typeSelect, { target: { value: "survival" } });
+
+      expect(onPickRoundSlot).toHaveBeenCalledWith(1, "track-b", "survival");
+    });
+
+    it("clearing a picked Round type back to Random sends null, not an empty string", () => {
+      const onPickRoundSlot = vi.fn();
+      render(
+        <LobbyScreen
+          lobby={baseLobby({
+            matchLength: 2,
+            roundPicks: [{ trackId: null, roundType: "race" }],
+          })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onSetMatchLength={noop}
+          onPickRoundSlot={onPickRoundSlot}
+          onStart={noop}
+        />,
+      );
+
+      fireEvent.change(screen.getByDisplayValue("Race"), { target: { value: "" } });
+
+      expect(onPickRoundSlot).toHaveBeenCalledWith(1, null, null);
+    });
+
+    it("shows a non-host plain text for each future Round, with no picker", () => {
+      render(
+        <LobbyScreen
+          lobby={baseLobby({
+            myId: "guest-id",
+            matchLength: 2,
+            roundPicks: [{ trackId: "track-b", roundType: "race" }],
+          })}
+          onSetNickname={noop}
+          onSetReady={noop}
+          onSelectTrack={noop}
+          onSetRoundType={noop}
+          onSetMatchLength={noop}
+          onPickRoundSlot={noop}
+          onStart={noop}
+        />,
+      );
+
+      expect(screen.getByText("track-b · Race")).toBeInTheDocument();
+      expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     });
   });
 });

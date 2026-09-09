@@ -26,6 +26,9 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
   const [exitReason, setExitReason] = useState<ExitReason | null>(null);
   const [lobby, setLobby] = useState<LobbySnapshot | null>(null);
   const [results, setResults] = useState<ResultsRow[] | null>(null);
+  // M7 ticket 04, ADR 0049 — whether `returnToLobby` is currently a real
+  // action (see `ResultsScreen`'s own `roundsRemaining` prop).
+  const [resultsRoundsRemaining, setResultsRoundsRemaining] = useState(false);
   const navigate = useNavigate();
 
   // Latest-ref, not a dependency: onMatchEnd/onExit are typically a fresh
@@ -64,7 +67,10 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
           onLobbyState: (state) => setLobby(state),
           // M4 ticket 08: same overlay shape as the Lobby above, shown
           // instead of it while `phase === "RESULTS"`.
-          onResults: (rows) => setResults(rows),
+          onResults: (rows, roundsRemaining) => {
+            setResults(rows);
+            setResultsRoundsRemaining(roundsRemaining);
+          },
         }),
       )
       .then((bootedHandle) => {
@@ -85,6 +91,7 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
       handleRef.current = null;
       setLobby(null);
       setResults(null);
+      setResultsRoundsRemaining(false);
     };
   }, [trackId]);
 
@@ -110,6 +117,8 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
           onSetReady={(ready) => handleRef.current?.setReady(ready)}
           onSelectTrack={(id) => handleRef.current?.selectTrack(id)}
           onSetRoundType={(roundType) => handleRef.current?.setRoundType(roundType)}
+          onSetMatchLength={(matchLength) => handleRef.current?.setMatchLength(matchLength)}
+          onPickRoundSlot={(roundIndex, trackId, roundType) => handleRef.current?.pickRoundSlot(roundIndex, trackId, roundType)}
           onStart={() => handleRef.current?.start()}
         />
       )}
@@ -118,6 +127,7 @@ export function GameCanvas({ trackId, onMatchEnd, onExit }: GameCanvasProps) {
           results={results}
           isHost={lobby.hostId === lobby.myId}
           onReturnToLobby={() => handleRef.current?.returnToLobby()}
+          roundsRemaining={resultsRoundsRemaining}
         />
       )}
       {exitReason && (

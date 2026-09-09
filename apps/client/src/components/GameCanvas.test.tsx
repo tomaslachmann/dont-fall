@@ -139,6 +139,8 @@ describe("GameCanvas", () => {
       trackId: "t1",
       trackRevision: 1,
       timeLimitMs: 180_000,
+      matchLength: 1,
+      roundPicks: [],
     });
     expect(await screen.findByText("Lobby")).toBeInTheDocument();
 
@@ -150,6 +152,8 @@ describe("GameCanvas", () => {
       trackId: "t1",
       trackRevision: 1,
       timeLimitMs: 180_000,
+      matchLength: 1,
+      roundPicks: [],
     });
     await waitFor(() => expect(screen.queryByText("Lobby")).not.toBeInTheDocument());
     vi.unstubAllGlobals();
@@ -184,6 +188,8 @@ describe("GameCanvas", () => {
       trackId: "t1",
       trackRevision: 1,
       timeLimitMs: 180_000,
+      matchLength: 1,
+      roundPicks: [],
     });
     reportResults([{ id: "me", nickname: "Player", qualified: true, placement: 1, checkpointIndex: 4, fallCount: 0, dnf: false }]);
     expect(await screen.findByText("Results")).toBeInTheDocument();
@@ -196,6 +202,8 @@ describe("GameCanvas", () => {
       trackId: "t1",
       trackRevision: 1,
       timeLimitMs: 180_000,
+      matchLength: 1,
+      roundPicks: [],
     });
     await waitFor(() => expect(screen.queryByText("Results")).not.toBeInTheDocument());
   });

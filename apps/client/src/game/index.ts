@@ -106,6 +106,16 @@ export interface LobbySnapshot {
    * client never computes a second opinion about a gate it doesn't enforce.
    */
   startBlockedReason: string | undefined;
+  /** How many Rounds this Match will run (M7 ticket 05, ADR 0049) — the host's own setting. */
+  matchLength: number;
+  /**
+   * The host's own picks for Rounds after the one about to start (M7 ticket
+   * 05) — `roundPicks[i]` is Round `i + 2`'s pick; Round 1 is `trackId`/
+   * `roundType` above, with its own pick mechanism. `null` in either field
+   * means "the server draws this" — never the drawn answer itself, which
+   * stays unknown to every client until that Round actually starts.
+   */
+  roundPicks: { trackId: string | null; roundType: RoundType | null }[];
 }
 
 /**
@@ -156,8 +166,13 @@ export interface GameConfig {
    * same way a Lobby Screen renders `onLobbyState`: an overlay on top of the
    * already-rendering `<GameCanvas>`, not a route the shell navigates to.
    * Deduped the same way, against the same snapshot-rate firehose.
+   *
+   * `roundsRemaining` (M7 ticket 04, ADR 0049): whether this Match has more
+   * Rounds scheduled after this one — `returnToLobby` is a Match-end action
+   * the server silently refuses while this is true, so a Results Screen
+   * needs it to know whether "Back to Lobby" is a real action right now.
    */
-  onResults?: (results: ResultsRow[]) => void;
+  onResults?: (results: ResultsRow[], roundsRemaining: boolean) => void;
 }
 
 export interface GameHandle {
@@ -175,6 +190,16 @@ export interface GameHandle {
   selectTrack: (trackId: string) => void;
   /** Host-only: picks this Lobby's Round type (M5 ticket 07). Ignored if not host or not in LOBBY. */
   setRoundType: (roundType: RoundType) => void;
+  /** Host-only: sets this Match's length (M7 ticket 05, ADR 0049). Ignored if not host, not in LOBBY, or out of bounds. */
+  setMatchLength: (matchLength: number) => void;
+  /**
+   * Host-only: picks (or clears) a Track/Round type for a Round after the
+   * one about to start (M7 ticket 05) — `roundIndex` is 0-based and counts
+   * from Round 1, so `1` is Round 2's slot. `null` for either field leaves
+   * it to the server's draw. Ignored if not host, not in LOBBY, or the
+   * index doesn't name a Round this Match will actually play.
+   */
+  pickRoundSlot: (roundIndex: number, trackId: string | null, roundType: RoundType | null) => void;
   /** Host-only: asks the server to start the Round (M4 ticket 07). Ignored unless the server's own gate passes. */
   start: () => void;
   /** Host-only: asks the server to return to the Lobby from Results (M4 ticket 08). Ignored outside RESULTS. */
@@ -451,6 +476,8 @@ const boot = async (
             roundType: message.lobby.roundType,
             survivorTarget: message.roundRules.survivorTarget,
             startBlockedReason: message.lobby.startBlockedReason,
+            matchLength: message.lobby.matchLength,
+            roundPicks: message.lobby.roundPicks,
           };
           const lobbyJson = JSON.stringify(lobbySnapshot);
           if (lobbyJson !== lastLobbyJson) {
@@ -460,10 +487,15 @@ const boot = async (
         }
         if (onResults && message.phase === "RESULTS") {
           const results = buildResults(message.state.characters, message.lobby.players, message.dnf);
-          const resultsJson = JSON.stringify(results);
+          // M7 ticket 04, ADR 0049: whether the server will auto-advance
+          // into another Round rather than wait for `returnToLobby` —
+          // folded into the same dedupe as `results` so a change in this
+          // alone (the last Round finishing, say) still reaches the Screen.
+          const roundsRemaining = message.roundResults.length < message.lobby.matchLength;
+          const resultsJson = JSON.stringify([results, roundsRemaining]);
           if (resultsJson !== lastResultsJson) {
             lastResultsJson = resultsJson;
-            onResults(results);
+            onResults(results, roundsRemaining);
           }
         }
         netMetrics.commandQueueDepth = message.commandQueueDepth;
@@ -884,6 +916,8 @@ const boot = async (
     setReady: (ready) => sendLobbyMessage({ type: "setReady", ready }),
     selectTrack: (trackId) => sendLobbyMessage({ type: "selectTrack", trackId }),
     setRoundType: (roundType) => sendLobbyMessage({ type: "setRoundType", roundType }),
+    setMatchLength: (matchLength) => sendLobbyMessage({ type: "setMatchLength", matchLength }),
+    pickRoundSlot: (roundIndex, trackId, roundType) => sendLobbyMessage({ type: "pickRoundSlot", roundIndex, trackId, roundType }),
     start: () => sendLobbyMessage({ type: "start" }),
     returnToLobby: () => sendLobbyMessage({ type: "returnToLobby" }),
   };

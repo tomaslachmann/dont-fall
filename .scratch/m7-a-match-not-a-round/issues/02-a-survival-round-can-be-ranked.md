@@ -5,7 +5,7 @@ produces a real order instead of a binary.
 
 **Blocked by:** nothing.
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## Why
 
@@ -25,24 +25,27 @@ simulation currently throws away.
 
 ## What to change
 
-- [ ] The Tick a Character was eliminated is recorded where `eliminated` is set today — the same
+- [x] The Tick a Character was eliminated is recorded where `eliminated` is set today — the same
       place, so there is no second path that can disagree about whether someone is out
-- [ ] It rides the snapshot. It is per-Character Round state like `finishTick`, not derived
-- [ ] `buildResults` ranks the non-Qualified by it, **latest elimination first**, and falls back to
+- [x] It rides the snapshot. It is per-Character Round state like `finishTick`, not derived
+- [x] `buildResults` ranks the non-Qualified by it, **latest elimination first**, and falls back to
       Checkpoint progress where there is none (a Race, where nobody is eliminated at all)
-- [ ] Survivors keep sharing a placement — standard competition ranking, the convention
+- [x] Survivors keep sharing a placement — standard competition ranking, the convention
       `qualificationPlacement` and `buildResults` already use. Everyone still standing when a
       Survival Round ends genuinely tied
 
 ## Done when
 
-- [ ] Shared tests: a Survival Round with four Characters eliminated at four different Ticks ranks
+- [x] Shared tests: a Survival Round with four Characters eliminated at four different Ticks ranks
       them in the reverse order they fell, and survivors share first place
-- [ ] A Race's ranking is byte-for-byte what it is today — no elimination Ticks exist there, so
+- [x] A Race's ranking is byte-for-byte what it is today — no elimination Ticks exist there, so
       nothing may move
-- [ ] The existing M5 Results tests pass unchanged, or an expectation moves with a note saying why
+- [x] The existing M5 Results tests pass unchanged, or an expectation moves with a note saying why
 - [ ] **Live:** a Survival Round in two browsers where one Player is shoved off early and the other
-      late — the Results order matches what actually happened, not the order they connected
+      late — the Results order matches what actually happened, not the order they connected —
+      **deferred to one end-of-milestone live-verification pass, by the user's own call (no
+      chromium-cli/Playwright in this sandbox, and docker-based track-service would need starting
+      on the user's real machine for every ticket otherwise)**
 
 ## Watch out for
 
@@ -56,3 +59,24 @@ in the world. It gets an elimination Tick like any other, and ticket 08 decides 
 
 **`eliminated` is also read by `survivorTargetReached`** (`Qualification.ts:45`). Adding a Tick must
 not change what counts as eliminated — only record when it happened.
+
+## Implementation notes
+
+Added `eliminatedTick: number | null` alongside `eliminated: boolean` everywhere it lives:
+`CharacterProgress` (`RapierSimulation.ts`), `CharacterSnapshot`/`CharacterSnapshotFields`
+(`SimState.ts`), and `ReconcileBase`. Set at the same two call sites `eliminated = true` already is
+(`eliminateCharacter`, `detectFall`'s eliminating branch) via `this.tickCount`, and restored
+unconditionally in `reconcileCharacter` right beside `eliminated`, same reasoning.
+
+`buildResults`' `eliminatedRows` sort became a three-way comparator: `eliminatedTick` descending
+(latest first), nulls sorted last, falling back to the existing `checkpointIndex` comparator when
+both are null (a Race, or a tie) — byte-for-byte the old order for a Race, since nothing there ever
+sets `eliminatedTick`.
+
+Added new `Results.test.ts` cases (four-way elimination-tick ordering, survivor tie-sharing, Race
+fallback) and 18 mechanical `eliminatedTick: <matching source>.eliminatedTick,` additions across
+existing `RapierSimulation.test.ts`/`tickAddressedInput.integration.test.ts` `ReconcileBase` literals
+(TypeScript's own missing-property errors found every one).
+
+`/code-review medium` — no findings. Full monorepo typecheck and `pnpm -r test` green (577 shared
+tests, up from 574).

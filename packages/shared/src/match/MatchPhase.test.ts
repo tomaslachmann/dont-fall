@@ -192,6 +192,57 @@ describe("advanceMatchPhase — ending a Round (M4 ticket 05)", () => {
   });
 });
 
+describe("advanceMatchPhase — several Rounds without the Lobby (M7 ticket 04, ADR 0049)", () => {
+  const results = at("RESULTS", 400);
+
+  it("advances RESULTS straight into COUNTDOWN once more Rounds remain and the next one's world is ready", () => {
+    const next = advanceMatchPhase(results, {
+      tick: 500,
+      connectedPlayers: 2,
+      roundsRemaining: true,
+      nextRoundReady: true,
+    });
+
+    expect(next.phase).toBe("COUNTDOWN");
+    expect(next.phaseStartTick).toBe(500);
+  });
+
+  it("holds on RESULTS while Rounds remain but the next one isn't ready yet", () => {
+    expect(
+      advanceMatchPhase(results, { tick: 500, connectedPlayers: 2, roundsRemaining: true, nextRoundReady: false }).phase,
+    ).toBe("RESULTS");
+  });
+
+  it("ignores returnToLobbyRequested while Rounds remain — it is a Standings screen advancing on its own, not a way out", () => {
+    expect(
+      advanceMatchPhase(results, {
+        tick: 500,
+        connectedPlayers: 2,
+        roundsRemaining: true,
+        nextRoundReady: true,
+        returnToLobbyRequested: true,
+      }).phase,
+    ).toBe("COUNTDOWN"); // the Match-continuing transition wins, not a return to the Lobby
+  });
+
+  it("still returns to the Lobby from Results once no Rounds remain and the host asks — this was the last one", () => {
+    const next = advanceMatchPhase(results, {
+      tick: 500,
+      connectedPlayers: 2,
+      roundsRemaining: false,
+      returnToLobbyRequested: true,
+    });
+
+    expect(next.phase).toBe("LOBBY");
+  });
+
+  it("does not advance into another Round on its own once nothing remains, even if nextRoundReady is stale-true", () => {
+    expect(
+      advanceMatchPhase(results, { tick: 500, connectedPlayers: 2, roundsRemaining: false, nextRoundReady: true }).phase,
+    ).toBe("RESULTS");
+  });
+});
+
 describe("countdownMsLeft", () => {
   it("is the full Countdown on the Tick it begins", () => {
     expect(countdownMsLeft(at("COUNTDOWN", 100), 100)).toBe(3_000);

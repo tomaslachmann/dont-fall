@@ -1,5 +1,6 @@
 import { MAX_ROUND_SCORE, QUALIFICATION_SCORE_BONUS } from "../tuning.js";
 import type { LobbyPlayer } from "./Lobby.js";
+import { rankWithTies } from "./ranking.js";
 import { buildResults, type DnfEntry, type ResultsCharacter, type ResultsRow } from "./Results.js";
 
 /**
@@ -37,7 +38,7 @@ export interface RoundResult {
 }
 
 /** Whether `curr` ties `prev` — same underlying value `buildResults` itself sorted the pair by, never a second rule. Different tiers never tie. */
-const tiesWithPrevious = (prev: ResultsRow, curr: ResultsRow, characters: Record<string, ResultsCharacter>): boolean => {
+const tiesWithPrevious = (characters: Record<string, ResultsCharacter>) => (prev: ResultsRow, curr: ResultsRow): boolean => {
   if (curr.qualified !== prev.qualified) return false;
   const p = characters[prev.id];
   const c = characters[curr.id];
@@ -55,12 +56,8 @@ export const buildRoundResult = (
   dnfEntries: readonly DnfEntry[],
 ): RoundResult => {
   const ranked = buildResults(characters, players, dnfEntries).filter((row) => !row.dnf);
-
-  let placement = 0;
-  const rows: RoundResultRow[] = ranked.map((row, i) => {
-    if (i === 0 || !tiesWithPrevious(ranked[i - 1]!, row, characters)) placement = i + 1;
-    return { id: row.id, placement, qualified: row.qualified };
-  });
+  const placements = rankWithTies(ranked, tiesWithPrevious(characters));
+  const rows: RoundResultRow[] = ranked.map((row, i) => ({ id: row.id, placement: placements[i]!, qualified: row.qualified }));
 
   return { rows };
 };

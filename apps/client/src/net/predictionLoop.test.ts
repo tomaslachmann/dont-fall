@@ -90,6 +90,24 @@ describe("PredictionLoop — step (the fixed-timestep accumulator)", () => {
     expect(loop.tick).toBe(MAX_STEPS_PER_FRAME);
   });
 
+  it(
+    "keeps a real sub-tick remainder banked when a frame only grazes the MAX_STEPS_PER_FRAME clamp " +
+      "(code review, M7 ticket 01) — a sustained low frame rate must not silently lose accumulated time " +
+      "the way a genuine multi-second stall correctly discards it",
+    () => {
+      const loop = new PredictionLoop(newSim(), DEFAULT_CHARACTER_ID);
+      loop.step(IDLE, TICK_MS * (MAX_STEPS_PER_FRAME + 0.5));
+      expect(loop.tick).toBe(MAX_STEPS_PER_FRAME);
+      expect(loop.accumulatorMs).toBeCloseTo(TICK_MS * 0.5, 5);
+    },
+  );
+
+  it("discards the backlog rather than banking it once a stall leaves a whole tick or more behind", () => {
+    const loop = new PredictionLoop(newSim(), DEFAULT_CHARACTER_ID);
+    loop.step(IDLE, TICK_MS * (MAX_STEPS_PER_FRAME + 50));
+    expect(loop.accumulatorMs).toBeLessThan(TICK_MS);
+  });
+
   it("bounds the input buffer to MAX_BUFFERED_INPUT_TICKS across repeated frames", () => {
     const loop = new PredictionLoop(newSim(), DEFAULT_CHARACTER_ID);
     for (let i = 0; i < MAX_BUFFERED_INPUT_TICKS + 10; i += 1) loop.step(IDLE, TICK_MS);

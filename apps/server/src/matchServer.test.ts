@@ -1017,7 +1017,13 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
 
   it("ends the Round as soon as every connected Character has Qualified", async () => {
     const trackId = await publishTrack(INSTANT_FINISH);
-    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0 });
+    server = await startServer({
+      port: 0,
+      playersToStart: 1,
+      countdownMs: 0,
+      roundEndMs: 0,
+      matchLengthOverride: 1, // pinned to one Round (M7 ticket 04/05) — this test is about the clock freezing, not a second Round's own clock
+    });
     const socket = connect(server.port, `?track=${trackId}`);
     await nextMessage(socket); // welcome
     await startMatch(socket);
@@ -1034,7 +1040,14 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
 
   it("ends the Round when the clock runs out with someone still running", async () => {
     const trackId = await publishTrack(M1_TRACK, undefined, MIN_TIME_LIMIT_MS);
-    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0, timeLimitMsOverride: 300 });
+    server = await startServer({
+      port: 0,
+      playersToStart: 1,
+      countdownMs: 0,
+      roundEndMs: 0,
+      timeLimitMsOverride: 300,
+      matchLengthOverride: 1, // pinned to one Round (M7 ticket 04) — this test is about the clock staying at 0, not the next Round starting
+    });
     const socket = connect(server.port, `?track=${trackId}`);
     await nextMessage(socket); // welcome
     await startMatch(socket);
@@ -1160,7 +1173,10 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     const latecomer = connect(server.port);
     const closed = await nextClose(latecomer);
 
-    expect(closed.reason).toMatch(/Round/i);
+    // "a Match," not "a Round" (M7 ticket 04/05, code review) — RESULTS can
+    // now be a brief inter-Round interlude, so this refusal's own words no
+    // longer claim specifically a Round is under way.
+    expect(closed.reason).toMatch(/Match/i);
     playing.close();
   });
 
@@ -1587,7 +1603,7 @@ describe("startServer — Results, and going again (M4 ticket 08)", () => {
 
   it("ignores a return-to-Lobby request from anyone but the host", async () => {
     const trackId = await publishTrack(INSTANT_FINISH);
-    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, roundEndMs: 0 });
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 1 });
     const a = connect(server.port, `?track=${trackId}`); // host
     await nextMessage(a);
     const b = connect(server.port);
@@ -1621,7 +1637,7 @@ describe("startServer — Results, and going again (M4 ticket 08)", () => {
 
   it("returns everyone to the Lobby once the host asks, with the previous Round's DNFs cleared", async () => {
     const trackId = await publishTrack(INSTANT_FINISH);
-    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 1 });
     const socket = connect(server.port, `?track=${trackId}`);
     const welcome = (await nextMessage(socket)) as Extract<ServerMessage, { type: "welcome" }>;
     await startMatch(socket);
@@ -1644,7 +1660,7 @@ describe("startServer — Results, and going again (M4 ticket 08)", () => {
 
   it("does not let a stale Ready from the previous Round auto-start the next one", async () => {
     const trackId = await publishTrack(INSTANT_FINISH);
-    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, roundEndMs: 0 });
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 1 });
     const a = connect(server.port, `?track=${trackId}`);
     await nextMessage(a);
     const b = connect(server.port);
@@ -1667,7 +1683,7 @@ describe("startServer — Results, and going again (M4 ticket 08)", () => {
 
   it("lets the host start a second Round on the same Track once back in the Lobby, running exactly like the first", async () => {
     const trackId = await publishTrack(INSTANT_FINISH);
-    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0 });
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 1 });
     const socket = connect(server.port, `?track=${trackId}`);
     await nextMessage(socket);
     await startMatch(socket);
@@ -1684,6 +1700,272 @@ describe("startServer — Results, and going again (M4 ticket 08)", () => {
   });
 });
 
+describe("startServer — a Match runs several Rounds (M7 ticket 04, ADR 0049)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+    max = 800,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (let i = 0; i < max; i += 1) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+    throw new Error("condition never held");
+  };
+
+  /** A Track whose Finish Zone is right on the spawn, so a Character Qualifies as soon as it is RUNNING. */
+  const INSTANT_FINISH: Track = [{ moduleId: "finish", position: { x: 0, y: 0, z: 10 }, rotation: 0 }];
+
+  it("runs its configured 3 Rounds back to back on one connection, never re-entering the Lobby, and ends with 3 results on the snapshot", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0 }); // default matchLength: 3
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket); // welcome
+
+    // The Match legitimately starts FROM the Lobby (below); this only flags
+    // a *return* to it after the first Round has left — the thing ticket 04
+    // says must not happen for as long as Rounds remain.
+    let leftLobbyOnce = false;
+    let returnedToLobby = false;
+    socket.on("message", (raw) => {
+      const message = JSON.parse(raw.toString()) as ServerMessage;
+      if (message.type !== "snapshot") return;
+      if (message.phase !== "LOBBY") leftLobbyOnce = true;
+      else if (leftLobbyOnce) returnedToLobby = true;
+    });
+
+    // Pin Rounds 2 and 3 to the same instant-finish Track (M7 ticket 05) —
+    // otherwise the server draws from track-service's whole shared pool
+    // (every other test's own published Tracks), which is not reliably
+    // instant-finish and would make this test about the draw, not about
+    // several Rounds running in sequence.
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 2, trackId, roundType: null } satisfies ClientMessage));
+
+    await startMatch(socket);
+
+    const final = await snapshotUntil(socket, (s) => s.roundResults.length === 3 && s.phase === "RESULTS");
+    expect(final.roundResults).toHaveLength(3);
+    expect(returnedToLobby).toBe(false);
+
+    // And it stays put on the last Round's Results rather than starting a 4th.
+    const later = await snapshotUntil(socket, (s) => s.state.tick > final.state.tick + 20);
+    expect(later.phase).toBe("RESULTS");
+    expect(later.roundResults).toHaveLength(3);
+    socket.close();
+  });
+
+  it("starts a fresh Match with an empty results list — a second Match does not inherit the first one's Score", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 1 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket); // welcome
+    await startMatch(socket);
+
+    const firstResults = await snapshotUntil(socket, (s) => s.phase === "RESULTS");
+    expect(firstResults.roundResults).toHaveLength(1);
+
+    socket.send(JSON.stringify({ type: "returnToLobby" } satisfies ClientMessage));
+    const backInLobby = await snapshotUntil(socket, (s) => s.phase === "LOBBY");
+    expect(backInLobby.roundResults).toEqual([]);
+
+    await startMatch(socket);
+    const secondResults = await snapshotUntil(socket, (s) => s.phase === "RESULTS");
+    expect(secondResults.roundResults).toHaveLength(1); // not 2 — the first Match's result is gone
+    socket.close();
+  });
+});
+
+describe("startServer — pick or shuffle (M7 ticket 05, ADR 0049)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+    max = 800,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (let i = 0; i < max; i += 1) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+    throw new Error("condition never held");
+  };
+
+  /** A Track whose Finish Zone is right on the spawn, so a Character Qualifies as soon as it is RUNNING. */
+  const INSTANT_FINISH: Track = [{ moduleId: "finish", position: { x: 0, y: 0, z: 10 }, rotation: 0 }];
+
+  it("shows a host's own pick for a future Round slot on the Lobby snapshot before the Match starts", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    const pickedTrackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 3 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket); // welcome
+
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId: pickedTrackId, roundType: "survival" } satisfies ClientMessage));
+
+    const lobbySnapshot = await snapshotUntil(
+      socket,
+      (s) => s.lobby.roundPicks[0]?.trackId === pickedTrackId && s.lobby.roundPicks[0]?.roundType === "survival",
+    );
+    // Round 3's slot (index 1) is untouched — still "the server draws this."
+    expect(lobbySnapshot.lobby.roundPicks[1]).toEqual({ trackId: null, roundType: null });
+    socket.close();
+  });
+
+  it("honours a host-picked Track for Round 2 once the Match actually reaches it", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    const pickedTrackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 2 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket); // welcome
+
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId: pickedTrackId, roundType: null } satisfies ClientMessage));
+    await startMatch(socket);
+
+    await snapshotUntil(socket, (s) => s.roundResults.length === 1); // Round 1 has ended
+    const round2 = await snapshotUntil(socket, (s) => s.phase === "RUNNING" || s.phase === "COUNTDOWN");
+    expect(round2.trackId).toBe(pickedTrackId);
+    socket.close();
+  });
+
+  it("ignores a pickRoundSlot for Round 1's own slot (index 0) — that has its own pick mechanism already", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    const otherTrackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 3 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket); // welcome
+
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 0, trackId: otherTrackId, roundType: null } satisfies ClientMessage));
+
+    await new Promise((r) => setTimeout(r, 100));
+    const snapshot = await nextSnapshot(socket);
+    expect(snapshot.trackId).toBe(trackId); // unchanged — the message was refused, not applied to Round 1
+    socket.close();
+  });
+
+  it("changes how many Rounds the Match runs", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0 }); // default matchLength: 3
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket); // welcome
+
+    socket.send(JSON.stringify({ type: "setMatchLength", matchLength: 2 } satisfies ClientMessage));
+    // Round 2's own Track is pinned too (same instant-finish one) — left
+    // unpicked it would draw from track-service's whole shared pool (every
+    // other test's own published Tracks), which is not reliably
+    // instant-finish and would make this test about the draw, not the
+    // Match length actually changing.
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
+    await snapshotUntil(socket, (s) => s.lobby.matchLength === 2);
+    await startMatch(socket);
+
+    const final = await snapshotUntil(socket, (s) => s.phase === "RESULTS" && s.roundResults.length === 2);
+    // And it stays at 2 — never draws a 3rd the default would have.
+    const later = await snapshotUntil(socket, (s) => s.state.tick > final.state.tick + 20);
+    expect(later.roundResults).toHaveLength(2);
+    socket.close();
+  });
+
+  it("ignores an out-of-bounds Match length", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+    await nextMessage(socket); // welcome
+
+    socket.send(JSON.stringify({ type: "setMatchLength", matchLength: 0 } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "setMatchLength", matchLength: 999 } satisfies ClientMessage));
+
+    await new Promise((r) => setTimeout(r, 100));
+    const snapshot = await nextSnapshot(socket);
+    expect(snapshot.lobby.matchLength).toBe(3); // DEFAULT_MATCH_LENGTH, unchanged by either refusal
+    socket.close();
+  });
+
+  it("ignores setMatchLength and pickRoundSlot from anyone but the host", async () => {
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0 });
+    const trackId = await publishTrack(INSTANT_FINISH);
+    const a = connect(server.port); // host
+    await nextMessage(a);
+    const b = connect(server.port);
+    await nextMessage(b);
+
+    b.send(JSON.stringify({ type: "setMatchLength", matchLength: 2 } satisfies ClientMessage));
+    b.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
+
+    await new Promise((r) => setTimeout(r, 100));
+    const snapshot = await nextSnapshot(a);
+    expect(snapshot.lobby.matchLength).toBe(3);
+    expect(snapshot.lobby.roundPicks[0]).toEqual({ trackId: null, roundType: null });
+    a.close();
+    b.close();
+  });
+
+  it("ignores a double-send of start — no client debounce, but the second one must not race a second draw (code review)", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 2 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket); // welcome
+
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "setReady", ready: true } satisfies ClientMessage));
+    // Two `start`s back to back, synchronously, before the tick loop can
+    // process the first and move `phase` off LOBBY — the exact window the
+    // phase-only re-entrancy check used to miss.
+    socket.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
+
+    // Runs cleanly to completion with exactly 2 results — a corrupted
+    // concurrent draw would more likely manifest as a hang, a thrown
+    // rejection, or a Match that never reaches RESULTS at all.
+    const final = await snapshotUntil(socket, (s) => s.phase === "RESULTS" && s.roundResults.length === 2);
+    expect(final.roundResults).toHaveLength(2);
+    socket.close();
+  });
+
+  it("refuses setMatchLength and pickRoundSlot once start has been sent, even before the phase has actually left LOBBY", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    const otherTrackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 3 });
+    const socket = connect(server.port, `?track=${trackId}`);
+    await nextMessage(socket); // welcome
+
+    // Rounds 2 and 3 pinned so the whole Match finishes fast regardless of
+    // track-service's shared pool — this test is about the *post-start*
+    // messages below being refused, not about what gets drawn.
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 2, trackId, roundType: null } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "setReady", ready: true } satisfies ClientMessage));
+    // Sent in the same synchronous burst as `start`, before any snapshot
+    // confirms the phase actually changed — the exact window
+    // `rt.startRequested` (not `rt.match.phase` alone) has to close.
+    socket.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "setMatchLength", matchLength: 1 } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId: otherTrackId, roundType: null } satisfies ClientMessage));
+
+    const final = await snapshotUntil(socket, (s) => s.phase === "RESULTS" && s.roundResults.length === 3);
+    expect(final.roundResults).toHaveLength(3); // matchLength stayed 3 — the post-start setMatchLength never landed
+    socket.close();
+  });
+});
 
 describe("startServer — a failed tick must not swallow the host's start (M4.5 review)", () => {
   const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>

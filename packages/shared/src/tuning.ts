@@ -905,3 +905,20 @@ export const MAX_ROUND_SCORE = 100;
  * high-placing non-Qualifier by an amount placement itself never could.
  */
 export const QUALIFICATION_SCORE_BONUS = 20;
+
+/**
+ * How many Rounds a Match runs before it ends (M7 ticket 04, ADR 0049) —
+ * the Lobby's own default (ticket 05 lets the host change it). Three:
+ * long enough that a bad first Round doesn't decide the Match, short
+ * enough that a Match stays a single sitting.
+ */
+export const DEFAULT_MATCH_LENGTH = 3;
+
+/**
+ * Bounds on a host-set Match length (M7 ticket 05). 1 is the escape hatch
+ * that keeps a single-Round Match — Track-builder Playtest among them —
+ * behaving exactly as it always has; 10 is a party-game ceiling, not a
+ * balance number.
+ */
+export const MIN_MATCH_LENGTH = 1;
+export const MAX_MATCH_LENGTH = 10;

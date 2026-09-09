@@ -11,6 +11,7 @@ export * from "./timing/roundClock.js";
 export * from "./match/Lobby.js";
 export * from "./match/MatchPhase.js";
 export * from "./match/Qualification.js";
+export * from "./match/ranking.js";
 export * from "./match/Results.js";
 export * from "./match/RoundRules.js";
 export * from "./match/Score.js";

@@ -5,7 +5,7 @@
 **Blocked by:** nothing. First, deliberately — `docs/architecture-review.md` §6 puts it first
 because everything after it would otherwise rest on two truths.
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## Why
 
@@ -30,19 +30,19 @@ Binary, per the review — no third "compatible" variant:
 - **(B)** delete `advanceFixed.ts`, `FixedSimulation.ts` and their tests from `shared`, leaving the
   single implementation in the client.
 
-- [ ] Pick one and say why in the commit message
-- [ ] Either way, `EPSILON_MS` ends up with exactly one definition — the review suggests `tuning.ts`,
+- [x] Pick one and say why in the commit message
+- [x] Either way, `EPSILON_MS` ends up with exactly one definition — the review suggests `tuning.ts`,
       next to `TICK_MS` and `MAX_STEPS_PER_FRAME`, which both branches already share
-- [ ] `roundClock.ts` is not touched
+- [x] `roundClock.ts` is not touched
 
 The review recommends **(B)** until a second production consumer proves itself: less code, one owner
 of the semantics. Take that unless building it changes your mind.
 
 ## Done when
 
-- [ ] There is one accumulator loop and one epsilon in the repo
-- [ ] Full suite green in `packages/shared`, `apps/client`, `apps/server`
-- [ ] If (B): `FixedSimulation`'s in-memory fake path is checked before deleting anything — ADR 0009
+- [x] There is one accumulator loop and one epsilon in the repo
+- [x] Full suite green in `packages/shared`, `apps/client`, `apps/server`
+- [x] If (B): `FixedSimulation`'s in-memory fake path is checked before deleting anything — ADR 0009
       exists so the simulation can be tested without WASM, and the review flags this explicitly
 
 ## Watch out for
@@ -52,3 +52,18 @@ is about how many places implement them.
 
 **Do not widen prediction while you are in here.** ADR 0016 and 0022 draw the line on what is
 predicted; a consolidation refactor must not move it.
+
+## Implementation notes
+
+Took **(B)**: deleted `advanceFixed.ts`, `FixedSimulation.ts`, and `advanceFixed.test.ts` outright.
+`grep` confirmed zero production callers (`game/index.ts` and `RapierSimulation.ts` only referenced
+`FixedSimulation` in comments/an unused `implements` clause) and no other in-memory-fake consumer of
+the `FixedSimulation` contract existed anywhere in the repo to preserve.
+
+`FIXED_STEP_EPSILON_MS` added to `tuning.ts`; `predictionLoop.ts`'s own local `EPSILON_MS` copy
+replaced with it. Also fixed a *third*, out-of-scope copy the code review turned up:
+`apps/server/src/net/tickAddressedInput.integration.test.ts`'s own research-mode accumulator had its
+own hand-rolled `EPSILON_MS = 1e-6`, now importing the shared constant too — small enough to fold in
+without widening the ticket.
+
+`/code-review medium` — no findings. Full monorepo typecheck and `pnpm -r test` green.

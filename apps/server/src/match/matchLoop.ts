@@ -4,12 +4,14 @@ import {
   TICK_RATE_HZ,
   advanceMatchPhase,
   allQualified,
+  buildRoundResult,
   countdownMsLeft,
   resolveHostId,
   roundTimeLeftMs,
   survivorTargetReached,
   type ServerMessage,
   type SimInputs,
+  type SimState,
 } from "@dont-fall/shared";
 import { trySend } from "../net/wire.js";
 import type { MatchRuntime } from "./matchRuntime.js";
@@ -48,6 +50,11 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
     // tick, silently breaking "physics steps == inputs applied by tick
     // number" (ADR 0027) for the rest of the Match.
     const thisTick = rt.serverTick + 1;
+    // Set only on the ROUND_END → RESULTS tick (below) — reused as `state`
+    // further down instead of a second `rt.simulation.snapshot()` call
+    // (code review), since nothing mutates the simulation between the two
+    // points on that specific tick.
+    let precomputedState: SimState | undefined;
     try {
       // Decided before anything is simulated, and committed below only once
       // the tick has actually succeeded — the same discipline `serverTick`
@@ -62,6 +69,8 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
         allQualified: rt.roundEnding.allQualified,
         timeExpired: rt.roundEnding.timeExpired,
         returnToLobbyRequested: rt.returnToLobbyRequested,
+        roundsRemaining: rt.canContinueMatch(),
+        nextRoundReady: rt.nextRoundReady,
       });
       // Whether input is actually applied — locked outside RUNNING (ADR
       // 0040), locked per-Character on Qualification (ADR 0039), and every
@@ -107,10 +116,56 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       if (nextMatch.phase === "ROUND_END" && rt.match.phase === "RUNNING" && isSurvival) {
         rt.simulation.qualifySurvivors(thisTick);
       }
+      // A Round's own result is appended the moment it actually ends (M7
+      // ticket 04, ADR 0049) — read from this exact simulation, not from
+      // `state` built later in this same tick: identical timing to
+      // `qualifySurvivors` just above, and for the same reason (Score has
+      // to see this Round's own Survivor Qualification too). Stashed in
+      // `precomputedState` rather than snapshotting a second time below
+      // (code review) — safe because this branch and the COUNTDOWN-rebuild
+      // branch further down are mutually exclusive on one tick (`nextMatch.phase`
+      // is either "RESULTS" or "COUNTDOWN", never both), so `rt.simulation`
+      // is still the identical, unmutated world by the time `state` is read.
+      if (nextMatch.phase === "RESULTS" && rt.match.phase === "ROUND_END") {
+        precomputedState = rt.simulation.snapshot();
+        rt.roundResults.push(buildRoundResult(precomputedState.characters, [...rt.lobbyPlayers.values()], rt.dnf));
+        if (rt.canContinueMatch()) {
+          // The whole Match's structure was already kicked off back when
+          // `start` fired (`lobby.ts`) — Round 1 alone almost always
+          // outlasts that fetch, so `matchStructurePromise` has usually
+          // long since settled by the time any later Round needs it. This
+          // is the seam ticket 04 left for it: a per-Round `await` that
+          // used to have nothing to wait on.
+          rt.nextRoundReady = false;
+          void (async () => {
+            await rt.matchStructurePromise;
+            rt.nextRoundReady = true;
+          })();
+        }
+      }
       // A fresh Countdown is a fresh Round: last Round's DNFs are not this
-      // Round's (M4 ticket 05).
+      // Round's (M4 ticket 05) — true whether the fresh Countdown came from
+      // the Lobby or from Results (M7 ticket 04).
       if (nextMatch.phase === "COUNTDOWN" && rt.match.phase !== "COUNTDOWN") rt.dnf = [];
-      if (nextMatch.phase === "LOBBY" && rt.match.phase !== "LOBBY") {
+      if (nextMatch.phase === "COUNTDOWN" && rt.match.phase === "RESULTS") {
+        // M7 ticket 04/05: a Match's later Rounds go straight from Standings
+        // into the next Countdown, never through the Lobby. Same "rebuild
+        // the world, not just reset the phase" discipline the LOBBY branch
+        // below already follows (M5 ticket 08) — an eliminated Character
+        // must come back properly, not carry its disabled collider in.
+        //
+        // The drawn entry for this Round (ticket 05) — absent only if its
+        // own draw failed (`buildMatchStructure`'s own try/catch already
+        // logged why), in which case replaying whatever `fetched` already
+        // points at is the same graceful fallback ticket 04's own
+        // placeholder always did.
+        const drawn = rt.matchStructure[rt.roundResults.length];
+        if (drawn) {
+          rt.fetched = drawn.fetched;
+          rt.roundType = drawn.roundType;
+        }
+        rt.startNextRound(rt.fetched.track);
+      } else if (nextMatch.phase === "LOBBY" && rt.match.phase !== "LOBBY") {
         // Every way back to a Lobby gets a genuinely fresh one, never a
         // resumed one: the host going again from Results (M4 ticket 08), and
         // the last Player leaving mid-Round (`advanceMatchPhase`'s "a Round
@@ -144,7 +199,7 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       // Built every tick, not just when a snapshot goes out: the Round's own
       // endings are read off it, and they should not be noticed only as often
       // as the snapshot rate happens to be (ADR 0020 decouples the two).
-      const state = rt.simulation.snapshot();
+      const state = precomputedState ?? rt.simulation.snapshot();
       for (const [id, character] of Object.entries(state.characters)) {
         character.lastInputTick = rt.inputs.lastInputTick(id);
       }
@@ -191,6 +246,16 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       // recomputed from who's here now rather than stored anywhere.
       const lobbyPlayerList = [...rt.lobbyPlayers.values()];
       const blockedReason = rt.startBlockedReason();
+      // roundPicks[i] is Round (i + 2)'s pick — index 0 is `pendingRoundPicks`
+      // key 1 (M7 ticket 05; Round 1 has its own pick mechanism, `trackId`/
+      // `roundType` above). An unpicked slot reports both fields `null`
+      // rather than being omitted — "do not reveal a drawn Track early"
+      // means this array only ever carries the host's own explicit choices,
+      // never the server's.
+      const roundPicks = Array.from({ length: Math.max(rt.matchLength - 1, 0) }, (_, i) => {
+        const pick = rt.pendingRoundPicks.get(i + 1);
+        return { trackId: pick?.trackId ?? null, roundType: pick?.roundType ?? null };
+      });
       const lobbySnapshot = {
         hostId: resolveHostId(lobbyPlayerList),
         players: lobbyPlayerList,
@@ -199,6 +264,8 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
         // 07), not discovered when the Round behaves unexpectedly.
         roundType: rt.roundType,
         ...(blockedReason !== undefined ? { startBlockedReason: blockedReason } : {}),
+        matchLength: rt.matchLength,
+        roundPicks,
       };
       for (const [id, socket] of rt.sockets) {
         if (socket.readyState !== socket.OPEN) continue;
@@ -217,6 +284,7 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
             trackId: rt.fetched.id,
             trackRevision: rt.fetched.revision,
             lobby: lobbySnapshot,
+            roundResults: rt.roundResults,
           } satisfies ServerMessage),
         );
       }

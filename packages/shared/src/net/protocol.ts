@@ -2,6 +2,7 @@ import type { Vec3 } from "../math/vec3.js";
 import type { SimInputs } from "../simulation/SimInputs.js";
 import type { LobbyPlayer } from "../match/Lobby.js";
 import type { MatchPhase } from "../match/MatchPhase.js";
+import type { RoundResult } from "../match/Score.js";
 import type { RoundRules } from "../match/RoundRules.js";
 import type { RoundType } from "../match/RoundType.js";
 import type { SimState } from "../state/SimState.js";
@@ -163,7 +164,32 @@ export interface SnapshotMessage {
      * actually decides.
      */
     startBlockedReason?: string;
+    /**
+     * How many Rounds this Match runs before it ends (M7 ticket 05, ADR
+     * 0049) — the host's own setting, defaulting to {@link DEFAULT_MATCH_LENGTH}.
+     */
+    matchLength: number;
+    /**
+     * The host's own picks for Rounds after the one about to start (M7
+     * ticket 05) — `roundPicks[i]` is Round `i + 2`'s pick (Round 1 is
+     * whatever `trackId`/`roundType` above already are; there is no second
+     * pick mechanism for it). Length `matchLength - 1`. A field left `null`
+     * means "the server draws this at Match start" — what the field never
+     * carries is the *drawn* answer itself: "do not reveal a drawn Track
+     * early" (the ticket's own words) means an unpicked slot stays exactly
+     * this unresolved on every snapshot until it becomes the current Round.
+     */
+    roundPicks: { trackId: string | null; roundType: RoundType | null }[];
   };
+  /**
+   * Every Round played so far this Match, in order (M7 ticket 04, ADR
+   * 0049) — Match-scoped: cleared on a fresh Match, carried across every
+   * Round within one. Score is deliberately **not** sent — it is
+   * `matchScore` over this list, computed by whoever needs it (the
+   * Standings Screen, ticket 06), the same discipline `qualificationPlacement`
+   * already follows for a single Round's own placement.
+   */
+  roundResults: RoundResult[];
 }
 
 /** Server → client, reply to a {@link PingMessage} (time sync, ADR 0019). */
@@ -251,6 +277,35 @@ export interface SetRoundTypeMessage {
 }
 
 /**
+ * Client → server: the host sets this Match's length (M7 ticket 05, ADR
+ * 0049). Host-only and LOBBY-only, same discipline as `setRoundType`.
+ * Bounded server-side ({@link MIN_MATCH_LENGTH}/{@link MAX_MATCH_LENGTH});
+ * an out-of-range value is ignored rather than clamped, the same silent
+ * refusal every other Lobby gate uses.
+ */
+export interface SetMatchLengthMessage {
+  type: "setMatchLength";
+  matchLength: number;
+}
+
+/**
+ * Client → server: the host picks (or clears) a Track and/or Round type for
+ * a Round after the one about to start (M7 ticket 05, ADR 0049) — `roundIndex`
+ * is 0-based and counts from Round 1, so `1` is Round 2's slot; `0` (Round
+ * 1's own slot) is refused, since Round 1 already has its own pick mechanism
+ * (`selectTrack`/`setRoundType`), not a second one. `trackId`/`roundType`
+ * `null` means "leave this to the server's draw" — sent together, always the
+ * slot's full desired state, never a partial patch onto whatever was there.
+ * Host-only and LOBBY-only, same discipline as `selectTrack`.
+ */
+export interface PickRoundSlotMessage {
+  type: "pickRoundSlot";
+  roundIndex: number;
+  trackId: string | null;
+  roundType: RoundType | null;
+}
+
+/**
  * Client → server: the host asks to start the Round (M4 ticket 07, ADR
  * 0040). The server is the only thing that decides whether this actually
  * moves the Match out of LOBBY — enough Players connected and everyone
@@ -279,6 +334,8 @@ export type ClientMessage =
   | SetReadyMessage
   | SelectTrackMessage
   | SetRoundTypeMessage
+  | SetMatchLengthMessage
+  | PickRoundSlotMessage
   | StartMessage
   | ReturnToLobbyMessage;
 

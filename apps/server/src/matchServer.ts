@@ -103,6 +103,15 @@ export interface StartServerConfig {
    * picks now (`setRoundType`), and the tests go through it.
    */
   survivorTargetOverride?: number;
+  /**
+   * Force this Match's own length over {@link DEFAULT_MATCH_LENGTH} (M7
+   * ticket 04, ADR 0049). Test-only, the same kind of override
+   * `timeLimitMsOverride` is: a test that wants to pin a Match to a single
+   * Round (to keep testing pre-M7 single-Round behaviour) or sit through a
+   * whole multi-Round one without waiting out the real default shouldn't
+   * have to. Ticket 05 gives the Lobby a real, non-test-only way to set this.
+   */
+  matchLengthOverride?: number;
 }
 
 export const startServer = async (config: StartServerConfig = {}): Promise<MatchServer> => {
@@ -140,6 +149,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       playersToStart,
       ...(config.timeLimitMsOverride !== undefined ? { timeLimitMsOverride: config.timeLimitMsOverride } : {}),
       ...(config.survivorTargetOverride !== undefined ? { survivorTargetOverride: config.survivorTargetOverride } : {}),
+      ...(config.matchLengthOverride !== undefined ? { matchLengthOverride: config.matchLengthOverride } : {}),
     },
     bootTrack,
   );
@@ -217,8 +227,15 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       // even once it has, that is exactly the mid-Round rejoin this ticket
       // exists to refuse. Whoever left is a DNF; they come back for the next
       // Round.
+      //
+      // The refusal reason is deliberately "a Match," not "a Round" (code
+      // review, M7 ticket 04/05): RESULTS can now be a brief auto-advancing
+      // interlude between Rounds rather than only "the Match is over," and
+      // "a Round is already under way" would be a literally false claim to
+      // show someone connecting in that window. A real "join mid-Match to
+      // spectate" is ticket 08's own scope, not this refusal's.
       if (rt.sockets.size > 0 && rt.match.phase !== "LOBBY" && rt.match.phase !== "COUNTDOWN") {
-        socket.close(4002, truncateForCloseReason("a Round is already under way — wait for it to finish"));
+        socket.close(4002, truncateForCloseReason("a Match is already under way — wait for it to finish"));
         return;
       }
 
@@ -321,6 +338,10 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     port,
     close: () =>
       new Promise((resolve, reject) => {
+        // M7 ticket 05: stop any in-flight `buildMatchStructure` from
+        // continuing to draw against track-service for a Match nothing is
+        // listening to anymore — see `MatchRuntime.closed`'s own doc.
+        rt.closed = true;
         clearInterval(interval);
         for (const socket of rt.sockets.values()) socket.close();
         wss.close((err) => (err ? reject(err) : resolve()));

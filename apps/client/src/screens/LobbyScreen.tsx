@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { allReady, NICKNAME_MAX_LENGTH, ROUND_TYPES, roundTypeLabel, type RoundType } from "@dont-fall/shared";
+import { allReady, MAX_MATCH_LENGTH, MIN_MATCH_LENGTH, NICKNAME_MAX_LENGTH, ROUND_TYPES, roundTypeLabel, type RoundType } from "@dont-fall/shared";
 import { Avatar, Button, Card, HostBadge, LiveOverlay, Panel, Row, Toggle } from "@dont-fall/ui";
 import type { LobbySnapshot } from "../game/index.js";
 import { formatRoundClock } from "../lib/roundTimer.js";
@@ -12,6 +12,10 @@ export interface LobbyScreenProps {
   onSetReady: (ready: boolean) => void;
   onSelectTrack: (trackId: string) => void;
   onSetRoundType: (roundType: RoundType) => void;
+  /** Host-only: sets this Match's length (M7 ticket 05, ADR 0049). */
+  onSetMatchLength: (matchLength: number) => void;
+  /** Host-only: picks (or clears, passing `null`/`null`) a future Round's slot (M7 ticket 05). */
+  onPickRoundSlot: (roundIndex: number, trackId: string | null, roundType: RoundType | null) => void;
   onStart: () => void;
 }
 
@@ -36,7 +40,16 @@ const initials = (nickname: string): string => {
  * this, not the placeholder backdrop that prop paints for a context with
  * no real one — the backdrop stays clear and the real render shows through.
  */
-export function LobbyScreen({ lobby, onSetNickname, onSetReady, onSelectTrack, onSetRoundType, onStart }: LobbyScreenProps) {
+export function LobbyScreen({
+  lobby,
+  onSetNickname,
+  onSetReady,
+  onSelectTrack,
+  onSetRoundType,
+  onSetMatchLength,
+  onPickRoundSlot,
+  onStart,
+}: LobbyScreenProps) {
   const me = lobby.players.find((p) => p.id === lobby.myId);
   const isHost = lobby.hostId === lobby.myId;
   const [nicknameDraft, setNicknameDraft] = useState(me?.nickname ?? "");
@@ -114,6 +127,35 @@ export function LobbyScreen({ lobby, onSetNickname, onSetReady, onSelectTrack, o
             />
           </div>
 
+          <h2 className={styles.heading}>Match length</h2>
+          {isHost ? (
+            <div className={styles.matchLengthRow}>
+              <Button
+                variant="secondary"
+                aria-label="Fewer Rounds"
+                disabled={lobby.matchLength <= MIN_MATCH_LENGTH}
+                onClick={() => onSetMatchLength(lobby.matchLength - 1)}
+              >
+                −
+              </Button>
+              <span className={styles.matchLengthValue}>
+                {lobby.matchLength} {lobby.matchLength === 1 ? "Round" : "Rounds"}
+              </span>
+              <Button
+                variant="secondary"
+                aria-label="More Rounds"
+                disabled={lobby.matchLength >= MAX_MATCH_LENGTH}
+                onClick={() => onSetMatchLength(lobby.matchLength + 1)}
+              >
+                +
+              </Button>
+            </div>
+          ) : (
+            <p className={styles.trackHint}>
+              {lobby.matchLength} {lobby.matchLength === 1 ? "Round" : "Rounds"}
+            </p>
+          )}
+
           <h2 className={styles.heading}>Round</h2>
           {/*
             Everyone sees the Round type, host or not (M5 ticket 07) — only
@@ -162,6 +204,64 @@ export function LobbyScreen({ lobby, onSetNickname, onSetReady, onSelectTrack, o
             </div>
           ) : (
             <p className={styles.trackHint}>Only the host picks the Track.</p>
+          )}
+
+          {lobby.roundPicks.length > 0 && (
+            <>
+              <h2 className={styles.heading}>Upcoming Rounds</h2>
+              {/*
+                Round 1 is whatever Track/Round-type panels above already
+                say — this only covers Rounds 2..matchLength (M7 ticket 05,
+                ADR 0049). A slot left "Random" is drawn by the server at
+                the moment that Round actually starts — never shown here
+                before then, "do not reveal a drawn Track early."
+              */}
+              <div className={styles.upcomingRounds}>
+                {lobby.roundPicks.map((pick, i) => {
+                  const roundIndex = i + 1; // 0-based; index 0 is Round 2
+                  return (
+                    <div key={roundIndex} className={styles.upcomingRound}>
+                      <span className={styles.upcomingRoundLabel}>Round {roundIndex + 1}</span>
+                      {isHost ? (
+                        <>
+                          <select
+                            className={styles.upcomingRoundSelect}
+                            value={pick.trackId ?? ""}
+                            disabled={tracks === null}
+                            onChange={(e) => onPickRoundSlot(roundIndex, e.target.value.length > 0 ? e.target.value : null, pick.roundType)}
+                          >
+                            <option value="">Random Track</option>
+                            {tracks?.map((track) => (
+                              <option key={track.id} value={track.id}>
+                                {track.name ?? track.id}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            className={styles.upcomingRoundSelect}
+                            value={pick.roundType ?? ""}
+                            onChange={(e) =>
+                              onPickRoundSlot(roundIndex, pick.trackId, e.target.value.length > 0 ? (e.target.value as RoundType) : null)
+                            }
+                          >
+                            <option value="">Random type</option>
+                            {ROUND_TYPES.map((type) => (
+                              <option key={type} value={type}>
+                                {roundTypeLabel(type)}
+                              </option>
+                            ))}
+                          </select>
+                        </>
+                      ) : (
+                        <span className={styles.trackHint}>
+                          {pick.trackId ?? "Random Track"} · {pick.roundType ? roundTypeLabel(pick.roundType) : "Random type"}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
 
           {/*

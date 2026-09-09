@@ -116,6 +116,49 @@
   font-size: var(--df-type-body);
 }
 
+.matchLengthRow {
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-3);
+}
+
+.matchLengthValue {
+  min-width: 6rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.upcomingRounds {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-2);
+}
+
+.upcomingRound {
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-2);
+}
+
+.upcomingRoundLabel {
+  min-width: 5rem;
+  color: var(--df-color-ink-secondary);
+  font-size: var(--df-type-body);
+}
+
+.upcomingRoundSelect {
+  flex: 1;
+  min-width: 0;
+  padding: var(--df-space-2) var(--df-space-3);
+  font: inherit;
+  font-size: var(--df-type-body);
+  color: var(--df-color-ink-primary);
+  background: var(--df-color-surface-2);
+  border: var(--df-border-width) solid var(--df-color-border);
+  border-radius: var(--df-radius-standard);
+}
+
 .startButton {
   align-self: flex-start;
 }

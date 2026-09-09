@@ -7,6 +7,14 @@ export interface ResultsScreenProps {
   /** Only the host's `returnToLobby` is honored server-side (M4 ticket 08) — mirrors `LobbyScreen`'s own host/guest split. */
   isHost: boolean;
   onReturnToLobby: () => void;
+  /**
+   * Whether this Match has more Rounds scheduled after this one (M7 ticket
+   * 04, ADR 0049) — while true, `returnToLobby` is a Match-end action the
+   * server silently refuses (`lobby.ts`), and the actual Standings Screen
+   * (ticket 06) is what this Screen is a placeholder for. Defaults `false`
+   * so every pre-M7 caller keeps rendering exactly what it always has.
+   */
+  roundsRemaining?: boolean;
 }
 
 /** `#1`/`#2`/`#3` get a medal color class; everyone else just gets the plain number (design-system.md §1.1's ranking role). */
@@ -26,7 +34,7 @@ const progressLabel = (row: ResultsRow): string => {
  * `packages/shared`): Qualified by finish order, then everyone else by Track
  * progress, then DNFs last.
  */
-export function ResultsScreen({ results, isHost, onReturnToLobby }: ResultsScreenProps) {
+export function ResultsScreen({ results, isHost, onReturnToLobby, roundsRemaining = false }: ResultsScreenProps) {
   return (
     <LiveOverlay isSceneLive={false}>
       <div className={styles.results}>
@@ -58,7 +66,14 @@ export function ResultsScreen({ results, isHost, onReturnToLobby }: ResultsScree
           ))}
         </Panel>
 
-        {isHost ? (
+        {roundsRemaining ? (
+          // The server auto-advances into the next Round on its own once
+          // it's ready (ADR 0049) — a "Back to Lobby" click here is
+          // silently refused (`lobby.ts`: Match-end only), so there is
+          // nothing for either the host or anyone else to press. The real
+          // Standings Screen (ticket 06) replaces this placeholder message.
+          <p className={styles.hint}>More Rounds to play — advancing automatically…</p>
+        ) : isHost ? (
           <Button onClick={onReturnToLobby}>Back to Lobby</Button>
         ) : (
           <p className={styles.hint}>Waiting for the host to return to the Lobby…</p>
