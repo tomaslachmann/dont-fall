@@ -1,11 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { Track } from "@dont-fall/shared";
-import { DEFAULT_TRACK_SERVICE_PORT, MODULE_LIBRARY, M1_TRACK } from "@dont-fall/shared";
+import { ASSET_DEMO_TRACK, ASSET_DEMO_TRACK_ID, DEFAULT_TRACK_SERVICE_PORT, MODULE_LIBRARY, M1_TRACK } from "@dont-fall/shared";
 import { defaultAssetsDir, parseAssetFileName, readAssetFile } from "./assets.js";
 import { openDb, type TrackDb } from "./db.js";
 import { generateRandomTrack } from "./generate.js";
-import { getAnyTrack, getTrackById, listTracks, saveTrack, seedIfEmpty } from "./store.js";
+import { getAnyTrack, getTrackById, listTracks, saveTrack, seedIfEmpty, seedTrackIfMissing } from "./store.js";
 import { invalidSurvivorTargetReason, invalidTimeLimitReason, unknownModuleIds } from "./validate.js";
 
 /**
@@ -262,6 +262,11 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse, as
 export const startTrackService = async (config: StartTrackServiceConfig = {}): Promise<TrackService> => {
   const db = openDb(config.dbPath ?? "./data/track-service.sqlite");
   seedIfEmpty(db, M1_SEED_TRACK_ID, "M1 playground", M1_TRACK);
+  // The M8 milestone playtest Track (ticket 04) — per-id, not whole-DB, so
+  // it joins databases that already hold user Tracks on their next boot.
+  // Seeded from the shared chained composition (never hand-placed Segments),
+  // served to Matches the same way every published Track is.
+  seedTrackIfMissing(db, ASSET_DEMO_TRACK_ID, "Asset demo", ASSET_DEMO_TRACK);
   const assetsDir = config.assetsDir ?? process.env.TRACK_ASSETS_DIR ?? defaultAssetsDir();
 
   const server = createServer((req, res) => {

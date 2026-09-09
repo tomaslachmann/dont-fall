@@ -149,3 +149,16 @@ export const seedIfEmpty = (db: TrackDb, id: string, name: string, track: Track)
   if (existing) return;
   saveTrack(db, { id, name, track });
 };
+
+/**
+ * Seeds `track` under `id` unless that id is already stored (M8 ticket 04) —
+ * per-id, unlike `seedIfEmpty`'s whole-DB gate, so a new seed joins existing
+ * databases on their next boot instead of only ever appearing on empty ones.
+ * Same idempotence: restarting never duplicates the row or bumps the stored
+ * Revision.
+ */
+export const seedTrackIfMissing = (db: TrackDb, id: string, name: string, track: Track): void => {
+  const existing = db.select({ trackId: tracks.trackId }).from(tracks).where(eq(tracks.trackId, id)).limit(1).get();
+  if (existing) return;
+  saveTrack(db, { id, name, track });
+};

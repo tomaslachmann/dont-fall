@@ -12,6 +12,7 @@ import {
   MIN_TIME_LIMIT_MS,
   type Track,
 } from "@dont-fall/shared";
+import { ASSET_DEMO_TRACK_ID } from "@dont-fall/shared";
 import { M1_SEED_TRACK_ID, startTrackService, type TrackService } from "./index.js";
 
 let dir: string;
@@ -95,6 +96,34 @@ describe("track-service", () => {
     const body = (await res.json()) as { id: string; track: Track };
     expect(body.id).toBe(M1_SEED_TRACK_ID);
     expect(body.track.length).toBeGreaterThan(0);
+  });
+
+  it("seeds the asset demo Track at startup — all four asset Modules plus a finish", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const res = await fetch(`http://localhost:${service.port}/tracks/${ASSET_DEMO_TRACK_ID}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { id: string; track: Track; timeLimitMs: number };
+    expect(body.id).toBe(ASSET_DEMO_TRACK_ID);
+    expect(body.track.map((segment) => segment.moduleId)).toEqual([
+      "platform_straight",
+      "ramp_45",
+      "stairs_4step",
+      "corner_lshape",
+      "finish",
+    ]);
+    // A seeded Track carries the default clock, like the M1 seed — raceable.
+    expect(body.timeLimitMs).toBe(DEFAULT_TIME_LIMIT_MS);
+  });
+
+  it("does not duplicate the asset demo seed on restart", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    await service.close();
+    service = await startTrackService({ port: 0, dbPath });
+
+    const first = await fetch(`http://localhost:${service.port}/tracks/${ASSET_DEMO_TRACK_ID}?revision=1`);
+    expect(first.status).toBe(200);
+    const second = await fetch(`http://localhost:${service.port}/tracks/${ASSET_DEMO_TRACK_ID}?revision=2`);
+    expect(second.status).toBe(404);
   });
 
   it("saves a Track and fetches it back by the returned id", async () => {

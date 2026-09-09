@@ -1,10 +1,10 @@
 import {
-  MODULE_LIBRARY,
   TRACK_FETCH_ATTEMPT_TIMEOUT_MS,
   TRACK_FETCH_MAX_WAIT_MS,
   TRACK_FETCH_RETRY_DELAY_MS,
   resolveTrack,
   roundStartBlockedReason,
+  type Module,
   type RoundType,
 } from "@dont-fall/shared";
 import { fetchTrack, type FetchedTrack } from "../track/trackSource.js";
@@ -29,6 +29,14 @@ export interface DrawContext {
   trackFetchRetryOptions: { maxWaitMs?: number; retryDelayMs?: number; attemptTimeoutMs?: number };
   /** Track ids already used this Match — mutated in place as Rounds are drawn (ticket 05: "not drawn twice until the pool is exhausted"). */
   usedTrackIds: Set<string>;
+  /**
+   * Every Module a published Track may place (M8 ticket 04) — the static
+   * registry composed with the fetched asset half, threaded from the runtime
+   * that already resolves its own world against it. Answering "does this
+   * Track carry a Finish Zone" against the procedural-only registry instead
+   * throws unknown-Module on asset Tracks rather than answering.
+   */
+  library: Record<string, Module>;
 }
 
 /**
@@ -69,7 +77,14 @@ const shuffled = <T,>(items: readonly T[]): T[] => {
   return copy;
 };
 
-const hasFinishZone = (fetched: FetchedTrack): boolean => resolveTrack(MODULE_LIBRARY, fetched.track).finishZones.length > 0;
+/**
+ * Whether a fetched Track carries a Finish Zone (M8 ticket 04) — resolved
+ * against the context library, never the procedural-only registry. Exported
+ * for tests: the pure seam where an asset-Module Track used to crash the
+ * draw with unknown-Module instead of answering race-compatible or not.
+ */
+export const hasFinishZone = (fetched: FetchedTrack, library: Record<string, Module>): boolean =>
+  resolveTrack(library, fetched.track).finishZones.length > 0;
 
 /**
  * Every published Track supports Survival (`roundStartBlockedReason`: "every
@@ -103,7 +118,7 @@ const drawCompatibleTrack = async (ctx: DrawContext, type: RoundType): Promise<F
   ];
   for (const id of ordered) {
     const fetched = await fetchTrack(ctx.trackServiceUrl, { ...ctx.trackFetchRetryOptions, trackId: id });
-    if (roundStartBlockedReason(type, hasFinishZone(fetched)) === undefined) return fetched;
+    if (roundStartBlockedReason(type, hasFinishZone(fetched, ctx.library)) === undefined) return fetched;
   }
   throw new Error(`no published Track supports Round type "${type}" (ticket 05's draw has nothing to offer)`);
 };
@@ -144,9 +159,9 @@ export const drawRound = async (ctx: DrawContext, pick: RoundSlotPick | undefine
   // drawn type rather than blocking a Match already in progress.
   const picked = pick?.roundType;
   const roundType: RoundType =
-    picked && roundStartBlockedReason(picked, hasFinishZone(fetched)) === undefined
+    picked && roundStartBlockedReason(picked, hasFinishZone(fetched, ctx.library)) === undefined
       ? picked
-      : hasFinishZone(fetched) && Math.random() < 0.5
+      : hasFinishZone(fetched, ctx.library) && Math.random() < 0.5
         ? "race"
         : "survival";
 

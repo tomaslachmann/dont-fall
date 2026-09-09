@@ -395,7 +395,14 @@ export class MatchRuntime {
       if (this.closed || seq !== this.matchStructureSeq) return;
       try {
         const drawn = await drawRound(
-          { trackServiceUrl: this.config.trackServiceUrl, trackFetchRetryOptions: this.config.trackFetchRetryOptions, usedTrackIds: this.usedTrackIds },
+          {
+            trackServiceUrl: this.config.trackServiceUrl,
+            trackFetchRetryOptions: this.config.trackFetchRetryOptions,
+            usedTrackIds: this.usedTrackIds,
+            // The same Modules the sim resolves against — the draw must see
+            // asset Tracks exactly as the world does (M8 ticket 04).
+            library: this.library,
+          },
           this.pendingRoundPicks.get(i),
         );
         if (this.closed || seq !== this.matchStructureSeq) return;

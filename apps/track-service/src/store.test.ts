@@ -6,7 +6,7 @@ import Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
 import { DEFAULT_SURVIVOR_TARGET, DEFAULT_TIME_LIMIT_MS, type Track } from "@dont-fall/shared";
 import { openDb, type TrackDb } from "./db.js";
-import { getTrackById, listTracks, saveTrack } from "./store.js";
+import { getTrackById, listTracks, saveTrack, seedTrackIfMissing } from "./store.js";
 import { tracks } from "./schema.js";
 
 let dir: string;
@@ -22,6 +22,35 @@ afterEach(() => {
 });
 
 const SAMPLE_TRACK: Track = [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+
+describe("seedTrackIfMissing (M8 ticket 04)", () => {
+  it("seeds the id when absent — retrievable with its name and Segments", () => {
+    seedTrackIfMissing(db, "asset-demo", "Asset demo", SAMPLE_TRACK);
+
+    const stored = getTrackById(db, "asset-demo")!;
+    expect(stored.track).toEqual(SAMPLE_TRACK);
+    expect(stored.revision).toBe(1);
+    expect(listTracks(db).map((t) => t.id)).toContain("asset-demo");
+  });
+
+  it("leaves an already-stored id alone — restarting never duplicates the row", () => {
+    seedTrackIfMissing(db, "asset-demo", "Asset demo", SAMPLE_TRACK);
+    seedTrackIfMissing(db, "asset-demo", "Asset demo", SAMPLE_TRACK);
+
+    const rows = db.select().from(tracks).where(eq(tracks.trackId, "asset-demo")).all();
+    expect(rows).toHaveLength(1);
+    expect(getTrackById(db, "asset-demo")!.revision).toBe(1);
+  });
+
+  it("seeds alongside unrelated Tracks without touching them", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK });
+
+    seedTrackIfMissing(db, "asset-demo", "Asset demo", SAMPLE_TRACK);
+
+    expect(getTrackById(db, id)!.track).toEqual(SAMPLE_TRACK);
+    expect(getTrackById(db, "asset-demo")!.track).toEqual(SAMPLE_TRACK);
+  });
+});
 
 describe("saveTrack — content hash (code review, ticket 10)", () => {
   it("hashes identical Track content the same regardless of object key order", () => {

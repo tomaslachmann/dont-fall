@@ -3,8 +3,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Module } from "./Module.js";
-import { chainTrack, resolveTrack, type Track } from "./Track.js";
-import { ASSET_MODULE_DEFS, assetFileName, attachAssetGeometry, loadAssetLibrary } from "./assetModules.js";
+import { chainTrack, resolveTrack, segmentOrientation, trackSpawn, type Segment, type Track } from "./Track.js";
+import {
+  ASSET_DEMO_TRACK,
+  ASSET_DEMO_TRACK_ID,
+  ASSET_MODULE_DEFS,
+  assetFileName,
+  attachAssetGeometry,
+  loadAssetLibrary,
+} from "./assetModules.js";
+import { addVec3, rotateVec3ByQuat, type Vec3 } from "../math/vec3.js";
 import { loadAssetModule, readAssetModel } from "./asset.js";
 import { M1_MODULES } from "./modules.js";
 import { CAPSULE_BOTTOM_OFFSET, TICK_RATE_HZ } from "../tuning.js";
@@ -113,16 +121,15 @@ describe("asset module definitions", () => {
       { id: "entry", type: "floor", position: { x: 0, y: 0.875, z: -2 }, yaw: 0 },
       { id: "exit", type: "floor", position: { x: 0, y: -0.25, z: 2 }, yaw: Math.PI },
     ]);
-    // The file is an 8x4 straight slab, not an L (measured, not assumed —
-    // a true L remodel is ticket 04's content fix), so it is socketed along
-    // its long axis like any straight: entry faces -X, exit faces +X.
+    // A true L since ticket 04's remodel (measured, not assumed): the exit
+    // turns 90° onto the north end (faces +Z) instead of continuing straight.
     expect(byId["corner_lshape"]!.footprint.bounds).toEqual({
-      center: { x: 2, y: 0, z: 0 },
-      halfExtents: { x: 4, y: 0.5, z: 2 },
+      center: { x: 2, y: 0, z: 2 },
+      halfExtents: { x: 4, y: 0.5, z: 4 },
     });
     expect(byId["corner_lshape"]!.sockets).toEqual([
       { id: "entry", type: "floor", position: { x: -2, y: 0.5, z: 0 }, yaw: Math.PI / 2 },
-      { id: "exit", type: "floor", position: { x: 6, y: 0.5, z: 0 }, yaw: -Math.PI / 2 },
+      { id: "exit", type: "floor", position: { x: 4, y: 0.5, z: 6 }, yaw: Math.PI },
     ]);
   });
 });
@@ -268,22 +275,49 @@ describe("asset physics (ticket 02 Done-when)", () => {
     sim.dispose();
   });
 
-  it("the corner slab walks end to end along its long axis", async () => {
+  it("corner_lshape turns a walker 90°: in the west arm, out the north arm", async () => {
+    // A true L since ticket 04's remodel — walking straight along the old
+    // slab axis would stride off the west-east arm's end (x = 6 is only deck
+    // for z in [-2, 2], and the exit sits at z = 6). Turn at the elbow like
+    // a player would.
     const sim = clientWorld(await assetLibrary(), [{ moduleId: "corner_lshape", position: { x: 0, y: 0, z: 0 }, rotation: 0 }], {
       x: -1,
       y: 2,
       z: 0,
     });
-    for (let n = 0; n < Math.round(10 * TICK_RATE_HZ); n += 1) {
-      sim.tick({ [DEFAULT_CHARACTER_ID]: EAST });
+    const NORTH_OF_CORNER = { ...IDLE_INPUTS, moveDirection: { x: 0, y: 0, z: 1 } };
+    for (let n = 0; n < Math.round(20 * TICK_RATE_HZ); n += 1) {
       const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-      if (c.position.x > 5) break;
+      sim.tick({ [DEFAULT_CHARACTER_ID]: c.position.x < 3.5 ? EAST : NORTH_OF_CORNER });
+      const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      if (after.position.z > 5) break;
     }
 
     const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
     expect(c.fallCount).toBe(0);
-    expect(c.position.x).toBeGreaterThan(5);
+    expect(c.position.z).toBeGreaterThan(5);
     expect(c.position.y).toBeCloseTo(0.5 + CAPSULE_BOTTOM_OFFSET, 1);
+    expect(c.grounded).toBe(true);
+    sim.dispose();
+  });
+
+  it("the L's missing quadrant is void — walking it falls", async () => {
+    // The other side of the remodel proof: the x in [-2, 2], z in [2, 6]
+    // quadrant is genuinely empty, not an invisible deck. Marching into it
+    // must fall, which is also what makes the turn above a real turn.
+    const sim = clientWorld(await assetLibrary(), [{ moduleId: "corner_lshape", position: { x: 0, y: 0, z: 0 }, rotation: 0 }], {
+      x: 0,
+      y: 2,
+      z: 0,
+    });
+    const NORTH_OF_CORNER = { ...IDLE_INPUTS, moveDirection: { x: 0, y: 0, z: 1 } };
+    for (let n = 0; n < Math.round(10 * TICK_RATE_HZ); n += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH_OF_CORNER });
+      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.fallCount > 0) break;
+    }
+
+    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(c.fallCount).toBeGreaterThan(0);
     sim.dispose();
   });
 });
@@ -389,6 +423,95 @@ describe("loadAssetLibrary warnings (M8 ticket 03)", () => {
     const library = await loadAssetLibrary(async () => bytes, "http://assets.test", defs);
 
     expect(library["warn_me"]).toBeDefined();
+  });
+});
+
+describe("asset demo track (ticket 04)", () => {
+  it("composes all four asset Modules plus a finish piece, chained end to end", () => {
+    expect(ASSET_DEMO_TRACK.map((segment) => segment.moduleId)).toEqual([
+      "platform_straight",
+      "ramp_45",
+      "stairs_4step",
+      "corner_lshape",
+      "finish",
+    ]);
+    // Every Segment after the first sits exactly on the previous one's exit
+    // Socket — chained, not hand-placed (re-chaining from the defs agrees).
+    const rechained = chainTrack(
+      ASSET_DEMO_TRACK.map((segment) => segment.moduleId),
+      {
+        ...Object.fromEntries(ASSET_MODULE_DEFS.map((def) => [def.id, attachAssetGeometry(def, loadAssetModule(realBytes(def.id), { footprint: def.footprint.bounds }))])),
+        ...M1_MODULES,
+      },
+      { x: 0, y: 0, z: 10 },
+    );
+    expect(ASSET_DEMO_TRACK).toEqual(rechained);
+  });
+
+  it("walks the whole demo Track and qualifies — the scripted playtest", async () => {
+    const library = await assetLibrary();
+    const resolved = resolveTrack(library, ASSET_DEMO_TRACK);
+    // Raceable by construction: the demo ends on M1's finish piece, since
+    // asset Modules carry no Finish Zone of their own.
+    expect(resolved.finishZones).toHaveLength(1);
+
+    // The corner's own center is void (the missing quadrant), so its three
+    // waypoints stay on deck: entry socket, elbow, north arm, exit socket.
+    const corner = ASSET_DEMO_TRACK[3]!;
+    const finish = ASSET_DEMO_TRACK[4]!;
+    const place = (segment: Segment, local: Vec3): Vec3 =>
+      addVec3(rotateVec3ByQuat(local, segmentOrientation(segment)), segment.position);
+    const waypoints: Vec3[] = [
+      ASSET_DEMO_TRACK[0]!.position,
+      ASSET_DEMO_TRACK[1]!.position,
+      ASSET_DEMO_TRACK[2]!.position,
+      place(corner, { x: -2, y: 0.5, z: 0 }),
+      place(corner, { x: 4, y: 0.5, z: 0 }),
+      place(corner, { x: 4, y: 0.5, z: 4 }),
+      place(finish, { x: 0, y: 0, z: 3 }),
+    ];
+
+    const sim = clientWorld(library, ASSET_DEMO_TRACK, trackSpawn(ASSET_DEMO_TRACK, 0));
+    let next = 0;
+    let sinceProgress = 0;
+    for (let n = 0; n < 150 * TICK_RATE_HZ; n += 1) {
+      const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      const wp = waypoints[next]!;
+      const dx = wp.x - c.position.x;
+      const dz = wp.z - c.position.z;
+      if (Math.hypot(dx, dz) < 1.3) {
+        next += 1;
+        sinceProgress = 0;
+        if (next === waypoints.length) break;
+        continue;
+      }
+      const len = Math.hypot(dx, dz) || 1;
+      sim.tick({ [DEFAULT_CHARACTER_ID]: { ...IDLE_INPUTS, moveDirection: { x: dx / len, y: 0, z: dz / len } } });
+      sinceProgress += 1;
+      expect(sinceProgress, `stuck walking to waypoint ${next} (${wp.x.toFixed(1)}, ${wp.z.toFixed(1)})`).toBeLessThan(25 * TICK_RATE_HZ);
+    }
+    expect(next, "reached every deck waypoint").toBe(waypoints.length);
+
+    // From the finish entry, straight into the zone: this is where a Race
+    // Qualifies (input locks afterward, so this runs as its own phase).
+    const zone = resolved.finishZones[0]!.trigger.center;
+    let qualified = false;
+    for (let n = 0; n < 30 * TICK_RATE_HZ; n += 1) {
+      const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      if (c.finishTick !== null) {
+        qualified = true;
+        break;
+      }
+      const dx = zone.x - c.position.x;
+      const dz = zone.z - c.position.z;
+      const len = Math.hypot(dx, dz) || 1;
+      sim.tick({ [DEFAULT_CHARACTER_ID]: { ...IDLE_INPUTS, moveDirection: { x: dx / len, y: 0, z: dz / len } } });
+    }
+
+    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(qualified, "qualified on the finish piece").toBe(true);
+    expect(c.fallCount).toBe(0);
+    sim.dispose();
   });
 });
 

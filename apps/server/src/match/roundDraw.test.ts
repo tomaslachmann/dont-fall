@@ -1,7 +1,18 @@
-import { type Track } from "@dont-fall/shared";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  ASSET_DEMO_TRACK,
+  ASSET_DEMO_TRACK_ID,
+  loadAssetLibrary,
+  MODULE_LIBRARY,
+  type Module,
+  type Track,
+} from "@dont-fall/shared";
 import { M1_SEED_TRACK_ID, startTrackService, type TrackService } from "@dont-fall/track-service";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { drawRound, type DrawContext } from "./roundDraw.js";
+import { drawRound, hasFinishZone, type DrawContext } from "./roundDraw.js";
+import type { FetchedTrack } from "../track/trackSource.js";
 
 // Each test gets its own fresh in-memory track-service instance rather than
 // one shared for the whole file — the pool-exhaustion/no-repeat tests below
@@ -40,12 +51,25 @@ const publishTrack = async (track: Track): Promise<string> => {
  * controls its own pool precisely, over only the Tracks it explicitly
  * publishes. (It happens to have a Finish Zone, so leaving it in would make
  * "no Track supports Race" tests pass by accident of what M1's own Track
- * looks like, not by the logic under test.)
+ * looks like, not by the logic under test. The M8 asset demo seed
+ * (`ASSET_DEMO_TRACK_ID`) is race-compatible too, so it is pre-excluded for
+ * the same reason.)
  */
 const newContext = (): DrawContext => ({
   trackServiceUrl,
   trackFetchRetryOptions: { maxWaitMs: 2_000, retryDelayMs: 50, attemptTimeoutMs: 1_000 },
-  usedTrackIds: new Set<string>([M1_SEED_TRACK_ID]),
+  usedTrackIds: new Set<string>([M1_SEED_TRACK_ID, ASSET_DEMO_TRACK_ID]),
+  library: MODULE_LIBRARY,
+});
+
+/** The full Module world the production runtime resolves against (M8 ticket 04) — M1 plus real asset geometry. */
+const assetsRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "assets");
+const fullAssetLibrary = async (): Promise<Record<string, Module>> => ({
+  ...MODULE_LIBRARY,
+  ...(await loadAssetLibrary(async (url: string): Promise<Uint8Array> => {
+    const fileName = url.substring(url.lastIndexOf("/") + 1);
+    return new Uint8Array(readFileSync(join(assetsRoot, fileName)));
+  }, "http://assets.test")),
 });
 
 describe("drawRound — an explicit host pick (M7 ticket 05, ADR 0049)", () => {
@@ -104,18 +128,19 @@ describe("drawRound — an explicit host pick (M7 ticket 05, ADR 0049)", () => {
   it("falls back to an already-used Track for a forced Race rather than finding nothing, once every unused Track is incompatible", async () => {
     // `drawCompatibleTrack` deliberately searches unused candidates first,
     // then already-used ones — a repeat is still a better answer than none.
-    // A fresh track-service always seeds one Race-compatible Track
-    // (`M1_SEED_TRACK_ID`), so marking it "used" here is exactly this case,
-    // not a way to construct "genuinely no compatible Track anywhere" —
-    // that premise is untestable against a real track-service, since the
-    // seed makes it impossible to publish a pool with zero Race-compatible
-    // Tracks in the first place.
+    // A fresh track-service always seeds two Race-compatible Tracks (the M1
+    // seed and the M8 asset demo seed), so marking them "used" here is
+    // exactly this case, not a way to construct "genuinely no compatible
+    // Track anywhere" — that premise is untestable against a real
+    // track-service, since the seeds make it impossible to publish a pool
+    // with zero Race-compatible Tracks in the first place.
     await publishTrack(SURVIVAL_ONLY_TRACK);
-    const ctx = newContext(); // pre-excludes the seed as "used"
+    const ctx = newContext(); // pre-excludes both seeds as "used"
 
     const { fetched, roundType } = await drawRound(ctx, { trackId: null, roundType: "race" });
 
-    expect(fetched.id).toBe(M1_SEED_TRACK_ID);
+    // Either seed is a legitimate repeat — the point is a repeat, not which.
+    expect([M1_SEED_TRACK_ID, ASSET_DEMO_TRACK_ID]).toContain(fetched.id);
     expect(roundType).toBe("race");
   });
 });
@@ -153,12 +178,12 @@ describe("drawRound — not drawn twice until the pool is exhausted (M7 ticket 0
     const first = await drawRound(ctx, undefined);
     expect(first.fetched.id).toBe(id);
     // Every Track this context knows about is now "used" (the one just
-    // drawn, plus the pre-excluded seed) — the next draw must reset and
-    // repool rather than throw. The reset clears the whole set, seed
-    // included, so the repool draws from the *actual* full pool — either
-    // Track is a legitimately predictable answer, not a failure.
+    // drawn, plus the pre-excluded seeds) — the next draw must reset and
+    // repool rather than throw. The reset clears the whole set, seeds
+    // included, so the repool draws from the *actual* full pool — any of
+    // these is a legitimately predictable answer, not a failure.
     const second = await drawRound(ctx, undefined);
-    expect([id, M1_SEED_TRACK_ID]).toContain(second.fetched.id);
+    expect([id, M1_SEED_TRACK_ID, ASSET_DEMO_TRACK_ID]).toContain(second.fetched.id);
   });
 });
 
@@ -181,5 +206,50 @@ describe("drawRound — mutates ctx.usedTrackIds in place", () => {
     const { fetched } = await drawRound(ctx, { trackId, roundType: "race" });
 
     expect(fetched.id).toBe(trackId);
+  });
+});
+
+describe("drawRound — asset-module Tracks (M8 ticket 04)", () => {
+  const demoFetched = (): FetchedTrack => ({
+    id: ASSET_DEMO_TRACK_ID,
+    revision: 1,
+    track: ASSET_DEMO_TRACK,
+    timeLimitMs: 120_000,
+    survivorTarget: 1,
+  });
+
+  it("reads the Finish Zone off the asset demo Track through the full library", async () => {
+    expect(hasFinishZone(demoFetched(), await fullAssetLibrary())).toBe(true);
+  });
+
+  it("throws unknown-Module against the procedural-only library — the crash this guards", () => {
+    expect(() => hasFinishZone(demoFetched(), MODULE_LIBRARY)).toThrow(/unknown Module/);
+  });
+
+  it("honours a host-picked Race on the seeded asset demo Track", async () => {
+    const ctx = { ...newContext(), library: await fullAssetLibrary() };
+
+    const { fetched, roundType } = await drawRound(ctx, { trackId: ASSET_DEMO_TRACK_ID, roundType: "race" });
+
+    expect(fetched.id).toBe(ASSET_DEMO_TRACK_ID);
+    expect(roundType).toBe("race");
+  });
+
+  it("finds the seeded asset demo Track when a forced Race searches the pool", async () => {
+    await publishTrack(SURVIVAL_ONLY_TRACK);
+    // Only the M1 seed counts as used here — the asset demo seed stays
+    // unused, and the survival-only publish can never satisfy a forced Race,
+    // so the search lands on the demo Track whatever order the pool
+    // shuffles into.
+    const ctx = {
+      ...newContext(),
+      usedTrackIds: new Set<string>([M1_SEED_TRACK_ID]),
+      library: await fullAssetLibrary(),
+    };
+
+    const { fetched, roundType } = await drawRound(ctx, { trackId: null, roundType: "race" });
+
+    expect(fetched.id).toBe(ASSET_DEMO_TRACK_ID);
+    expect(roundType).toBe("race");
   });
 });

@@ -1,6 +1,8 @@
 import { loadAssetModule, type ValidatedAsset } from "./asset.js";
 import type { Footprint, Module, Socket } from "./Module.js";
 import type { SurfaceId } from "./Surface.js";
+import { chainTrack, type Track } from "./Track.js";
+import { M1_MODULES } from "./modules.js";
 
 /**
  * The code-authored half of an asset Module (M8 ticket 02, ADR 0050) —
@@ -70,14 +72,16 @@ export const ASSET_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "corner_lshape",
-    // Measured — and the file is HONESTLY NOT AN L: collision and visual are
-    // the same 8 x 1 x 4 straight slab (x in [-2, 6], top y = 0.5). Socketed
-    // along its long axis like any straight until ticket 04 remodels it
-    // into a real corner (or renames it): entry faces -X, exit faces +X.
-    footprint: { bounds: box({ x: 2, y: 0, z: 0 }, { x: 4, y: 0.5, z: 2 }), clearance: 0.5 },
+    // Measured — a true L since ticket 04's remodel (extruded outline, top
+    // y = 0.5): the west-east arm spans x in [-2, 6], z in [-2, 2] and the
+    // south-north arm x in [2, 6], z in [2, 6]; the x in [-2, 2], z in [2, 6]
+    // quadrant is void. Entry stays the west end (faces -X, as before); the
+    // exit turns 90° onto the north end (faces +Z, yaw π — the same facing
+    // every +Z-facing Socket in this file and M1's uses).
+    footprint: { bounds: box({ x: 2, y: 0, z: 2 }, { x: 4, y: 0.5, z: 4 }), clearance: 0.5 },
     sockets: [
       { id: "entry", type: "floor", position: { x: -2, y: 0.5, z: 0 }, yaw: Math.PI / 2 },
-      { id: "exit", type: "floor", position: { x: 6, y: 0.5, z: 0 }, yaw: -Math.PI / 2 },
+      { id: "exit", type: "floor", position: { x: 4, y: 0.5, z: 6 }, yaw: Math.PI },
     ],
   },
 ];
@@ -105,6 +109,41 @@ export const attachAssetGeometry = (def: AssetModuleDef, validated: ValidatedAss
  * ticket-02 behavior exactly.
  */
 export type AssetWarningHandler = (moduleId: string, warning: string) => void;
+
+/**
+ * The milestone playtest Track (M8 ticket 04): all four asset Modules in one
+ * run, ending on M1's `finish` piece so a Race on it can actually Qualify —
+ * asset Modules carry no Finish Zone of their own. Chained through Sockets
+ * exactly like `M1_TRACK`, so socket re-measurements re-seat it
+ * automatically; a test below walks it end to end in the sim. Seeded by
+ * track-service under {@link ASSET_DEMO_TRACK_ID}.
+ *
+ * Chaining needs only Sockets, never geometry — so this is pure (no bytes,
+ * no fetch) and both sides derive the identical Segments. The asset entries
+ * here are their defs' socket/footprint halves; `attachAssetGeometry`
+ * provides the geometry half per consumer.
+ */
+export const ASSET_DEMO_TRACK_ID = "asset-demo";
+
+export const ASSET_DEMO_TRACK: Track = chainTrack(
+  ["platform_straight", "ramp_45", "stairs_4step", "corner_lshape", "finish"],
+  {
+    ...Object.fromEntries(
+      ASSET_MODULE_DEFS.map((def) => [
+        def.id,
+        {
+          id: def.id,
+          statics: [],
+          sockets: def.sockets,
+          footprint: def.footprint,
+          ...(def.surface === undefined ? {} : { surface: def.surface }),
+        } satisfies Module,
+      ]),
+    ),
+    finish: M1_MODULES.finish!,
+  },
+  { x: 0, y: 0, z: 10 },
+);
 
 /**
  * Fetch every def's bytes and shape the asset half of a Module library
