@@ -922,3 +922,24 @@ export const DEFAULT_MATCH_LENGTH = 3;
  */
 export const MIN_MATCH_LENGTH = 1;
 export const MAX_MATCH_LENGTH = 10;
+
+// --- Assets (M8 ticket 01, ADR 0050) -----------------------------------------------
+
+/**
+ * How far an Asset's collision may spill past its Module's footprint before
+ * the load fails. The anti-gap overlap allowance: micro-seams between
+ * Segments (bevels, exporter rounding) seal shut when neighboring colliders
+ * overlap slightly, and overlapping statics cost nothing in Rapier. 0.02 is
+ * invisible at gameplay scale — anything more is a mis-measured file, not a
+ * seam, and must fail identically on both sides rather than simulate
+ * differently per side.
+ */
+export const ASSET_FOOTPRINT_EPSILON = 0.02;
+
+/**
+ * How far an Asset's visual may escape its collision before the loader
+ * reports it. A dev warning, never an error — visuals may legitimately vary
+ * (detail, LOD, compression) while collision stays single-source. 0.05 stays
+ * silent on rounding noise but catches a genuinely misplaced visual.
+ */
+export const ASSET_VISUAL_WARN = 0.05;
