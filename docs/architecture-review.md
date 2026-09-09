@@ -144,3 +144,95 @@ Migrace je přesun souborů + úprava importních cest + jeden řádek v `SHELL`
 ---
 
 *Podklady: čteno z `apps/client/src/App.tsx:1–30`, `apps/client/package.json:1–30`, `packages/shared/package.json:1–24`, `packages/shared/src/index.ts:1–43`, `packages/shared/src/timing/advanceFixed.ts:1–81`, `packages/shared/src/timing/FixedSimulation.ts:1–11`, `apps/client/src/net/predictionLoop.ts:1–52,163–165`, `apps/client/src/game/index.ts:1–58,329`, `apps/client/src/codeSplitBoundary.test.ts:1–143`, `apps/server/package.json:1–22`. Změny kódu mimo tento soubor nebyly provedeny.*
+
+---
+
+# Část 2 — hloubkový průchod po souborech
+
+*Rozsah: server (`apps/server/src/`), sdílená simulace (`packages/shared/src/simulation/RapierSimulation.ts`). Pro oblasti klientí herní smyčka, shell+ui, builder+service a cross-cutting tento průchod nepřináší žádné nové ověřené nálezy nad rámec Části 1 (nálezy 1–4) — níže je u každé z nich výslovně uvedeno, že se potvrzuje stav z Části 1 bez nového dělení. Vše je ukotveno v kódu ve tvaru `soubor:řádky`; mimo tento soubor nebyly provedeny žádné změny kódu.*
+
+## 2.1 Serverové vrstvy (`apps/server/src/`)
+
+### `matchServer.ts` — boot + connection koordinátor (~180 řádků vlastní logiky)
+
+**Odpovědnosti s rozsahy řádků:**
+
+- Boot / konfigurace (`matchServer.ts:117–157`): `startServer` řeší `trackServiceUrl` (`matchServer.ts:123–124`), testovací knoby `countdownMs` / `roundEndMs` / `playersToStart` / `trackFetch*` (`matchServer.ts:128–137`), boot-time `fetchTrack` (`matchServer.ts:142`), konstrukci `MatchRuntime` (`matchServer.ts:143–155`) a bind `WebSocketServer` (`matchServer.ts:157`). Jediná odpovědnost: procesní bootstrap.
+- Playtest `?track=` reload (`matchServer.ts:159–212`): parsování URL parametru (`matchServer.ts:166`), `fetchTrack` podle id (`matchServer.ts:176`), kontrola `alreadyLoaded` (`matchServer.ts:182`), `sockets.size` stráž (`matchServer.ts:193`) s odmítnutími `4002` při selhání načtení (`matchServer.ts:178`) a `4001` při obsazeném serveru (`matchServer.ts:198`), atomický swap `rt.fetched = …` + `resetToFreshLobby` (`matchServer.ts:208–209`). Jediná odpovědnost: admission politika pro reload trati (asynchronní fetch + atomický swap).
+- Join admission + registrace (`matchServer.ts:230–247`): odmítnutí mid-round joinu `4002` (`matchServer.ts:230–231`), `randomUUID` id (`matchServer.ts:235`), `trackSpawn(joinCount)` (`matchServer.ts:238`), registrace `sockets` / `inputs` / `lobbyPlayers` / `sim.addCharacter` (`matchServer.ts:241–247`) a odeslání `welcome` (`matchServer.ts:249–263`). Dvě odlišitelné odpovědnosti: fázová brána (phase-gate) vs. spawn/registrace vs. transportní `welcome`.
+- Dispatch zpráv (`matchServer.ts:270–293`): `JSON.parse` stráž (`matchServer.ts:273–278`), `ping`/`pong` hodinový echo přes `performance.now` (`matchServer.ts:279–283`), `input → rt.inputs.receive` (`matchServer.ts:284–287`), lobby větev `handleLobbyMessage` (`matchServer.ts:292`). Jediná odpovědnost: transportní rámování/dispatch, nikoli zápasová logika.
+- Close / cleanup (`matchServer.ts:295–317`): `RUNNING`-podmíněný DNF zápis (`matchServer.ts:303–306`), mazy `sockets` / `inputs` / `lobbyPlayers` (`matchServer.ts:307–309`), větev `eliminateCharacter` vs. `removeCharacter` (`matchServer.ts:315–316`). Dvě odlišitelné odpovědnosti: zápasová DNF/eliminační politika vs. transportní úklid.
+
+**Verdikt vrstvení:** transport vs. logika jsou smíchané v jednom uzávěru `wss.on("connection")` (`matchServer.ts:159–319`), který taví transport, admission, spawn, dispatch i cleanup. Samotný soubor už není plný god-object (boot + connection koordinátor ~180 řádků), ale právě tento uzávěr je jediný blok k dělení. Vstupní bod `index.ts:1–39` je správně tenký (pouze `isMain` stráž + `SIGINT`/`SIGTERM` shutdown + re-export `startServer`; `index.ts:12–39`) — žádné dělení netřeba, a potvrzuje, že hranice leží v `matchServer.ts`, ne v entry.
+
+**Konkrétní split s názvy funkcí:**
+
+1. Boot → nový `match/boot.ts`: `buildRuntimeConfig(config)` (resolve URL + knobů, dnes `matchServer.ts:123–137`) + `bootRuntime(config)` (fetch + `new MatchRuntime`, dnes `matchServer.ts:142–155`) vracející `{ rt }`; ve `startServer` zbude tenký wire-up.
+2. Playtest reload → nový `match/playtestReload.ts`: `tryPlaytestReload(rt, socket, req): Promise<boolean-consumed>`; odmítnutí `refuseBusy` (dnes `matchServer.ts:193–200`) a `failedLoad` close (dnes `matchServer.ts:177–180`) uvnitř.
+3. Join + disconnect → nový `match/connectionController.ts`: `canJoinDuringPhase(rt): boolean` (fázová brána, dnes `matchServer.ts:230–233`) + `registerPlayer(rt, id, spawn)` (registrace, dnes `matchServer.ts:241–247`) s builderem `buildWelcome(rt, id, spawn)` (dnes `matchServer.ts:249–263`); `handleDisconnect(rt, id)` (fázová/DNF/sim větev, dnes `matchServer.ts:303–316`) volaná z tenkého `socket.on("close")`.
+4. Dispatch → nový `net/messageDispatcher.ts`: `dispatchClientMessage(rt, id, socket, raw)` (dnes `matchServer.ts:270–293`), s transportní větví `handlePing` (dnes `matchServer.ts:279–283`).
+
+**Návrh kontroleru:** `match/connectionController.ts` je hranice, kde má vzniknout *Controller modul* — admission (`canJoinDuringPhase`), registrace (`registerPlayer` + `buildWelcome`) a odpojení (`handleDisconnect`) na jednom místě, takže `wss.on("connection")` zůstane jen tenkým transportním obalem (socket ↔ kontroler ↔ runtime).
+
+### `match/matchRuntime.ts` — stav + operace (`matchRuntime.ts:73–189` + `matchRuntime.ts:227–509`)
+
+**Odpovědnosti s rozsahy řádků:** jedna mutabilní třída nese registr připojení (`sockets`, `lobbyPlayers`, `inputs` — `matchRuntime.ts:74–85`), stav zápasových fází (`match`, `dnf`, `roundResults`, `matchStructure`, `nextRoundReady`, one-shot hrany `startRequested`/`returnToLobbyRequested` — `matchRuntime.ts:121–185`) a stavbu světa (`resolveRules` `matchRuntime.ts:227–240`, `setRoundType` `matchRuntime.ts:248–252`, `buildMatchStructure` `matchRuntime.ts:344–363`, `buildSimulationFor` `matchRuntime.ts:395–412`, `rebuildSimulation` `matchRuntime.ts:456–463`, `resetToFreshLobby` `matchRuntime.ts:482–491`, `startNextRound` `matchRuntime.ts:505–508`). Tři odlišitelné odpovědnosti: registr připojení vs. stav fází zápasu/kola vs. stavba světa.
+
+**Verdikt vrstvení:** logika zápasu vs. stavba simulačního světa — čistá logika (fáze, pravidla, struktura zápasu) smíchaná s konstrukcí `RapierSimulation` + `resolveTrack` + usazováním postav.
+
+**Konkrétní split s názvy funkcí:** registr ponechat v `MatchRuntime`; stavbu světa extrahovat do `match/simulationFactory.ts` jako `buildSimulationFor(track, players, serverTick, rules)` (dnes metoda `matchRuntime.ts:395–412` + `syncTick`/usazení `matchRuntime.ts:407–410`); `rebuildSimulation` (`matchRuntime.ts:456–463`) se pak stane tenkým volajícím factory.
+
+**Návrh kontroleru:** žádná nová *Controller třída zde není potřeba — `MatchRuntime` už je držitelem stavu; hranicí má být modul factory (stavba světa), ne kontroler.
+
+### `match/matchLoop.ts` — tick pipeline (`matchLoop.ts:31–299`)
+
+**Odpovědnosti s rozsahy řádků:** krokování fází `advanceMatchPhase` (`matchLoop.ts:63–74`), odběr vstupů `takeFor` (`matchLoop.ts:83–84`), `sim.tick` (`matchLoop.ts:86`), utracení hran (`startRequested`/`returnToLobbyRequested` — `matchLoop.ts:100–101`), přechodové vedlejší efekty (`ROUND_END` qualify `matchLoop.ts:116–118`, `RESULTS` push `matchLoop.ts:129–145`, `COUNTDOWN` rebuild `matchLoop.ts:150–168`, `LOBBY` reset `matchLoop.ts:168–193`), hodiny kola `roundEnding`/`timeLeftMs` (`matchLoop.ts:211–233`), snapshot + lobby broadcast (`matchLoop.ts:235–290`). Tři odlišitelné odpovědnosti: krokování fází vs. vedlejší efekty přechodů vs. snapshot broadcast.
+
+**Verdikt vrstvení:** logika zápasu vs. transport — rozhodnutí o fázích a jejich efekty jsou propletené se sestavováním a rozesíláním snapshotů po socketech.
+
+**Konkrétní split s názvy funkcí:** přechody přesunout do `match/phaseController.ts` jako `applyPhaseTransition(rt, nextMatch, thisTick)` (dnes `matchLoop.ts:100–196`); broadcast do `net/snapshotBroadcaster.ts` jako `broadcastSnapshot(rt, state, timeLeftMs)` (dnes `matchLoop.ts:235–290`); v `startMatchLoop` zbude pipeline: advance → inputs → tick → transition → snapshot.
+
+**Návrh kontroleru:** `match/phaseController.ts` je druhý *Controller kandidát* vedle `connectionController.ts` — veškeré vedlejší efekty přechodů (qualify, výsledky, rebuildy, reset DNF/Ready) na jednom místě, testovatelné bez socketů a časovače.
+
+## 2.2 Sdílené simulační god-objects (`packages/shared/src/simulation/`)
+
+### `RapierSimulation.ts` — grab držení (`RapierSimulation.ts:527–531`, `RapierSimulation.ts:599–706`)
+
+**Odpovědnosti s rozsahy řádků:** dotaz `isGrabEngaged` (`RapierSimulation.ts:527–531`, prohledává `activeGrabs` oběma směry), údržbová polovina `updateGrabs` (`RapierSimulation.ts:599–649`: odpočet držení, struggle-detekt, release, `grabbingId`/`heldByGrabberId`, zmrazené facing), pohybová polovina `applyGrabTether` (`RapierSimulation.ts:680–706`: `wishFor` součet, `setGrabSpeedMultiplier`, `setGrabTetherWish`). Dvě odlišitelné odpovědnosti uvnitř jedné mechaniky: stav držení ( maintenance, čte se ze snapshotu) vs. pohybový tether (musí běžet před `beginTick`, viz `RapierSimulation.ts:651–679`).
+
+**Verdikt vrstvení:** sim vs. sim — nejde o vrstvení transport/logika, ale o god-object metody uvnitř simulace; iniciace (`resolveGrabInitiation`, `RapierSimulation.ts:546–575`) a obě poloviny držení žijí na jedné třídě vedle Hit/Bump logiky.
+
+**Konkrétní split s názvy funkcí:** přesunout `isGrabEngaged` + `updateGrabs` + `applyGrabTether` do nového `GrabHoldManager.ts` (dnes neexistuje — nejbližší sourozenec je `GrabController.ts`, který drží cooldown/release kontrakt jedné postavy, nikoli stav držení páru); `RapierSimulation` si ponechá pouze volání `grabHolds.preTick(...)` / `grabHolds.postTick(...)` v místech dnešních volání (`RapierSimulation.ts:986`, `RapierSimulation.ts:1059`).
+
+**Návrh kontroleru:** `GrabHoldManager` je *Controller třída* pro stav párového držení (`activeGrabs` mapa se přestěhuje s ním) — `RapierSimulation` zůstane orchestrátorem ticku, manager vlastníkem jedné mechaniky; stejný vzor jako existující `GrabController`/`HitController`/`DashController` pro per-postavu stav.
+
+## 2.3 Klientí herní smyčka — beze změny (potvrzení Části 1)
+
+Žádný nový ověřený nález: platí Nález 1 (rozdělit `game/` na `sim/` vs. `render`, strážce `codeSplitBoundary.test.ts`) a Nález 4 (rozhodnout o `advanceFixed` vs. `PredictionLoop`, varianta A/B). Tato část nepřidává nové soubory ani funkce — jen konstatuje, že serverové splity výše jsou nezávislé a nesmí měnit klientský kontrakt snapshotů (`ServerMessage`: `state`, `phase`, `roundRules`, `countdownMsLeft`, `dnf`, `lobby`, `roundResults` — `matchLoop.ts:270–290`).
+
+## 2.4 Shell + UI — beze změny (potvrzení Části 1)
+
+Žádný nový ověřený nález: platí Nález 2 (přesun `tokens.css → packages/ui`, `playground.ts → client-only`) a ADR 0008 (dynamický import hry ze shellu). Serverové kontrolery výše se shellu nedotýkají.
+
+## 2.5 Builder + service — beze změny (potvrzení Části 1)
+
+Žádný nový ověřený nález: Playtest kontrakt `?track=` (klient předává, server konzumuje v `matchServer.ts:166`) se navrženým přesunem do `tryPlaytestReload` nemění — mění se vlastník kódu, ne wire kontrakt. Track-typová konsolidace zůstává bodem 5 v kap. 4 Části 1.
+
+## 2.6 Cross-cutting — beze změny (potvrzení Části 1)
+
+Žádný nový ověřený nález: platí Nález 3 (lint `no-restricted-imports` nad novými hranicemi: `shared` nesmí importovat `apps/*`; `match/*` nesmí importovat `ws`/`net` transport — po splitu to lint ověří strojově). Nové moduly (`match/boot.ts`, `match/playtestReload.ts`, `match/connectionController.ts`, `match/phaseController.ts`, `match/simulationFactory.ts`, `net/messageDispatcher.ts`, `net/snapshotBroadcaster.ts`, `GrabHoldManager.ts`) se po vytvoření přidají do téže lint mapy.
+
+## 2.7 Aktualizované pořadí (Část 2 vůči krokům Části 1)
+
+Kroky 1–6 z Části 1 (§6) zůstávají v platnosti; splity z Části 2 se do nich vkládají takto:
+
+1. **Krok 1 (rozhodnout `advanceFixed`)** — beze změny, stále první; serverové splity na něm nezávisí.
+2. **Krok 2 (exporty `shared`)** — beze změny; navíc ze serveru nic do `shared` nepřibude (factory i kontrolery zůstávají v `apps/server`, `GrabHoldManager` v `packages/shared/src/simulation/` vedle `GrabController`).
+3. **Krok 2.5 (nový — serverové kontrolery, malý diff, velká čitelnost):** `net/messageDispatcher.ts` (`dispatchClientMessage`) → `match/connectionController.ts` (`canJoinDuringPhase`, `registerPlayer`/`buildWelcome`, `handleDisconnect`) → `match/playtestReload.ts` (`tryPlaytestReload`) → `match/boot.ts` (`buildRuntimeConfig`/`bootRuntime`). Pořadí je od nejtenčího k nejsilnějšímu; každý krok je ověřen existujícími `matchServer.test.ts` bez změny kontraktu. Zařadit hned po kroku 2, před fyzickým dělením klienta — serverové přesuny nesmí měnit snapshot kontrakt, na který klientské dělení spoléhá.
+4. **Krok 3 (rozdělit `game/` na `sim/` vs. zbytek)** — beze změny, až po 2.5, aby se klient dělil proti stabilnímu snapshot kontraktu.
+5. **Krok 3.5 (nový — tick pipeline):** `match/phaseController.ts` (`applyPhaseTransition`) + `net/snapshotBroadcaster.ts` (`broadcastSnapshot`) + `match/simulationFactory.ts` (`buildSimulationFor`). Až po 2.5 (staví na stabilním `MatchRuntime`), nezávisle na kroku 3 — lze paralelně s ním.
+6. **Krok 4 (lint hranic)** — rozšířen: kromě hranic z Části 1 zamkne i nové serverové hranice (`match/*` bez `ws` importů kromě `connectionController`/`boot`; `net/*` bez zápasové logiky) a existenci `GrabHoldManager` vedle `GrabController`.
+7. **Krok 5 (reuse kandidáti)** — rozšířen o grab: po extrakci `GrabHoldManager.ts` ověřit, zda `GrabController` (per-postava cooldown/release) a `GrabHoldManager` (párové držení) nesdílejí duplicitní struggle/release logiku; případně sjednotit práh `GRAB_STRUGGLE_*` na jediný zdroj pravdy.
+8. **Krok 6 (regresní ověření)** — beze změny, navíc `apps/server` testy (`matchServer.test.ts`, `roundDraw.test.ts`) a `RapierSimulation.test.ts` / `GrabController.test.ts` po grab-split.
+
+*Podklady Části 2: čteno z `apps/server/src/matchServer.ts:117–319`, `apps/server/src/index.ts:1–39`, `apps/server/src/match/matchRuntime.ts:73–216,227–252,344–363,395–412,456–463,482–491,505–508`, `apps/server/src/match/matchLoop.ts:31–299`, `packages/shared/src/simulation/RapierSimulation.ts:526–575,599–706,986,1059`. Změny kódu mimo tento soubor nebyly provedeny.*
