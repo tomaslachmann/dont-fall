@@ -198,6 +198,19 @@ export interface SnapshotMessage {
    * already follows for a single Round's own placement.
    */
   roundResults: RoundResult[];
+  /**
+   * Whether this Match can actually continue into another Round (M7
+   * ticket 10, ADR 0051, code review) — `MatchRuntime.canContinueMatch()`:
+   * Rounds remain **and** enough Players are still connected to run one.
+   * Sent rather than left for the client to re-derive from `roundResults.length
+   * < lobby.matchLength` alone, the same "the client never computes a
+   * second opinion about a gate it doesn't enforce" discipline
+   * `lobby.startBlockedReason` already follows — a client-side re-derivation
+   * that ignored the population half of the gate used to show a "Ready for
+   * next Round" button on a Match the server had already given up on
+   * continuing, with no way for that confirmation to ever be honoured.
+   */
+  roundsRemaining: boolean;
 }
 
 /** Server → client, reply to a {@link PingMessage} (time sync, ADR 0019). */

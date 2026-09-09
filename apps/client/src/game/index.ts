@@ -584,12 +584,14 @@ const boot = async (
         }
         if (onStandings && message.phase === "RESULTS") {
           const results = buildResults(message.state.characters, message.lobby.players, message.dnf);
-          // M7 ticket 10, ADR 0051: whether more Rounds are configured at
-          // all — the *advance* itself now also waits on every connected
-          // Player's own confirmation (`standingsReady`), not just this.
-          // Folded into the same dedupe as `results` so a change in this
-          // alone (the last Round finishing, say) still reaches the Screen.
-          const roundsRemaining = message.roundResults.length < message.lobby.matchLength;
+          // M7 ticket 10, ADR 0051: the server's own `canContinueMatch()` —
+          // Rounds remain *and* enough Players are still connected to run
+          // one — read straight off the snapshot, never re-derived from
+          // `roundResults.length < matchLength` alone (code review): that
+          // ignores the population half of the gate, and used to show a
+          // "Ready for next Round" button the server would never honour
+          // once population had already dropped it below its own bar.
+          const roundsRemaining = message.roundsRemaining;
 
           // `matchScore` (packages/shared, ADR 0049) is the only place this
           // arithmetic lives — never re-derived here, only laid out for

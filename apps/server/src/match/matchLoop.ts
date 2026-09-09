@@ -292,6 +292,13 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
             trackRevision: rt.fetched.revision,
             lobby: lobbySnapshot,
             roundResults: rt.roundResults,
+            // Recomputed here, not reused from the `advanceMatchPhase` call
+            // above (code review): that one deliberately reads the
+            // pre-Round-result-push state (whether *this* transition should
+            // happen), while a client needs whether the Match can continue
+            // as of *this* snapshot — after the push, on the exact tick a
+            // Round ends, those two disagree by one `RoundResult`.
+            roundsRemaining: rt.canContinueMatch(),
           } satisfies ServerMessage),
         );
       }

@@ -95,6 +95,38 @@ full suite green (652 tests, including 12 new `MatchPhase` tests for the confirm
 tests are **written, not run** — this sandbox denies loopback `listen` for any socket test in this
 repo (same limitation ticket 08 hit) — needs a real run to verify.
 
+## Code review findings and fixes
+
+`/code-review high` (intricate phase-machine/netcode logic, per CLAUDE.md) — ran across the whole
+working tree (this ticket's diff plus a concurrently-developing session's own uncommitted M8.1
+work); of its 10 findings, two were this ticket's own:
+
+- **Fixed — the client re-derived `roundsRemaining` from `roundResults.length < matchLength`
+  alone**, ignoring the population half of the server's own `canContinueMatch()` gate. Once a
+  Match dropped below `playersToStart`, the server correctly gave up (RESULTS terminal), but the
+  client still showed a "Ready for next Round" button that could never be honoured — clicking it
+  swapped to the buttonless `LoadingScreen` with no way back. Fixed by replicating
+  `canContinueMatch()` directly as `SnapshotMessage.roundsRemaining`, computed fresh at
+  snapshot-build time in `matchLoop.ts` (not reused from the earlier `advanceMatchPhase` call,
+  which deliberately reads the pre-Round-result-push state) and consumed verbatim client-side — the
+  same "never compute a second opinion about a gate you don't enforce" discipline
+  `startBlockedReason` already follows.
+- **Investigated, not fixed — a pre-existing race, not introduced here.** A new connection landing
+  in the narrow window between the last Player's disconnect and the tick loop's next
+  `connectedPlayers === 0` check can get seated as a real racer into a stale RESULTS instead of
+  spectating (`matchServer.ts`'s own `spectating` check, gated on `sockets.size > 0` at the moment
+  of connection). This is `matchServer.ts`'s own already-documented ticket 08 tradeoff ("a Round
+  with no Players in it is not a Round to protect"), not something this ticket's retirement of
+  `returnToLobby` introduced — traced through and confirmed it self-heals via the same
+  disconnect/reconnect path this ticket's own "population drop" test already exercises (the
+  stranded Player sees a Final Standings for a Round they never played and clicks Main Menu, same
+  as any other Match end), not a permanent strand. Left alone as out of this ticket's scope — a
+  ticket 08 follow-up, if it's worth closing at all.
+
+Two other findings — `canContinueMatch()` counting mid-Match spectators toward `playersToStart`,
+and a hardcoded Round-type-name check in `matchLoop.ts`'s Survival branch — are both pre-existing
+(ticket 08 and ticket 05 respectively), not touched by this ticket's diff. Not fixed here.
+
 ## Watch out for
 
 **This is intricate phase-machine logic — `/code-review high` per CLAUDE.md, not medium.**
