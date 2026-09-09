@@ -1,5 +1,5 @@
 import type { MatchWinner, ResultsRow } from "@dont-fall/shared";
-import { Button, ExtrudedText, LiveOverlay, Panel, Row } from "@dont-fall/ui";
+import { Button, ExtrudedText, Panel, Row, Screen } from "@dont-fall/ui";
 import type { StandingsRow } from "../game/index.js";
 import styles from "./StandingsScreen.module.css";
 
@@ -56,7 +56,7 @@ export function StandingsScreen({
   onReturnToLobby,
 }: StandingsScreenProps) {
   return (
-    <LiveOverlay isSceneLive={false}>
+    <Screen>
       <div className={styles.standings}>
         <h1 className={styles.title}>{roundsRemaining ? "Standings" : "Final Standings"}</h1>
 
@@ -132,6 +132,6 @@ export function StandingsScreen({
           <p className={styles.hint}>Waiting for the host to return to the Lobby…</p>
         )}
       </div>
-    </LiveOverlay>
+    </Screen>
   );
 }

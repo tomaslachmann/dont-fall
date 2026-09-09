@@ -5,7 +5,10 @@ to everyone's running Score.
 
 **Blocked by:** ticket 04 (nothing to stand between). Also needs the visual design below.
 
-**Status:** implemented — live verification pending
+**Status:** superseded by ADR 0051 — live verification found this shipped to a stale spec (a
+verbal supersession of ADR 0049's auto-advance line, and the artifact's actual Results design,
+neither of which had ever been written down). The rework is tickets 09-12. This file stays as the
+record of what actually shipped under this ticket; do not re-open it.
 
 ## Why
 

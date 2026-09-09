@@ -34,5 +34,8 @@ export type { HostBadgeProps } from "./components/HostBadge";
 export { LiveOverlay } from "./components/LiveOverlay";
 export type { LiveOverlayProps } from "./components/LiveOverlay";
 
+export { Screen } from "./components/Screen";
+export type { ScreenProps } from "./components/Screen";
+
 export { useReducedMotion, useExtrusion } from "./hooks";
 export { staggerDelay, landInStyles } from "./motion";

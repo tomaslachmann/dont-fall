@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { allReady, MAX_MATCH_LENGTH, MIN_MATCH_LENGTH, NICKNAME_MAX_LENGTH, ROUND_TYPES, roundTypeLabel, type RoundType } from "@dont-fall/shared";
-import { Avatar, Button, Card, HostBadge, LiveOverlay, Panel, Row, Toggle } from "@dont-fall/ui";
+import { Avatar, Button, Card, HostBadge, Panel, Row, Screen, Toggle } from "@dont-fall/ui";
 import type { LobbySnapshot } from "../game/index.js";
 import { formatRoundClock } from "../lib/roundTimer.js";
 import { resolveEndpoints } from "../lib/connection.js";
@@ -33,12 +33,12 @@ const initials = (nickname: string): string => {
 };
 
 /**
- * The Lobby overlaying an already-connected, already-rendering
- * `<GameCanvas>` (M4 ticket 07, ADR 0040) — the same "content over a live
- * scene" shape the Countdown overlay uses. `isSceneLive={false}` on
- * `<LiveOverlay>` because the real live scene is the actual game behind
- * this, not the placeholder backdrop that prop paints for a context with
- * no real one — the backdrop stays clear and the real render shows through.
+ * The Lobby, mounted alongside an already-connected `<GameCanvas>` (M4
+ * ticket 07, ADR 0040) — but never showing it. `<Screen>`, not
+ * `<LiveOverlay>` (ADR 0051): the live Match is never behind this, unlike
+ * Countdown/Bet/Spectate, which genuinely are content over a live scene.
+ * The connection itself stays live underneath (roster/ready/Track-pick
+ * sync depends on it); only the 3D canvas is hidden.
  */
 export function LobbyScreen({
   lobby,
@@ -76,7 +76,7 @@ export function LobbyScreen({
   };
 
   return (
-    <LiveOverlay isSceneLive={false}>
+    <Screen>
       <div className={styles.lobby}>
         <h1 className={styles.title}>Lobby</h1>
 
@@ -285,6 +285,6 @@ export function LobbyScreen({
           )}
         </Panel>
       </div>
-    </LiveOverlay>
+    </Screen>
   );
 }
