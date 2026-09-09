@@ -15,10 +15,14 @@ for the eye; ticket 02 already closed it for the feet.
 
 ## What to change
 
-- [ ] Load each asset Module's GLB with three's `GLTFLoader` (the
-      MushroomKing precedent: bundled under `public/`), filter nodes by
-      `role` — visual nodes render, collision nodes are dropped, never
-      hidden-and-kept
+- [ ] Load each asset Module's GLB with three's `GLTFLoader`, fetched from
+      track-service at track load (ADR 0050 as amended — not bundled), filter
+      nodes by `role` — visual nodes render, collision nodes are dropped,
+      never hidden-and-kept. Loader paths injectable, not game-hardcoded:
+      ticket 05 reuses the pattern through its own fetch
+- [ ] The role filter is deliberately duplicated in ticket 05 (each copy
+      points at its twin) — too small for a package, wrong mandate for
+      `@dont-fall/ui`
 - [ ] One visual instance per placed Segment, positioned/rotated exactly as
       the Segment places its collision (same origin, same transform — the
       two must never be positioned by separate code)

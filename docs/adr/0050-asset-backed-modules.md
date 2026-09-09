@@ -66,3 +66,18 @@ what is on disk rather than inventing it.
 - Filename stem must equal `moduleId`, enforced by the loader.
 - M8 is pipeline + placeholders: final beveled/textured visuals are a later
   content drop that changes no code by design.
+
+## Amendment (2026-09-09, M8 grill follow-up)
+
+The "Served bundled, not versioned" bullet above is superseded: track-service
+serves the bytes (`GET /assets/:name`, read from a disk dir), and all three
+loaders — match server at boot, client at track load, builder at tab
+open — fetch through it. Reason: two `public/` copies drift silently, and a
+sync script treats the symptom; one pipe deletes the problem. Revisions
+float (latest wins); in-match consistency comes from fetch-once-per-loader,
+with a documented window — an asset edit landing *between* the server's and
+a client's fetch splits that match, the exact window ADR 0032 closed for
+tracks, accepted here because art edits are rare and revision-pinned art
+(content hashes in the welcome) belongs to the content-pipeline milestone,
+not M8. History above is preserved as decided; this section records what
+changed and why.

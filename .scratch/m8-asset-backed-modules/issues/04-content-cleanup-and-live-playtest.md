@@ -20,10 +20,9 @@ deliberately deferred.
       (re-export or patch GLB extras — whichever leaves byte-identical
       geometry), so `role` is the only signal and the next person isn't
       misled the way we were
-- [ ] Confirm the track builder lists all four asset Modules with working
-      previews, placed from the registry with no per-module builder work
-      (ADR 0050's promise — if it needs per-module work, that work is this
-      ticket, not a surprise later)
+- [ ] Builder presence moved to ticket 05 (Assets tab + viewport visuals) —
+      this ticket keeps the game-side playtest below; the tab is where
+      "the builder lists all four" is proven
 - [ ] A Track composed of all four Modules, published and playable
 
 ## Done when

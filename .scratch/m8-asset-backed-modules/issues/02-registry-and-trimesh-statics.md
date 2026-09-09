@@ -23,8 +23,9 @@ is presentation or cleanup around physics that already works.
       collision mesh into static trimesh colliders with the node's resolved
       Surface — the same `Surface`/`Volume`/trigger machinery procedural
       floors already flow through, not a parallel one
-- [ ] Server reads GLBs from disk, client fetches bundled files — both
-      through ticket 01's reader, no second parse anywhere
+- [ ] Server fetches GLBs from track-service at boot, client fetches them at
+      track load — both through ticket 01's reader, no second parse anywhere
+      (ADR 0050 as amended: one pipe, floating revisions, fetch-once-per-loader)
 - [ ] Footprints + sockets for the four, measured off the actual files so
       Segments tile without gaps or overlaps past the epsilon
 
