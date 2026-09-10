@@ -39,3 +39,33 @@ export const tracks = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.trackId, table.revision] })],
 );
+
+/**
+ * An Account (CONTEXT.md, ADR 0052) — a Player's persistent identity, created
+ * on first Discord login. `discordId` is the Discord user id from the OAuth
+ * `/users/@me` response; it's what a repeat login is looked up by. `id` is
+ * this game's own stable identifier, independent of Discord, so nothing else
+ * in the schema (or a future second OAuth provider) needs to key on a
+ * third-party id directly.
+ */
+export const accounts = sqliteTable("accounts", {
+  id: text("id").primaryKey(),
+  discordId: text("discord_id").notNull().unique(),
+  displayName: text("display_name").notNull(),
+  avatarUrl: text("avatar_url"),
+  createdAt: integer("created_at").notNull(),
+});
+
+/**
+ * A logged-in session — an opaque bearer token (ADR 0024's existing
+ * `sessionToken` pattern, `randomBytes(32).toString("base64url")`, reused
+ * rather than introducing JWTs) mapped to the Account it authenticates.
+ * Verified by lookup, not decoded — the same posture the match server
+ * already uses for its own reconnect token.
+ */
+export const sessions = sqliteTable("sessions", {
+  token: text("token").primaryKey(),
+  accountId: text("account_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+  expiresAt: integer("expires_at").notNull(),
+});

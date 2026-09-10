@@ -8,10 +8,13 @@ import {
   DEFAULT_TRACK_SERVICE_PORT,
   MODULE_LIBRARY,
   M1_TRACK,
+  randomBearerToken,
   type Module,
 } from "@dont-fall/shared";
+import { createSession, deleteSession, getAccountBySessionToken, upsertAccountFromDiscord } from "./accounts.js";
 import { defaultAssetsDir, parseAssetFileName, readAssetFile } from "./assets.js";
 import { openDb, type TrackDb } from "./db.js";
+import { buildDiscordAuthorizeUrl, exchangeDiscordCode, type DiscordOAuthConfig, type FetchLike } from "./discordAuth.js";
 import { generateRandomTrack } from "./generate.js";
 import { getAnyTrack, getTrackById, listTracks, saveTrack, seedIfEmpty, seedTrackIfMissing } from "./store.js";
 import { invalidSurvivorTargetReason, invalidTimeLimitReason, unknownModuleIds } from "./validate.js";
@@ -51,6 +54,24 @@ export interface StartTrackServiceConfig {
    * binaries ride the image, never the database).
    */
   assetsDir?: string;
+  /**
+   * Discord app credentials (M9 ticket 11, ADR 0052). Defaults to
+   * `DISCORD_CLIENT_ID`/`DISCORD_CLIENT_SECRET`/`DISCORD_REDIRECT_URI` env
+   * vars. Left undefined (no env vars set either), `/auth/discord/*` answers
+   * 500 rather than crashing the whole service at boot — every other route
+   * (Tracks, assets) has nothing to do with Accounts and must keep working.
+   */
+  discord?: DiscordOAuthConfig;
+  /**
+   * Where the browser lands after a successful login — the client app's own
+   * `/auth/callback` route, which reads the session token off the URL
+   * *fragment* (`#token=...`, never a query param — see the callback
+   * handler's comment). Defaults to `PUBLIC_CLIENT_URL` env var, else
+   * `http://localhost:5173`.
+   */
+  clientAppUrl?: string;
+  /** Test-only seam: injects a fake Discord (`discordAuth.ts`'s `FetchLike`) instead of the real network. */
+  discordFetch?: FetchLike;
 }
 
 const readBody = (req: IncomingMessage): Promise<string> =>
@@ -70,7 +91,40 @@ const readBody = (req: IncomingMessage): Promise<string> =>
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+};
+
+const OAUTH_STATE_COOKIE = "df_oauth_state";
+
+/** Everything the `/auth/*` routes need beyond `db` — bundled so `handle`'s signature doesn't grow a parameter per route. */
+interface RouteConfig {
+  assetsDir: string;
+  discord?: DiscordOAuthConfig;
+  clientAppUrl: string;
+  discordFetch: FetchLike;
+}
+
+const parseCookie = (header: string | undefined, name: string): string | undefined => {
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+  }
+  return undefined;
+};
+
+const bearerToken = (req: IncomingMessage): string | undefined => {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) return undefined;
+  return header.slice("Bearer ".length);
+};
+
+/** Both `/auth/discord/*` routes need this identical guard; answers the 500 itself and reports whether the caller should stop. */
+const requireDiscordConfigured = (config: RouteConfig, res: ServerResponse): config is RouteConfig & { discord: DiscordOAuthConfig } => {
+  if (config.discord) return true;
+  json(res, 500, { error: "Discord OAuth is not configured on this server" });
+  return false;
 };
 
 const json = (res: ServerResponse, status: number, payload: unknown): void => {
@@ -117,7 +171,7 @@ const isSegment = (value: unknown): boolean => {
 
 const isTrack = (value: unknown): value is Track => Array.isArray(value) && value.every(isSegment);
 
-const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse, assetsDir: string): Promise<void> => {
+const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse, config: RouteConfig): Promise<void> => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, CORS_HEADERS);
     res.end();
@@ -142,12 +196,101 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse, as
       return;
     }
     try {
-      const { bytes, contentType } = await readAssetFile(assetsDir, fileName);
+      const { bytes, contentType } = await readAssetFile(config.assetsDir, fileName);
       res.writeHead(200, { ...CORS_HEADERS, "Content-Type": contentType, "Content-Length": bytes.length });
       res.end(Buffer.from(bytes));
     } catch (err) {
       json(res, 404, { error: (err as Error).message });
     }
+    return;
+  }
+
+  // Discord OAuth login (M9 ticket 11, ADR 0052). The redirect chain is:
+  // client -> here (authorize) -> Discord -> here (callback) -> client, with
+  // an HttpOnly `state` cookie (Max-Age 300s, scoped to /auth/discord) as
+  // CSRF protection — the callback rejects unless the `state` query param it
+  // gets back from Discord matches the cookie this route set.
+  //
+  // Known limitation, accepted rather than fixed here: the state cookie
+  // holds exactly one in-flight attempt. Two concurrent `/authorize` calls
+  // (two tabs, a double-click) overwrite each other's cookie, and whichever
+  // tab's Discord consent completes second gets rejected with a 400 instead
+  // of a real CSRF attempt being caught — a per-attempt state store would
+  // fix this properly but is more machinery than a single-flow login needs
+  // right now.
+  if (req.method === "GET" && url.pathname === "/auth/discord/authorize") {
+    if (!requireDiscordConfigured(config, res)) return;
+    const state = randomBearerToken(16);
+    res.writeHead(302, {
+      ...CORS_HEADERS,
+      Location: buildDiscordAuthorizeUrl(config.discord, state),
+      "Set-Cookie": `${OAUTH_STATE_COOKIE}=${state}; HttpOnly; Max-Age=300; Path=/auth/discord`,
+    });
+    res.end();
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/auth/discord/callback") {
+    if (!requireDiscordConfigured(config, res)) return;
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    const cookieState = parseCookie(req.headers.cookie, OAUTH_STATE_COOKIE);
+    if (!code) {
+      json(res, 400, { error: "missing ?code" });
+      return;
+    }
+    if (!state || !cookieState || state !== cookieState) {
+      json(res, 400, { error: "state mismatch — possible CSRF, or an expired/reused login attempt" });
+      return;
+    }
+    let identity: Awaited<ReturnType<typeof exchangeDiscordCode>>;
+    try {
+      identity = await exchangeDiscordCode(config.discord, code, config.discordFetch);
+    } catch (err) {
+      json(res, 502, { error: `Discord login failed: ${(err as Error).message}` });
+      return;
+    }
+    const account = upsertAccountFromDiscord(db, identity);
+    const { token } = createSession(db, account.id);
+    // The token rides the URL *fragment*, not a query param: a fragment is
+    // never sent in the request line to the client app's own server, never
+    // logged by it or any proxy in front of it, and never forwarded as
+    // Referer if that landing page loads a third-party resource — a query
+    // param would leak the bearer token into all three. Browser history
+    // still holds it either way; the client's `/auth/callback` route must
+    // strip it (`history.replaceState`) once read, not leave it sitting in
+    // the address bar.
+    const redirectUrl = new URL("/auth/callback", config.clientAppUrl);
+    redirectUrl.hash = `token=${token}`;
+    res.writeHead(302, {
+      ...CORS_HEADERS,
+      Location: redirectUrl.toString(),
+      // Clears the state cookie now that it's served its purpose (single-use).
+      "Set-Cookie": `${OAUTH_STATE_COOKIE}=; Max-Age=0; Path=/auth/discord`,
+    });
+    res.end();
+    return;
+  }
+
+  // Mandatory-login gate (ADR 0052): every other app entry point calls this
+  // to check the bearer token it's holding. 401, not a redirect — this is a
+  // JSON API; the client owns navigating to `/auth` on a 401.
+  if (req.method === "GET" && url.pathname === "/auth/me") {
+    const token = bearerToken(req);
+    const account = token ? getAccountBySessionToken(db, token) : undefined;
+    if (!account) {
+      json(res, 401, { error: "not logged in" });
+      return;
+    }
+    json(res, 200, account);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/auth/logout") {
+    const token = bearerToken(req);
+    if (token) deleteSession(db, token);
+    res.writeHead(204, CORS_HEADERS);
+    res.end();
     return;
   }
 
@@ -285,9 +428,24 @@ export const startTrackService = async (config: StartTrackServiceConfig = {}): P
   // served to Matches the same way every published Track is.
   seedTrackIfMissing(db, ASSET_DEMO_TRACK_ID, "Asset demo", ASSET_DEMO_TRACK);
   const assetsDir = config.assetsDir ?? process.env.TRACK_ASSETS_DIR ?? defaultAssetsDir();
+  const discord =
+    config.discord ??
+    (process.env.DISCORD_CLIENT_ID && process.env.DISCORD_CLIENT_SECRET && process.env.DISCORD_REDIRECT_URI
+      ? {
+          clientId: process.env.DISCORD_CLIENT_ID,
+          clientSecret: process.env.DISCORD_CLIENT_SECRET,
+          redirectUri: process.env.DISCORD_REDIRECT_URI,
+        }
+      : undefined);
+  const routeConfig: RouteConfig = {
+    assetsDir,
+    ...(discord ? { discord } : {}),
+    clientAppUrl: config.clientAppUrl ?? process.env.PUBLIC_CLIENT_URL ?? "http://localhost:5173",
+    discordFetch: config.discordFetch ?? fetch,
+  };
 
   const server = createServer((req, res) => {
-    handle(db, req, res, assetsDir).catch((err: unknown) => {
+    handle(db, req, res, routeConfig).catch((err: unknown) => {
       // A single malformed/unlucky request must never take the always-on
       // service down for every other caller (same posture as ADR 0011's
       // per-socket `trySend` in apps/server).

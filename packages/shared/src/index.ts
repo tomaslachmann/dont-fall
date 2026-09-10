@@ -43,3 +43,4 @@ export * from "./track/asset.js";
 export * from "./track/assetModules.js";
 export * from "./track/modules.js";
 export * from "./net/protocol.js";
+export * from "./net/bearerToken.js";

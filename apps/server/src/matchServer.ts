@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import {
   DEFAULT_SERVER_PORT,
@@ -26,6 +26,7 @@ import {
   TRACK_FETCH_MAX_WAIT_MS,
   TRACK_FETCH_RETRY_DELAY_MS,
   initPhysics,
+  randomBearerToken,
   resolveTrack,
   roundTimeLeftMs,
   trackSpawn,
@@ -280,7 +281,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         playerId: id,
         // A bearer credential the client presents on reconnect (ADR 0024). M2
         // issues it; no reconnect logic acts on it yet.
-        sessionToken: randomBytes(32).toString("base64url"),
+        sessionToken: randomBearerToken(),
         spawn,
         trackId: rt.fetched.id,
         trackRevision: rt.fetched.revision,

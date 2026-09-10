@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_SURVIVOR_TARGET,
   DEFAULT_TIME_LIMIT_MS,
@@ -549,5 +549,113 @@ describe("Survivor Target on publish (M5 ticket 07, ADR 0041)", () => {
     };
 
     expect(stored).toMatchObject({ timeLimitMs: 45_000, survivorTarget: 3 });
+  });
+});
+
+describe("Discord OAuth / accounts (M9 ticket 11, ADR 0052)", () => {
+  const DISCORD_CONFIG = { clientId: "client-1", clientSecret: "secret-1", redirectUri: "http://localhost:0/auth/discord/callback" };
+
+  const fakeDiscordFetch = vi.fn(async (url: string) => {
+    if (url === "https://discord.com/api/oauth2/token") {
+      return new Response(JSON.stringify({ access_token: "at-1" }), { status: 200 });
+    }
+    if (url === "https://discord.com/api/users/@me") {
+      return new Response(JSON.stringify({ id: "d-1", username: "Wobbleton", avatar: null }), { status: 200 });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  it("without Discord configured, /auth/discord/authorize answers 500 rather than crashing the service", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const res = await fetch(`http://localhost:${service.port}/auth/discord/authorize`, { redirect: "manual" });
+    expect(res.status).toBe(500);
+    // Every unrelated route keeps working — Accounts config is independent of Track storage.
+    expect((await fetch(`http://localhost:${service.port}/health`)).status).toBe(200);
+  });
+
+  it("/auth/discord/authorize redirects to Discord with a state cookie set", async () => {
+    service = await startTrackService({ port: 0, dbPath, discord: DISCORD_CONFIG });
+    const res = await fetch(`http://localhost:${service.port}/auth/discord/authorize`, { redirect: "manual" });
+
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get("location")!);
+    expect(location.origin + location.pathname).toBe("https://discord.com/oauth2/authorize");
+    expect(location.searchParams.get("client_id")).toBe("client-1");
+    expect(res.headers.get("set-cookie")).toMatch(/^df_oauth_state=/);
+  });
+
+  it("a full login: authorize -> callback (state verified) -> /auth/me -> /auth/logout -> /auth/me 401s again", async () => {
+    service = await startTrackService({
+      port: 0,
+      dbPath,
+      discord: DISCORD_CONFIG,
+      clientAppUrl: "http://localhost:5173",
+      discordFetch: fakeDiscordFetch,
+    });
+
+    const authorizeRes = await fetch(`http://localhost:${service.port}/auth/discord/authorize`, { redirect: "manual" });
+    const state = new URL(authorizeRes.headers.get("location")!).searchParams.get("state")!;
+    const cookie = authorizeRes.headers.get("set-cookie")!.split(";")[0]!; // "df_oauth_state=<value>"
+
+    const callbackRes = await fetch(
+      `http://localhost:${service.port}/auth/discord/callback?code=the-code&state=${state}`,
+      { redirect: "manual", headers: { Cookie: cookie } },
+    );
+    expect(callbackRes.status).toBe(302);
+    const redirectLocation = new URL(callbackRes.headers.get("location")!);
+    expect(redirectLocation.origin + redirectLocation.pathname).toBe("http://localhost:5173/auth/callback");
+    // The token rides the URL fragment, never a query param (never sent to a server/proxy/Referer).
+    expect(redirectLocation.search).toBe("");
+    const token = new URLSearchParams(redirectLocation.hash.slice(1)).get("token")!;
+    expect(token).toBeTruthy();
+
+    const meRes = await fetch(`http://localhost:${service.port}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(meRes.status).toBe(200);
+    expect(await meRes.json()).toMatchObject({ discordId: "d-1", displayName: "Wobbleton" });
+
+    const logoutRes = await fetch(`http://localhost:${service.port}/auth/logout`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(logoutRes.status).toBe(204);
+
+    const meAfterLogoutRes = await fetch(`http://localhost:${service.port}/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(meAfterLogoutRes.status).toBe(401);
+  });
+
+  it("the callback rejects a state that doesn't match the cookie (CSRF protection)", async () => {
+    service = await startTrackService({ port: 0, dbPath, discord: DISCORD_CONFIG, discordFetch: fakeDiscordFetch });
+
+    const authorizeRes = await fetch(`http://localhost:${service.port}/auth/discord/authorize`, { redirect: "manual" });
+    const cookie = authorizeRes.headers.get("set-cookie")!.split(";")[0]!;
+
+    const callbackRes = await fetch(
+      `http://localhost:${service.port}/auth/discord/callback?code=the-code&state=not-the-real-state`,
+      { redirect: "manual", headers: { Cookie: cookie } },
+    );
+    expect(callbackRes.status).toBe(400);
+  });
+
+  it("the callback rejects a missing state cookie (no prior /authorize visit)", async () => {
+    service = await startTrackService({ port: 0, dbPath, discord: DISCORD_CONFIG, discordFetch: fakeDiscordFetch });
+
+    const res = await fetch(`http://localhost:${service.port}/auth/discord/callback?code=the-code&state=anything`, {
+      redirect: "manual",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("/auth/me with no bearer token answers 401", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const res = await fetch(`http://localhost:${service.port}/auth/me`);
+    expect(res.status).toBe(401);
+  });
+
+  it("/auth/me with an unknown/garbage bearer token answers 401", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const res = await fetch(`http://localhost:${service.port}/auth/me`, { headers: { Authorization: "Bearer garbage" } });
+    expect(res.status).toBe(401);
   });
 });

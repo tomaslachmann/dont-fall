@@ -80,6 +80,33 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
     sqlite.exec(`ALTER TABLE tracks ADD COLUMN survivor_target INTEGER NOT NULL DEFAULT ${DEFAULT_SURVIVOR_TARGET}`);
   }
 
+  // M9 ticket 11 / ADR 0052: Accounts + Sessions are new tables, not a change
+  // to an existing one — a plain `CREATE TABLE IF NOT EXISTS`, no migration
+  // needed either way.
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id TEXT PRIMARY KEY,
+      discord_id TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      avatar_url TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
+    )
+  `);
+  // Sessions are only pruned lazily, on the exact expired token being looked
+  // up again (`accounts.ts`) — a batch sweep is future work, not built here
+  // (this project's established pattern: don't build for scale not yet
+  // needed). This index is cheap now and is exactly what that future sweep,
+  // or a "log out everywhere" feature, would need to query by account.
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_sessions_account_id ON sessions (account_id)`);
+
   return db;
 };
 
