@@ -140,11 +140,36 @@ Rapier had not yet given a mass (`chest.mass() === 0` after the bone had sat `Fi
 end-of-milestone verification tickets had sat unfinished while that reached the player — which is
 why M7 has no such ticket.
 
-**Next:** M7 — a Match, not a Round (`docs/milestones/M7.md`). Design settled in a grilling session
+**M7 done** — a Match, not a Round (`docs/milestones/M7.md`). Design settled in a grilling session
 and recorded as **ADR 0049**: elimination stops being a property of the Match and becomes a property
 of a Round, every Round pays Score by placement, and the highest total after a fixed number of
 Rounds wins. This closes the oldest contradiction in the repo — `CONTEXT.md` has always defined a
 Match as running "to a single winner, made of several Rounds", and the code has only ever run one.
+
+**M8 done** — Asset-backed Modules (`docs/milestones/M8.md`, ADR 0050). Four authored GLBs
+(`platform_straight`, `ramp_45`, `stairs_4step`, `corner_lshape`) load and collide identically on
+client and server through one shared GLB reader in `packages/shared`, replacing procedural boxes
+for those four Track pieces — the pipeline, not the final art. Tickets 01–05 in
+`.scratch/m8-asset-backed-modules/issues/`.
+
+**M8.1 done** — Free-roam practice: `?freeroam=1` boots a local, server-free playtest session
+through the same `<GameCanvas>`, so a Track author can spawn-and-run without Lobby ceremony. Landed
+inside the M7/M8 commit range rather than its own — `.scratch/m8.1-free-roam/issues/*.md` still
+read `Status: planned` even though `practice.ts`, `PracticeHud`, and `PlayRoute`'s branching are
+real, tested, and shipped; correcting those four ticket files is outstanding housekeeping, not open
+design work.
+
+**Next: M9** — Design screens reconciliation (`.scratch/m9-design-screens-reconciliation/issues/`).
+A new design-screens drop (`apps/client/src/test_components/`) turned out to assume six systems
+this game never had — recorded in `docs/research/test-components-design-screens-gap-analysis.md`.
+Ticket 04's scope call is decided (**ADR 0052**): DON'T FALL becomes a persisted-identity game —
+mandatory Discord login, a two-currency (XP/coins) economy, dynamic pari-mutuel Betting, and full
+Friends all get built; Character Select ships as a stub pending new character art (separate,
+already-in-progress work); Track discovery gets browsing + filters only. Tickets 01–03 (the
+remaining architecture decisions: the HUD boundary for reaction overlays, the Track builder's ADR
+0034 fate, reconciling the two design-token/component kits) and 05–10 (component wiring against
+today's real backend) are still open; 11–16 (the new systems ADR 0052 commits to) are scoped but
+not yet built.
 
 ## Tech stack
 
@@ -203,7 +228,10 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 | **M6** | Hit and Grab, and a real remote Character — replicated `facing` (ADR 0045), the capsule placeholder retired (ADR 0046). |
 | **M6.1** | A Hit that lands, and a fall you can watch — a Hit that can knock down, and a knockdown drawn from the ragdoll's own bones. |
 | **M7** | A Match, not a Round — several Rounds back to back, scored by placement, ending with a winner (ADR 0049). |
-| later | Collapsing terrain, Power-ups, Betting/Spectator, reconnection, level themes, the Skyfall final. |
+| **M8** | Asset-backed Modules — four Track pieces load from authored GLBs, collide identically on both sides (ADR 0050). |
+| **M8.1** | Free-roam practice — `?freeroam=1` boots a local, server-free playtest session through the real pipeline. |
+| **M9** | Design screens reconciliation — architecture decisions + wiring for a new visual design; scopes the persisted-identity systems below (ADR 0052). |
+| later | Accounts (mandatory Discord login) → XP/currency → Betting (dynamic pari-mutuel) → Friends (full presence) → Track discovery (browsing + filters) — scope decided in ADR 0052, one milestone each, build order TBD per milestone. Also: collapsing terrain, Power-ups, reconnection, level themes, the Skyfall final. |
 
 ## Working agreements
 

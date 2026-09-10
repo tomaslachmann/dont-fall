@@ -3,9 +3,19 @@
 **What to build:** A friends/social system — friend requests, a friends list, presence — needed
 by `Friends.tsx` and `FriendRequestAlert.tsx`.
 
-**Blocked by:** ticket 04 (scope decision), ticket 11 (needs accounts to attach friendships to).
+**Blocked by:** ticket 11 (needs accounts to attach friendships to). Per ADR 0052's build order
+(Accounts → XP/currency → Betting → Friends), this is the last of the four sequenced backend
+tickets — pick up ticket 13 first.
 
-**Status:** planned — speculative pending ticket 04; do not start without its outcome.
+**Status:** scoped, blocked on ticket 11 (and ordering — see above).
+
+## Decided scope (ADR 0052)
+
+- **Full scope, not a requests-only first cut**: presence status (Online / In Match / Idle),
+  friend requests, and a list — matching `Friends.tsx`/`FriendRequestAlert.tsx` as drawn.
+- Presence needs a real online-status broadcast mechanism (who's connected, and what they're
+  doing) — new server-side infrastructure, not just a data model. Exact transport (piggyback on
+  the existing match socket vs. a separate presence channel) is this ticket's own design work.
 
 ## Why
 

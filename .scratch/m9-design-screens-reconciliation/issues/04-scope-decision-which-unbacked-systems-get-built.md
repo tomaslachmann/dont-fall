@@ -8,7 +8,14 @@ screens get cut or indefinitely deferred.
 
 **Blocked by:** nothing (this is the decision itself), but gates tickets 7, 8, 11–16.
 
-**Status:** planned
+**Status:** decided — see **ADR 0052** (`docs/adr/0052-dont-fall-grows-a-persisted-identity-layer.md`).
+All six systems get built, not cut: mandatory Discord-only login gating the whole app (including
+Practice); two currencies (XP progression, spendable coins); dynamic pari-mutuel Betting, no house
+cut; full Friends (presence + requests + list); Character Select ships as a stub now, real
+selection waits on new character art (separate workstream); Track discovery gets browsing +
+filters only, no ratings/author. Build order: Accounts → XP/currency → Betting → Friends; Track
+discovery and the Character Select stub are unblocked immediately. `CLAUDE.md`'s roadmap and stale
+status line are updated to match.
 
 ## Why
 
@@ -26,20 +33,20 @@ summary's framing of the user's original ask ("it will replace everything even i
 
 ## What to change
 
-- [ ] Grilling session: for each of accounts/auth, friends, XP/currency/cosmetics, Bet/wagering,
+- [x] Grilling session: for each of accounts/auth, friends, XP/currency/cosmetics, Bet/wagering,
       character selection, Track discovery — build it, defer it, or cut the screens that assume
       it?
-- [ ] Record the outcome somewhere durable (a short doc, or per-system ADRs if a "yes, build it"
-      answer is itself architecturally significant — e.g. account system shape)
-- [ ] Update `CLAUDE.md`'s roadmap table to reflect whatever gets decided, and fix its stale
+- [x] Record the outcome somewhere durable — **ADR 0052**, since "DON'T FALL becomes a
+      persisted-identity game" is exactly the hard-to-reverse, surprising-without-context call
+      this repo's working agreements say gets an ADR
+- [x] Update `CLAUDE.md`'s roadmap table to reflect whatever gets decided, and fix its stale
       "Next: M7" status line while touching that file (M7/M8/M8.1 are already shipped)
 
 ## Done when
 
-- [ ] Each of the six systems has an explicit yes/no/deferred answer, not silence
-- [ ] `CLAUDE.md` roadmap reflects the decision and its own current-status line is accurate again
-- [ ] Tickets 11–16 either get unblocked with a concrete size/priority, or get closed as
-      out-of-scope
+- [x] Each of the six systems has an explicit yes/no/deferred answer, not silence
+- [x] `CLAUDE.md` roadmap reflects the decision and its own current-status line is accurate again
+- [x] Tickets 11–16 unblocked with concrete scope (see each ticket)
 
 ## Watch out
 

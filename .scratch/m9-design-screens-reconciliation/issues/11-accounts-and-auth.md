@@ -4,9 +4,22 @@
 account rather than a connection-scoped session id — needed by `Login.tsx`/`Auth.tsx`, and as the
 FK target `track-service`'s `authorId` already anticipates.
 
-**Blocked by:** ticket 04 (scope decision — build this at all?).
+**Blocked by:** nothing — ticket 04 is decided (**ADR 0052**). This is now the first ticket to
+build in the backend group; tickets 12–14 are blocked by it.
 
-**Status:** planned — speculative pending ticket 04; do not start without its outcome.
+**Status:** scoped, ready to pick up.
+
+## Decided scope (ADR 0052)
+
+- **Discord OAuth, single provider.** No email/password, no other providers for this pass.
+- **Mandatory, app-wide.** Every route in `apps/client` requires being logged in first — no
+  guest/anonymous path. This explicitly includes `?freeroam=1` Practice: the session itself still
+  opens no socket (`apps/client/src/game/practice.test.ts:19` is unchanged), but the *route* is
+  now unreachable pre-login, same as the Lobby.
+- Exact shape of the account/session store (new service vs. new tables on an existing one) and how
+  it reconciles with ADR 0024's connection-scoped `sessionToken` reconnect credential
+  (`packages/shared/src/net/protocol.ts:24-34`) is this ticket's own design work, not settled by
+  ADR 0052.
 
 ## Why
 

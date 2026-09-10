@@ -2,7 +2,9 @@
 
 **What to build:** A React Screen (styled on `Spectator.tsx`'s follow/switch design) that
 `GameCanvas` renders while spectating, wired to the real `SpectatorController`. Betting UI (odds,
-stakes, payout, balance) is excluded — that's ticket 14, and only if ticket 04 greenlights it.
+stakes, payout, balance) is excluded for now — Betting is decided scope (**ADR 0052**), but sequenced
+after Accounts and XP/currency (ticket 14 is blocked on both); this ticket ships the follow/switch
+Screen without it and ticket 14 adds the betting panel once its dependencies land.
 
 **Blocked by:** ticket 01 (overlay-vs-HUD boundary decision — a live spectate view sits over the
 running scene, same category question as the reaction overlays), ticket 03 (component kit).
@@ -30,7 +32,8 @@ domain gaps" (Spectator Mode entry).
 - [ ] Wire the follow/switch UI to `SpectatorController`'s real target-switching (Q/E or
       equivalent), not a mock keypress handler
 - [ ] Everything about odds/stakes/"ALL IN"/payout/balance is out of scope here — cut it from the
-      shipped version of this screen entirely (it's ticket 14's, if that ever gets built)
+      shipped version of this screen entirely; ticket 14 adds it back once Accounts and
+      XP/currency exist
 
 ## Done when
 

@@ -3,11 +3,19 @@
 **What to build:** Richer `track-service` listing metadata (ratings, play counts, author, best
 time, filter categories) beyond today's flat `{id, name}` listing, needed by `Discover.tsx`.
 
-**Blocked by:** ticket 04 (scope decision). Independent of the account tickets (11–13) — Track
-authorship today doesn't require a real account (`DEFAULT_AUTHOR_ID`), though a real "author name"
-display (ticket mentions this) would want one eventually.
+**Blocked by:** nothing — independent of the account tickets (11–14) and can be picked up
+whenever, per ADR 0052.
 
-**Status:** planned — speculative pending ticket 04; do not start without its outcome.
+**Status:** scoped, ready to pick up.
+
+## Decided scope (ADR 0052)
+
+- **Browsing + category filters only** (e.g. Trending/Survival/Race/New-shaped tabs). Explicitly
+  **not** in scope: ratings, author-name display, "best time." A lighter cut of `Discover.tsx`,
+  not the full mock — those three specifically depend on identity/social data this ticket doesn't
+  need.
+- Play counts (to power "Trending"-style sorting) are in scope and don't need real accounts —
+  an anonymous per-Track counter is enough.
 
 ## Why
 

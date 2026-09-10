@@ -4,9 +4,11 @@
 still branch on `?track=&freeroam=1` into either a local practice session or a real Match
 connection through `<GameCanvas>`, exactly as the current (undiffed) `PlayRoute` does.
 
-**Blocked by:** ticket 05.
+**Blocked by:** ticket 05, and (per **ADR 0052**) ticket 11's login gate — `/play` in any form,
+including `?freeroam=1`, is now only reachable once logged in, so this ticket's branching sits
+behind that gate rather than at the app's front door.
 
-**Status:** planned
+**Status:** planned — scope note added per ADR 0052, ticket itself unstarted
 
 ## Why
 

@@ -4,10 +4,23 @@
 `Spectator.tsx`'s betting panel (odds/stakes/"ALL IN"/payout/balance UI, out of scope for ticket
 08's real Spectator Screen).
 
-**Blocked by:** ticket 04 (scope decision), ticket 11 (accounts), ticket 13 (wagers a currency
-that has to exist first).
+**Blocked by:** ticket 11 (accounts), ticket 13 (wagers the coins ticket 13 mints/tracks). Per ADR
+0052's build order, this is the third backend ticket, after Accounts and XP/currency, before
+Friends.
 
-**Status:** planned — speculative pending ticket 04; do not start without its outcome.
+**Status:** scoped, blocked on tickets 11 and 13.
+
+## Decided scope (ADR 0052)
+
+- **Dynamic, pari-mutuel odds** driven by live stake volume: odds on a Player shorten as more
+  coins are staked on them relative to the total pool — not a fixed/flat stake, and explicitly
+  not informed by any persisted skill/win-rate rating (no ranked system is being built to feed
+  this).
+- **No house cut** — the pot is redistributed among winners in full.
+- **Named risk, not a blocker** (ADR 0052's consequences): a coins-based wagering system, even
+  play-currency-only with no house edge, is gambling-adjacent once real accounts and a real
+  currency exist. Do a deliberate compliance sanity check before shipping this specific ticket —
+  it doesn't block tickets 11–13 or 16.
 
 ## Why
 

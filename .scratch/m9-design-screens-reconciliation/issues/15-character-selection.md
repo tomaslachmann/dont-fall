@@ -3,10 +3,21 @@
 **What to build:** A selectable/equippable character model system — distinct from ticket 13's
 ownership data — needed by `CharacterSelect.tsx`'s turntable/pick UI.
 
-**Blocked by:** ticket 04 (scope decision), ticket 13 (needs cosmetic-ownership data to gate
-locked/owned skins).
+**Blocked by:** nothing, for the stub described below — it can land as part of the M9 wiring pass
+(alongside tickets 5–10), independent of accounts/currency. Real selection logic is blocked on new
+character models (a separate, already-in-progress art/pipeline workstream) and ticket 13 (needs
+cosmetic-ownership data to gate locked/owned skins), neither of which this ticket needs yet.
 
-**Status:** planned — speculative pending ticket 04; do not start without its outcome.
+**Status:** scoped — the near-term version is trivial; downgrade this to a wiring ticket.
+
+## Decided scope (ADR 0052)
+
+- **Ships now as a stub.** Wire `CharacterSelect.tsx`'s screen in; picking any character shows a
+  "not implemented" message (a plain alert is fine) instead of doing anything. No backend, no
+  ownership check, no persistence.
+- **Real selection is explicitly deferred**, not cut — it waits on new character models existing
+  (each one needs a rig, animations, and ragdoll bone mapping per ADR 0047) and on ticket 13's
+  ownership data, once that's built. Revisit this ticket's scope when either lands.
 
 ## Why
 

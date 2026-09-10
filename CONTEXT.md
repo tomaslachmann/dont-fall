@@ -9,9 +9,21 @@ cz + en
 
 ### Participants
 
+**Account**:
+A Player's persistent identity, created via Discord login and required to reach any Screen (ADR
+0052) — nothing in the app is reachable anonymously. Distinct from a Character, which exists only
+for a Match, and from the connection-scoped session id a socket carries.
+_Avoid_: profile, login, user
+
 **Player**:
-A human with an account who joins a Match. Persists across Matches.
+A human with an Account who joins a Match. Persists across Matches.
 _Avoid_: user, gamer
+
+**Friend**:
+A mutual connection between two Accounts, formed by request/accept. Carries presence (Online / In
+Match / Idle) between Friends. Distinct from a Party — DON'T FALL has no matchmaking concept of a
+party (ADR 0040); Friends is purely social.
+_Avoid_: party, contact, buddy
 
 **Character**:
 The in-world body a Player controls — a kinematic capsule with an attached
@@ -39,7 +51,7 @@ _Avoid_: level, stage, kolo, heat
 **Score**:
 What a Player has earned across the Rounds of a Match so far. Match-scoped: it is
 built from the Rounds already played and ceases to exist when the Match ends.
-Distinct from XP and coins, which persist across Matches.
+Distinct from XP and Coins, which persist across Matches.
 _Avoid_: points, score total, rating
 
 **Round type**:
@@ -316,9 +328,21 @@ Player still in the Round, and may switch between them. Lasts until the Round en
 never longer: since ADR 0049 elimination is a Round's business, so the next Round
 starts them playing again.
 
+**XP**:
+An Account's persistent progression number. Only ever increases; never spent, never staked.
+Distinct from Score, which is Match-scoped and resets every Match.
+_Avoid_: level, points, experience points (spell it XP)
+
+**Coin**:
+An Account's persistent, spendable currency — the only one. Spent on cosmetics and staked in a
+Bet; never earned back by a Bet's own losers (the pot redistributes to winners, not the house).
+_Avoid_: gem, gold, credits, currency (when you mean this specific one)
+
 **Bet**:
-A prediction an eliminated Player makes in Spectator Mode about who wins the
-Round, for XP / coins. Keeps eliminated Players engaged.
+A wager an eliminated Player makes in Spectator Mode, staking Coins on which still-active Player
+wins the Round. Odds move dynamically with how many Coins are staked on each Player (more staked
+on a Player, shorter their odds); the pot is redistributed among winners with no cut taken (ADR
+0052). Keeps eliminated Players engaged.
 _Avoid_: wager, guess
 
 **Skyfall**:
