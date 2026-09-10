@@ -80,13 +80,27 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
     sqlite.exec(`ALTER TABLE tracks ADD COLUMN survivor_target INTEGER NOT NULL DEFAULT ${DEFAULT_SURVIVOR_TARGET}`);
   }
 
-  // M9 ticket 11 / ADR 0052: Accounts + Sessions are new tables, not a change
-  // to an existing one — a plain `CREATE TABLE IF NOT EXISTS`, no migration
-  // needed either way.
+  // M9 ticket 11: `accounts` first shipped Discord-only (`discord_id TEXT
+  // NOT NULL UNIQUE`, no `email`/`password_hash`) at commit 87b1426, before
+  // ADR 0053 corrected the decision to "both login methods." That old shape
+  // is real, committed history now — not just this session's own tests — so
+  // it gets the same guard `tracks` above already uses: detect it, drop and
+  // recreate (still nothing worth migrating: Accounts have no real
+  // deployment yet either way).
+  const accountsInfo = sqlite.pragma("table_info(accounts)") as { name: string }[];
+  const hasDiscordOnlyAccountsSchema = accountsInfo.length > 0 && !accountsInfo.some((c) => c.name === "email");
+  if (hasDiscordOnlyAccountsSchema) {
+    console.warn("track-service: dropping accounts (+ sessions) for the email/password schema (ADR 0053) — no data to migrate yet");
+    sqlite.exec("DROP TABLE accounts");
+    sqlite.exec("DROP TABLE IF EXISTS sessions"); // sessions.accountId would otherwise dangle against the recreated table
+  }
+
   db.run(sql`
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
-      discord_id TEXT NOT NULL UNIQUE,
+      discord_id TEXT UNIQUE,
+      email TEXT UNIQUE,
+      password_hash TEXT,
       display_name TEXT NOT NULL,
       avatar_url TEXT,
       created_at INTEGER NOT NULL

@@ -10,9 +10,11 @@ cz + en
 ### Participants
 
 **Account**:
-A Player's persistent identity, created via Discord login and required to reach any Screen (ADR
-0052) — nothing in the app is reachable anonymously. Distinct from a Character, which exists only
-for a Match, and from the connection-scoped session id a socket carries.
+A Player's persistent identity, required to reach any Screen (ADR 0052) — nothing in the app is
+reachable anonymously. Reached by Discord login or by this game's own email/password credentials,
+either or both at once (ADR 0053: an Account may link both, in either order). Distinct from a
+Character, which exists only for a Match, and from the connection-scoped session id a socket
+carries.
 _Avoid_: profile, login, user
 
 **Player**:

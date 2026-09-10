@@ -659,3 +659,165 @@ describe("Discord OAuth / accounts (M9 ticket 11, ADR 0052)", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("Email/password auth + linking (M9 ticket 11 follow-up, ADR 0053)", () => {
+  const SIGNUP = { email: "wobbleton@example.com", password: "correct horse battery staple", displayName: "Wobbleton" };
+  const DISCORD_CONFIG = { clientId: "client-1", clientSecret: "secret-1", redirectUri: "http://localhost:0/auth/discord/callback" };
+  const fakeDiscordFetch = vi.fn(async (url: string) => {
+    if (url === "https://discord.com/api/oauth2/token") return new Response(JSON.stringify({ access_token: "at-1" }), { status: 200 });
+    if (url === "https://discord.com/api/users/@me") {
+      return new Response(JSON.stringify({ id: "d-1", username: "DiscordWobbleton", avatar: null }), { status: 200 });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+
+  const signup = (port: number, body: unknown) =>
+    fetch(`http://localhost:${port}/auth/signup`, { method: "POST", body: JSON.stringify(body) });
+  const login = (port: number, body: unknown) =>
+    fetch(`http://localhost:${port}/auth/login`, { method: "POST", body: JSON.stringify(body) });
+
+  it("signs up and is immediately logged in — /auth/me works with the returned token", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const res = await signup(service.port, SIGNUP);
+    expect(res.status).toBe(201);
+    const { account, token } = (await res.json()) as { account: { email: string; discordId: string | null }; token: string };
+    expect(account.email).toBe(SIGNUP.email);
+    expect(account.discordId).toBeNull();
+
+    const meRes = await fetch(`http://localhost:${service.port}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(meRes.status).toBe(200);
+    expect(await meRes.json()).toEqual(account);
+  });
+
+  it("a second signup with the same email answers 409, not a silent overwrite", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    await signup(service.port, SIGNUP);
+    const res = await signup(service.port, { ...SIGNUP, displayName: "Someone else" });
+    expect(res.status).toBe(409);
+  });
+
+  it("signup validates email/password/displayName and answers 400 naming what's wrong", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    expect((await signup(service.port, { ...SIGNUP, email: "not-an-email" })).status).toBe(400);
+    expect((await signup(service.port, { ...SIGNUP, password: "short" })).status).toBe(400);
+    expect((await signup(service.port, { ...SIGNUP, displayName: "" })).status).toBe(400);
+  });
+
+  it("logs in with the signed-up email/password", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    await signup(service.port, SIGNUP);
+    const res = await login(service.port, { email: SIGNUP.email, password: SIGNUP.password });
+    expect(res.status).toBe(200);
+    const { token } = (await res.json()) as { token: string };
+    expect(token).toBeTruthy();
+  });
+
+  it("rejects a wrong password and a nonexistent email identically (401, no enumeration)", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    await signup(service.port, SIGNUP);
+    const wrongPassword = await login(service.port, { email: SIGNUP.email, password: "wrong password entirely" });
+    const noSuchEmail = await login(service.port, { email: "nobody@example.com", password: "whatever12345" });
+    expect(wrongPassword.status).toBe(401);
+    expect(noSuchEmail.status).toBe(401);
+    expect(await wrongPassword.json()).toEqual(await noSuchEmail.json());
+  });
+
+  it("links a password onto a Discord-first Account, then logs in with it", async () => {
+    service = await startTrackService({ port: 0, dbPath, discord: DISCORD_CONFIG, discordFetch: fakeDiscordFetch });
+
+    // Log in via Discord first.
+    const authorizeRes = await fetch(`http://localhost:${service.port}/auth/discord/authorize`, { redirect: "manual" });
+    const state = new URL(authorizeRes.headers.get("location")!).searchParams.get("state")!;
+    const stateCookie = authorizeRes.headers.get("set-cookie")!.split(";")[0]!;
+    const callbackRes = await fetch(`http://localhost:${service.port}/auth/discord/callback?code=c&state=${state}`, {
+      redirect: "manual",
+      headers: { Cookie: stateCookie },
+    });
+    const discordToken = new URLSearchParams(new URL(callbackRes.headers.get("location")!).hash.slice(1)).get("token")!;
+
+    // Now link a password onto that same, already-logged-in Account.
+    const linkRes = await fetch(`http://localhost:${service.port}/auth/link/password`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${discordToken}` },
+      body: JSON.stringify(SIGNUP),
+    });
+    expect(linkRes.status).toBe(200);
+    expect(await linkRes.json()).toMatchObject({ discordId: "d-1", email: SIGNUP.email });
+
+    // The same Account is now reachable by email/password too.
+    const loginRes = await login(service.port, { email: SIGNUP.email, password: SIGNUP.password });
+    expect(loginRes.status).toBe(200);
+  });
+
+  it("/auth/link/password without a valid session answers 401, never creates or mutates anything", async () => {
+    service = await startTrackService({ port: 0, dbPath });
+    const res = await fetch(`http://localhost:${service.port}/auth/link/password`, {
+      method: "POST",
+      body: JSON.stringify(SIGNUP),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("links Discord onto an email/password-first Account via the authorize route's linking mode", async () => {
+    service = await startTrackService({ port: 0, dbPath, discord: DISCORD_CONFIG, discordFetch: fakeDiscordFetch });
+
+    const signupRes = await signup(service.port, SIGNUP);
+    const { token: emailToken } = (await signupRes.json()) as { token: string };
+
+    // Authorize called *with* the existing session — linking mode.
+    const authorizeRes = await fetch(`http://localhost:${service.port}/auth/discord/authorize`, {
+      redirect: "manual",
+      headers: { Authorization: `Bearer ${emailToken}` },
+    });
+    const state = new URL(authorizeRes.headers.get("location")!).searchParams.get("state")!;
+    const setCookies = authorizeRes.headers.getSetCookie();
+    const cookieHeader = setCookies.map((c) => c.split(";")[0]).join("; ");
+
+    const callbackRes = await fetch(`http://localhost:${service.port}/auth/discord/callback?code=c&state=${state}`, {
+      redirect: "manual",
+      headers: { Cookie: cookieHeader },
+    });
+    expect(callbackRes.status).toBe(302);
+    const redirectLocation = new URL(callbackRes.headers.get("location")!);
+    // Linking, not a fresh login: no new token minted, the fragment just confirms success.
+    expect(redirectLocation.hash).toBe("#linked=discord");
+
+    const meRes = await fetch(`http://localhost:${service.port}/auth/me`, { headers: { Authorization: `Bearer ${emailToken}` } });
+    // displayName stays the one chosen at signup — linking Discord ("DiscordWobbleton" per fakeDiscordFetch) must not overwrite it.
+    expect(await meRes.json()).toMatchObject({ email: SIGNUP.email, discordId: "d-1", displayName: SIGNUP.displayName });
+  });
+
+  it("linking a Discord identity already claimed by another Account redirects with an error, not a crash", async () => {
+    service = await startTrackService({ port: 0, dbPath, discord: DISCORD_CONFIG, discordFetch: fakeDiscordFetch });
+
+    // "d-1" already belongs to a Discord-only Account.
+    const firstAuthorize = await fetch(`http://localhost:${service.port}/auth/discord/authorize`, { redirect: "manual" });
+    const firstState = new URL(firstAuthorize.headers.get("location")!).searchParams.get("state")!;
+    const firstCookie = firstAuthorize.headers.get("set-cookie")!.split(";")[0]!;
+    await fetch(`http://localhost:${service.port}/auth/discord/callback?code=c&state=${firstState}`, {
+      redirect: "manual",
+      headers: { Cookie: firstCookie },
+    });
+
+    // A second, separate email/password Account tries to link the same Discord identity.
+    const signupRes = await signup(service.port, SIGNUP);
+    const { token: emailToken } = (await signupRes.json()) as { token: string };
+    const linkAuthorize = await fetch(`http://localhost:${service.port}/auth/discord/authorize`, {
+      redirect: "manual",
+      headers: { Authorization: `Bearer ${emailToken}` },
+    });
+    const linkState = new URL(linkAuthorize.headers.get("location")!).searchParams.get("state")!;
+    const linkCookies = linkAuthorize.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+
+    const callbackRes = await fetch(`http://localhost:${service.port}/auth/discord/callback?code=c&state=${linkState}`, {
+      redirect: "manual",
+      headers: { Cookie: linkCookies },
+    });
+    expect(callbackRes.status).toBe(302);
+    expect(new URL(callbackRes.headers.get("location")!).hash).toBe("#error=discord-already-linked");
+
+    // The second Account is untouched — still email/password only.
+    const meRes = await fetch(`http://localhost:${service.port}/auth/me`, { headers: { Authorization: `Bearer ${emailToken}` } });
+    expect(await meRes.json()).toMatchObject({ discordId: null });
+  });
+});

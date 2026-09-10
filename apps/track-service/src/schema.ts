@@ -41,16 +41,23 @@ export const tracks = sqliteTable(
 );
 
 /**
- * An Account (CONTEXT.md, ADR 0052) — a Player's persistent identity, created
- * on first Discord login. `discordId` is the Discord user id from the OAuth
- * `/users/@me` response; it's what a repeat login is looked up by. `id` is
- * this game's own stable identifier, independent of Discord, so nothing else
- * in the schema (or a future second OAuth provider) needs to key on a
- * third-party id directly.
+ * An Account (CONTEXT.md, ADR 0052/0053) — a Player's persistent identity.
+ * `id` is this game's own stable identifier, independent of either login
+ * method, so nothing else in the schema needs to key on a third-party id
+ * directly. Two independent, optional login methods may point at the same
+ * Account (ADR 0053: both allowed together, not mutually exclusive):
+ * `discordId` (the Discord user id from OAuth's `/users/@me`) and
+ * `email`/`passwordHash` (this game's own credential store). At least one of
+ * the two is always present — enforced in `accounts.ts`, not a DB
+ * constraint, since "at least one of two nullable columns" isn't expressible
+ * as a single SQLite `NOT NULL`.
  */
 export const accounts = sqliteTable("accounts", {
   id: text("id").primaryKey(),
-  discordId: text("discord_id").notNull().unique(),
+  discordId: text("discord_id").unique(),
+  email: text("email").unique(),
+  /** `scrypt(password, salt)` as `"<salt-hex>:<hash-hex>"` (`password.ts`) — null when this Account has no email/password login linked. */
+  passwordHash: text("password_hash"),
   displayName: text("display_name").notNull(),
   avatarUrl: text("avatar_url"),
   createdAt: integer("created_at").notNull(),

@@ -11,7 +11,20 @@ import {
   randomBearerToken,
   type Module,
 } from "@dont-fall/shared";
-import { createSession, deleteSession, getAccountBySessionToken, upsertAccountFromDiscord } from "./accounts.js";
+import {
+  createAccountWithPassword,
+  createSession,
+  deleteSession,
+  getAccountBySessionToken,
+  invalidDisplayNameReason,
+  invalidEmailReason,
+  invalidPasswordReason,
+  isUniqueConstraintError,
+  linkDiscordToAccount,
+  linkPasswordToAccount,
+  upsertAccountFromDiscord,
+  verifyEmailPassword,
+} from "./accounts.js";
 import { defaultAssetsDir, parseAssetFileName, readAssetFile } from "./assets.js";
 import { openDb, type TrackDb } from "./db.js";
 import { buildDiscordAuthorizeUrl, exchangeDiscordCode, type DiscordOAuthConfig, type FetchLike } from "./discordAuth.js";
@@ -83,6 +96,22 @@ const readBody = (req: IncomingMessage): Promise<string> =>
   });
 
 /**
+ * Reads and JSON-parses a request body, answering the 400 itself on failure.
+ * `undefined` is a safe "already handled, stop" sentinel — valid JSON never
+ * parses to `undefined` (the literal input `"undefined"` isn't valid JSON).
+ * Shared by every `POST` route with a JSON body, so the invalid-body
+ * response (message, status) stays one thing to edit, not four.
+ */
+const readJsonBody = async (req: IncomingMessage, res: ServerResponse): Promise<unknown> => {
+  try {
+    return JSON.parse(await readBody(req));
+  } catch {
+    json(res, 400, { error: "invalid JSON body" });
+    return undefined;
+  }
+};
+
+/**
  * A browser-based caller (the Track builder tool, ticket 04) is always a
  * different origin from track-service — wide-open CORS is fine for a
  * dev-only, no-auth internal service (Q11/Q15 in the M3 grilling session);
@@ -95,6 +124,8 @@ const CORS_HEADERS = {
 };
 
 const OAUTH_STATE_COOKIE = "df_oauth_state";
+/** Set only when `/auth/discord/authorize` is called with a valid session (ADR 0053: linking Discord onto an already-logged-in Account, not a fresh login). */
+const OAUTH_LINK_ACCOUNT_COOKIE = "df_oauth_link_account";
 
 /** Everything the `/auth/*` routes need beyond `db` — bundled so `handle`'s signature doesn't grow a parameter per route. */
 interface RouteConfig {
@@ -221,10 +252,18 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse, co
   if (req.method === "GET" && url.pathname === "/auth/discord/authorize") {
     if (!requireDiscordConfigured(config, res)) return;
     const state = randomBearerToken(16);
+    const cookies = [`${OAUTH_STATE_COOKIE}=${state}; HttpOnly; Max-Age=300; Path=/auth/discord`];
+    // Linking mode (ADR 0053): a caller who's already logged in (sends a
+    // valid Bearer token to this GET) is linking Discord onto their existing
+    // Account, not starting a fresh login — the account id rides its own
+    // short-lived cookie so the callback can tell the two cases apart.
+    const linkToken = bearerToken(req);
+    const linkAccount = linkToken ? getAccountBySessionToken(db, linkToken) : undefined;
+    if (linkAccount) cookies.push(`${OAUTH_LINK_ACCOUNT_COOKIE}=${linkAccount.id}; HttpOnly; Max-Age=300; Path=/auth/discord`);
     res.writeHead(302, {
       ...CORS_HEADERS,
       Location: buildDiscordAuthorizeUrl(config.discord, state),
-      "Set-Cookie": `${OAUTH_STATE_COOKIE}=${state}; HttpOnly; Max-Age=300; Path=/auth/discord`,
+      "Set-Cookie": cookies,
     });
     res.end();
     return;
@@ -235,6 +274,7 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse, co
     const code = url.searchParams.get("code");
     const state = url.searchParams.get("state");
     const cookieState = parseCookie(req.headers.cookie, OAUTH_STATE_COOKIE);
+    const linkAccountId = parseCookie(req.headers.cookie, OAUTH_LINK_ACCOUNT_COOKIE);
     if (!code) {
       json(res, 400, { error: "missing ?code" });
       return;
@@ -250,25 +290,115 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse, co
       json(res, 502, { error: `Discord login failed: ${(err as Error).message}` });
       return;
     }
-    const account = upsertAccountFromDiscord(db, identity);
-    const { token } = createSession(db, account.id);
-    // The token rides the URL *fragment*, not a query param: a fragment is
-    // never sent in the request line to the client app's own server, never
-    // logged by it or any proxy in front of it, and never forwarded as
-    // Referer if that landing page loads a third-party resource — a query
-    // param would leak the bearer token into all three. Browser history
-    // still holds it either way; the client's `/auth/callback` route must
-    // strip it (`history.replaceState`) once read, not leave it sitting in
-    // the address bar.
+    // Clears both single-use cookies now that they've served their purpose, on every exit path below.
+    const clearCookies = [
+      `${OAUTH_STATE_COOKIE}=; Max-Age=0; Path=/auth/discord`,
+      `${OAUTH_LINK_ACCOUNT_COOKIE}=; Max-Age=0; Path=/auth/discord`,
+    ];
     const redirectUrl = new URL("/auth/callback", config.clientAppUrl);
-    redirectUrl.hash = `token=${token}`;
-    res.writeHead(302, {
-      ...CORS_HEADERS,
-      Location: redirectUrl.toString(),
-      // Clears the state cookie now that it's served its purpose (single-use).
-      "Set-Cookie": `${OAUTH_STATE_COOKIE}=; Max-Age=0; Path=/auth/discord`,
-    });
+    if (linkAccountId) {
+      try {
+        linkDiscordToAccount(db, linkAccountId, identity);
+      } catch (err) {
+        if (!isUniqueConstraintError(err)) throw err;
+        redirectUrl.hash = "error=discord-already-linked";
+        res.writeHead(302, { ...CORS_HEADERS, Location: redirectUrl.toString(), "Set-Cookie": clearCookies });
+        res.end();
+        return;
+      }
+      // Linking, not a fresh login: the caller already holds a valid session
+      // token (that's what put `linkAccountId` on the cookie) — no new one issued.
+      redirectUrl.hash = "linked=discord";
+    } else {
+      const account = upsertAccountFromDiscord(db, identity);
+      const { token } = createSession(db, account.id);
+      // The token rides the URL *fragment*, not a query param: a fragment is
+      // never sent in the request line to the client app's own server, never
+      // logged by it or any proxy in front of it, and never forwarded as
+      // Referer if that landing page loads a third-party resource — a query
+      // param would leak the bearer token into all three. Browser history
+      // still holds it either way; the client's `/auth/callback` route must
+      // strip it (`history.replaceState`) once read, not leave it sitting in
+      // the address bar.
+      redirectUrl.hash = `token=${token}`;
+    }
+    res.writeHead(302, { ...CORS_HEADERS, Location: redirectUrl.toString(), "Set-Cookie": clearCookies });
     res.end();
+    return;
+  }
+
+  // Email/password signup (ADR 0053) — creates a brand-new Account. A
+  // logged-in caller wanting to *add* a password to their existing (likely
+  // Discord-first) Account uses `/auth/link/password` below, not this route.
+  if (req.method === "POST" && url.pathname === "/auth/signup") {
+    const parsed = await readJsonBody(req, res);
+    if (parsed === undefined) return;
+    const body = parsed as { email?: unknown; password?: unknown; displayName?: unknown };
+    const reason = invalidEmailReason(body.email) ?? invalidPasswordReason(body.password) ?? invalidDisplayNameReason(body.displayName);
+    if (reason) {
+      json(res, 400, { error: reason });
+      return;
+    }
+    let account: ReturnType<typeof createAccountWithPassword>;
+    try {
+      account = createAccountWithPassword(db, body as { email: string; password: string; displayName: string });
+    } catch (err) {
+      if (!isUniqueConstraintError(err)) throw err;
+      json(res, 409, { error: "an Account with that email already exists" });
+      return;
+    }
+    const { token } = createSession(db, account.id);
+    json(res, 201, { account, token });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/auth/login") {
+    const parsed = await readJsonBody(req, res);
+    if (parsed === undefined) return;
+    const body = parsed as { email?: unknown; password?: unknown };
+    if (typeof body.email !== "string" || typeof body.password !== "string") {
+      json(res, 400, { error: "email and password are required" });
+      return;
+    }
+    const account = verifyEmailPassword(db, body.email, body.password);
+    if (!account) {
+      // Deliberately the same error for "no such email" and "wrong password" — never lets a caller enumerate registered emails.
+      json(res, 401, { error: "invalid email or password" });
+      return;
+    }
+    const { token } = createSession(db, account.id);
+    json(res, 200, { account, token });
+    return;
+  }
+
+  // Links email/password onto the *already-authenticated* caller's Account
+  // (ADR 0053) — the Discord-first counterpart to Discord-authorize's
+  // linking mode above. Requires a valid Bearer token; unlike `/auth/signup`
+  // this never creates a new Account.
+  if (req.method === "POST" && url.pathname === "/auth/link/password") {
+    const token = bearerToken(req);
+    const account = token ? getAccountBySessionToken(db, token) : undefined;
+    if (!account) {
+      json(res, 401, { error: "not logged in" });
+      return;
+    }
+    const parsed = await readJsonBody(req, res);
+    if (parsed === undefined) return;
+    const body = parsed as { email?: unknown; password?: unknown };
+    const reason = invalidEmailReason(body.email) ?? invalidPasswordReason(body.password);
+    if (reason) {
+      json(res, 400, { error: reason });
+      return;
+    }
+    let linked: ReturnType<typeof linkPasswordToAccount>;
+    try {
+      linked = linkPasswordToAccount(db, account.id, body as { email: string; password: string });
+    } catch (err) {
+      if (!isUniqueConstraintError(err)) throw err;
+      json(res, 409, { error: "an Account with that email already exists" });
+      return;
+    }
+    json(res, 200, linked);
     return;
   }
 
@@ -295,13 +425,8 @@ const handle = async (db: TrackDb, req: IncomingMessage, res: ServerResponse, co
   }
 
   if (req.method === "POST" && url.pathname === "/tracks") {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(await readBody(req));
-    } catch {
-      json(res, 400, { error: "invalid JSON body" });
-      return;
-    }
+    const parsed = await readJsonBody(req, res);
+    if (parsed === undefined) return;
     const body = parsed as { id?: unknown; name?: unknown; track?: unknown; timeLimitMs?: unknown; survivorTarget?: unknown };
     if (!isTrack(body.track)) {
       json(res, 400, {
