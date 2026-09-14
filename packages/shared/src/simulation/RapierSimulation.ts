@@ -2,7 +2,7 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import { pointInOrientedBox, type OrientedBox } from "../math/box.js";
 import { IDENTITY_QUAT } from "../math/quat.js";
 import { addVec3, dotVec3, lengthVec3, normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
-import { phaseLocksInput, type MatchPhase } from "../match/MatchPhase.js";
+import { phaseLocksInput, phaseNeedsPhysicsStep, type MatchPhase } from "../match/MatchPhase.js";
 import { DEFAULT_ROUND_RULES, type RoundRules } from "../match/RoundRules.js";
 import { characterSnapshot, type CharacterSnapshot, type ReconcileBase, type SimState } from "../state/SimState.js";
 import {
@@ -1035,7 +1035,13 @@ export class RapierSimulation {
       // post-step bookkeeping runs this tick.
       if (character.grabFiredThisTick) this.resolveGrabInitiation(id);
     }
-    this.world.step();
+    // Grilling session, 2026-09: `world.step()` — the expensive part, Rapier's
+    // own collision/contact solve — only runs for COUNTDOWN/RUNNING
+    // (`phaseNeedsPhysicsStep`). `tickCount` still advances unconditionally
+    // below regardless: freezing it too, instead of just the physics step,
+    // is exactly the tick-epoch bug class M5 ticket 08 found live (see that
+    // predicate's own doc comment).
+    if (phaseNeedsPhysicsStep(phase)) this.world.step();
     this.tickCount += 1;
 
     // Each Character must finish moving — including any queued respawn —

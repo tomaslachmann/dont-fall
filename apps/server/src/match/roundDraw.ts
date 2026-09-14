@@ -42,7 +42,7 @@ export interface DrawContext {
 /**
  * Lists every published Track's id — retried with backoff exactly like
  * {@link fetchTrack} (code review: this used to be a bare, unretried
- * `fetch`, the one track-service call in this file that didn't match the
+ * `fetch`, the one the API call in this file that didn't match the
  * rest), each attempt bounded so one hung request can't eat the whole wait
  * budget on its own.
  */
@@ -60,11 +60,11 @@ const listTrackIds = async (
       return body.map((t) => t.id);
     } catch (err) {
       lastError = err;
-      console.warn(`DON'T FALL: track-service Track listing failed, retrying: ${(err as Error).message}`);
+      console.warn(`DON'T FALL: the API Track listing failed, retrying: ${(err as Error).message}`);
       await sleep(retryDelayMs);
     }
   }
-  throw new Error(`track-service unreachable listing Tracks at ${trackServiceUrl} (ADR 0028): ${(lastError as Error)?.message}`);
+  throw new Error(`the API unreachable listing Tracks at ${trackServiceUrl} (ADR 0028): ${(lastError as Error)?.message}`);
 };
 
 /** Fisher-Yates — every candidate order is equally likely, not just "not sorted." */
@@ -94,7 +94,7 @@ export const hasFinishZone = (fetched: FetchedTrack, library: Record<string, Mod
  */
 const drawUnusedTrackId = async (ctx: DrawContext): Promise<string> => {
   const pool = await listTrackIds(ctx.trackServiceUrl, ctx.trackFetchRetryOptions);
-  if (pool.length === 0) throw new Error("track-service has no published Tracks to draw from");
+  if (pool.length === 0) throw new Error("the API has no published Tracks to draw from");
   const unused = shuffled(pool.filter((id) => !ctx.usedTrackIds.has(id)));
   if (unused.length > 0) return unused[0]!;
   // Exhausted — start over rather than fail (ticket 05: "repeats rather

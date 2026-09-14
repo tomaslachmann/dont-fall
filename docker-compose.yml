@@ -1,17 +1,35 @@
-# Local dev for track-service (ADR 0028/0029) — the project's first Docker
-# usage. The ephemeral per-Match `apps/server` is unaffected: it stays a
-# manually-started process (ADR 0002/0011), not part of this compose file.
+# Local dev for the single API service (ADR 0058) — tracks, assets, auth,
+# and lobbies on one origin, one port. The ephemeral per-Match
+# `apps/server` is unaffected: it stays a manually-started process
+# (ADR 0002/0011), not part of this compose file.
 #
-#   docker compose up --build track-service
+#   docker compose up --build api
 #
 services:
-  track-service:
+  api:
     build:
       context: .
-      dockerfile: apps/track-service/Dockerfile
+      dockerfile: apps/api/Dockerfile
     ports:
       - "8081:8081"
+      # Lobby Match servers bind inside this range (`LOBBY_PORT_MIN/MAX`
+      # below) — Docker publishes only known ports, so an OS-ephemeral port
+      # would be unreachable from the browser and every brokered Lobby would
+      # die waiting for its welcome. Local (non-Docker) dev needs none of
+      # this: ephemeral ports on localhost just work.
+      - "51000-51099:51000-51099"
+    environment:
+      LOBBY_PORT_MIN: "51000"
+      LOBBY_PORT_MAX: "51099"
+      # Match-server service token for the betting open/settle calls (ticket
+      # 14). Local-dev default, overridable per environment — brokered Match
+      # servers share the process env, so no further wiring is needed. Never
+      # ship a real deployment on this default.
+      SERVICE_TOKEN: "${SERVICE_TOKEN:-local-dev-betting-token}"
     volumes:
+      # Deliberately the old volume name: the SQLite file inside keeps its
+      # path (`/data/track-service.sqlite`), so existing dev data survives
+      # the merge instead of starting on a fresh empty volume. (ADR 0058)
       - track-service-data:/data
 
 volumes:

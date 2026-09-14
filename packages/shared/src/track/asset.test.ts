@@ -248,6 +248,65 @@ describe("readAssetModel", () => {
     const norole = assemble([{ name: "mystery", mesh: 0 }], [[{ positions: TRI }]]);
     expect(() => readAssetModel(norole)).toThrow(/role/);
   });
+
+  describe("the node-name role fallback (M9 asset drop)", () => {
+    it("reads the role off the node name when extras.role is absent", () => {
+      // Both spellings this asset drop has shipped, one export to the next.
+      for (const [collision, visual] of [
+        ["Track_Straight_1x1_Collision", "Track_Straight_1x1_Visual"],
+        ["CollisionMesh", "VisualMesh"],
+        ["collision_mesh", "mesh-visual"],
+      ]) {
+        const model = readAssetModel(
+          assemble(
+            [
+              { name: collision!, mesh: 0 },
+              { name: visual!, mesh: 1 },
+            ],
+            [[{ positions: TRI }], [{ positions: TRI }]],
+          ),
+        );
+        expect(model.collision, collision).toHaveLength(1);
+        expect(model.visual, visual).toHaveLength(1);
+      }
+    });
+
+    it("matches whole words only — never a substring", () => {
+      // "collisions" and "precollision" are not the word "collision": a mesh
+      // is in or out of the world, never included on a near-miss.
+      for (const name of ["collisions", "precollision", "kollision", "visuals"]) {
+        const stray = assemble([{ name, mesh: 0 }], [[{ positions: TRI }]]);
+        expect(() => readAssetModel(stray), name).toThrow(/role/);
+      }
+    });
+
+    it("refuses a name carrying both words, or neither", () => {
+      const both = assemble([{ name: "Visual_Collision_Proxy", mesh: 0 }], [[{ positions: TRI }]]);
+      expect(() => readAssetModel(both)).toThrow(/role/);
+
+      const neither = assemble([{ name: "mystery", mesh: 0 }], [[{ positions: TRI }]]);
+      expect(() => readAssetModel(neither)).toThrow(/role/);
+    });
+
+    it("never overrides an explicit extras.role, and never rescues a wrong one", () => {
+      // Name says visual, the property says collision — the property wins,
+      // so no existing file can change meaning under this fallback.
+      const conflicting = assemble(
+        [
+          { name: "thing_Visual", role: "collision", mesh: 0 },
+          { name: "other", role: "visual", mesh: 1 },
+        ],
+        [[{ positions: TRI }], [{ positions: TRI }]],
+      );
+      expect(readAssetModel(conflicting).collision).toHaveLength(1);
+      expect(readAssetModel(conflicting).visual).toHaveLength(1);
+
+      // A typo'd property is an authoring error worth failing on — falling
+      // back to the name here would silently paper over it.
+      const typo = assemble([{ name: "thing_Collision", role: "collission" as "collision", mesh: 0 }], [[{ positions: TRI }]]);
+      expect(() => readAssetModel(typo)).toThrow(/role/);
+    });
+  });
 });
 
 describe("validateAssetModule", () => {

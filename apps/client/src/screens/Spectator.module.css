@@ -1,0 +1,198 @@
+/* 1j — you're out, so the frame is bordered in accent and the betting card owns the right.
+   Left column carries who you're following; the bean switcher lives along the bottom. */
+.screen {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.55fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: var(--df-space-5) var(--df-space-7);
+  align-items: start;
+}
+
+/* the "you are spectating" frame */
+.border {
+  box-shadow: inset 0 0 0 calc(var(--df-u) * 0.62) rgba(255, 210, 63, .55);
+  pointer-events: none;
+}
+
+.following {
+  justify-self: start;
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-5);
+  padding: var(--df-space-3) var(--df-space-6) var(--df-space-3) var(--df-space-3);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-plate-strong);
+  color: var(--df-color-on-brand);
+}
+.followMeta { display: flex; flex-direction: column; gap: var(--df-space-2); }
+.followKicker {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-accent);
+}
+.followName { font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display); }
+.sep { width: calc(var(--df-u) * .16); height: calc(var(--df-u) * 2.65); background: var(--df-color-on-brand-18); }
+.statLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  opacity: .65;
+}
+.statValue { font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display); }
+
+.tags { justify-self: start; display: flex; flex-wrap: wrap; gap: var(--df-space-3); }
+
+.feed {
+  place-self: center;
+  text-align: center;
+  font: var(--df-weight-display) var(--df-text-2xs) / 2 var(--df-font-mono);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand-60);
+}
+
+/* live betting ticker */
+.ticker {
+  align-self: end;
+  justify-self: start;
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-4);
+  width: 100%;
+  padding: var(--df-space-4) var(--df-space-6);
+  border-radius: var(--df-radius-row);
+  background: rgba(43, 27, 77, .6);
+  color: var(--df-color-on-brand);
+}
+.tickerText { display: flex; flex-direction: column; gap: var(--df-space-3); min-width: 0; }
+.tickerMain { font: var(--df-weight-label) var(--df-text-2xs) / 1.2 var(--df-font-ui); }
+.tickerSub {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  opacity: .6;
+}
+
+/* bean switcher */
+.switcher {
+  grid-column: 1 / -1;
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--df-space-5);
+  padding: var(--df-space-4);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-plate-strong);
+}
+/* Pills and beans are buttons now (shell PREV/NEXT/follow) — reset the
+   native chrome, keep the designed look. */
+.key {
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-3);
+  padding: var(--df-space-3) var(--df-space-5);
+  border: none;
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-on-brand-18);
+  font: inherit;
+  cursor: pointer;
+}
+.keyCap {
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 2);
+  aspect-ratio: 1;
+  border-radius: calc(var(--df-u) * .7);
+  background: var(--df-color-surface-0);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+}
+.keyLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-on-brand-80);
+}
+.beans { display: flex; align-items: center; gap: var(--df-space-4); }
+.bean {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  opacity: .6;
+  transition: transform var(--df-dur-up) var(--df-ease);
+}
+.bean:hover { opacity: 1; transform: translateY(var(--df-lift)); }
+.beanOn { opacity: 1; }
+
+/* A refused stake (broke, closed mid-tap) lands here, not a boundary — a
+   user error on one ticket, not a crashed screen. */
+.stakeFailed {
+  display: block;
+  margin-top: var(--df-space-3);
+  font: var(--df-weight-label) var(--df-text-3xs) / 1.4 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-danger);
+  text-align: center;
+}
+
+/* ---- betting card ---- */
+.bets {
+  grid-row: 1 / 4;
+  grid-column: 2;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
+  gap: var(--df-space-5);
+  min-height: 0;
+  padding: var(--df-space-6);
+  border-radius: calc(var(--df-u) * 2.65);
+  box-shadow: 0 var(--df-bevel-5) 0 var(--df-color-drop), var(--df-drop);
+}
+.betsHead { display: flex; align-items: center; justify-content: space-between; gap: var(--df-space-4); }
+.betsTitle { font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display); }
+.betsNote {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1.5 var(--df-font-ui);
+  color: var(--df-color-ink-55);
+  text-wrap: pretty;
+}
+
+.runners { display: flex; flex-direction: column; gap: var(--df-space-3); min-height: 0; overflow-y: auto; }
+.runner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-4) var(--df-space-5);
+  border: calc(var(--df-u) * .16) solid transparent;
+  border-radius: var(--df-radius-tile);
+  background: var(--df-color-surface-1);
+  text-align: left;
+}
+.picked { background: #FFF8E0; border-color: var(--df-color-accent); }
+.runnerText { display: flex; flex-direction: column; gap: var(--df-space-3); min-width: 0; }
+.runnerName { font: var(--df-weight-label) var(--df-text-xs) / 1.2 var(--df-font-ui); }
+.runnerForm {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-55);
+}
+.oddsWrap { display: flex; flex-direction: column; align-items: flex-end; gap: var(--df-space-3); }
+.odds { font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display); }
+.favourite { color: var(--df-color-brand); }
+.longshot { color: #FF5A3C; }
+.oddsTag { font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui); color: var(--df-color-ink-45); }
+
+.stakes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--df-space-3); }
+.stake {
+  padding: var(--df-space-4) 0;
+  border-radius: var(--df-radius-icon);
+  background: #F2EDFC;
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+}
+.stake:hover { background: var(--df-color-surface-2); }
+.stakeOn, .stakeOn:hover { background: var(--df-color-ink); color: var(--df-color-on-brand); }
+
+.balance { display: flex; align-items: center; justify-content: space-between; gap: var(--df-space-4); }
+.balanceLabel {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-45);
+}
+.balanceValue { font: var(--df-weight-display) var(--df-text-sm) / 1 var(--df-font-display); }

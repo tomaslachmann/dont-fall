@@ -1,0 +1,70 @@
+.app {
+  display: grid;
+  grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+  height: 100dvh;
+  color: var(--df-color-on-brand);
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-6);
+  padding: 1.25rem;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, .25);
+}
+
+.brand { display: flex; flex-direction: column; gap: .4rem; }
+.brandName { font: 700 1.25rem/1 var(--df-font-display); }
+.brandMeta {
+  font: 800 .625rem/1 var(--df-font-ui);
+  letter-spacing: .16em;
+  color: var(--df-color-on-brand-60);
+}
+
+.list { display: flex; flex-direction: column; gap: .25rem; }
+.item {
+  display: grid;
+  grid-template-columns: 1.4rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .5rem;
+  padding: .55rem .7rem;
+  border-radius: .5rem;
+  font: 900 .7rem/1.2 var(--df-font-ui);
+  letter-spacing: .04em;
+  text-align: left;
+  color: var(--df-color-on-brand-80);
+}
+.item:hover { background: var(--df-color-on-brand-10); color: var(--df-color-on-brand); }
+.active, .active:hover { background: var(--df-color-accent); color: var(--df-color-ink); }
+.itemId { opacity: .6; }
+.todo { font: 800 .55rem/1 var(--df-font-ui); opacity: .55; }
+
+.group { display: flex; flex-direction: column; gap: .5rem; }
+.groupLabel {
+  font: 800 .625rem/1 var(--df-font-ui);
+  letter-spacing: .16em;
+  color: var(--df-color-on-brand-60);
+}
+.segmented { display: flex; gap: .3rem; }
+.seg {
+  flex: 1;
+  padding: .5rem 0;
+  border-radius: .5rem;
+  background: var(--df-color-on-brand-10);
+  font: 900 .65rem/1 var(--df-font-ui);
+  color: var(--df-color-on-brand);
+}
+.segOn { background: var(--df-color-surface-0); color: var(--df-color-ink); }
+
+.viewport {
+  display: grid;
+  place-items: center;
+  padding: clamp(.75rem, 2.5vw, 2rem);
+  min-width: 0;
+}
+/* The stage is fluid: it takes the width it is given and keeps its aspect. */
+.frame {
+  width: 100%;
+  max-width: calc((100dvh - 4rem) * 16 / 9);
+}

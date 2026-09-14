@@ -20,7 +20,7 @@ import {
   PLAYGROUND_STATIC_SURFACES,
   PLAYGROUND_STATICS,
 } from "@dont-fall/shared/playground.js";
-import { startTrackService, type TrackService } from "@dont-fall/track-service";
+import { startApi, type ApiService } from "@dont-fall/api";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { startServer, type MatchServer } from "../matchServer.js";
@@ -81,13 +81,13 @@ import { startServer, type MatchServer } from "../matchServer.js";
  * zero.
  */
 
-// ADR 0028: startServer now fetches its Track from track-service; one shared
+// ADR 0028: startServer now fetches its Track from the API; one shared
 // instance for this file, via TRACK_SERVICE_URL (startServer's default reads it).
-let trackService: TrackService;
+let trackService: ApiService;
 
 beforeAll(async () => {
   await initPhysics();
-  trackService = await startTrackService({ port: 0, dbPath: ":memory:" });
+  trackService = await startApi({ port: 0, dbPath: ":memory:" });
   process.env.TRACK_SERVICE_URL = `http://localhost:${trackService.port}`;
 });
 

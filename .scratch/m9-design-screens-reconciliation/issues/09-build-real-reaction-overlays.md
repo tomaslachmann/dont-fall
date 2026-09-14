@@ -5,9 +5,28 @@
 simulation actually does — this is not a reskin.
 
 **Blocked by:** ticket 01 (plain-DOM-vs-React decision determines the implementation shape
-entirely).
+entirely) — decided, see ADR 0060.
 
-**Status:** planned
+**Status:** in progress — Hit-received landed (see below); Dash feedback,
+Ragdoll get-up, and Grab hold still pending.
+
+## Hit-received (landed)
+
+Fired off your own `hitReactEpoch` rising on the authoritative snapshot
+(`game/hitTaken.ts`, pure `detectHitTaken`, mirrored on the `runEnd`
+pattern); `onHitTaken` wired through the loop in `game/index.ts`;
+`HitFeedback.tsx` flashes in GameCanvas's `screenOverlay` slot for one beat
+(`HIT_FLASH_MS = 1000`, GO! cadence), keyed per landing so back-to-back Hits
+replay. Reads YOU GOT HIT, or KNOCKED DOWN when a fresh down episode with
+`ragdollCause "Hit"` lands (with the Hit edge in one gap, or the gap after
+— the landing and the deferred Ragdoll entry resolve on consecutive ticks,
+never the same one) — the only two things the sim says about an incoming
+Hit. Attacker name/avatar, direction wedge, damage, combo, and the
+stagger meter from the mock stay unbuilt per this ticket's own rule (no such
+mechanics exist); attacker attribution would need a protocol change
+(replicating the striker id) and is flagged as follow-up, not UI work.
+Live verification with two browsers still outstanding (sandbox denies
+binding sockets).
 
 ## Why
 

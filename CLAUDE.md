@@ -176,7 +176,9 @@ not yet built.
 - **Language:** TypeScript everywhere.
 - **Client rendering:** Three.js, hand-written game loop. No full engine (Unity/Godot/PlayCanvas).
 - **Physics:** Rapier (WASM). Same module on client and server.
-- **Server (from M2):** Node. Authoritative. One instance spun up on-demand per Match.
+- **Server (from M2):** Node. Authoritative. One instance (one `MatchRuntime` + `WebSocketServer`
+  pair, fully isolated simulation state) per Match — spun up on-demand, in-process by the API's
+  lobbies module rather than as a separate OS process (ADR 0054/0058).
 - **Screens (from M4):** React + `react-router`, code-split from the game module. HUD is plain DOM, not React. (ADR 0008)
 - **Monorepo:** pnpm workspaces.
 - **Client bundler:** Vite.
@@ -187,6 +189,9 @@ not yet built.
 packages/shared/   Simulation step, domain types, tuning constants. Runs on BOTH client and server.
 apps/client/       Three.js renderer, input, camera, prediction, interpolation.
 apps/server/       Authoritative match server (M2+). Imports the sim step from shared.
+apps/api/          The single always-on service (ADR 0058, Fastify): tracks, assets, auth, and
+                    lobbies on one origin (`:8081`), layered controller → service → DAO.
+                    Lobbies are real in-process apps/server instances (ADR 0054).
 docs/adr/          Architecture decision records. Read these before changing architecture.
 docs/milestones/   Milestone specs. Each is a checklist with a one-line "done" definition.
 CONTEXT.md         Glossary / ubiquitous language. Use these exact terms in code and docs.

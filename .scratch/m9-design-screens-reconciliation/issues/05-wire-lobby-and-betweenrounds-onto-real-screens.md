@@ -6,7 +6,11 @@ field the mocks invent that the real Lobby/Standings protocol doesn't carry.
 
 **Blocked by:** ticket 03 (design-token/component-kit reconciliation).
 
-**Status:** planned
+**Status:** partially superseded by ADR 0059 — the `MatchOver` half is done
+differently: instead of folding its visuals into `StandingsScreen` (now
+deleted), Match end moved to the fetched `/match/:matchId` page rendering
+`MatchOver` from persisted results. What remains is the `LobbyScreen` reskin
+half (and dropping the unbacked room-code/capacity/invite chips there).
 
 ## Why
 

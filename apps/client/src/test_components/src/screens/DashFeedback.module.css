@@ -1,0 +1,174 @@
+/* 1t — wind wraps the character, the FOV pushes in, charge pips burn down.
+   Wind arcs are one SVG scaled to the stage so they never need pixel coordinates. */
+.screen {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  gap: var(--df-space-5);
+  align-items: start;
+}
+
+.ability {
+  justify-self: start;
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-4) var(--df-space-6) var(--df-space-4) var(--df-space-4);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-plate-strong);
+  color: var(--df-color-on-brand);
+}
+.abilityText { display: flex; flex-direction: column; gap: var(--df-space-3); }
+.abilityName { font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui); }
+.abilityNote {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-speed-lite);
+}
+
+.speed {
+  justify-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--df-space-3);
+  padding: var(--df-space-5) var(--df-space-7);
+  border-radius: var(--df-radius-panel);
+  background: var(--df-color-plate);
+  color: var(--df-color-on-brand);
+  text-align: right;
+}
+.speedLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  opacity: .7;
+}
+.speedValue {
+  font: var(--df-weight-display) calc(var(--df-u) * 3.1) / 1 var(--df-font-display);
+  color: var(--df-color-speed-lite);
+}
+.speedUnit { font-size: .4em; opacity: .7; }
+
+/* character silhouette in the middle of the gust */
+.subject {
+  grid-column: 1 / -1;
+  place-self: center;
+  display: grid;
+  place-items: center;
+  width: min(23%, 100%);
+  aspect-ratio: 290 / 376;
+  border: var(--df-bevel-1) dashed var(--df-color-on-brand-35);
+  border-radius: 50%;
+  text-align: center;
+}
+.subjectCaption {
+  font: var(--df-weight-display) var(--df-text-3xs) / 1.8 var(--df-font-mono);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-on-brand-60);
+}
+
+.state {
+  grid-column: 1 / -1;
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-3) var(--df-space-6);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-plate-strong);
+  border: calc(var(--df-u) * .16) solid rgba(127, 227, 255, .6);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand);
+}
+.state svg { width: calc(var(--df-u) * 1.56); fill: var(--df-color-speed-lite); }
+
+/* charge readout, with the halo that pulses while it refills */
+.charge {
+  grid-column: 1 / -1;
+  justify-self: center;
+  position: relative;
+  display: grid;
+  grid-template-areas: 'charge';
+  width: min(29%, 100%);
+}
+.charge > * { grid-area: charge; }
+.halo {
+  margin: calc(var(--df-u) * -1.1);
+  border-radius: calc(var(--df-u) * 2.5);
+  background: var(--df-color-speed);
+  animation: df-charge 1.4s ease-in-out infinite;
+}
+.chargeCard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-4);
+  padding: var(--df-space-6) var(--df-space-7);
+  border-radius: var(--df-radius-panel);
+  background: rgba(43, 27, 77, .6);
+  color: var(--df-color-on-brand);
+}
+.chargeHead { display: flex; align-items: center; justify-content: space-between; gap: var(--df-space-4); }
+.chargeLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  opacity: .75;
+}
+.chargeKey { font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui); color: var(--df-color-speed-lite); }
+.pips { display: flex; gap: var(--df-space-3); }
+.pip {
+  flex: 1;
+  height: calc(var(--df-u) * 1.1);
+  border-radius: var(--df-radius-pill);
+  background: rgba(255, 255, 255, .22);
+}
+.pipOn { background: var(--df-color-speed); }
+.recharge {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  opacity: .6;
+}
+
+.feed {
+  grid-column: 1;
+  align-self: end;
+  justify-self: start;
+  font: var(--df-weight-display) var(--df-text-2xs) / 2 var(--df-font-mono);
+  letter-spacing: var(--df-tracking-wide);
+  color: rgba(255, 255, 255, .45);
+}
+
+/* ---- wind overlay ---- */
+.fx { display: grid; grid-template-areas: 'fx'; pointer-events: none; }
+.fx > * { grid-area: fx; width: 100%; height: 100%; }
+
+.fov {
+  background: radial-gradient(58% 54% at 52% 52%, transparent 42%, rgba(43,27,77,.62) 100%);
+  animation: df-fov-push 1.1s ease-in-out infinite;
+}
+.pull {
+  display: grid;
+  place-items: center;
+}
+.pullCore {
+  width: 35%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(127,227,255,.22), transparent 62%);
+  animation: df-wind-pull 1.1s ease-in-out infinite;
+}
+.arcs svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.arcs g { fill: none; stroke-linecap: round; }
+.arcWhite { stroke: rgba(255,255,255,.9); stroke-width: 7; animation: df-wind-arc 1.15s cubic-bezier(.2,.7,.2,1) infinite; }
+.arcCyan { stroke: rgba(127,227,255,.95); stroke-width: 6; animation: df-wind-arc 1.15s cubic-bezier(.2,.7,.2,1) .09s infinite; }
+.arcFaint { stroke: rgba(255,255,255,.55); stroke-width: 4; animation: df-wind-arc 1.15s cubic-bezier(.2,.7,.2,1) .18s infinite; }
+
+/* full-width speed streaks */
+.streaks { display: grid; align-content: center; gap: 8%; }
+.streak {
+  width: 100%;
+  height: calc(var(--df-u) * 4);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.75), transparent);
+  animation: df-wind-trail 1.15s cubic-bezier(.2,.7,.2,1) var(--df-fx-delay, 0s) infinite;
+}
+.streakCyan { height: calc(var(--df-u) * 3); background: linear-gradient(90deg, transparent, rgba(127,227,255,.8), transparent); }
+.streakThin { height: calc(var(--df-u) * 2); background: linear-gradient(90deg, transparent, rgba(255,255,255,.5), transparent); }

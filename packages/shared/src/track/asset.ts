@@ -117,6 +117,42 @@ const trsMatrix = (translation: [number, number, number], rotation: [number, num
 
 const IDENTITY_MAT4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
+/**
+ * Which half of the Asset a meshed node is (M9 asset drop): `extras.role` is
+ * the authoritative marker (ADR 0050, and what M8's four files carry), with
+ * the **node name** read as a fallback when the extra is absent entirely.
+ *
+ * The fallback exists because a Blender custom property is easy to lose — it
+ * doesn't survive a duplicate-and-rename, an object join, or a library
+ * override — while the name is right there in the outliner. It matches on
+ * whole words, not substrings, so every spelling one authoring pass to the
+ * next has produced reads the same: `Track_Straight_1x1_Collision`,
+ * `CollisionMesh`, `collision_mesh`, `Mesh-Visual`. Separators and camelCase
+ * both split.
+ *
+ * Deliberately narrow in three ways: `extras.role` always wins where it is
+ * present (so no existing file changes meaning), an *explicit but
+ * unrecognized* role fails rather than falling through to the name (a typo
+ * is an authoring error, not a reason to guess), and a name carrying **both**
+ * words — or neither — fails too. A mesh is in or out of the world; it is
+ * never included on a coin flip.
+ */
+const nodeRole = (extrasRole: unknown, name: string): "collision" | "visual" | null => {
+  if (extrasRole === "collision" || extrasRole === "visual") return extrasRole;
+  if (extrasRole !== undefined) return null;
+  const words = new Set(
+    name
+      // camelCase/PascalCase boundaries first, then every non-alphanumeric run.
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .split(/[^A-Za-z0-9]+/)
+      .map((word) => word.toLowerCase()),
+  );
+  const isCollision = words.has("collision");
+  const isVisual = words.has("visual");
+  if (isCollision === isVisual) return null; // both, or neither — ambiguous either way
+  return isCollision ? "collision" : "visual";
+};
+
 const applyMat4 = (m: number[], p: Vec3): Vec3 => ({
   x: m[0]! * p.x + m[4]! * p.y + m[8]! * p.z + m[12]!,
   y: m[1]! * p.x + m[5]! * p.y + m[9]! * p.z + m[13]!,
@@ -251,9 +287,11 @@ export const readAssetModel = (bytes: Uint8Array): AssetModel => {
     const local = node.matrix ?? trsMatrix(node.translation ?? [0, 0, 0], node.rotation ?? [0, 0, 0, 1], node.scale ?? [1, 1, 1]);
     const world = mulMat4(parentMatrix, local);
     if (node.mesh !== undefined) {
-      const role = node.extras?.role;
+      const role = nodeRole(node.extras?.role, name);
       const target = role === "collision" ? model.collision : role === "visual" ? model.visual : null;
-      if (!target) fail(`node "${name}" has a mesh but no recognized extras.role ("collision" or "visual")`);
+      if (!target) {
+        fail(`node "${name}" has a mesh but no recognized role — set extras.role to "collision"/"visual", or suffix the node name "_Collision"/"_Visual"`);
+      }
       const mesh = meshes[node.mesh];
       if (!mesh) fail(`node "${name}" references missing mesh ${node.mesh}`);
       const surfaceRaw = node.extras?.surface;

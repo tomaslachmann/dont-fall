@@ -1,0 +1,23 @@
+/* Chunky segmented switch — never a web toggle. */
+.group {
+  display: flex;
+  gap: var(--df-space-2);
+  padding: var(--df-space-1);
+  border-radius: var(--df-radius-icon);
+  background: var(--df-color-surface-2);
+}
+.opt {
+  padding: var(--df-space-3) var(--df-space-5);
+  border-radius: var(--df-radius-chip);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-ink-55);
+  transition: transform var(--df-dur-up) var(--df-ease);
+}
+.opt:hover { color: var(--df-color-ink); }
+.on {
+  background: var(--df-color-accent);
+  color: var(--df-color-ink);
+  box-shadow: 0 var(--df-bevel-1) 0 var(--df-color-accent-shade);
+  transform: translateY(calc(var(--df-u) * -0.08));
+}

@@ -20,7 +20,7 @@ describe("parseDraftTimeLimitMs", () => {
     expect(parseDraftTimeLimitMs("Infinity")).toBe(DEFAULT_TIME_LIMIT_MS);
   });
 
-  it("clamps a real but out-of-range number to what track-service will accept", () => {
+  it("clamps a real but out-of-range number to what the API will accept", () => {
     // A genuine typed value is clamped rather than discarded: the author meant
     // *something*, and the nearest legal clock beats a rejected publish.
     expect(parseDraftTimeLimitMs("1")).toBe(MIN_TIME_LIMIT_MS);

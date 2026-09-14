@@ -6,6 +6,7 @@ const player = (id: string, ready: boolean, joinOrder: number): LobbyPlayer => (
   nickname: `nick-${id}`,
   ready,
   joinOrder,
+  accountId: null,
 });
 
 describe("allReady", () => {

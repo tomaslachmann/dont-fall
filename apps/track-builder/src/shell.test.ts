@@ -21,3 +21,15 @@ describe("builder shell ids", () => {
     for (const id of queried) expect(provided.has(id), `index.html lacks #${id}`).toBe(true);
   });
 });
+
+describe("builder Playtest target (m8.1 ticket 04)", () => {
+  it("opens the free-roam session, not the match Lobby — one button, one purpose", () => {
+    const root = path.resolve(import.meta.dirname, "..");
+    const main = readFileSync(path.join(root, "src", "main.ts"), "utf8");
+
+    // The publish-first flow is unchanged (still `publishPlaytestTrack`);
+    // only the opened route changed: `&freeroam=1` is the free-roam boot.
+    expect(main).toMatch(/publishPlaytestTrack/);
+    expect(main).toMatch(/\/play\?track=.*&freeroam=1/);
+  });
+});

@@ -1,0 +1,19 @@
+/* Placeholder bean head: striped plastic disc. Swap for the real portrait render. */
+.avatar {
+  --df-avatar-size: calc(var(--df-u) * 3);
+  flex: none;
+  width: var(--df-avatar-size);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: repeating-linear-gradient(45deg,
+    var(--df-skin-a) 0 calc(var(--df-avatar-size) / 5.4),
+    var(--df-skin-b) calc(var(--df-avatar-size) / 5.4) calc(var(--df-avatar-size) / 2.7));
+  box-shadow: inset 0 calc(var(--df-avatar-size) * -0.08) 0 var(--df-color-ink-14);
+}
+.ringed { box-shadow: inset 0 calc(var(--df-avatar-size) * -0.08) 0 var(--df-color-ink-14), 0 0 0 var(--df-bevel-1) var(--df-avatar-ring); }
+
+.pink  { --df-skin-a: #FFB4DC; --df-skin-b: #FF8AC6; }
+.cyan  { --df-skin-a: var(--df-color-speed-lite); --df-skin-b: var(--df-color-speed); }
+.mint  { --df-skin-a: #8DF0CE; --df-skin-b: var(--df-color-go); }
+.gold  { --df-skin-a: #FFE491; --df-skin-b: var(--df-color-accent); }
+.grape { --df-skin-a: #C7A6F5; --df-skin-b: var(--df-color-brand-lite); }

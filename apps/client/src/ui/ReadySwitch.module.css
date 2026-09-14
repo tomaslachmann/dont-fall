@@ -1,0 +1,50 @@
+/* Big plastic ready switch — the one thing you press in a lobby. */
+.wrap { display: flex; align-items: center; gap: var(--df-space-6); }
+
+.switch {
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-6);
+  padding: var(--df-space-4) var(--df-space-7) var(--df-space-4) var(--df-space-4);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-go);
+  color: var(--df-color-go-ink);
+  box-shadow: 0 var(--df-bevel-4) 0 var(--df-color-go-shade);
+  transition: transform var(--df-dur-up) var(--df-ease), box-shadow var(--df-dur-up) var(--df-ease);
+}
+.off {
+  background: var(--df-color-plate);
+  color: var(--df-color-on-brand);
+  box-shadow: 0 var(--df-bevel-4) 0 rgba(0, 0, 0, .25);
+}
+.switch:hover { transform: translateY(var(--df-lift)); }
+.switch:active {
+  transform: translateY(var(--df-squash));
+  box-shadow: 0 0 0 var(--df-color-go-shade);
+}
+
+.track {
+  display: flex;
+  align-items: center;
+  width: calc(var(--df-u) * 5.9);
+  padding: calc(var(--df-u) * 0.31);
+  border-radius: var(--df-radius-pill);
+  background: rgba(14, 71, 54, .25);
+  justify-content: flex-end;
+}
+.off .track { background: rgba(0, 0, 0, .25); justify-content: flex-start; }
+.knob {
+  width: calc(var(--df-u) * 2.65);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--df-color-on-brand);
+  box-shadow: 0 var(--df-bevel-1) 0 rgba(14, 71, 54, .25);
+}
+.label { font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display); }
+
+.tally {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1.6 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-on-brand-80);
+}
+.hint { color: var(--df-color-accent); }

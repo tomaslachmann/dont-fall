@@ -1,0 +1,27 @@
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-3);
+  border-radius: var(--df-radius-tile);
+  background: #F2EDFC;
+}
+.btn {
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 3);
+  aspect-ratio: 1;
+  border-radius: calc(var(--df-u) * 1.1);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-1) 0 var(--df-color-ink-14);
+  transition: transform var(--df-dur-up) var(--df-ease);
+}
+.plus { background: var(--df-color-accent); box-shadow: 0 var(--df-bevel-1) 0 var(--df-color-accent-shade); }
+.btn:hover { transform: translateY(var(--df-lift)); }
+.btn:active { transform: translateY(var(--df-squash)); box-shadow: none; }
+.btn svg { width: 40%; fill: var(--df-color-ink); }
+.value {
+  min-width: calc(var(--df-u) * 2);
+  text-align: center;
+  font: var(--df-weight-display) var(--df-text-md) / 1 var(--df-font-display);
+}

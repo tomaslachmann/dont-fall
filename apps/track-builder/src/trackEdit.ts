@@ -232,7 +232,7 @@ export const rotateSegment = (
 ): Track => {
   assertIndexInRange("rotateSegment", track, index);
   // Defensive, not redundant: `track` isn't guaranteed already-settled — it
-  // may have come from `history.reset` (a Track loaded from track-service,
+  // may have come from `history.reset` (a Track loaded from the API,
   // possibly saved by a different, less careful caller than this module's
   // own edit functions).
   const segment = settleOne("rotateSegment", track, modules, index);

@@ -84,10 +84,10 @@ describe("buildRoundResult", () => {
     const result = buildRoundResult(
       { stayed: { finishTick: 90, checkpointIndex: 4, fallCount: 0 } },
       [
-        { id: "stayed", nickname: "Stayed", ready: true, joinOrder: 0 },
-        { id: "left", nickname: "Left", ready: true, joinOrder: 1 },
+        { id: "stayed", nickname: "Stayed", ready: true, joinOrder: 0, accountId: null },
+        { id: "left", nickname: "Left", ready: true, joinOrder: 1, accountId: null },
       ],
-      [{ id: "left", nickname: "Left" }],
+      [{ id: "left", nickname: "Left", accountId: null }],
     );
 
     expect(result.rows.map((r) => r.id)).toEqual(["stayed"]);

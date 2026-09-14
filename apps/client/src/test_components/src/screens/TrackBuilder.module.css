@@ -1,0 +1,124 @@
+/* 1g — a creative game tool, not CAD. Floating plastic islands over a grid canvas:
+   tool rail left, toolbar top, parts tray right, playtest bar bottom. */
+.screen {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--df-space-6);
+  align-items: start;
+}
+
+/* the grid paper canvas */
+.grid {
+  background:
+    repeating-linear-gradient(0deg, rgba(123, 63, 228, .07) 0 1px, transparent 1px calc(var(--df-u) * 3.1)),
+    repeating-linear-gradient(90deg, rgba(123, 63, 228, .07) 0 1px, transparent 1px calc(var(--df-u) * 3.1));
+  pointer-events: none;
+}
+
+.tools {
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-4);
+  padding: var(--df-space-5);
+  border-radius: calc(var(--df-u) * 2.2);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-4) 0 rgba(43, 27, 77, .18);
+}
+.tool {
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 4.4);
+  aspect-ratio: 1;
+  border-radius: var(--df-radius-icon);
+  background: #F2EDFC;
+  transition: transform var(--df-dur-up) var(--df-ease);
+}
+.tool:hover { transform: translateY(var(--df-lift)); }
+.tool:active { transform: translateY(var(--df-squash)); box-shadow: none; }
+.tool svg { width: 44%; fill: none; stroke: var(--df-color-brand); stroke-width: 2.6; stroke-linecap: round; }
+.toolOn { background: var(--df-color-brand); box-shadow: 0 var(--df-bevel-2) 0 #5A28B0; }
+.toolOn svg { stroke: var(--df-color-on-brand); }
+.toolDanger { background: #FFE9E4; }
+.toolDanger svg { stroke: #FF5A3C; }
+.toolRule { height: calc(var(--df-u) * .16); margin-inline: var(--df-space-2); background: var(--df-color-surface-2); }
+
+.toolbar {
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--df-space-4);
+  padding: var(--df-space-4) var(--df-space-5);
+  border-radius: calc(var(--df-u) * 2.05);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-4) 0 rgba(43, 27, 77, .18);
+}
+.chip {
+  padding: var(--df-space-4) var(--df-space-5);
+  border-radius: var(--df-radius-chip);
+  background: #F2EDFC;
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+}
+.chip:hover { background: var(--df-color-surface-2); }
+.chipOn, .chipOn:hover { background: var(--df-color-go); color: var(--df-color-go-ink); }
+.toolbarRule { width: calc(var(--df-u) * .16); height: calc(var(--df-u) * 2.05); background: var(--df-color-surface-2); }
+
+.viewport {
+  grid-column: 1 / -1;
+  place-self: center;
+  text-align: center;
+  font: var(--df-weight-display) var(--df-text-2xs) / 2 var(--df-font-mono);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-ink-35);
+}
+
+/* parts tray */
+.tray {
+  grid-column: 3;
+  grid-row: 2;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-5);
+  width: calc(var(--df-u) * 17);
+  padding: var(--df-space-6);
+  border-radius: calc(var(--df-u) * 2.2);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-4) 0 rgba(43, 27, 77, .18);
+}
+.trayTitle { font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display); }
+.parts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--df-space-4); }
+.part {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border-radius: var(--df-radius-icon);
+  font: var(--df-weight-label) var(--df-text-3xs) / 1.2 var(--df-font-ui);
+  color: var(--df-color-ink-70);
+  text-align: center;
+  box-shadow: 0 var(--df-bevel-2) 0 var(--df-color-ink-14);
+  transition: transform var(--df-dur-up) var(--df-ease);
+}
+.part:hover { transform: translateY(var(--df-lift)); }
+.part:active { transform: translateY(var(--df-squash)); box-shadow: none; }
+
+.playtest {
+  grid-column: 1 / -1;
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--df-space-4);
+  padding: var(--df-space-4);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-4) 0 rgba(43, 27, 77, .18);
+}
+.pieceCount {
+  padding-inline: var(--df-space-5);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-55);
+}

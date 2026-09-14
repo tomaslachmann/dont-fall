@@ -6,23 +6,30 @@
   inset: 0;
 }
 
-.notice {
+/* Designed match screens (Countdown, BetweenRounds, MatchOver) render over
+   the still-mounted game — the sim keeps running underneath and is never
+   torn down for a phase change. */
+.screenOverlay {
   position: fixed;
   inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--df-space-4);
-  padding: var(--df-space-6);
-  text-align: center;
-  color: var(--df-color-ink-primary);
-  background: var(--df-color-surface-0);
+  overflow-y: auto;
 }
+
+/* A practice boot that rejects is a Track that never loaded — no
+   connection exists to blame (m8.1: a Track load error, not a connection
+   error), so the local banner stays instead of the app-wide boundary. */
+.notice {
+  position: fixed;
+  left: 50%;
+  bottom: var(--df-space-6);
+  transform: translateX(-50%);
+  padding: var(--df-space-3);
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: var(--df-radius-standard);
+}
+
 .detail {
-  color: var(--df-color-ink-secondary);
-  font-size: var(--df-type-label);
-  max-width: 60ch;
+  opacity: 0.8;
 }
 
 /* Shown over the game's own frozen last frame and HUD message on exit

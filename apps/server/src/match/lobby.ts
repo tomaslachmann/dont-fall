@@ -28,6 +28,22 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
   // Lobby interactions (M4 ticket 07, ADR 0040) — nickname/ready/Track
   // pick/start, all travelling this same socket, no second transport.
 
+  if (message.type === "auth" && typeof message.token === "string" && message.token.length > 0) {
+    // M9 ticket 11 phase 2b: bind this connection to its Account. Async by
+    // necessity (an API round trip), so the bind lands after this handler
+    // returns — guarded on both ends: a resolution for a Player who left
+    // while it was in flight binds nothing, and a null (invalid token,
+    // down API) leaves the seat anonymous instead of closing it. Latest
+    // send wins.
+    const token = message.token;
+    void rt.accounts.resolveAccount(token).then((accountId) => {
+      if (accountId === null) return;
+      const player = rt.lobbyPlayers.get(id);
+      if (player) player.accountId = accountId;
+    });
+    return true;
+  }
+
   if (message.type === "setNickname" && typeof message.nickname === "string") {
     // A nickname is cosmetic, never a start gate — any connected Player
     // may send this at any time, in any phase. An empty result after
@@ -169,7 +185,7 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
     // left unpicked, kicked off now rather than awaited here — Round 1 is
     // about to play with whatever's already loaded regardless, and by the
     // time it ends this draw has almost always long since finished. Not
-    // awaited: a slow track-service must not delay the Countdown the host
+    // awaited: a slow the API must not delay the Countdown the host
     // just asked for.
     rt.matchStructurePromise = rt.buildMatchStructure();
     return true;

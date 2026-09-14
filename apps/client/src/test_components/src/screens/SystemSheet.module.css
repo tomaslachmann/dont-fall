@@ -1,0 +1,108 @@
+/* 1h — the system, on one page. Reads the same --df-* tokens everything else does,
+   so it can never drift from the real thing. */
+.screen {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--df-space-5) var(--df-space-6);
+}
+
+.head { grid-column: 1 / -1; display: flex; align-items: baseline; gap: var(--df-space-5); flex-wrap: wrap; }
+.title { font: var(--df-weight-display) var(--df-text-lg) / 1 var(--df-font-display); }
+.sub {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-ink-55);
+}
+
+.col { display: flex; flex-direction: column; gap: var(--df-space-5); min-height: 0; overflow-y: auto; }
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-4);
+  padding: var(--df-space-6);
+  border-radius: calc(var(--df-u) * 2.05);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-3) 0 var(--df-color-shadow);
+}
+.blockTitle {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-ink-45);
+}
+
+/* ---- color ---- */
+.swatches { display: flex; flex-direction: column; gap: var(--df-space-3); }
+.swatch {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--df-space-4);
+}
+.chipColor {
+  width: calc(var(--df-u) * 2.8);
+  aspect-ratio: 1;
+  border-radius: var(--df-radius-chip);
+  box-shadow: 0 var(--df-bevel-1) 0 var(--df-swatch-shade, var(--df-color-ink-14));
+}
+.swatchName { font: var(--df-weight-label) var(--df-text-2xs) / 1.2 var(--df-font-ui); }
+.swatchUse {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1.3 var(--df-font-ui);
+  color: var(--df-color-ink-55);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+/* ---- type ---- */
+.typeRow { display: flex; align-items: baseline; justify-content: space-between; gap: var(--df-space-4); }
+.specimenDisplay { font: var(--df-weight-display) var(--df-text-md) / 1 var(--df-font-display); }
+.specimenLabel { font: var(--df-weight-label) var(--df-text-xs) / 1 var(--df-font-ui); letter-spacing: var(--df-tracking-label); }
+.specimenKicker {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+}
+.spec {
+  font: var(--df-weight-display) var(--df-text-3xs) / 1.4 var(--df-font-mono);
+  color: var(--df-color-ink-45);
+  white-space: nowrap;
+}
+
+/* ---- bevel ladder ---- */
+.bevels { display: flex; align-items: flex-end; gap: var(--df-space-4); }
+.bevelChip {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border-radius: var(--df-radius-icon);
+  background: var(--df-color-accent);
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+}
+
+/* ---- radius ladder ---- */
+.radii { display: flex; align-items: center; gap: var(--df-space-4); }
+.radiusChip {
+  flex: 1;
+  aspect-ratio: 1;
+  background: var(--df-color-surface-2);
+  border: calc(var(--df-u) * .16) solid var(--df-color-brand);
+}
+
+/* ---- motion ---- */
+.motion { display: flex; flex-direction: column; gap: var(--df-space-4); }
+.motionRow { display: flex; align-items: center; justify-content: space-between; gap: var(--df-space-4); }
+.motionName { font: var(--df-weight-label) var(--df-text-2xs) / 1.2 var(--df-font-ui); }
+.motionSpec {
+  font: var(--df-weight-display) var(--df-text-3xs) / 1.4 var(--df-font-mono);
+  color: var(--df-color-ink-45);
+}
+
+/* ---- rules ---- */
+.rules { display: flex; flex-direction: column; gap: var(--df-space-4); }
+.rule { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--df-space-4); align-items: baseline; }
+.ruleYes { font: var(--df-weight-label) var(--df-text-2xs) / 1.4 var(--df-font-ui); color: var(--df-color-go-shade); }
+.ruleNo { font: var(--df-weight-label) var(--df-text-2xs) / 1.4 var(--df-font-ui); color: var(--df-color-danger); }
+.ruleText { font: var(--df-weight-kicker) var(--df-text-2xs) / 1.5 var(--df-font-ui); text-wrap: pretty; }
+
+/* ---- buttons demo ---- */
+.buttons { display: flex; flex-direction: column; gap: var(--df-space-4); }

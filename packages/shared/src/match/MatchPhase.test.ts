@@ -4,6 +4,7 @@ import {
   advanceMatchPhase,
   countdownMsLeft,
   phaseLocksInput,
+  phaseNeedsPhysicsStep,
   type MatchPhaseInputs,
   type MatchState,
 } from "./MatchPhase.js";
@@ -19,6 +20,23 @@ describe("phaseLocksInput", () => {
     expect(phaseLocksInput("RUNNING")).toBe(false);
     expect(phaseLocksInput("ROUND_END")).toBe(true);
     expect(phaseLocksInput("RESULTS")).toBe(true);
+  });
+});
+
+describe("phaseNeedsPhysicsStep (grilling session, 2026-09)", () => {
+  it("only COUNTDOWN and RUNNING need world.step() — everywhere else nobody's input is unlocked anyway", () => {
+    expect(phaseNeedsPhysicsStep("LOBBY")).toBe(false);
+    expect(phaseNeedsPhysicsStep("COUNTDOWN")).toBe(true);
+    expect(phaseNeedsPhysicsStep("RUNNING")).toBe(true);
+    expect(phaseNeedsPhysicsStep("ROUND_END")).toBe(false);
+    expect(phaseNeedsPhysicsStep("RESULTS")).toBe(false);
+  });
+
+  it("every phase where physics is unneeded already has input locked — pausing world.step() there never changes what a Player could have driven", () => {
+    for (const phase of ["LOBBY", "ROUND_END", "RESULTS"] as const) {
+      expect(phaseNeedsPhysicsStep(phase)).toBe(false);
+      expect(phaseLocksInput(phase)).toBe(true);
+    }
   });
 });
 

@@ -1,7 +1,7 @@
 import { loadAssetLibrary, type Module } from "@dont-fall/shared";
 
 /**
- * Fetches every asset Module's bytes through track-service and shapes the
+ * Fetches every asset Module's bytes through the API and shapes the
  * asset half of the Module library (M8 ticket 02, ADR 0050 as amended).
  * Called once at boot — fetch-once-per-loader, so a mid-Match art edit
  * cannot split this server from the world it already built. (The documented

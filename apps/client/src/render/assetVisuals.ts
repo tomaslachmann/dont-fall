@@ -72,7 +72,7 @@ export const parseAssetVisual = async (moduleId: string, bytes: Uint8Array): Pro
 };
 
 /**
- * Fetch every asset Module's visual template through track-service (M8 ticket
+ * Fetch every asset Module's visual template through the API (M8 ticket
  * 03, ADR 0050 as amended — fetched at track load, never bundled).
  * `fetchBytes`/`baseUrl` are injected, not game-hardcoded: ticket 05 reuses
  * this pattern through its own fetch. The URL is derived from the id via the

@@ -39,11 +39,11 @@ import {
 } from "@dont-fall/shared";
 import { loadCharacterModel } from "../render/characterModel.js";
 import { assetPlacements, loadAssetVisuals } from "../render/assetVisuals.js";
-import { awaitWelcome, resolveEndpoints } from "../lib/connection.js";
+import { awaitWelcome, resolveEndpoints } from "../lib/socket/connection.js";
 import { createHud } from "../hud/hud.js";
 import { formatHudText } from "../hud/hudText.js";
 import { FreeLookCamera, KeyboardInput } from "../input/input.js";
-import { listen } from "../lib/listeners.js";
+import { listen } from "../lib/socket/listeners.js";
 import { startPracticeGame } from "./practice.js";
 import type { PracticeSnapshot } from "./practice.js";
 import { createTrackLoading } from "./trackLoading.js";
@@ -51,12 +51,21 @@ import { createStage } from "../render/scene.js";
 import { NetMetrics } from "../net/netMetrics.js";
 import { PropPredictionController, graceTicksForRtt } from "../net/propPrediction.js";
 import { matchBanner } from "../hud/matchBanner.js";
-import { isMatchSpectator, isSpectating, livingIds, SpectatorController } from "./spectator.js";
+import {
+  isMatchSpectator,
+  isSpectating,
+  livingIds,
+  SpectatorController,
+  type SpectateSnapshot,
+} from "./spectator.js";
+import { detectHitTaken, type HitBaseline, type HitTakenEvent } from "./hitTaken.js";
+import { detectRunEnd, type RunEndEvent } from "./runEnd.js";
 import { PredictionLoop } from "../net/predictionLoop.js";
-import { formatRoundClock } from "../lib/roundTimer.js";
+import { formatRoundClock } from "../lib/utils/roundTimer.js";
 import { SnapshotInterpolator } from "../net/snapshotInterpolation.js";
-import { createTeardown, type Teardown } from "../lib/teardown.js";
+import { createTeardown, type Teardown } from "../lib/utils/teardown.js";
 import { TimeSync } from "../net/timeSync.js";
+import { toLobbySnapshot, type LobbyConnection, type LobbySnapshot } from "../lib/socket/lobbyConnection.js";
 
 /**
  * Cap on the per-frame delta fed to the Character model's animation/facing
@@ -69,63 +78,6 @@ const MAX_ANIMATION_DELTA_MS = 100;
 
 /** Why the game stopped being playable and handed control back to the shell. */
 export type ExitReason = "disconnected";
-
-/**
- * The Lobby as this client currently sees it (M4 ticket 07, ADR 0040) — a
- * read of the snapshot's own `lobby`/`trackId`/`trackRevision` fields, plus
- * `myId` so a Lobby Screen can tell "you" apart without threading the
- * `WelcomeMessage` through separately. Rendered, never computed: `hostId`
- * reassigns itself the instant the server sees the original host disconnect.
- *
- * Carries `phase` too, not just while it's LOBBY: a Lobby Screen overlaying
- * `<GameCanvas>` needs to know the instant the Match leaves LOBBY so it can
- * unmount itself, same as the Countdown overlay's own read of `phase`
- * (ADR 0040) — folding it in here means one dedupe against the snapshot
- * rate covers both "the roster changed" and "the phase changed."
- */
-export interface LobbySnapshot {
-  myId: string;
-  phase: MatchPhase;
-  hostId: string | undefined;
-  players: LobbyPlayer[];
-  trackId: string;
-  trackRevision: number;
-  /**
-   * The currently-loaded Track's Time Limit (ADR 0038: "the Lobby only ever
-   * reads" it) — this IS `SnapshotMessage.timeLeftMs`, which already holds at
-   * the full clock until the Round is RUNNING, so it needs no separate
-   * "authored Time Limit" field of its own.
-   */
-  timeLimitMs: number;
-  /**
-   * The Round type this Lobby will start, and how many survivors a Survival
-   * Round here would run to (M5 ticket 07) — both shown before the start, so
-   * nobody learns what kind of Round they're in by falling into it.
-   *
-   * `survivorTarget` is the Track's own authored default under whatever this
-   * Match overrides (it is read straight off the snapshot's `roundRules`,
-   * the same resolved record the simulation runs by) — never re-derived
-   * here, and meaningless while `roundType` is `"race"`.
-   */
-  roundType: RoundType;
-  survivorTarget: number;
-  /**
-   * Why the host can't start on this Track, in words to show, or `undefined`
-   * when they can (M5 ticket 07). The server's own answer, rendered — the
-   * client never computes a second opinion about a gate it doesn't enforce.
-   */
-  startBlockedReason: string | undefined;
-  /** How many Rounds this Match will run (M7 ticket 05, ADR 0049) — the host's own setting. */
-  matchLength: number;
-  /**
-   * The host's own picks for Rounds after the one about to start (M7 ticket
-   * 05) — `roundPicks[i]` is Round `i + 2`'s pick; Round 1 is `trackId`/
-   * `roundType` above, with its own pick mechanism. `null` in either field
-   * means "the server draws this" — never the drawn answer itself, which
-   * stays unknown to every client until that Round actually starts.
-   */
-  roundPicks: { trackId: string | null; roundType: RoundType | null }[];
-}
 
 /**
  * One Player's running Match total, ready to render (M7 ticket 06, ADR
@@ -176,10 +128,26 @@ export interface StandingsSnapshot {
 export interface GameConfig {
   /** Element the canvas and HUD are mounted into. The game empties it again on `stop`. */
   mount: HTMLElement;
-  /** Host serving the Match server and track-service. Defaults to the host serving the page. */
+  /** Host serving the Match server and the API. Defaults to the host serving the page. */
   host?: string;
   /** A specific Track to play — Track Builder's Playtest (ADR 0028). Omitted: whatever the server chose. */
   trackId?: string;
+  /**
+   * The port of the Lobby the lobby broker sent this Player to (ADR 0054).
+   * Every brokered Lobby binds an ephemeral port, so the shell must name
+   * one; omitted, this falls back to the fixed-port standalone Match server
+   * `scripts/dev.sh` still starts for a single-Lobby test.
+   */
+  serverPort?: number;
+  /**
+   * A live shell-owned connection to boot on top of (ADR 0056) — the same
+   * socket the Lobby Screen already used, so Player identity (`welcome`)
+   * survives the LOBBY → COUNTDOWN handoff instead of rejoining as a
+   * stranger on a second socket. When present, `serverPort`/`trackId` are
+   * ignored (the socket is already open) and the game never closes it —
+   * the shell still owns that lifetime.
+   */
+  connection?: LobbyConnection;
   /**
    * Free-roam practice instead of a Match (m8.1): the Track simulated
    * locally, no socket, no Lobby, no Rounds. Requires `trackId` — with no
@@ -231,6 +199,27 @@ export interface GameConfig {
    * snapshot-rate firehose.
    */
   onStandings?: (snapshot: StandingsSnapshot) => void;
+  /**
+   * Raised once per Round when your own run ends mid-Round (ticket 14) — a
+   * race finish or a Survival elimination. The FinishedOrOut verdict's
+   * facts, off the authoritative snapshot: placement among the field as the
+   * server sees it, never the local prediction's guess.
+   */
+  onRunEnd?: (event: RunEndEvent) => void;
+  /**
+   * Raised every time your own Character takes a Hit mid-Round (M9 ticket
+   * 09, Hit-received) — off your `hitReactEpoch` rising on the authoritative
+   * snapshot, never the local prediction. The HitFeedback flash's facts:
+   * whether this landing knocked you down with it.
+   */
+  onHitTaken?: (event: HitTakenEvent) => void;
+  /**
+   * Raised whenever Spectator Mode's facts change (ticket 14) — who the
+   * camera follows, who is still racing, whether FREE CAM holds the pose —
+   * and once with `null` when spectating stops. The Spectator panel's feed,
+   * deduped against the frame rate like `onLobbyState`.
+   */
+  onSpectate?: (snapshot: SpectateSnapshot | null) => void;
 }
 
 export interface GameHandle {
@@ -268,11 +257,34 @@ export interface GameHandle {
    * at Match end, only this Round's own confirmation between Rounds.
    */
   standingsReady: () => void;
+  /**
+   * Follows one bean exactly (ticket 14) — the Spectator panel's bean
+   * buttons. Ignored for anyone not still racing, and outside Spectator
+   * Mode entirely: with nobody to follow there is nothing to aim at.
+   */
+  spectateFollow: (playerId: string) => void;
+  /** Steps to the next living bean — the shell NEXT pill's half of the cycle key. */
+  spectateNext: () => void;
+  /** Steps back — the shell PREV pill's half. */
+  spectatePrev: () => void;
+  /**
+   * Holds (or releases) the camera's pose (ticket 14) — FREE CAM looks
+   * around from where the follow was released instead of tracking. Any
+   * follow resumes tracking and reports back through `onSpectate`.
+   */
+  setFreeCam: (on: boolean) => void;
+  /**
+   * Asks to spectate as a finisher (ticket 14) — the verdict's SPECTATE on
+   * a finished run. Elimination spectates unasked; a finisher opts in, and
+   * only a finisher: anything else (or anything outside RUNNING) ignores
+   * it. Lasts until the Round ends.
+   */
+  enterSpectate: () => void;
 }
 
 /**
  * Boot the game. Resolves once it is running and rendering; rejects if it
- * could not start (server unreachable, track-service unreachable, a
+ * could not start (server unreachable, the API unreachable, a
  * missing/invalid Revision) — having released whatever it had already
  * acquired, so a failed start leaks nothing either.
  */
@@ -296,20 +308,33 @@ export const startGame = async (config: GameConfig): Promise<GameHandle> => {
 };
 
 const boot = async (
-  { mount, host, trackId, onExit, onLobbyState, onStandings }: GameConfig,
+  { mount, host, trackId, serverPort, connection, onExit, onLobbyState, onStandings, onRunEnd, onHitTaken, onSpectate }: GameConfig,
   teardown: Teardown,
 ): Promise<GameHandle> => {
   const hud = createHud(mount);
   teardown.add(() => hud.dispose());
-  hud.setText("DON'T FALL — M2 · connecting to server…");
+  // Borrowed socket (ADR 0056) is already open — the wait is the world
+  // loading, not the connection. Says so, so a handoff mid-Countdown reads
+  // honestly instead of claiming to connect.
+  hud.setText(connection === undefined ? "DON'T FALL — M2 · connecting to server…" : "DON'T FALL — loading…");
 
   const [, characterModel] = await Promise.all([initPhysics(), loadCharacterModel()]);
 
-  const endpoints = resolveEndpoints(host ?? location.hostname, trackId);
-  const socket = new WebSocket(endpoints.matchServerUrl);
-  teardown.add(() => socket.close());
+  // A shell-owned connection (ADR 0056) arrives with its socket already open
+  // and its welcome already consumed — dial only when the game owns the
+  // lifetime itself (standalone/`?track=` playtest, practice excluded above).
+  // A borrowed socket is never closed here; the shell still owns it.
+  const socket =
+    connection?.socket ??
+    new WebSocket(
+      resolveEndpoints(host ?? location.hostname, {
+        ...(trackId === undefined ? {} : { trackId }),
+        ...(serverPort === undefined ? {} : { matchServerPort: serverPort }),
+      }).matchServerUrl,
+    );
+  if (connection === undefined) teardown.add(() => socket.close());
 
-  const welcome = await awaitWelcome(socket);
+  const welcome = connection?.welcome ?? (await awaitWelcome(socket));
 
   let serverInterp = new SnapshotInterpolator();
   serverInterp.setSnapshotHz(welcome.config.snapshotHz);
@@ -411,13 +436,42 @@ const boot = async (
    * a joiner anyway, so the first frame before any snapshot is honest.
    */
   let phase: MatchPhase = "LOBBY";
-  let countdownMsLeft = 0;
   /**
    * Who this client follows in Spectator Mode (M7 ticket 07) — the client's
    * own choice, never sent anywhere. Reset the moment spectating ends, so no
    * stale target survives into the next Round.
    */
   const spectator = new SpectatorController();
+  /**
+   * Ticket 14's shell surface — everything below is frame-loop or snapshot
+   * state for the run-end verdict and the Spectator panel, never sim state:
+   * - `roundStartedAtServerMs` anchors both stopwatches (race time,
+   *   survived) to the server's own clock, set on RUNNING entry.
+   * - `wasFinished`/`wasEliminated` are the previous snapshot's edges;
+   *   `runEndFired` keeps the verdict to once per Round.
+   * - `lastHitEpochs` is the previous snapshot's Hit baseline (`null` before
+   *   the first sighting each Round) — the HitFeedback flash fires off its
+   *   edge, unlike the verdict it may fire many times per Round.
+   * - `spectateRequested` is a finisher's SPECTATE (the verdict's button) —
+   *   elimination spectates unasked, a finisher opts in.
+   * - `freeCamOn`/`freeCamPose` hold the camera's pose (FREE CAM); any
+   *   follow — bean button, cycle key, shell step — resumes tracking.
+   * - `followRequest`/`shellSpectateSteps`/`shellSpectateBacks` are the
+   *   handle's one-frame inbox, drained by the loop like the keyboard's.
+   */
+  let roundStartedAtServerMs = 0;
+  let wasFinished = false;
+  let wasEliminated = false;
+  let runEndFired = false;
+  let lastHitEpochs: HitBaseline | null = null;
+  let spectateRequested = false;
+  let freeCamOn = false;
+  let freeCamPose: Vec3 | null = null;
+  let followRequest: string | null = null;
+  let shellSpectateSteps = 0;
+  let shellSpectateBacks = 0;
+  let lastSpectateJson: string | null = null;
+  let lastRoundIsSurvival = false;
   /** Latest Lobby roster, id → nickname — names the followed Player on the banner. */
   let playerNames: Record<string, string> = {};
   /**
@@ -536,6 +590,12 @@ const boot = async (
   // `awaitWelcome` above already consumed the one-time `welcome` — a Match
   // server sends exactly one per connection (ADR 0024) — so this handler only
   // ever sees `pong`/`snapshot` from here on.
+  //
+  // Attached long after connecting (Track fetch, stage build), so in an idle
+  // phase the join-push is already gone — ask for the current state outright
+  // (ADR 0057's `sync`; the next tick pushes). `sendLobbyMessage` is defined
+  // below, hence the inline send here.
+  if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
   teardown.add(
     listen(socket, "message", (event) => {
       const message = JSON.parse((event as MessageEvent<string>).data) as ServerMessage;
@@ -550,6 +610,17 @@ const boot = async (
         // rate that is a visible step of at most one tenth of a second on a
         // display that only shows whole seconds.
         timeLeftMs = message.timeLeftMs;
+        // Ticket 14: RUNNING entry anchors the run stopwatches to the
+        // server's own clock and re-arms the once-per-Round verdict — `phase`
+        // below still holds the previous phase here, which is what makes
+        // this an entry edge rather than a level.
+        if (message.phase === "RUNNING" && phase !== "RUNNING") {
+          roundStartedAtServerMs = message.serverTimeMs;
+          runEndFired = false;
+          wasFinished = false;
+          wasEliminated = false;
+          lastHitEpochs = null;
+        }
         phase = message.phase;
         // The server's own resolved RoundRules (M5 ticket 02, ADR 0041) —
         // adopted every snapshot, same cadence as `phase`, so this client's
@@ -557,25 +628,59 @@ const boot = async (
         // rather than its own construction-time guess at the Track's bare
         // default (which a Match-level override can disagree with).
         localSim.syncRoundRules(message.roundRules);
-        countdownMsLeft = message.countdownMsLeft;
         playerNames = Object.fromEntries(message.lobby.players.map((player) => [player.id, player.nickname]));
+        lastRoundIsSurvival = message.roundRules.fallBehavior === "eliminate";
+        // Ticket 14: your run ended mid-Round — the verdict's facts, raised
+        // once, off this exact snapshot. Outside RUNNING the edges re-sync
+        // silently instead, so a late snapshot can't verdict a Round already
+        // over, and the next RUNNING entry above re-arms everything anyway.
+        if (message.phase === "RUNNING") {
+          const myChar = message.state.characters[myId];
+          if (onRunEnd && !runEndFired && myChar !== undefined) {
+            const elapsed = message.serverTimeMs - roundStartedAtServerMs;
+            const event = detectRunEnd({
+              wasFinished,
+              wasEliminated,
+              character: myChar,
+              characters: message.state.characters,
+              myId,
+              raceTimeMs: elapsed,
+              survivedMs: elapsed,
+            });
+            if (event) {
+              runEndFired = true;
+              onRunEnd(event);
+            }
+          }
+          wasFinished = myChar !== undefined && myChar.finishTick !== null;
+          wasEliminated = myChar?.eliminated ?? false;
+          // M9 ticket 09 (Hit-received): your own Hit flash, raised off
+          // every `hitReactEpoch` edge on these same snapshots — unlike the
+          // verdict above, a Round can flash many times. The baseline
+          // re-syncs every snapshot (and resets off-Round below), so a
+          // reordered snapshot never re-fires what already played.
+          if (onHitTaken && myChar !== undefined) {
+            const hitEvent = detectHitTaken({ previous: lastHitEpochs, character: myChar });
+            if (hitEvent) onHitTaken(hitEvent);
+          }
+          lastHitEpochs =
+            myChar === undefined
+              ? lastHitEpochs
+              : { hitReactEpoch: myChar.hitReactEpoch, ragdollEpoch: myChar.ragdollEpoch };
+        } else {
+          wasFinished = false;
+          wasEliminated = false;
+          runEndFired = false;
+          lastHitEpochs = null;
+          spectateRequested = false;
+        }
         for (const player of message.lobby.players) knownNicknames.set(player.id, player.nickname);
         for (const dropped of message.dnf) knownNicknames.set(dropped.id, dropped.nickname);
         if (onLobbyState) {
-          const lobbySnapshot: LobbySnapshot = {
-            myId,
-            phase: message.phase,
-            hostId: message.lobby.hostId,
-            players: message.lobby.players,
-            trackId: message.trackId,
-            trackRevision: message.trackRevision,
-            timeLimitMs: message.timeLeftMs,
-            roundType: message.lobby.roundType,
-            survivorTarget: message.roundRules.survivorTarget,
-            startBlockedReason: message.lobby.startBlockedReason,
-            matchLength: message.lobby.matchLength,
-            roundPicks: message.lobby.roundPicks,
-          };
+          // One projection, shared with the shell's own connection (ADR
+          // 0056) — the game never maintains a second mapping of the same
+          // snapshot, so the two can never disagree about the Lobby.
+          const lobbySnapshot: LobbySnapshot = toLobbySnapshot(myId, welcome.config.maxPlayers, message);
           const lobbyJson = JSON.stringify(lobbySnapshot);
           if (lobbyJson !== lastLobbyJson) {
             lastLobbyJson = lobbyJson;
@@ -972,24 +1077,95 @@ const boot = async (
     // follow the field through the same path, until a fresh Match seats
     // them and the snapshots start carrying them again.
     const serverHasMe = latestServerSnapshot?.characters[myId] !== undefined;
-    const spectating = isSpectating(phase, ownEliminated) || isMatchSpectator(phase, serverHasMe);
+    const mySnap = latestServerSnapshot?.characters[myId];
+    const ownFinished = mySnap !== undefined && mySnap.finishTick !== null;
+    // Ticket 14: a finisher may ask to spectate (the verdict's SPECTATE) —
+    // the camera-only half of Spectator Mode, which M7 gated on elimination
+    // alone. A finished Character isn't stepped either, so this drives
+    // nothing, exactly like elimination-spectating.
+    const spectating =
+      isSpectating(phase, ownEliminated) ||
+      isMatchSpectator(phase, serverHasMe) ||
+      (phase === "RUNNING" && spectateRequested && ownFinished);
     // Drained every frame either way, so a `C` typed while playing can't
     // bank a stale cycle for the next time you're out.
     const spectatePresses = keyboard.consumeSpectateNext();
     let cameraTarget: Vec3 = visualCharacter.position;
     let spectatingNickname: string | undefined;
     if (spectating && serverRender && latestServerSnapshot) {
-      const living = livingIds(latestServerSnapshot.characters, myId);
+      const snap = latestServerSnapshot;
+      const living = livingIds(snap.characters, myId);
       spectator.update(living);
-      for (let i = 0; i < spectatePresses; i += 1) spectator.cycle(living);
+      // The shell's inbox, drained like the keyboard's — a bean button names
+      // its target, the pills step. Any follow resumes tracking (FREE CAM
+      // lasts until someone is followed, however they were picked).
+      if (followRequest !== null) {
+        spectator.follow(living, followRequest);
+        followRequest = null;
+        freeCamOn = false;
+      }
+      for (let i = 0; i < spectatePresses; i += 1) {
+        spectator.cycle(living);
+        freeCamOn = false;
+      }
+      for (let i = 0; i < shellSpectateSteps; i += 1) {
+        spectator.cycle(living);
+        freeCamOn = false;
+      }
+      shellSpectateSteps = 0;
+      for (let i = 0; i < shellSpectateBacks; i += 1) {
+        spectator.cyclePrev(living);
+        freeCamOn = false;
+      }
+      shellSpectateBacks = 0;
       const targetId = spectator.target;
       const followed = targetId === null ? undefined : serverRender.characters[targetId];
       if (targetId !== null && followed) {
         cameraTarget = followed.position;
         spectatingNickname = playerNames[targetId];
       }
+      // FREE CAM holds the pose the follow was released from — the shell
+      // keeps looking around from there instead of tracking.
+      if (!freeCamOn) freeCamPose = null;
+      else if (freeCamPose === null) freeCamPose = cameraTarget;
+      if (freeCamPose !== null) cameraTarget = freeCamPose;
+      if (onSpectate) {
+        // Everyone still racing but yourself — the out and the finished sit
+        // out alike, in cycle order, named off the roster.
+        const runners = living
+          .filter((id) => snap.characters[id]?.finishTick === null)
+          .map((id) => ({ id, nickname: playerNames[id] ?? knownNicknames.get(id) ?? "Player" }));
+        const targetCp = targetId === null ? null : (snap.characters[targetId]?.checkpointIndex ?? null);
+        const snapshot: SpectateSnapshot = {
+          followingId: targetId,
+          followingNickname:
+            targetId === null ? "—" : (playerNames[targetId] ?? knownNicknames.get(targetId) ?? "Player"),
+          // Race rank by progress (higher checkpoint = further ahead);
+          // survival has no mid-Round places, only beans left.
+          followedPlace:
+            lastRoundIsSurvival || targetCp === null
+              ? null
+              : 1 +
+                Object.entries(snap.characters).filter(
+                  ([id, c]) => id !== myId && (c.checkpointIndex ?? -1) > targetCp,
+                ).length,
+          runners,
+          beansLeft: runners.length,
+          freeCam: freeCamPose !== null,
+        };
+        const spectateJson = JSON.stringify(snapshot);
+        if (spectateJson !== lastSpectateJson) {
+          lastSpectateJson = spectateJson;
+          onSpectate(snapshot);
+        }
+      }
     } else {
       spectator.reset();
+      freeCamPose = null;
+      if (onSpectate && lastSpectateJson !== "null") {
+        lastSpectateJson = "null";
+        onSpectate(null);
+      }
     }
     stage.updateCamera(cameraTarget, look.yaw, look.pitch);
 
@@ -1015,7 +1191,6 @@ const boot = async (
     hud.setBanner(
       matchBanner({
         phase,
-        countdownMsLeft,
         connectedPlayers,
         playersToStart: welcome.config.playersToStart,
         eliminated,
@@ -1082,5 +1257,20 @@ const boot = async (
     pickRoundSlot: (roundIndex, trackId, roundType) => sendLobbyMessage({ type: "pickRoundSlot", roundIndex, trackId, roundType }),
     start: () => sendLobbyMessage({ type: "start" }),
     standingsReady: () => sendLobbyMessage({ type: "standingsReady" }),
+    spectateFollow: (playerId) => {
+      followRequest = playerId;
+    },
+    spectateNext: () => {
+      shellSpectateSteps += 1;
+    },
+    spectatePrev: () => {
+      shellSpectateBacks += 1;
+    },
+    setFreeCam: (on) => {
+      freeCamOn = on;
+    },
+    enterSpectate: () => {
+      spectateRequested = true;
+    },
   };
 };

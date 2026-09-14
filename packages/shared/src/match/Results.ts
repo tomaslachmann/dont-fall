@@ -38,6 +38,12 @@ export interface ResultsCharacter {
 export interface DnfEntry {
   id: string;
   nickname: string;
+  /**
+   * The Account behind this dropped connection (M9 ticket 11 phase 2b) —
+   * captured at drop, since the Lobby row (and with it the only live copy)
+   * is deleted on close. `null` for a connection that never authed.
+   */
+  accountId: string | null;
 }
 
 /**

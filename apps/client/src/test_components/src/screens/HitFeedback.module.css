@@ -1,0 +1,158 @@
+/* 1s — the screen takes the punch. Layer order matters:
+   jolted field -> black snap -> red bleed -> impact bloom -> wedge -> cracks -> readouts. */
+.screen {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--df-space-6);
+  align-items: start;
+}
+
+.attacker {
+  justify-self: start;
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-4) var(--df-space-6) var(--df-space-4) var(--df-space-4);
+  border-radius: var(--df-radius-pill);
+  background: rgba(21, 12, 40, .7);
+  color: var(--df-color-on-brand);
+}
+.attackerText { display: flex; flex-direction: column; gap: var(--df-space-3); }
+.attackerName { font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui); }
+.attackerDir {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: #FF8A7A;
+}
+
+/* combo counter, right edge */
+.combo {
+  justify-self: end;
+  align-self: center;
+  grid-row: 1 / 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--df-space-3);
+  text-align: right;
+  animation: df-fx-pop 3s cubic-bezier(.2, 1.5, .4, 1) .05s infinite;
+}
+.comboLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand-80);
+}
+.comboValue {
+  font: var(--df-weight-display) calc(var(--df-u) * 7.2) / 1 var(--df-font-display);
+  color: #FF5A3C;
+  text-shadow: 0 var(--df-bevel-4) 0 rgba(60, 0, 0, .5);
+}
+.comboPips { display: flex; gap: var(--df-space-2); }
+.comboPip {
+  width: calc(var(--df-u) * 2);
+  height: calc(var(--df-u) * .62);
+  border-radius: var(--df-radius-pill);
+  background: rgba(255, 255, 255, .3);
+}
+.comboPipOn { background: #FF5A3C; }
+
+/* damage number, dead center-ish */
+.damage {
+  grid-column: 1;
+  place-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--df-space-3);
+  text-align: center;
+  animation: df-fx-pop 3s cubic-bezier(.2, 1.5, .4, 1) infinite;
+}
+.damageValue {
+  font: var(--df-weight-display) var(--df-text-mega) / 1 var(--df-font-display);
+  color: var(--df-color-on-brand);
+  text-shadow: 0 var(--df-bevel-5) 0 rgba(90, 0, 0, .55);
+}
+.damageTag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--df-space-3);
+  padding: var(--df-space-3) var(--df-space-6);
+  border-radius: var(--df-radius-pill);
+  background: rgba(21, 12, 40, .75);
+  border: calc(var(--df-u) * .16) solid rgba(255, 90, 60, .8);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand);
+}
+.damageTag svg { width: calc(var(--df-u) * 1.25); fill: none; stroke: #FF5A3C; stroke-width: 3.2; stroke-linecap: round; }
+
+/* stagger meter along the bottom */
+.stagger {
+  grid-column: 1 / -1;
+  align-self: end;
+  justify-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--df-space-4);
+  width: min(42%, 100%);
+  text-align: center;
+}
+.staggerLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand-80);
+}
+.staggerTrack {
+  width: 100%;
+  height: calc(var(--df-u) * 1.25);
+  border-radius: var(--df-radius-pill);
+  background: rgba(43, 27, 77, .45);
+  overflow: hidden;
+}
+.staggerFill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--df-color-accent), #FF5A3C);
+  animation: df-mash 3s ease-out infinite;
+}
+.staggerWarn {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-on-brand-60);
+}
+
+/* ---- overlay effect layers ---- */
+.fx { display: grid; grid-template-areas: 'fx'; pointer-events: none; }
+.fx > * { grid-area: fx; width: 100%; height: 100%; }
+
+.snap { background: #150C28; animation: df-hit-black 3s linear infinite; }
+.bleed {
+  background: radial-gradient(65% 60% at 50% 50%, rgba(255,40,40,.15) 0%, rgba(214,20,20,.75) 78%, rgba(150,8,8,.95) 100%);
+  animation: df-hit-red 3s ease-out infinite;
+}
+/* white bloom at the point of contact */
+.bloom {
+  background: radial-gradient(circle at 76% 40%, rgba(255,255,255,.5), transparent 26%);
+  animation: df-hit-black 3s linear infinite;
+}
+/* direction wedge, anchored to the edge the hit came from */
+.wedgeWrap { display: grid; place-items: center; rotate: var(--df-hit-angle, 0deg); }
+.wedge {
+  width: 100%;
+  height: 100%;
+  background: conic-gradient(from 150deg at 100% 50%, rgba(255,60,60,0) 0deg, rgba(255,70,70,.85) 22deg, rgba(255,40,40,0) 44deg);
+  animation: df-hit-wedge 3s ease-out infinite;
+}
+.cracks { animation: df-crack 3s ease-out infinite; }
+.cracks svg { width: 100%; height: 100%; display: block; }
+.cracks path { stroke: var(--df-color-on-brand); stroke-width: 3; fill: none; opacity: .85; stroke-linecap: round; }
+
+.feed {
+  grid-column: 1;
+  align-self: end;
+  justify-self: start;
+  font: var(--df-weight-display) var(--df-text-2xs) / 2 var(--df-font-mono);
+  letter-spacing: var(--df-tracking-wide);
+  color: rgba(255, 255, 255, .45);
+}

@@ -6,7 +6,10 @@ time, filter categories) beyond today's flat `{id, name}` listing, needed by `Di
 **Blocked by:** nothing — independent of the account tickets (11–14) and can be picked up
 whenever, per ADR 0052.
 
-**Status:** scoped, ready to pick up.
+**Status:** landed — the lighter cut is built, wired, and tested (vitest + typecheck).
+Remaining: live verification with real running processes (a Round's play
+landing in TRENDING, the Lobby inline pick over a real socket), which this
+sandbox can't do (it denies binding sockets).
 
 ## Decided scope (ADR 0052)
 
@@ -28,16 +31,43 @@ Lobby (`LobbyScreen.tsx:59-72`). No matchmaking or browse endpoint exists in `ap
 See `docs/research/test-components-design-screens-gap-analysis.md`, "Backend/domain gaps"
 (Matchmaking/discovery entry) and screen row 1f.
 
-## What to change
+## What changed
 
-*(Deliberately unscoped — placeholder until ticket 04 confirms scope. Of the six backend tickets,
-this one is the least entangled with accounts — play counts/ratings can be built without a real
-account system if "author name" is dropped or deferred — so it could plausibly be the first of
-the six picked up if the group wants an easy win.)*
+- **Shared:** `TrackListing` gains `plays` + `hasFinishZone` (a derived
+  raceability fact, not a Round-type tag — ADR 0041 still holds); new pure
+  `trackHasFinishZone(track, modules)`, lenient on unknown Modules like
+  `countCheckpoints` (a label, not a load).
+- **API:** new `track_plays` table (keyed by `track_id`, so counts survive
+  republishes; separate from `tracks` so Revisions stay immutable per ADR
+  0032); `GET /tracks` rows carry both new fields (`hasFinishZone`
+  computed on read against `PUBLISH_MODULES`, never stored, so the listing
+  can't disagree with the server); new
+  `POST /internal/tracks/:id/played` behind the service token (404 naming
+  an unknown id, same message as `fetchTrack`).
+- **Server:** new fire-and-forget `TrackPlayRecorder` (betting's notifier
+  posture: logs, never throws, never blocks the Round), injected on
+  `MatchRuntime`, reported on both COUNTDOWN entries — Round 1 from an
+  explicit `LOBBY → COUNTDOWN` branch, later Rounds after the draw lands
+  (deliberately *not* next to betting's open, where `fetched` still points
+  at the previous Round's Track).
+- **Client:** `Discover.tsx` rewritten on the real listing (no author, no
+  rating, no best time, per scope); tabs are TRENDING (plays desc),
+  SURVIVAL (whole catalogue A–Z — every Track supports Survival),
+  RACE (raceable only), NEW (recency); featured band plays the hottest
+  Track. New `/discover` route (a card boots Practice on that Track);
+  Main Menu DISCOVER pill + 404 BROWSE DISCOVER link to it. The Lobby's
+  BROWSE TRACKS renders the same catalogue **inline** — navigating to a
+  route would unmount the Lobby and drop the socket the pick travels over
+  (M2 does not reconnect); a card selects straight into Round 1.
 
 ## Done when
 
-- [ ] Not yet scoped
+- [x] `GET /tracks` rows carry `plays` + `hasFinishZone`; no ratings, no author display, no best time anywhere
+- [x] Every Round start counts one anonymous play on its Track (Round 1 and later Rounds)
+- [x] `/discover` browses the real catalogue with working Trending/Survival/Race/New tabs
+- [x] A Track is pickable from the Lobby through the Discover catalogue
+- [x] Play counts and raceability covered by tests at every layer (shared/API/server-notifier/client)
+- [ ] Live-verified with real running processes (blocked on a sandbox that allows sockets)
 
 ## Watch out
 

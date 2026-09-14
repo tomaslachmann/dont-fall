@@ -12,8 +12,9 @@ import {
   resolveTrack,
   type Track,
 } from "@dont-fall/shared";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { MatchRuntime, type MatchConfig } from "./matchRuntime.js";
+import { handleLobbyMessage } from "./lobby.js";
 import type { FetchedTrack } from "../track/trackSource.js";
 
 beforeAll(async () => {
@@ -29,17 +30,29 @@ const fetched: FetchedTrack = {
 };
 
 const config: MatchConfig = {
+  matchId: "test-match",
   trackServiceUrl: "http://unused",
   trackFetchRetryOptions: {},
   countdownMs: 0,
   roundEndMs: 0,
   standingsReadyTimeoutMs: 0,
   playersToStart: 2,
+  maxPlayers: 10,
 };
 
-const seat = (rt: MatchRuntime, ...ids: string[]): void => {
-  ids.forEach((id, joinOrder) => rt.lobbyPlayers.set(id, { id, nickname: id, ready: true, joinOrder }));
+const seat = (
+  rt: MatchRuntime,
+  ...ids: (string | { id: string; accountId: string | null })[]
+): void => {
+  ids.forEach((entry, joinOrder) => {
+    const id = typeof entry === "string" ? entry : entry.id;
+    const accountId = typeof entry === "string" ? null : entry.accountId;
+    rt.lobbyPlayers.set(id, { id, nickname: id, ready: true, joinOrder, accountId });
+  });
 };
+
+const authedRuntime = (resolveAccount: (token: string) => Promise<string | null>): MatchRuntime =>
+  new MatchRuntime(config, fetched, undefined, undefined, undefined, undefined, { resolveAccount });
 
 const characterIds = (rt: MatchRuntime): string[] => Object.keys(rt.simulation.snapshot().characters).sort();
 
@@ -85,12 +98,22 @@ describe("MatchRuntime spectators (M7 ticket 08)", () => {
     seat(rt, "a", "b", "c");
     rt.spectators.add("c");
     rt.roundResults.push({ rows: [{ id: "a", placement: 1, qualified: true }] });
+    rt.matchNicknames.set("a", "Ann");
+    rt.totalFalls = { a: 2 };
+    rt.resultsSavedMatchId = "m1";
+    rt.resultsSavedAtMs = 5_000;
+    rt.closeRequested = true;
 
     rt.resetToFreshLobby(M1_TRACK);
 
     expect(rt.spectators.size).toBe(0);
     expect(rt.match.phase).toBe("LOBBY");
     expect(rt.roundResults).toEqual([]);
+    expect(rt.matchNicknames.size).toBe(0);
+    expect(rt.totalFalls).toEqual({});
+    expect(rt.resultsSavedMatchId).toBeNull();
+    expect(rt.resultsSavedAtMs).toBeNull();
+    expect(rt.closeRequested).toBe(false);
     expect(characterIds(rt)).toEqual(["a", "b", "c"]);
     rt.simulation.dispose();
   });
@@ -133,5 +156,90 @@ describe("MatchRuntime asset worlds (M8 ticket 02)", () => {
     expect(a.grounded).toBe(b.grounded);
     clientSim.dispose();
     rt.simulation.dispose();
+  });
+});
+
+describe("auth message binding (M9 ticket 11 phase 2b)", () => {
+  const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+  it("binds a resolving token's Account to the sender's Lobby row", async () => {
+    const resolveAccount = vi.fn(async () => "acc-1");
+    const rt = authedRuntime(resolveAccount);
+    try {
+      seat(rt, "a");
+
+      expect(handleLobbyMessage(rt, "a", { type: "auth", token: "tok" })).toBe(true);
+      await flush();
+
+      expect(resolveAccount).toHaveBeenCalledWith("tok");
+      expect(rt.lobbyPlayers.get("a")?.accountId).toBe("acc-1");
+    } finally {
+      rt.simulation.dispose();
+    }
+  });
+
+  it("a null resolution leaves the seat anonymous — never closed, never bound", async () => {
+    const rt = authedRuntime(async () => null);
+    try {
+      seat(rt, "a");
+
+      handleLobbyMessage(rt, "a", { type: "auth", token: "stale" });
+      await flush();
+
+      expect(rt.lobbyPlayers.get("a")?.accountId).toBeNull();
+    } finally {
+      rt.simulation.dispose();
+    }
+  });
+
+  it("a resolution landing after the Player left binds nothing and throws nothing", async () => {
+    let release!: (id: string | null) => void;
+    const gate = new Promise<string | null>((resolve) => {
+      release = resolve;
+    });
+    const rt = authedRuntime(() => gate);
+    try {
+      seat(rt, "a");
+      handleLobbyMessage(rt, "a", { type: "auth", token: "tok" });
+      rt.lobbyPlayers.delete("a");
+
+      release("acc-1");
+      await flush();
+
+      expect(rt.lobbyPlayers.has("a")).toBe(false);
+    } finally {
+      rt.simulation.dispose();
+    }
+  });
+
+  it("re-auth re-binds — latest send wins", async () => {
+    const rt = authedRuntime(async (token) => `acc-for-${token}`);
+    try {
+      seat(rt, "a");
+
+      handleLobbyMessage(rt, "a", { type: "auth", token: "one" });
+      handleLobbyMessage(rt, "a", { type: "auth", token: "two" });
+      await flush();
+
+      expect(rt.lobbyPlayers.get("a")?.accountId).toBe("acc-for-two");
+    } finally {
+      rt.simulation.dispose();
+    }
+  });
+
+  it("ignores a malformed auth — no token, no resolution, row untouched", async () => {
+    const resolveAccount = vi.fn(async () => "acc-1");
+    const rt = authedRuntime(resolveAccount);
+    try {
+      seat(rt, "a");
+
+      handleLobbyMessage(rt, "a", { type: "auth", token: "" });
+      await flush();
+
+      expect(resolveAccount).not.toHaveBeenCalled();
+      expect(rt.lobbyPlayers.get("a")?.accountId).toBeNull();
+    } finally {
+      rt.simulation.dispose();
+    }
   });
 });

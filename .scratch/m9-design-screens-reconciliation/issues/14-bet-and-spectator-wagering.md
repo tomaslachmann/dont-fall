@@ -8,7 +8,9 @@
 0052's build order, this is the third backend ticket, after Accounts and XP/currency, before
 Friends.
 
-**Status:** scoped, blocked on tickets 11 and 13.
+**Status:** shipped 2026-09-11 (scope call: build now, grill waived by explicit user decision — the abuse-surface/compliance review this ticket demanded did NOT happen and is still owed before real-money-adjacent play or a public deployment).
+
+What shipped: pari-mutuel, no house cut, exactly per the formula — `parimutuelOdds`/`settlePayouts` in `packages/shared/src/economy.ts` (shared by the API settle and the client preview); `BETTING_WINDOW_MS = 60_000` in shared tuning; `POST /bets`, `GET /bets/:matchId/:round`, service-token-guarded `POST /bets/rounds/open|settle` on the API (`SERVICE_TOKEN` env, dev default in `scripts/dev.sh` + `docker-compose.yml`); the match server opens each Round at its Countdown and settles it at RESULTS (fire-and-forget, a down API closes betting rather than breaking the Round); the Spectator panel polls the board every 2s and posts tickets. Deliberate deviations from the ticket's open questions: closes are time-based (Round start + window), not odds-threshold; no max-stake cap yet; settle retries are idempotent by recomputation. Still owed: the grill session's abuse review, real two-browser verification (sandbox can't listen), and the play-currency compliance sanity check from ADR 0052.
 
 ## Decided scope (ADR 0052)
 

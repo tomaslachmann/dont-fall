@@ -1,0 +1,83 @@
+/* The tumble IS the logo: fixed rotations and increasing drops, so the word falls over.
+   Never straighten FALL, never rotate the whole lockup, never re-space DON'T.
+   Extrude is hard and downward only — no outline, no gradient, no glow.
+   Clear space = the height of the D. Below ~34px cap height use variant="icon". */
+.logo {
+  --df-logo-size: calc(var(--df-u) * 7.5);
+  --df-logo-ink: var(--df-color-on-brand);
+  --df-logo-extrude:
+    0 calc(var(--df-logo-size) * .073) 0 var(--df-color-brand-shade),
+    0 calc(var(--df-logo-size) * .146) 0 var(--df-color-drop);
+
+  display: flex;
+  align-items: center;
+  gap: calc(var(--df-logo-size) * .27);
+  flex: none;
+}
+.stacked {
+  flex-direction: column;
+  gap: calc(var(--df-logo-size) * .1);
+}
+
+.word { display: flex; flex-direction: column; }
+
+.tag {
+  align-self: flex-start;
+  padding: calc(var(--df-logo-size) * .07) calc(var(--df-logo-size) * .145);
+  border-radius: calc(var(--df-logo-size) * .1);
+  background: var(--df-color-accent);
+  color: var(--df-color-ink);
+  /* never falls below a readable size when the lockup is used as small chrome */
+  font-family: var(--df-font-ui);
+  font-weight: var(--df-weight-label);
+  font-size: max(calc(var(--df-logo-size) * .156), calc(var(--df-u) * .72));
+  line-height: 1;
+  letter-spacing: .28em;
+  rotate: -5deg;
+}
+.stacked .tag { align-self: center; }
+
+.tumble {
+  display: flex;
+  align-items: flex-end;
+  margin-top: calc(var(--df-logo-size) * .1);
+  font: var(--df-weight-display) var(--df-logo-size) / .86 var(--df-font-display);
+  color: var(--df-logo-ink);
+  text-shadow: var(--df-logo-extrude);
+}
+.stacked .tumble { justify-content: center; }
+
+/* the four fixed angles — these ARE the mark */
+.tumble > :nth-child(1) { rotate: -6deg; }
+.tumble > :nth-child(2) { rotate: -2deg; translate: 0 6%; }
+.tumble > :nth-child(3) { rotate: 4deg;  translate: 0 15%; }
+.tumble > :nth-child(4) { rotate: 12deg; translate: 0 29%; }
+
+/* One-color lockup: ink wordmark, ink tag on accent grounds. */
+.mono { --df-logo-ink: var(--df-color-ink); --df-logo-extrude: none; }
+.mono .tag { background: var(--df-color-ink); color: var(--df-color-accent); }
+
+/* Flat extrude for small chrome (menu header). */
+.chrome { --df-logo-extrude: 0 calc(var(--df-logo-size) * .12) 0 var(--df-color-ink-35); }
+
+/* ---- app icon: one bean losing its footing, three steps down the diagonal ---- */
+.mark {
+  --df-mark-size: calc(var(--df-u) * 3.6);
+  position: relative;
+  flex: none;
+  width: var(--df-mark-size);
+  aspect-ratio: 1;
+  border-radius: calc(var(--df-mark-size) * .34);
+  background: var(--df-color-accent);
+  box-shadow: 0 calc(var(--df-mark-size) * .086) 0 var(--df-color-accent-shade);
+}
+.dot {
+  position: absolute;
+  width: 19.6%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--df-color-ink);
+}
+.dot:nth-child(1) { left: 24%; top: 22%; }
+.dot:nth-child(2) { left: 41%; top: 41%; opacity: .55; }
+.dot:nth-child(3) { left: 59%; top: 61%; opacity: .28; }

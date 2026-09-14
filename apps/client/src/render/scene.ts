@@ -33,7 +33,7 @@ import {
   resolveArm,
   springArmPosition,
 } from "../input/camera/springArm.js";
-import { listen } from "../lib/listeners.js";
+import { listen } from "../lib/socket/listeners.js";
 import { buildAssetVisuals, type AssetVisualPlacement } from "./assetVisuals.js";
 import { disposeSceneGraph } from "./disposeSceneGraph.js";
 import { HitReactionPlayer } from "./hitReactionPlayer.js";

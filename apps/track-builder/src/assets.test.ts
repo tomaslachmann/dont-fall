@@ -26,7 +26,10 @@ const realFetch = async (url: string): Promise<Uint8Array> => {
 describe("assetTabModuleIds", () => {
   it("lists exactly the registry's asset Modules — a fixed set, no file input", () => {
     expect(assetTabModuleIds()).toEqual(ASSET_MODULE_DEFS.map((def) => def.id));
-    expect(assetTabModuleIds()).toHaveLength(4);
+    // Length tracks the registry rather than a number copied here — an asset
+    // drop lands new ids regularly, and a hardcoded count only ever fails
+    // for the uninteresting reason.
+    expect(assetTabModuleIds()).toHaveLength(ASSET_MODULE_DEFS.length);
   });
 });
 
@@ -93,19 +96,16 @@ describe("placing asset Modules through the existing insert flow", () => {
 });
 
 describe("loadAssetVisuals", () => {
-  it("fetches one URL per tab Module from track-service — the same pipe as the game", async () => {
+  it("fetches one URL per tab Module from the API — the same pipe as the game", async () => {
     const seen: string[] = [];
     await loadAssetVisuals(async (url) => {
       seen.push(url);
       return realFetch(url);
     }, "http://assets.test");
 
-    expect(seen.sort()).toEqual([
-      "http://assets.test/corner_lshape.glb",
-      "http://assets.test/platform_straight.glb",
-      "http://assets.test/ramp_45.glb",
-      "http://assets.test/stairs_4step.glb",
-    ]);
+    expect(seen.sort()).toEqual(
+      ASSET_MODULE_DEFS.map((def) => `http://assets.test/${def.id}.glb`).sort(),
+    );
   });
 
   it("names the module when its fetch fails", async () => {

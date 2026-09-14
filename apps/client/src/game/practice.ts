@@ -16,7 +16,7 @@ import {
 import { loadCharacterModel } from "../render/characterModel.js";
 import { assetPlacements } from "../render/assetVisuals.js";
 import { FreeLookCamera, KeyboardInput } from "../input/input.js";
-import { createTeardown, type Teardown } from "../lib/teardown.js";
+import { createTeardown, type Teardown } from "../lib/utils/teardown.js";
 import { createStage } from "../render/scene.js";
 import { createTrackLoading } from "./trackLoading.js";
 import type { GameHandle } from "./index.js";
@@ -35,7 +35,7 @@ export interface PracticeSnapshot {
 export interface PracticeConfig {
   /** Element the canvas mounts into. The session empties it again on `stop`. */
   mount: HTMLElement;
-  /** Host serving track-service. Defaults to the host serving the page. */
+  /** Host serving the API. Defaults to the host serving the page. */
   host?: string;
   /** Track to roam. Required — with no server there is nothing to default to. */
   trackId: string;
@@ -52,7 +52,7 @@ export const shouldAnnounceFinish = (alreadyAnnounced: boolean, insideNow: boole
 
 /**
  * Boot a free-roam practice session (m8.1 ticket 01): the Track, its
- * collision and its visuals through the same track-service pipe match boot
+ * collision and its visuals through the same the API pipe match boot
  * uses, simulated locally — no socket, no Lobby, no Rounds. Resolves once
  * it is running and rendering; rejects on load failure having released
  * whatever it had already acquired, like `startGame`.
@@ -200,7 +200,9 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
 
   // The full `GameHandle` shape so the shell needs no second handle type —
   // everything lobby-shaped is a documented no-op: a practice session has
-  // no lobby, no host, no rounds to pick and nobody to send to.
+  // no lobby, no host, no rounds to pick and nobody to send to. Spectating
+  // joins that list (ticket 14): no Round, no elimination, no other beans —
+  // nothing to follow, hold, or enter.
   const notInPractice = (): void => {};
   return {
     stop: () => teardown.run(),
@@ -212,5 +214,10 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     pickRoundSlot: notInPractice,
     start: notInPractice,
     standingsReady: notInPractice,
+    spectateFollow: notInPractice,
+    spectateNext: notInPractice,
+    spectatePrev: notInPractice,
+    setFreeCam: notInPractice,
+    enterSpectate: notInPractice,
   };
 };

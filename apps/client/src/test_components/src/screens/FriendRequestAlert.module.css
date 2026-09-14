@@ -1,0 +1,123 @@
+/* 1x — the menu, but social traffic is arriving: badges on the account chip and the
+   FRIENDS pill, two toasts sliding in on the right. Same menu grid as 1a. */
+.screen {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--df-space-7);
+}
+
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--df-space-6); }
+.identity { display: flex; align-items: center; gap: var(--df-space-4); }
+
+/* account chip carries the count badge */
+.account {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-3) var(--df-space-6) var(--df-space-3) var(--df-space-3);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-3) 0 var(--df-color-shadow);
+}
+.accountText { display: flex; flex-direction: column; gap: var(--df-space-2); }
+.name { font: var(--df-weight-label) var(--df-text-sm) / 1 var(--df-font-ui); }
+.level {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-brand);
+}
+
+/* the badge is pinned to the chip's own corner, not the screen */
+.badge {
+  position: absolute;
+  inset-block-start: calc(var(--df-u) * -0.6);
+  inset-inline-end: calc(var(--df-u) * -0.6);
+  display: grid;
+  place-items: center;
+  min-width: calc(var(--df-u) * 2.2);
+  height: calc(var(--df-u) * 2.2);
+  padding-inline: var(--df-space-2);
+  border-radius: var(--df-radius-pill);
+  background: #FF5A3C;
+  color: var(--df-color-on-brand);
+  box-shadow: 0 var(--df-bevel-1) 0 #C93A20;
+  font: var(--df-weight-label) var(--df-text-xs) / 1 var(--df-font-ui);
+  animation: df-badge-pulse 2.2s ease-in-out infinite;
+}
+.badgeSmall {
+  min-width: calc(var(--df-u) * 2);
+  height: calc(var(--df-u) * 2);
+  font-size: var(--df-text-2xs);
+  animation-delay: .2s;
+}
+
+.iconBtn {
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 4.1);
+  aspect-ratio: 1;
+  border-radius: var(--df-radius-icon);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-3) 0 var(--df-color-shadow);
+}
+.iconBtn svg { width: 42%; stroke: var(--df-color-brand); fill: none; stroke-width: 2.2; stroke-linecap: round; }
+
+/* ---- body ---- */
+.body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--df-space-7);
+  min-height: 0;
+}
+.actions { display: flex; flex-direction: column; gap: var(--df-space-5); align-self: center; }
+.nav { display: flex; flex-wrap: wrap; gap: var(--df-space-4); }
+.navItem { position: relative; }
+
+/* toast column — stacks under the header, doesn't overlap the render */
+.toasts { display: flex; flex-direction: column; gap: var(--df-space-4); }
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-5);
+  padding: var(--df-space-5) var(--df-space-6);
+  border-radius: calc(var(--df-u) * 2.2);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-4) 0 var(--df-color-drop), var(--df-drop);
+  animation: df-toast-in 7s ease-in-out infinite;
+}
+.toastDark {
+  background: var(--df-color-plate);
+  color: var(--df-color-on-brand);
+  box-shadow: none;
+  animation-delay: 3.5s;
+}
+.toastText { display: flex; flex-direction: column; gap: var(--df-space-3); flex: 1; min-width: 0; }
+.toastKicker {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-brand);
+}
+.toastDark .toastKicker { color: var(--df-color-accent); }
+.toastTitle { font: var(--df-weight-display) var(--df-text-sm) / 1.1 var(--df-font-display); }
+.toastDark .toastTitle { font: var(--df-weight-label) var(--df-text-xs) / 1.1 var(--df-font-ui); }
+
+.toastActions { display: flex; gap: var(--df-space-3); }
+.action {
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 3.4);
+  aspect-ratio: 1;
+  border-radius: var(--df-radius-icon);
+  transition: transform var(--df-dur-up) var(--df-ease);
+}
+.action:hover { transform: translateY(var(--df-lift)); }
+.action:active { transform: translateY(var(--df-squash)); box-shadow: none; }
+.accept { background: var(--df-color-go); box-shadow: 0 var(--df-bevel-2) 0 var(--df-color-go-shade); }
+.accept svg { width: 42%; fill: none; stroke: var(--df-color-go-ink); stroke-width: 3; stroke-linecap: round; }
+.decline { background: #F2EDFC; }
+.decline svg { width: 36%; fill: none; stroke: var(--df-color-ink-55); stroke-width: 3; stroke-linecap: round; }
+
+.stats { display: flex; flex-wrap: wrap; gap: var(--df-space-5); }

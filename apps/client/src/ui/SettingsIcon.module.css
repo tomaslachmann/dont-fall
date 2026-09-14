@@ -1,0 +1,40 @@
+/* Settings cog. Eight chunky teeth, hard downward bevel, punched centre —
+   same plastic language as JellyButton. Never outline it, never rotate it in place
+   except on hover. */
+.mark {
+  --df-cog-size: calc(var(--df-u) * 2.1);
+  display: grid;
+  place-items: center;
+  width: var(--df-cog-size);
+  aspect-ratio: 1;
+  line-height: 0;
+}
+
+.svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transition: transform var(--df-dur-slide) var(--df-ease);
+}
+
+.cog {
+  fill: var(--df-color-accent);
+  stroke: none;
+  filter: drop-shadow(0 calc(var(--df-cog-size) * .07) 0 var(--df-color-accent-shade));
+}
+.hole { fill: var(--df-color-ink); }
+
+.inverse .cog {
+  fill: var(--df-color-ink);
+  filter: drop-shadow(0 calc(var(--df-cog-size) * .07) 0 rgba(0, 0, 0, .3));
+}
+.inverse .hole { fill: var(--df-color-accent); }
+
+/* Hosting button drives the spin, so the whole control feels clickable. */
+:global(button):hover > .mark .svg,
+:global(button):focus-visible > .mark .svg { transform: rotate(40deg); }
+:global(button):active > .mark .svg { transform: rotate(40deg) scale(.94); }
+
+@media (prefers-reduced-motion: reduce) {
+  .svg { transition: none; }
+}

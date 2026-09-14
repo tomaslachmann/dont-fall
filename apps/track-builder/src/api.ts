@@ -3,7 +3,7 @@ import type { StoredTrack, Track, TrackListing, TrackRoundDefaults } from "@dont
 export type { StoredTrack, TrackListing, TrackRoundDefaults };
 
 /**
- * Saves a Track to track-service (ticket 02's `POST /tracks`). `defaults` —
+ * Saves a Track to the API (ticket 02's `POST /tracks`). `defaults` —
  * the Time Limit (M4 ticket 03, ADR 0038) and the Survivor Target (M5 ticket
  * 07, ADR 0041) — is written with the new Revision: each publish carries
  * whatever the Draft's own fields say at that moment.
@@ -57,7 +57,7 @@ export const publishPlaytestTrack = async (
   return (await res.json()) as { id: string };
 };
 
-/** Loads a Track from track-service by id (`GET /tracks/:id`). */
+/** Loads a Track from the API by id (`GET /tracks/:id`). */
 export const loadTrack = async (baseUrl: string, id: string): Promise<StoredTrack> => {
   const res = await fetch(`${baseUrl}/tracks/${encodeURIComponent(id)}`);
   if (!res.ok) throw new Error(`load failed: HTTP ${res.status}`);

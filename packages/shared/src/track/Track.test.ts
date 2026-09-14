@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { dotQuat, eulerQuat, IDENTITY_QUAT } from "../math/quat.js";
 import type { Module } from "./Module.js";
-import { chainTrack, placeAfter, resolveTrack, segmentOrientation } from "./Track.js";
+import { chainTrack, countCheckpoints, placeAfter, resolveTrack, segmentOrientation, trackHasFinishZone } from "./Track.js";
+import type { Track } from "./Track.js";
 import { M1_MODULES, M1_TRACK } from "./modules.js";
 
 const STRAIGHT_SOCKETS: Module["sockets"] = [
@@ -345,5 +346,44 @@ describe("M1_TRACK (ticket 01 — M1 playground ported to Modules; re-chained vi
       { x: 0, y: -2, z: -14 },
       { x: 0, y: -2.5, z: -20 },
     ]);
+  });
+});
+
+describe("countCheckpoints", () => {
+  const seg = (moduleId: string): Track[number] => ({ moduleId, position: { x: 0, y: 0, z: 0 }, rotation: 0 });
+  const library: Record<string, Module> = { straight: STRAIGHT, spinner: SPINNER_MODULE };
+
+  it("counts one per Segment whose Module authors a checkpoint, ignoring the rest", () => {
+    const track: Track = [seg("straight"), seg("spinner"), seg("spinner"), seg("straight")];
+    expect(countCheckpoints(track, library)).toBe(2);
+  });
+
+  it("counts zero for an empty Track and for Segments referencing unknown Modules", () => {
+    expect(countCheckpoints([], library)).toBe(0);
+    expect(countCheckpoints([seg("straight"), seg("nope")], library)).toBe(0);
+  });
+});
+
+describe("trackHasFinishZone", () => {
+  const seg = (moduleId: string): Track[number] => ({ moduleId, position: { x: 0, y: 0, z: 0 }, rotation: 0 });
+  const FINISH: Module = {
+    ...STRAIGHT,
+    id: "finish",
+    finishZone: { trigger: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 4, y: 2, z: 2 } } },
+  };
+  const library: Record<string, Module> = { straight: STRAIGHT, finish: FINISH };
+
+  it("is true when any placed Segment's Module authors a Finish Zone", () => {
+    expect(trackHasFinishZone([seg("straight"), seg("finish"), seg("straight")], library)).toBe(true);
+  });
+
+  it("is false when no placed Module carries one, and for an empty Track", () => {
+    expect(trackHasFinishZone([seg("straight"), seg("straight")], library)).toBe(false);
+    expect(trackHasFinishZone([], library)).toBe(false);
+  });
+
+  it("ignores Segments referencing unknown Modules rather than throwing — a label, not a load", () => {
+    expect(trackHasFinishZone([seg("straight"), seg("nope")], library)).toBe(false);
+    expect(trackHasFinishZone([seg("nope"), seg("finish")], library)).toBe(true);
   });
 });

@@ -1,0 +1,146 @@
+/* 1p — the level-up beat. Render column on the left, the three reward cards on the right. */
+.screen {
+  grid-template-columns: minmax(0, 0.62fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--df-space-6) var(--df-space-7);
+}
+
+.headline { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: var(--df-space-3); }
+.kicker {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-mega);
+  color: var(--df-color-on-brand-80);
+}
+.level {
+  font: var(--df-weight-display) calc(var(--df-u) * 4.2) / 1 var(--df-font-display);
+  color: var(--df-color-on-brand);
+  text-shadow: 0 var(--df-bevel-3) 0 var(--df-color-ink-35);
+}
+
+.render {
+  min-height: 0;
+  border: var(--df-bevel-1) dashed rgba(255, 255, 255, .38);
+  border-radius: calc(var(--df-u) * 3.4);
+  background: rgba(43, 27, 77, .28);
+}
+
+.cards { display: flex; flex-direction: column; gap: var(--df-space-5); min-height: 0; }
+
+/* ---- xp card ---- */
+.xp { gap: var(--df-space-5); padding: var(--df-space-7); border-radius: calc(var(--df-u) * 2.65); }
+.xpHead { display: flex; align-items: baseline; justify-content: space-between; gap: var(--df-space-4); }
+.xpTitle { font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display); }
+.xpGain { font: var(--df-weight-display) var(--df-text-md) / 1 var(--df-font-display); color: var(--df-color-brand); }
+
+.bar { display: flex; align-items: center; gap: var(--df-space-5); }
+.node {
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 3.4);
+  aspect-ratio: 1;
+  border-radius: var(--df-radius-icon);
+  background: var(--df-color-surface-2);
+  font: var(--df-weight-label) var(--df-text-xs) / 1 var(--df-font-ui);
+  color: var(--df-color-ink-55);
+}
+.nodeNext {
+  background: var(--df-color-accent);
+  color: var(--df-color-ink);
+  box-shadow: 0 var(--df-bevel-1) 0 var(--df-color-accent-shade);
+}
+.track {
+  flex: 1;
+  display: flex;
+  height: calc(var(--df-u) * 1.72);
+  border-radius: var(--df-radius-pill);
+  background: #F2EDFC;
+  overflow: hidden;
+}
+/* Two segments: what you had, then what this match added. */
+.had { background: var(--df-color-brand); }
+.earned { background: var(--df-color-accent); }
+
+.breakdown { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--df-space-4); }
+.reason {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-3);
+  padding: var(--df-space-4) var(--df-space-5);
+  border-radius: var(--df-radius-icon);
+  background: var(--df-color-surface-1);
+}
+.reasonLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1.2 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-55);
+}
+.reasonValue { font: var(--df-weight-display) var(--df-text-sm) / 1 var(--df-font-display); }
+
+/* ---- currency + unlock ---- */
+.pair { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: var(--df-space-5); }
+
+.beans {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-4);
+  padding: var(--df-space-7);
+  border-radius: calc(var(--df-u) * 2.65);
+  background: var(--df-color-accent);
+  box-shadow: 0 var(--df-bevel-5) 0 var(--df-color-accent-shade);
+}
+.beansLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-ink-70);
+}
+.beansRow { display: flex; align-items: center; gap: var(--df-space-5); }
+.coin {
+  width: calc(var(--df-u) * 3.9);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--df-color-surface-0);
+  box-shadow: inset 0 calc(var(--df-u) * -0.31) 0 var(--df-color-ink-14);
+}
+.beansValue { font: var(--df-weight-display) calc(var(--df-u) * 3.9) / 1 var(--df-font-display); }
+.beansSplit { display: flex; flex-wrap: wrap; gap: var(--df-space-5); }
+.split {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  color: var(--df-color-ink-70);
+  white-space: nowrap;
+}
+.splitValue { color: var(--df-color-ink); }
+
+.unlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-5);
+  padding: var(--df-space-7);
+  border-radius: calc(var(--df-u) * 2.65);
+  background: rgba(43, 27, 77, .45);
+  color: var(--df-color-on-brand);
+}
+.unlockLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-accent);
+}
+.unlockRow { display: flex; align-items: center; gap: var(--df-space-5); }
+.item {
+  flex: none;
+  width: calc(var(--df-u) * 4.4);
+  aspect-ratio: 1;
+  border-radius: var(--df-radius-tile);
+  background: repeating-linear-gradient(45deg, #FFB4DC 0 calc(var(--df-u) * .62), #FF8AC6 calc(var(--df-u) * .62) calc(var(--df-u) * 1.25));
+  box-shadow: 0 0 0 calc(var(--df-u) * .23) var(--df-color-accent);
+}
+.itemText { display: flex; flex-direction: column; gap: var(--df-space-3); min-width: 0; }
+.itemName { font: var(--df-weight-display) var(--df-text-sm) / 1.1 var(--df-font-display); }
+.itemHint { font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui); opacity: .65; }
+
+.actions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: var(--df-space-4);
+}

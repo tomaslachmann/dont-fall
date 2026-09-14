@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import {
   COUNTDOWN_MS,
   DEFAULT_TIME_LIMIT_MS,
@@ -15,19 +15,19 @@ import {
   type SimInputs,
   type Track,
 } from "@dont-fall/shared";
-import { startTrackService, type TrackService } from "@dont-fall/track-service";
+import { startApi, type ApiService } from "@dont-fall/api";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { startServer, type MatchServer } from "./matchServer.js";
 
-// ADR 0028: the Match server now has a hard runtime dependency on track-service.
+// ADR 0028: the Match server now has a hard runtime dependency on the API.
 // One shared instance for this whole file, pointed to by TRACK_SERVICE_URL, so
 // every existing `startServer({ port: 0, playersToStart: 1, countdownMs: 0 })` call site below keeps working
 // unchanged — `startServer` picks up the env var as its default.
-let trackService: TrackService;
+let trackService: ApiService;
 
 beforeAll(async () => {
-  trackService = await startTrackService({ port: 0, dbPath: ":memory:" });
+  trackService = await startApi({ port: 0, dbPath: ":memory:" });
   process.env.TRACK_SERVICE_URL = `http://localhost:${trackService.port}`;
 });
 
@@ -58,7 +58,26 @@ const nextMessage = (socket: WebSocket): Promise<ServerMessage> =>
   new Promise((resolve) => socket.once("message", (raw) => resolve(JSON.parse(raw.toString()) as ServerMessage)));
 
 /**
- * Publishes `track` to the shared test track-service instance, returning its
+ * Resolves `true` when nothing arrives within `ms` — the idle-phase
+ * assertion (ADR 0057). Removes its listener either way, so a message
+ * arriving just after the window can never be stolen from a later
+ * `nextMessage` waiting on the same socket.
+ */
+const noMessageFor = (socket: WebSocket, ms: number): Promise<boolean> =>
+  new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      socket.off("message", onMessage);
+      resolve(true);
+    }, ms);
+    const onMessage = (): void => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    socket.on("message", onMessage);
+  });
+
+/**
+ * Publishes `track` to the shared test the API instance, returning its
  * trackId — Track Builder Playtest's own publish step, without going through
  * the builder itself. Passing `id` republishes that exact id as a new
  * Revision (ADR 0032) instead of creating a fresh one — Playtest always
@@ -171,6 +190,7 @@ describe("startServer", () => {
     expect(welcome.sessionToken).not.toBe(welcome.playerId);
     expect(welcome.config.snapshotHz).toBeGreaterThan(0);
     expect(welcome.config.graceWindowMs).toBeGreaterThan(0);
+    expect(welcome.config.maxPlayers).toBeGreaterThan(0);
     // ticket 11: every client learns the exact Track (id + Revision) the
     // server fetched, so it can fetch that same one instead of "latest".
     expect(typeof welcome.trackId).toBe("string");
@@ -246,7 +266,7 @@ describe("startServer", () => {
     socket.close();
   });
 
-  it("broadcasts a snapshot every tick containing the connected client's Character", async () => {
+  it("pushes a newcomer the current snapshot on join — the only Lobby snapshot without a mutation (ADR 0057)", async () => {
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port);
     const welcome = await nextMessage(socket);
@@ -256,6 +276,60 @@ describe("startServer", () => {
     expect(snapshot.type).toBe("snapshot");
     if (snapshot.type !== "snapshot") throw new Error("unreachable");
     expect(Object.keys(snapshot.state.characters)).toEqual([id]);
+    socket.close();
+  });
+
+  it("stays silent in LOBBY until something changes, then pushes the change (ADR 0057)", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+    await nextMessage(socket); // welcome
+    const first = await nextMessage(socket); // join-push
+    if (first.type !== "snapshot") throw new Error("unreachable");
+    expect(first.phase).toBe("LOBBY");
+
+    // Nothing moves in a Lobby — a third of a second with no traffic at all.
+    expect(await noMessageFor(socket, 300)).toBe(true);
+
+    socket.send(JSON.stringify({ type: "setReady", ready: true } satisfies ClientMessage));
+    const changed = await nextMessage(socket);
+    if (changed.type !== "snapshot") throw new Error("unreachable");
+    expect(changed.lobby.players[0]!.ready).toBe(true);
+    socket.close();
+  });
+
+  it("pushes the current Lobby to a second joiner without waiting for an event (ADR 0057)", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const a = connect(server.port);
+    await nextMessage(a); // welcome
+    await nextMessage(a); // join-push
+
+    const aNext = nextMessage(a); // someone joined — A's roster grows
+    const b = connect(server.port);
+    const bWelcome = await nextMessage(b);
+    if (bWelcome.type !== "welcome") throw new Error("unreachable");
+    const bFirst = await nextMessage(b);
+    if (bFirst.type !== "snapshot") throw new Error("unreachable");
+    expect(bFirst.lobby.players).toHaveLength(2);
+
+    const aChanged = await aNext;
+    if (aChanged.type !== "snapshot") throw new Error("unreachable");
+    expect(aChanged.lobby.players).toHaveLength(2);
+    a.close();
+    b.close();
+  });
+
+  it("answers a sync request with the current snapshot even when nothing changed (ADR 0057)", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const socket = connect(server.port);
+    await nextMessage(socket); // welcome
+    await nextMessage(socket); // join-push
+
+    expect(await noMessageFor(socket, 200)).toBe(true); // quiet...
+    socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
+    const snapshot = await nextMessage(socket); // ...until asked
+    expect(snapshot.type).toBe("snapshot");
+    if (snapshot.type !== "snapshot") throw new Error("unreachable");
+    expect(snapshot.phase).toBe("LOBBY");
     socket.close();
   });
 
@@ -489,8 +563,8 @@ describe("startServer — disconnects (ticket 07)", () => {
   });
 });
 
-describe("startServer — track-service startup retry (ticket 12)", () => {
-  it("retries the startup fetch and succeeds once track-service comes up", async () => {
+describe("startServer — the API startup retry (ticket 12)", () => {
+  it("retries the startup fetch and succeeds once the API comes up", async () => {
     const port = 34567 + Math.floor(Math.random() * 1000);
     const trackServiceUrl = `http://localhost:${port}`;
 
@@ -501,10 +575,10 @@ describe("startServer — track-service startup retry (ticket 12)", () => {
       trackFetchRetryDelayMs: 50,
     });
 
-    // track-service isn't listening on `port` yet — give the first couple of
+    // the API isn't listening on `port` yet — give the first couple of
     // retry attempts a chance to fail before it comes up.
     await new Promise((resolve) => setTimeout(resolve, 150));
-    const lateTrackService = await startTrackService({ port, dbPath: ":memory:" });
+    const lateTrackService = await startApi({ port, dbPath: ":memory:" });
 
     try {
       server = await serverPromise;
@@ -522,8 +596,8 @@ describe("startServer — track-service startup retry (ticket 12)", () => {
   });
 
   it("bounds a single hung request instead of letting it block past the wait budget", async () => {
-    // Accepts the connection but never responds — track-service stalling
-    // (a DB lock, a GC pause), not track-service being down. Without a
+    // Accepts the connection but never responds — the API stalling
+    // (a DB lock, a GC pause), not the API being down. Without a
     // per-attempt timeout, a single `fetch` here would hang for the whole
     // test; with one, it fails fast and retries within the budget instead.
     const hangingServer = createServer(() => {});
@@ -652,6 +726,61 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
     expect(refused[0]!.close!.code).toBe(4001);
     connA.close();
     connB.close();
+  });
+
+  it("answers GET /status on the same port, for the lobby broker to poll (grilling session, 2026-09)", async () => {
+    server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, maxPlayers: 7 });
+
+    const res = await fetch(`http://localhost:${server.port}/status`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ playerCount: 0, maxPlayers: 7, phase: "LOBBY" });
+
+    const socket = connect(server.port);
+    await nextMessage(socket); // welcome
+    const afterJoin = await fetch(`http://localhost:${server.port}/status`);
+    expect(await afterJoin.json()).toMatchObject({ playerCount: 1 });
+    socket.close();
+  });
+
+  it("answers an unknown path with 404, not the WebSocket protocol", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
+    const res = await fetch(`http://localhost:${server.port}/nonsense`);
+    expect(res.status).toBe(404);
+  });
+
+  it("refuses the (maxPlayers + 1)th connection outright, over capacity (grilling session, 2026-09)", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, maxPlayers: 2 });
+
+    const first = connect(server.port);
+    await nextMessage(first); // welcome
+    const second = connect(server.port);
+    await nextMessage(second); // welcome — still at capacity, not over it
+
+    const third = connect(server.port);
+    const { code, reason } = await nextClose(third);
+    expect(code).toBe(4003);
+    expect(reason).toMatch(/full/i);
+
+    first.close();
+    second.close();
+  });
+
+  it("accepts a new connection again once a Player who was at capacity leaves", async () => {
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, maxPlayers: 1 });
+
+    const first = connect(server.port);
+    await nextMessage(first); // welcome
+
+    const refused = connect(server.port);
+    expect((await nextClose(refused)).code).toBe(4003);
+
+    first.close();
+    await new Promise((resolve) => first.once("close", resolve));
+
+    const second = connect(server.port);
+    const welcome = await nextMessage(second);
+    expect(welcome.type).toBe("welcome");
+    second.close();
   });
 
   it("closes with a clear reason when the requested Track can't be loaded", async () => {
@@ -1366,6 +1495,44 @@ describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
     a.close();
   });
 
+  it("binds a valid session token's Account to the sender's Lobby row (phase 2b)", async () => {
+    server = await startServer({ port: 0 });
+    // A real Account + session on the shared API — what a logged-in client's
+    // own token resolves to when the socket sends it in `auth`.
+    const signup = await fetch(`${process.env.TRACK_SERVICE_URL}/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "phase2b-auth@example.com", password: "password-123", displayName: "Authed" }),
+    });
+    expect(signup.status).toBe(201);
+    const { account, token } = (await signup.json()) as { account: { id: string }; token: string };
+
+    const a = connect(server.port);
+    await nextMessage(a); // welcome
+    const anon = await snapshotUntil(a, (s) => s.lobby.players.length === 1);
+    expect(anon.lobby.players[0]!.accountId).toBeNull(); // seat starts unattributed
+
+    a.send(JSON.stringify({ type: "auth", token } satisfies ClientMessage));
+    const bound = await snapshotUntil(a, (s) => s.lobby.players[0]?.accountId === account.id);
+    expect(bound.lobby.players[0]).toMatchObject({ accountId: account.id });
+    a.close();
+  });
+
+  it("leaves a bad token's seat anonymous instead of closing it (phase 2b)", async () => {
+    server = await startServer({ port: 0 });
+    const a = connect(server.port);
+    await nextMessage(a); // welcome
+    await snapshotUntil(a, (s) => s.lobby.players.length === 1);
+
+    a.send(JSON.stringify({ type: "auth", token: "no-such-session" } satisfies ClientMessage));
+    // Auth is enrichment, never a gate: the seat plays on, unattributed.
+    // Proven by the socket surviving — a close would reject the next message.
+    a.send(JSON.stringify({ type: "setNickname", nickname: "StillHere" } satisfies ClientMessage));
+    const renamed = await snapshotUntil(a, (s) => s.lobby.players[0]!.nickname === "StillHere");
+    expect(renamed.lobby.players[0]!.accountId).toBeNull();
+    a.close();
+  });
+
   it("broadcasts a Ready toggle to every connected Player, not just the one who sent it", async () => {
     server = await startServer({ port: 0 });
     const a = connect(server.port);
@@ -1554,7 +1721,7 @@ describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
     // The interesting race ticket 07 calls out: the pre-check passes (LOBBY,
     // host) and the fetch begins, then — before it resolves — the same host's
     // `start` (queued right behind it, same burst) is validated and queued
-    // against the *old* Lobby. A same-process fetch to track-service settles
+    // against the *old* Lobby. A same-process fetch to the API settles
     // well inside one 30 Hz tick, so in practice it always resolves before
     // the tick loop gets a chance to spend that queued start: without the
     // post-`await` reset also clearing it, the tick loop would spend it right
@@ -1804,7 +1971,7 @@ describe("startServer — a Match runs several Rounds (M7 ticket 04, ADR 0049)",
     });
 
     // Pin Rounds 2 and 3 to the same instant-finish Track (M7 ticket 05) —
-    // otherwise the server draws from track-service's whole shared pool
+    // otherwise the server draws from the API's whole shared pool
     // (every other test's own published Tracks), which is not reliably
     // instant-finish and would make this test about the draw, not about
     // several Rounds running in sequence.
@@ -2128,7 +2295,7 @@ describe("startServer — pick or shuffle (M7 ticket 05, ADR 0049)", () => {
 
     socket.send(JSON.stringify({ type: "setMatchLength", matchLength: 2 } satisfies ClientMessage));
     // Round 2's own Track is pinned too (same instant-finish one) — left
-    // unpicked it would draw from track-service's whole shared pool (every
+    // unpicked it would draw from the API's whole shared pool (every
     // other test's own published Tracks), which is not reliably
     // instant-finish and would make this test about the draw, not the
     // Match length actually changing.
@@ -2208,7 +2375,7 @@ describe("startServer — pick or shuffle (M7 ticket 05, ADR 0049)", () => {
     autoConfirmStandings(socket);
 
     // Rounds 2 and 3 pinned so the whole Match finishes fast regardless of
-    // track-service's shared pool — this test is about the *post-start*
+    // the API's shared pool — this test is about the *post-start*
     // messages below being refused, not about what gets drawn.
     socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
     socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 2, trackId, roundType: null } satisfies ClientMessage));
@@ -2685,3 +2852,75 @@ describe("startServer — Hit's hold-to-charge over a real network round trip (M
   }, 15_000);
 });
 
+describe("portRange (Docker-published lobby ports)", () => {
+  // High, uncommon ports: parallel dev servers and CI neighbors live lower.
+  const RANGE = { min: 52100, max: 52102 };
+
+  const block = (port: number): Promise<Server> =>
+    new Promise((resolve) => {
+      const blocker = createServer();
+      blocker.listen(port, () => resolve(blocker));
+    });
+  const unblock = (blocker: Server): Promise<void> =>
+    new Promise((resolve, reject) => blocker.close((err) => (err ? reject(err) : resolve())));
+
+  it("rejects an invalid range before binding anything", async () => {
+    await expect(startServer({ portRange: { min: 100, max: 99 } })).rejects.toThrow(RangeError);
+    await expect(startServer({ portRange: { min: 0, max: 100 } })).rejects.toThrow(RangeError);
+  });
+
+  it("binds the first free port in range, skipping taken ones", async () => {
+    const blocker = await block(RANGE.min);
+    let ranged: MatchServer | undefined;
+    try {
+      ranged = await startServer({ portRange: RANGE, playersToStart: 1, countdownMs: 0 });
+      expect(ranged.port).toBe(RANGE.min + 1);
+    } finally {
+      await ranged?.close();
+      await unblock(blocker);
+    }
+  });
+
+  it("raises no unhandled error while skipping a taken port — a collision must not kill the process", async () => {
+    // The test above already proves the *return value* is right. This one
+    // exists because that is not the part that broke: `ws`, constructed with
+    // `{ server }`, re-emits the HTTP server's bind `error` on the
+    // WebSocketServer, and Node turns an unhandled `'error'` event into a
+    // process exit. `startServer` still resolved with the correct port while
+    // the process died underneath it a tick later — so an assertion on the
+    // resolved value could never catch it.
+    //
+    // It killed far more than one Match: every Lobby is an in-process
+    // `startServer` inside the always-on API (ADR 0054/0058), so one taken
+    // port took tracks, assets, auth and every live Lobby down with it.
+    const uncaught: unknown[] = [];
+    const onUncaught = (err: unknown): void => void uncaught.push(err);
+    // `uncaughtException` is where an unhandled `'error'` event lands. Vitest
+    // installs its own handler, so ours is added alongside rather than
+    // replacing it; `prependListener` gets us the event either way.
+    process.prependListener("uncaughtException", onUncaught);
+
+    const blocker = await block(RANGE.min);
+    let ranged: MatchServer | undefined;
+    try {
+      ranged = await startServer({ portRange: RANGE, playersToStart: 1, countdownMs: 0 });
+      // One turn of the loop past the bind: the re-emitted error arrives on
+      // a `process.nextTick`, strictly after `startServer` has resolved.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.removeListener("uncaughtException", onUncaught);
+      await ranged?.close();
+      await unblock(blocker);
+    }
+  });
+
+  it("rejects when the whole range is taken, instead of binding outside it", async () => {
+    const blockers = await Promise.all([RANGE.min, RANGE.min + 1, RANGE.min + 2].map(block));
+    try {
+      await expect(startServer({ portRange: RANGE, playersToStart: 1, countdownMs: 0 })).rejects.toThrow();
+    } finally {
+      await Promise.all(blockers.map(unblock));
+    }
+  });
+});

@@ -1,0 +1,184 @@
+/* 1y — Play: mode select. A modal card over the menu stage: pick a way in on the left,
+   configure it on the right. The detail column swaps content, never size. */
+.screen { place-items: center; }
+
+.card {
+  width: min(88%, 100%);
+  gap: var(--df-space-7);
+}
+
+.headMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-4);
+}
+
+.close {
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 3.4);
+  aspect-ratio: 1;
+  border-radius: var(--df-radius-chip);
+  background: var(--df-color-surface-1);
+  box-shadow: 0 var(--df-bevel-1) 0 var(--df-color-shadow);
+  font: var(--df-weight-label) var(--df-text-base) / 1 var(--df-font-ui);
+}
+.close:hover { background: var(--df-color-surface-2); }
+
+.body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: var(--df-space-7);
+  min-height: 0;
+}
+
+/* ---- left: the three ways in ---- */
+.modes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-4);
+}
+
+.mode {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--df-space-5);
+  padding: var(--df-space-6);
+  border-radius: var(--df-radius-tile);
+  background: var(--df-color-surface-1);
+  box-shadow: 0 var(--df-bevel-2) 0 var(--df-color-shadow);
+  text-align: left;
+  transition: transform var(--df-dur-up) var(--df-ease), background var(--df-dur-up) var(--df-ease);
+}
+.mode:hover { transform: translateY(var(--df-lift)); }
+.mode:active { transform: translateY(var(--df-squash)); box-shadow: 0 0 0 var(--df-color-shadow); }
+
+.modeOn, .modeOn:hover {
+  background: var(--df-color-ink);
+  box-shadow: 0 var(--df-bevel-2) 0 rgba(0, 0, 0, .35);
+}
+
+.modeIcon {
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 3.6);
+  aspect-ratio: 1;
+  border-radius: var(--df-radius-chip);
+  background: var(--df-color-surface-2);
+  color: var(--df-color-brand);
+}
+.modeIcon svg { width: 58%; }
+.modeOn .modeIcon { background: var(--df-color-accent); color: var(--df-color-ink); }
+
+.modeText { display: flex; flex-direction: column; gap: var(--df-space-3); min-width: 0; }
+.modeLabel { font: var(--df-weight-label) var(--df-text-sm) / 1.1 var(--df-font-ui); }
+.modeSub {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1.3 var(--df-font-ui);
+  color: var(--df-color-ink-55);
+}
+.modeOn .modeLabel { color: var(--df-color-on-brand); }
+.modeOn .modeSub { color: var(--df-color-on-brand-60); }
+
+/* ---- right: the detail pane ---- */
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-6);
+  padding: var(--df-space-7);
+  border-radius: var(--df-radius-panel);
+  background: var(--df-color-surface-1);
+  min-width: 0;
+}
+
+.detailHead { display: flex; flex-direction: column; gap: var(--df-space-3); }
+.kicker {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-brand);
+}
+.title {
+  margin: 0;
+  font: var(--df-weight-display) var(--df-text-md) / 1.15 var(--df-font-display);
+  text-wrap: balance;
+}
+
+.rows { display: flex; flex-direction: column; gap: var(--df-space-3); }
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--df-space-4);
+  padding: var(--df-space-4) var(--df-space-5);
+  border-radius: var(--df-radius-row);
+  background: var(--df-color-surface-0);
+}
+.rowLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-ink-55);
+}
+
+/* ---- quick match: party faces ---- */
+.party {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-4) var(--df-space-5);
+  border-radius: var(--df-radius-row);
+  background: var(--df-color-surface-0);
+}
+.faces { display: flex; gap: var(--df-space-2); }
+.partyNote {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1.3 var(--df-font-ui);
+  color: var(--df-color-ink-55);
+  text-align: right;
+}
+
+/* ---- join: code cells ---- */
+.code {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--df-space-3);
+}
+.cell {
+  width: 100%;
+  aspect-ratio: 0.86;
+  border: calc(var(--df-u) * 0.16) solid var(--df-color-surface-2);
+  border-radius: var(--df-radius-chip);
+  background: var(--df-color-surface-0);
+  color: var(--df-color-ink);
+  font: var(--df-weight-display) var(--df-text-lg) / 1 var(--df-font-display);
+  text-align: center;
+  text-transform: uppercase;
+}
+.cell:focus { outline: none; border-color: var(--df-color-brand); }
+.cellFull { background: var(--df-color-accent); border-color: var(--df-color-accent-shade); }
+
+.recent { display: flex; flex-direction: column; gap: var(--df-space-3); }
+.recentRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-4) var(--df-space-5);
+  border-radius: var(--df-radius-row);
+  background: var(--df-color-surface-0);
+  text-align: left;
+  transition: transform var(--df-dur-up) var(--df-ease);
+}
+.recentRow:hover { transform: translateY(var(--df-lift)); }
+.recentRow:active { transform: translateY(var(--df-squash)); }
+.recentText { display: flex; flex-direction: column; gap: var(--df-space-3); min-width: 0; }
+.recentName { font: var(--df-weight-label) var(--df-text-xs) / 1 var(--df-font-ui); }
+.recentSub {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1 var(--df-font-ui);
+  color: var(--df-color-ink-55);
+}
+.recentJoin {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-brand);
+  white-space: nowrap;
+}

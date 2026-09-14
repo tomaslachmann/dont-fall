@@ -6,11 +6,11 @@ import {
   type Track,
 } from "@dont-fall/shared";
 import type * as THREE from "three";
-import { resolveEndpoints } from "../lib/connection.js";
+import { resolveEndpoints } from "../lib/socket/connection.js";
 import { loadAssetVisuals } from "../render/assetVisuals.js";
 
 /**
- * Everything either game boot needs from track-service (m8.1 ticket 01):
+ * Everything either game boot needs from the API (m8.1 ticket 01):
  * the Track itself, the collision library and the visual templates. Factored
  * out of match boot (`game/index.ts`) so the practice session boots through
  * the identical pipe — same fetch-once caching, same URL derivation, same
@@ -20,7 +20,7 @@ import { loadAssetVisuals } from "../render/assetVisuals.js";
  * it stays server-free by construction (`practice.test.ts` pins that).
  */
 export interface TrackLoading {
-  /** `GET {trackServiceUrl}/tracks/:id` — revision omitted means latest. */
+  /** `GET {apiUrl}/tracks/:id` — revision omitted means latest. */
   fetchTrack: (trackId: string, trackRevision?: number) => Promise<{ track: Track; name: string | null }>;
   /** Collision library, session-cached (M8 ticket 02, ADR 0050 as amended). */
   loadLibrary: () => Promise<Record<string, Module>>;
@@ -34,11 +34,11 @@ export const createTrackLoading = (host: string | undefined): TrackLoading => {
   const fetchTrack = async (trackId: string, trackRevision?: number): Promise<{ track: Track; name: string | null }> => {
     const url =
       trackRevision === undefined
-        ? `${endpoints.trackServiceUrl}/tracks/${trackId}`
-        : `${endpoints.trackServiceUrl}/tracks/${trackId}?revision=${trackRevision}`;
+        ? `${endpoints.apiUrl}/tracks/${trackId}`
+        : `${endpoints.apiUrl}/tracks/${trackId}?revision=${trackRevision}`;
     const res = await fetch(url);
     if (!res.ok) {
-      throw new Error(`could not fetch Track ${trackId}${trackRevision === undefined ? "" : `@${trackRevision}`} from track-service: HTTP ${res.status}`);
+      throw new Error(`could not fetch Track ${trackId}${trackRevision === undefined ? "" : `@${trackRevision}`} from the API: HTTP ${res.status}`);
     }
     const { track, name } = (await res.json()) as { track: Track; name: string | null };
     return { track, name };
@@ -61,7 +61,7 @@ export const createTrackLoading = (host: string | undefined): TrackLoading => {
     fetchedBytes.set(url, pending);
     return pending;
   };
-  const assetsBaseUrl = `${endpoints.trackServiceUrl}/assets`;
+  const assetsBaseUrl = `${endpoints.apiUrl}/assets`;
 
   let assetLibrary: Record<string, Module> | null = null;
   const loadLibrary = async (): Promise<Record<string, Module>> => {

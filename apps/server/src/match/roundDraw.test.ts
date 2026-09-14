@@ -9,20 +9,20 @@ import {
   type Module,
   type Track,
 } from "@dont-fall/shared";
-import { M1_SEED_TRACK_ID, startTrackService, type TrackService } from "@dont-fall/track-service";
+import { M1_SEED_TRACK_ID, startApi, type ApiService } from "@dont-fall/api";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { drawRound, hasFinishZone, type DrawContext } from "./roundDraw.js";
 import type { FetchedTrack } from "../track/trackSource.js";
 
-// Each test gets its own fresh in-memory track-service instance rather than
+// Each test gets its own fresh in-memory the API instance rather than
 // one shared for the whole file — the pool-exhaustion/no-repeat tests below
 // need to know exactly what's published, which a shared instance polluted
 // by every other test's own publishes would make impossible to assert on.
-let trackService: TrackService;
+let trackService: ApiService;
 let trackServiceUrl: string;
 
 beforeEach(async () => {
-  trackService = await startTrackService({ port: 0, dbPath: ":memory:" });
+  trackService = await startApi({ port: 0, dbPath: ":memory:" });
   trackServiceUrl = `http://localhost:${trackService.port}`;
 });
 
@@ -128,11 +128,11 @@ describe("drawRound — an explicit host pick (M7 ticket 05, ADR 0049)", () => {
   it("falls back to an already-used Track for a forced Race rather than finding nothing, once every unused Track is incompatible", async () => {
     // `drawCompatibleTrack` deliberately searches unused candidates first,
     // then already-used ones — a repeat is still a better answer than none.
-    // A fresh track-service always seeds two Race-compatible Tracks (the M1
+    // A fresh the API always seeds two Race-compatible Tracks (the M1
     // seed and the M8 asset demo seed), so marking them "used" here is
     // exactly this case, not a way to construct "genuinely no compatible
     // Track anywhere" — that premise is untestable against a real
-    // track-service, since the seeds make it impossible to publish a pool
+    // the API, since the seeds make it impossible to publish a pool
     // with zero Race-compatible Tracks in the first place.
     await publishTrack(SURVIVAL_ONLY_TRACK);
     const ctx = newContext(); // pre-excludes both seeds as "used"

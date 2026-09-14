@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { performance } from "node:perf_hooks";
 import {
+  DEFAULT_API_PORT,
   DEFAULT_SERVER_PORT,
-  DEFAULT_TRACK_SERVICE_PORT,
   GRACE_WINDOW_MS,
   IDLE_INPUTS,
+  MAX_PLAYERS,
   MODULE_LIBRARY,
   NICKNAME_MAX_LENGTH,
   RapierSimulation,
@@ -58,10 +60,24 @@ export interface MatchServer {
   close: () => Promise<void>;
 }
 
+export interface PortRange {
+  min: number;
+  max: number;
+}
+
 export interface StartServerConfig {
   /** Port to listen on. `0` asks the OS for an ephemeral port. Defaults to {@link DEFAULT_SERVER_PORT}. */
   port?: number;
-  /** track-service base URL (ADR 0028). Defaults to `TRACK_SERVICE_URL` env, then localhost:{@link DEFAULT_TRACK_SERVICE_PORT}. */
+  /**
+   * Bind the first free port inside `[min, max]` instead of `port`.
+   * Docker publishes only known ports, so an OS-ephemeral port bound inside
+   * the API container is unreachable from the browser — the lobby broker
+   * hands that port to the client, which dials it and never gets a welcome.
+   * Local dev leaves this unset (ephemeral ports on localhost just work).
+   * Invalid (`min > max`, outside 1..65535) fails fast, before physics init.
+   */
+  portRange?: PortRange;
+  /** Track-serving API base URL (ADR 0028, merged service in ADR 0058 — the option/env names are historical). Defaults to `TRACK_SERVICE_URL` env, then localhost:{@link DEFAULT_API_PORT}. */
   trackServiceUrl?: string;
   /** Ticket 12: how long/often to retry the startup Track fetch. Test-only knobs; production uses `fetchTrack`'s defaults. */
   trackFetchMaxWaitMs?: number;
@@ -77,6 +93,14 @@ export interface StartServerConfig {
    * single-browser Playtest would otherwise sit in LOBBY forever.
    */
   playersToStart?: number;
+  /**
+   * How many connections this server accepts before refusing the next one
+   * outright (grilling session, 2026-09). Defaults to `MAX_PLAYERS` env,
+   * then {@link MAX_PLAYERS}. Refused with a WS close (reason string, same
+   * pattern as the existing Playtest/mid-Round refusals just below) rather
+   * than ever seating an eleventh Character no capacity plan accounted for.
+   */
+  maxPlayers?: number;
   /**
    * How long the Countdown holds before a Round is released (M4 ticket 04).
    * Defaults to {@link COUNTDOWN_MS}. A test-only knob, like the track-fetch
@@ -96,7 +120,7 @@ export interface StartServerConfig {
   standingsReadyTimeoutMs?: number;
   /**
    * Ignore the Revision's authored Time Limit and use this instead. Test-only
-   * (ADR 0038 is explicit that the clock belongs to the Track): track-service
+   * (ADR 0038 is explicit that the clock belongs to the Track): the API
    * enforces a floor of ten seconds on a published Revision, which is far too
    * long to wait out in a test of what happens when the clock expires.
    */
@@ -125,15 +149,62 @@ export interface StartServerConfig {
   matchLengthOverride?: number;
 }
 
+/**
+ * Listens on the first free port in `[min, max]`, skipping `EADDRINUSE`
+ * collisions. Two near-simultaneous boots may both try the same candidate —
+ * the loser just moves to the next one, so no cross-process lock is needed
+ * at dev scale. Throws the last bind error when the whole range is taken.
+ */
+const listenFirstFree = async (server: Server, min: number, max: number): Promise<number> => {
+  let lastError: unknown = new Error(`no free port in [${min}, ${max}]`);
+  for (let port = min; port <= max; port++) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = (): void => {
+          server.removeListener("listening", onListening);
+          server.removeListener("error", onError);
+        };
+        const onListening = (): void => {
+          cleanup();
+          resolve();
+        };
+        const onError = (err: unknown): void => {
+          cleanup();
+          reject(err);
+        };
+        server.once("listening", onListening);
+        server.once("error", onError);
+        server.listen(port);
+      });
+      return port;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
+};
+
+const validPortRange = (range: PortRange): boolean =>
+  Number.isInteger(range.min) &&
+  Number.isInteger(range.max) &&
+  range.min >= 1 &&
+  range.max <= 65535 &&
+  range.min <= range.max;
+
 export const startServer = async (config: StartServerConfig = {}): Promise<MatchServer> => {
+  if (config.portRange !== undefined && !validPortRange(config.portRange)) {
+    throw new RangeError(
+      `portRange must be { min, max } within 1..65535 with min <= max, got ${JSON.stringify(config.portRange)}`,
+    );
+  }
   await initPhysics();
 
   // ADR 0028: the Match server never holds Module data or generates a Track
   // itself — it always just fetches one, resolved against the procedural
   // registry composed with the fetched asset half (`MODULE_LIBRARY` plus
-  // track-service art, M8 ticket 02, ADR 0050 as amended).
+  // the API art, M8 ticket 02, ADR 0050 as amended).
   const trackServiceUrl =
-    config.trackServiceUrl ?? process.env.TRACK_SERVICE_URL ?? `http://localhost:${DEFAULT_TRACK_SERVICE_PORT}`;
+    config.trackServiceUrl ?? process.env.TRACK_SERVICE_URL ?? `http://localhost:${DEFAULT_API_PORT}`;
   // Ticket 12's test-only knobs, shared by every `fetchTrack` call this
   // server ever makes — the boot-time one below, and a Playtest connection's
   // live reload (further down) — so a test can bound both the same way.
@@ -143,6 +214,8 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   const envPlayersToStart = Number(process.env.PLAYERS_TO_START);
   const playersToStart =
     config.playersToStart ?? (Number.isInteger(envPlayersToStart) && envPlayersToStart > 0 ? envPlayersToStart : PLAYERS_TO_START);
+  const envMaxPlayers = Number(process.env.MAX_PLAYERS);
+  const maxPlayers = config.maxPlayers ?? (Number.isInteger(envMaxPlayers) && envMaxPlayers > 0 ? envMaxPlayers : MAX_PLAYERS);
   const trackFetchRetryOptions = {
     ...(config.trackFetchMaxWaitMs !== undefined ? { maxWaitMs: config.trackFetchMaxWaitMs } : {}),
     ...(config.trackFetchRetryDelayMs !== undefined ? { retryDelayMs: config.trackFetchRetryDelayMs } : {}),
@@ -153,19 +226,26 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   // The Track this server boots on. From here it lives on the runtime, which a
   // Playtest `?track=` reload or a Lobby Track pick can replace while running.
   // Asset art loads once, here (M8 ticket 02) — fetch-once-per-loader, so a
-  // mid-Match edit on track-service cannot split this server from the world
+  // mid-Match edit on the API cannot split this server from the world
   // it already built. A boot with no asset Modules in any Track still pays
   // four tiny fetches; correctness of the library beats saving them.
   const bootTrack = await fetchTrack(trackServiceUrl, trackFetchRetryOptions);
   const library = { ...MODULE_LIBRARY, ...(await fetchAssetLibrary(trackServiceUrl)) };
+  // This Match's own id (ticket 14) — one stable name for the Match that the
+  // API (betting pools keyed by `(matchId, round)`) and every client share
+  // via the snapshot. The broker needs none of it: its Lobby id stays its
+  // own bookkeeping, never crossing into the Match.
+  const matchId = randomUUID();
   const rt = new MatchRuntime(
     {
+      matchId,
       trackServiceUrl,
       trackFetchRetryOptions,
       countdownMs,
       roundEndMs,
       standingsReadyTimeoutMs,
       playersToStart,
+      maxPlayers,
       ...(config.timeLimitMsOverride !== undefined ? { timeLimitMsOverride: config.timeLimitMsOverride } : {}),
       ...(config.survivorTargetOverride !== undefined ? { survivorTargetOverride: config.survivorTargetOverride } : {}),
       ...(config.matchLengthOverride !== undefined ? { matchLengthOverride: config.matchLengthOverride } : {}),
@@ -174,10 +254,83 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     library,
   );
 
-  const wss = new WebSocketServer({ port: config.port ?? DEFAULT_SERVER_PORT });
+  // A tiny HTTP surface sharing the WebSocket's own port (grilling session,
+  // 2026-09) — `GET /status` is the lobby broker's only way to know this
+  // Match's live occupancy/phase without joining it as a Player. Everything
+  // else this server does is still the WebSocket protocol; this exists
+  // purely so something outside the Match (the broker) can poll it.
+  const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+    if (req.method === "GET" && req.url === "/status") {
+      // M9 ticket 11 phase 2b: friends presence reads who (authed Accounts,
+      // anonymous seats omitted) and which Round — alongside the occupancy
+      // the broker already polled for. Account ids are identifiers, not
+      // credentials, and this port only ever answers localhost.
+      const round =
+        rt.match.phase === "COUNTDOWN" || rt.match.phase === "RUNNING" || rt.match.phase === "ROUND_END"
+          ? rt.roundResults.length + 1
+          : null;
+      const body = JSON.stringify({
+        playerCount: rt.sockets.size,
+        maxPlayers: rt.config.maxPlayers,
+        phase: rt.match.phase,
+        round,
+        accounts: [...rt.lobbyPlayers.values()].flatMap((p) => (p.accountId === null ? [] : [p.accountId])),
+      });
+      res.writeHead(200, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) });
+      res.end(body);
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  const wss = new WebSocketServer({ server: httpServer });
+
+  /**
+   * Cleared the moment a port is actually bound (below). While it is set,
+   * bind failures belong to the listen logic, which retries or rejects them.
+   */
+  let binding = true;
+
+  /**
+   * `ws` is constructed with `{ server }`, so it attaches its own listener to
+   * the HTTP server and **re-emits whatever that server emits on this
+   * instance** — including a bind `error`. Node's unhandled-`'error'` rule
+   * then turns a routine `EADDRINUSE` from `listenFirstFree`'s port scan
+   * into a process exit.
+   *
+   * That is fatal well beyond one Match: every Lobby is an in-process
+   * `startServer` inside the always-on API (ADR 0054/0058), so one taken
+   * port in the Lobby range killed tracks, assets, auth and every other
+   * live Lobby with it — observed as an API that died the moment somebody
+   * created a Lobby, leaving already-running Matches unable to fetch their
+   * `.glb` files (procedural Modules kept drawing; asset-backed ones
+   * silently rendered nothing).
+   *
+   * Bind errors stay the listen logic's business — it retries the scan and
+   * rejects with the last failure, so ignoring them here loses nothing.
+   * Anything after bind is a real runtime WebSocket fault: logged, never
+   * fatal, because one bad socket must not take the process down either.
+   */
+  wss.on("error", (err: unknown) => {
+    if (binding) return;
+    console.error("DON'T FALL: match server WebSocket error:", err);
+  });
 
   wss.on("connection", (socket, req) => {
     void (async () => {
+      // Capacity (grilling session, 2026-09): checked first, synchronously,
+      // before anything else this handler does — a full server refuses the
+      // next connection outright rather than ever seating a Character past
+      // `maxPlayers`. A flat cap on every connection this process holds
+      // (`rt.sockets`), not just active Lobby/Round joiners: it mirrors what
+      // a Player-facing "room" capacity means (`Lobby.tsx`'s own "N SLOTS
+      // OPEN"), and a mid-Match spectator (M7 ticket 08) is still a
+      // connection this server is holding open for someone.
+      if (rt.sockets.size >= rt.config.maxPlayers) {
+        socket.close(4003, truncateForCloseReason(`server is full (${rt.config.maxPlayers} players)`));
+        return;
+      }
+
       // Track Builder's Playtest button (`?track=<id>` on the connection URL,
       // read by `apps/client`'s own bootstrap and forwarded onto its
       // WebSocket URL) — the one way this always-on dev server ever serves
@@ -265,10 +418,14 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       rt.joinCount += 1;
       rt.sockets.set(id, socket);
       rt.inputs.add(id);
+      // A newcomer has nothing yet — the next tick must push even if the
+      // shared payload is unchanged for everyone else (ADR 0057: idle phases
+      // broadcast only on change, and a join is nobody's change but theirs).
+      rt.snapshotDirty = true;
       // The host is the first joiner (M4 ticket 07, ADR 0040) — `joinOrder`
       // is what `resolveHostId` reads to decide that, recomputed from
       // whoever is still connected rather than stored.
-      rt.lobbyPlayers.set(id, { id, nickname: "Player", ready: false, joinOrder });
+      rt.lobbyPlayers.set(id, { id, nickname: "Player", ready: false, joinOrder, accountId: null });
       // A mid-Match spectator is in the Lobby's list, not in the Round (M7
       // ticket 08): registered and welcomed above, but seated by no
       // simulation — `buildSimulationFor` seats everyone else, and only a
@@ -289,7 +446,12 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         // the threshold at the point it goes on the wire, so a future
         // runtime-adjustable value cannot leave the welcome advertising a
         // number the tick loop no longer uses.
-        config: { snapshotHz: SNAPSHOT_HZ, graceWindowMs: GRACE_WINDOW_MS, playersToStart: rt.config.playersToStart },
+        config: {
+          snapshotHz: SNAPSHOT_HZ,
+          graceWindowMs: GRACE_WINDOW_MS,
+          playersToStart: rt.config.playersToStart,
+          maxPlayers: rt.config.maxPlayers,
+        },
       });
 
       // A single client's socket erroring (an abrupt reset, a write to a
@@ -315,6 +477,12 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
           rt.inputs.receive(id, message.inputs);
           return;
         }
+        if (message.type === "sync") {
+          // A late-attached listener asking for the current state (ADR
+          // 0057) — the next tick pushes whether or not anything changed.
+          rt.snapshotDirty = true;
+          return;
+        }
 
         // Lobby interactions (M4 ticket 07, ADR 0040) — nickname/ready/Track
         // pick/start/return, all travelling this same socket, no second
@@ -337,7 +505,8 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         const spectating = rt.spectators.has(id);
         const midRound = rt.match.phase === "RUNNING";
         if (midRound && !spectating && !rt.dnf.some((entry) => entry.id === id)) {
-          rt.dnf.push({ id, nickname: rt.lobbyPlayers.get(id)?.nickname ?? "Player" });
+          const row = rt.lobbyPlayers.get(id);
+          rt.dnf.push({ id, nickname: row?.nickname ?? "Player", accountId: row?.accountId ?? null });
         }
         rt.sockets.delete(id);
         rt.inputs.remove(id);
@@ -354,26 +523,40 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     })();
   });
 
-  const interval = startMatchLoop(rt);
+  // ADR 0059: a finished server closes itself — everyone left for the
+  // results page, or the straggler grace ran out. `closeServer` below is only
+  // *called* from a later tick, so referencing it here is safe.
+  const interval = startMatchLoop(rt, { onTerminalClose: () => void closeServer() });
 
-  await new Promise<void>((resolve, reject) => {
-    wss.once("listening", resolve);
-    wss.once("error", reject); // e.g. EADDRINUSE — reject instead of hanging forever
-  });
-  const address = wss.address();
-  const port = typeof address === "object" && address ? address.port : (config.port ?? DEFAULT_SERVER_PORT);
+  const port =
+    config.portRange !== undefined
+      ? await listenFirstFree(httpServer, config.portRange.min, config.portRange.max)
+      : await new Promise<number>((resolve, reject) => {
+          httpServer.once("listening", () => {
+            const address = httpServer.address();
+            resolve(typeof address === "object" && address ? address.port : (config.port ?? DEFAULT_SERVER_PORT));
+          });
+          httpServer.once("error", reject); // e.g. EADDRINUSE — reject instead of hanging forever
+          httpServer.listen(config.port ?? DEFAULT_SERVER_PORT);
+        });
+  binding = false;
 
-  return {
-    port,
-    close: () =>
-      new Promise((resolve, reject) => {
-        // M7 ticket 05: stop any in-flight `buildMatchStructure` from
-        // continuing to draw against track-service for a Match nothing is
-        // listening to anymore — see `MatchRuntime.closed`'s own doc.
-        rt.closed = true;
-        clearInterval(interval);
-        for (const socket of rt.sockets.values()) socket.close();
-        wss.close((err) => (err ? reject(err) : resolve()));
-      }),
-  };
+  const closeServer = (): Promise<void> =>
+    new Promise((resolve, reject) => {
+      // M7 ticket 05: stop any in-flight `buildMatchStructure` from
+      // continuing to draw against the API for a Match nothing is
+      // listening to anymore — see `MatchRuntime.closed`'s own doc.
+      rt.closed = true;
+      clearInterval(interval);
+      for (const socket of rt.sockets.values()) socket.close();
+      // `wss` was created with `{ server: httpServer }` — closing it only
+      // stops the WebSocket layer, never the HTTP server underneath it
+      // (`ws`'s own documented behavior for an externally-owned server).
+      // Both need closing; the callback that resolves/rejects this promise
+      // waits on the HTTP server, the one actually holding the port.
+      wss.close();
+      httpServer.close((err) => (err ? reject(err) : resolve()));
+    });
+
+  return { port, close: closeServer };
 };

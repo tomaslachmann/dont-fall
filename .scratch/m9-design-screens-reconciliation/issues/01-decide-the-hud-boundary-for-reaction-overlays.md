@@ -8,7 +8,12 @@ live `<GameCanvas>` (ADR 0051's "content over a live scene" carve-out).
 
 **Blocked by:** nothing (this is the decision itself).
 
-**Status:** planned
+**Status:** decided — see **ADR 0060**
+(`docs/adr/0060-reaction-overlays-may-be-react-telemetry-stays-plain-dom.md`).
+One sentence: every-frame telemetry stays plain DOM (ADR 0008's own
+reasoning), occasional event feedback fired off a discrete sim edge may
+render as React in the `screenOverlay` slot. First instance: the
+incoming-Hit flash (ticket 09, Hit-received).
 
 ## Why
 
@@ -25,20 +30,20 @@ See `docs/research/test-components-design-screens-gap-analysis.md`, "ADR/archite
 
 ## What to change
 
-- [ ] Grill/decide: does ADR 0008's plain-DOM rule extend to per-event reaction overlays (Hit
+- [x] Grill/decide: does ADR 0008's plain-DOM rule extend to per-event reaction overlays (Hit
       landed, Dash charged, Grab held, Ragdoll get-up), or is there a principled line between
       "every-frame telemetry" (stays plain DOM) and "occasional event feedback" (may be React)?
-- [ ] Record the decision as a new ADR (or an amendment noting what ADR 0008 still covers and
+- [x] Record the decision as a new ADR (or an amendment noting what ADR 0008 still covers and
       what it doesn't)
-- [ ] `RaceHUD.tsx` itself is out of scope for a carve-out — it duplicates `hud.ts`/`hudText.ts`
+- [x] `RaceHUD.tsx` itself is out of scope for a carve-out — it duplicates `hud.ts`/`hudText.ts`
       wholesale and has no reason to exist as a second implementation; the decision is about the
       *reaction* overlays only, not the whole HUD
 
 ## Done when
 
-- [ ] A new or amended ADR states, in one sentence, which in-match feedback may render as React
+- [x] A new or amended ADR states, in one sentence, which in-match feedback may render as React
       and which must stay plain DOM
-- [ ] Ticket 09 can start without re-litigating this
+- [x] Ticket 09 can start without re-litigating this
 
 ## Watch out
 

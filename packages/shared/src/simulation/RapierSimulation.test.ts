@@ -81,6 +81,35 @@ const tickUntilControlled = (sim: RapierSimulation, maxTicks = 400): void => {
   throw new Error(`still ${sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState} after ${maxTicks} ticks`);
 };
 
+describe("RapierSimulation — physics only steps for COUNTDOWN/RUNNING (grilling session, 2026-09)", () => {
+  it("a falling Character freezes mid-air during LOBBY, ROUND_END, and RESULTS — no world.step() runs", () => {
+    for (const phase of ["LOBBY", "ROUND_END", "RESULTS"] as const) {
+      const sim = new RapierSimulation({ spawn: { x: 0, y: 4, z: 0 }, statics: [GROUND] });
+      const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
+      for (let n = 0; n < 30; n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS }, phase);
+      const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
+      expect(after).toBeCloseTo(before, 6);
+    }
+  });
+
+  it("gravity behaves exactly as before for COUNTDOWN and RUNNING — the Character still lands", () => {
+    for (const phase of ["COUNTDOWN", "RUNNING"] as const) {
+      const sim = new RapierSimulation({ spawn: { x: 0, y: 4, z: 0 }, statics: [GROUND] });
+      for (let n = 0; n < Math.round(3 * TICK_RATE_HZ); n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS }, phase);
+      expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y - CAPSULE_BOTTOM_OFFSET).toBeCloseTo(0, 1);
+    }
+  });
+
+  it("tickCount (state.tick) keeps advancing every call regardless of phase — never freezes the tick epoch (ADR 0027, M5 ticket 08)", () => {
+    const sim = new RapierSimulation({ spawn: { x: 0, y: 4, z: 0 }, statics: [GROUND] });
+    for (const phase of ["LOBBY", "COUNTDOWN", "RUNNING", "ROUND_END", "RESULTS"] as const) {
+      const before = sim.snapshot().tick;
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS }, phase);
+      expect(sim.snapshot().tick).toBe(before + 1);
+    }
+  });
+});
+
 describe("RapierSimulation — walk", () => {
   it("drops the character under gravity onto the ground", () => {
     const sim = new RapierSimulation({ spawn: { x: 0, y: 4, z: 0 }, statics: [GROUND] });
@@ -746,14 +775,24 @@ describe("RapierSimulation — what a Fall does is a RoundRules field (M5 ticket
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.fallCount).toBe(1);
   });
 
-  it("only eliminates while the Round is RUNNING — a Fall in the Lobby respawns instead (code review, ticket 07)", () => {
+  it("only eliminates while the Round is RUNNING — a Fall in the Countdown respawns instead (code review, ticket 07)", () => {
     // A Lobby host can pick Survival before the Round starts (ticket 07), so
     // `fallBehavior` is already "eliminate" through LOBBY and COUNTDOWN.
-    // Input is locked there but gravity and Spinners are not, and `eliminated`
-    // is never cleared — a Fall before the Round would put a Player out of a
-    // Round that hasn't begun.
+    // `eliminated` is never cleared — a Fall before the Round would put a
+    // Player out of a Round that hasn't begun.
+    //
+    // Exercised against COUNTDOWN, not LOBBY: physics only steps for
+    // COUNTDOWN/RUNNING now (`phaseNeedsPhysicsStep`, grilling session
+    // 2026-09) — a Character spawned over the void in LOBBY simply never
+    // falls at all (nothing steps there to fall with), covered separately
+    // below. COUNTDOWN is where "physics is live but the Round hasn't
+    // begun" is still real and still needs this guard: Characters are
+    // already spawned with live cameras and gravity/Spinners running
+    // (ADR 0040), so an ambient Fall there must still respawn, not
+    // eliminate a Round that hasn't started yet.
+    //
     // Spawned clear off the platform, so it Falls under gravity alone — no
-    // input, which is locked in LOBBY anyway.
+    // input, which is locked in COUNTDOWN anyway.
     const overTheVoid = () =>
       new RapierSimulation({
         spawn: { x: 20, y: 1.5, z: 0 },
@@ -763,17 +802,32 @@ describe("RapierSimulation — what a Fall does is a RoundRules field (M5 ticket
       });
 
     const sim = overTheVoid();
-    for (let i = 0; i < 120; i += 1) sim.tick({}, "LOBBY");
+    for (let i = 0; i < 120; i += 1) sim.tick({}, "COUNTDOWN");
 
-    const inLobby = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-    expect(inLobby.eliminated).toBe(false);
-    expect(inLobby.fallCount).toBeGreaterThan(0); // it did Fall — it just Respawned instead
-    expect(inLobby.respawnCount).toBeGreaterThan(0);
+    const inCountdown = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(inCountdown.eliminated).toBe(false);
+    expect(inCountdown.fallCount).toBeGreaterThan(0); // it did Fall — it just Respawned instead
+    expect(inCountdown.respawnCount).toBeGreaterThan(0);
 
     // And the identical Fall, once the Round is RUNNING, eliminates as ever.
     const running = overTheVoid();
     for (let i = 0; i < 120; i += 1) running.tick({});
     expect(running.snapshot().characters[DEFAULT_CHARACTER_ID]!.eliminated).toBe(true);
+  });
+
+  it("physics no longer steps in LOBBY at all — a Character spawned over the void never falls there (grilling session, 2026-09)", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 20, y: 1.5, z: 0 },
+      statics: [PLATFORM],
+      killPlaneY: -8,
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
+    });
+
+    for (let i = 0; i < 120; i += 1) sim.tick({}, "LOBBY");
+
+    const inLobby = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(inLobby.fallCount).toBe(0);
+    expect(inLobby.position.y).toBeCloseTo(1.5, 6);
   });
 
   it("ignores Checkpoints crossed before the Fall — a Round with no Respawn never reads respawnPoint", () => {

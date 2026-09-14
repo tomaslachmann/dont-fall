@@ -6,9 +6,11 @@
   "scripts": {
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "dev": "bash scripts/dev.sh"
+    "dev": "bash scripts/dev.sh",
+    "check:assets": "tsx scripts/check-assets.ts"
   },
   "devDependencies": {
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "tsx": "^4.19.2"
   }
 }

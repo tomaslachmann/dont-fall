@@ -1,0 +1,142 @@
+/* 1r — the run-end slam, inside the HUD. Same beat for both outcomes; only the
+   badge color, the big number and the three stat plates differ. */
+.screen {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--df-space-6);
+  align-items: start;
+  justify-items: center;
+}
+
+/* HUD chrome sits back while the verdict lands. */
+.hud { opacity: .75; }
+.position {
+  justify-self: start;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--df-space-5);
+  padding: var(--df-space-6) var(--df-space-7);
+  border-radius: var(--df-radius-card);
+  background: rgba(255, 255, 255, .35);
+}
+.place {
+  font: var(--df-weight-display) var(--df-text-hero) / .82 var(--df-font-display);
+  color: rgba(255, 255, 255, .9);
+}
+.positionMeta { display: flex; flex-direction: column; gap: var(--df-space-3); padding-bottom: var(--df-space-2); }
+.field { font: var(--df-weight-label) var(--df-text-sm) / 1 var(--df-font-ui); color: var(--df-color-on-brand-80); }
+.caption {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand-80);
+}
+.checkpoints {
+  justify-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--df-space-4);
+}
+.cpLabel {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand-80);
+}
+.pb {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-on-brand-60);
+}
+
+.feed {
+  grid-column: 1 / -1;
+  align-self: end;
+  justify-self: start;
+  font: var(--df-weight-display) var(--df-text-2xs) / 2 var(--df-font-mono);
+  letter-spacing: var(--df-tracking-wide);
+  color: rgba(255, 255, 255, .45);
+}
+
+/* ---- the verdict ---- */
+.verdict {
+  display: grid;
+  grid-template-areas: 'verdict';
+  place-items: center;
+  pointer-events: none;
+}
+.verdict > * { grid-area: verdict; }
+
+/* The flash fires once on entry and is gone inside half a second — a beat,
+   not a strobe. The verdict itself pops in on df-cd-beat (same attack as
+   the Countdown's live numeral) and settles visible: live this is one
+   outcome, never the mock's alternation. */
+.flash { width: 100%; height: 100%; background: var(--df-color-on-brand); animation: df-flash-out 1.2s linear 1; }
+.flashOut { background: #FF5A3C; }
+
+.beat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--df-space-5);
+  text-align: center;
+  opacity: 1;
+  animation: df-cd-beat .55s cubic-bezier(.2, 1.4, .4, 1) 1;
+}
+
+.badge {
+  padding: var(--df-space-3) var(--df-space-8);
+  border-radius: var(--df-radius-pill);
+  font: var(--df-weight-label) var(--df-text-xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-mega);
+}
+.badgeFinished { background: var(--df-color-go); color: var(--df-color-go-ink); box-shadow: 0 var(--df-bevel-3) 0 var(--df-color-go-shade); }
+.badgeOut { background: #FF5A3C; color: var(--df-color-on-brand); box-shadow: 0 var(--df-bevel-3) 0 #C93A20; }
+
+.result {
+  font: var(--df-weight-display) calc(var(--df-u) * 11.9) / .95 var(--df-font-display);
+  color: var(--df-color-on-brand);
+  text-shadow: 0 calc(var(--df-u) * .94) 0 rgba(43, 27, 77, .45);
+}
+
+.plates { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--df-space-4); }
+.plate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-3);
+  padding: var(--df-space-4) var(--df-space-7);
+  border-radius: var(--df-radius-tile);
+  background: var(--df-color-plate-strong);
+  color: var(--df-color-on-brand);
+}
+.plateAccent {
+  background: var(--df-color-accent);
+  color: var(--df-color-ink);
+  box-shadow: 0 var(--df-bevel-2) 0 var(--df-color-accent-shade);
+}
+.plateLabel {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  opacity: .7;
+}
+.plateAccent .plateLabel { color: var(--df-color-ink-70); opacity: 1; }
+.plateValue { font: var(--df-weight-display) var(--df-text-md) / 1 var(--df-font-display); }
+.plateWarn { color: #FF9E9E; }
+
+/* ---- actions ---- */
+.actions {
+  grid-column: 1 / -1;
+  align-self: end;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: var(--df-space-4);
+}
+.timer {
+  padding: var(--df-space-5) var(--df-space-6);
+  border-radius: var(--df-radius-row);
+  background: var(--df-color-on-brand-18);
+  color: var(--df-color-on-brand-80);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+}

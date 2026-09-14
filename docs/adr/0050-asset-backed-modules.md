@@ -81,3 +81,25 @@ tracks, accepted here because art edits are rare and revision-pinned art
 (content hashes in the welcome) belongs to the content-pipeline milestone,
 not M8. History above is preserved as decided; this section records what
 changed and why.
+
+## Amendment (2026-09-11, M9 asset drop)
+
+The role marker gains a fallback. `extras.role` (`"collision"` / `"visual"`)
+stays the authoritative marker and still wins wherever it is present, but a
+meshed node carrying no `role` extra at all is now also accepted when its
+**node name** ends in `_Collision` / `_Visual` (case-insensitive, suffix
+only). Reason: a Blender custom property is quietly lost to a
+duplicate-and-rename, an object join, or a library override, while the
+outliner naming convention survives all three — the ten-block drop this
+amendment came from carries the names and none of the properties. The
+fallback is deliberately narrow: an *explicit but unrecognized* `role` still
+fails (a typo is an authoring error, not a reason to guess from the name),
+`_Collision` anywhere but the end of the name names nothing, and a node
+marked neither way still fails the load loudly rather than being silently
+dropped from collision.
+
+Unchanged, and re-affirmed: a GLB is authored **in the Module's own local
+frame, Y-up** — the reader applies node transforms and nothing else. Assets
+exported Z-up are re-exported with Blender's "+Y Up" option rather than
+rotated in code, so one frame holds for every file and shared never
+transforms authored geometry on its way into the simulation.

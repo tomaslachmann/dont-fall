@@ -1,6 +1,7 @@
 import type { Vec3 } from "../math/vec3.js";
 import type { SimInputs } from "../simulation/SimInputs.js";
 import type { LobbyPlayer } from "../match/Lobby.js";
+import type { DnfEntry } from "../match/Results.js";
 import type { MatchPhase } from "../match/MatchPhase.js";
 import type { RoundResult } from "../match/Score.js";
 import type { RoundRules } from "../match/RoundRules.js";
@@ -35,7 +36,7 @@ export interface WelcomeMessage {
   spawn: Vec3;
   /**
    * The exact Track (ADR 0028) this Match server fetched at startup —
-   * `trackId`/`revision` from track-service's Revision model (ADR 0032).
+   * `trackId`/`revision` from the API's Revision model (ADR 0032).
    * Every client fetches this exact Revision (ticket 11), not "latest",
    * so a publish landing mid-Match can never desync client from server.
    */
@@ -54,12 +55,29 @@ export interface WelcomeMessage {
      * clients render what the server decides, they never compute it).
      */
     playersToStart: number;
+    /**
+     * How many connections this server accepts before refusing the next one
+     * outright (grilling session, 2026-09). Sent for the same reason
+     * `playersToStart` is: a client rendering "N SLOTS OPEN" from a
+     * hardcoded guess would drift the moment this config changes, and ADR
+     * 0040 already settled that clients render the server's own numbers,
+     * never a second guess of them.
+     */
+    maxPlayers: number;
   };
 }
 
 /** Server → client, broadcast at the snapshot rate (`config.snapshotHz`). */
 export interface SnapshotMessage {
   type: "snapshot";
+  /**
+   * Which Match this snapshot belongs to (ticket 14) — the server's own id
+   * for itself, generated at boot. Spectator betting keys pools by
+   * `(matchId, round)` on the API, so both sides need one shared, stable
+   * name for the Match: this is it, on every snapshot, rather than a second
+   * handshake to learn it.
+   */
+  matchId: string;
   /** The authoritative world state; carries `tick`. */
   state: SimState;
   /**
@@ -122,7 +140,7 @@ export interface SnapshotMessage {
    * Eliminated Player is simply one who is still here with no `finishTick`
    * when the Round ends, which both sides can already see (`isEliminated`).
    */
-  dnf: { id: string; nickname: string }[];
+  dnf: DnfEntry[];
   /**
    * Ids who have confirmed Ready on the current Standings Screen (M7 ticket
    * 10/12, ADR 0051) — Round-scoped exactly like `dnf`, cleared on every
@@ -211,6 +229,18 @@ export interface SnapshotMessage {
    * continuing, with no way for that confirmation to ever be honoured.
    */
   roundsRemaining: boolean;
+  /**
+   * Set once the Match is over AND its results are persisted (ADR 0059) —
+   * `null` in every other state, including a terminal RESULTS whose save is
+   * still in flight. The client navigates to its post-Match results page on
+   * this (fetching from the API by `matchId`) and unmounts the game; the
+   * server closes itself once everyone has left.
+   *
+   * A snapshot field rather than a one-shot message, the same discipline as
+   * `standingsReady`/`roundResults` above: a client that attached late reads
+   * the current value via `sync` instead of having missed an event.
+   */
+  matchOver: { matchId: string } | null;
 }
 
 /** Server → client, reply to a {@link PingMessage} (time sync, ADR 0019). */
@@ -261,6 +291,21 @@ export interface ReclaimMessage {
 export interface SetNicknameMessage {
   type: "setNickname";
   nickname: string;
+}
+
+/**
+ * Client → server, once per connection, right after open (M9 ticket 11 phase
+ * 2b): binds this connection to the Account behind the session token — the
+ * same opaque Bearer [REDACTED] the API's own routes verify. Optional and idempotent:
+ * a missing, invalid, or unverifiable token leaves the connection anonymous
+ * (`accountId: null`) instead of closing it — auth is enrichment (friends
+ * presence, RECENT), never a start gate, the same posture as betting's
+ * fire-and-forget notifier. Latest send wins; re-sending after a re-login
+ * re-binds.
+ */
+export interface AuthMessage {
+  type: "auth";
+  token: string;
 }
 
 /**
@@ -351,10 +396,24 @@ export interface StandingsReadyMessage {
   type: "standingsReady";
 }
 
+/**
+ * Client → server: "send me the current snapshot now" (ADR 0057). Idle
+ * phases (LOBBY, RESULTS) broadcast only on change, so a client that
+ * attached its listener late — a game still loading its Track, a Screen
+ * subscribing after the welcome — would otherwise sit on nothing until the
+ * next mutation. Sets `snapshotDirty`; the next tick pushes. No state, no
+ * gate, no phase restriction: in a live phase it is a harmless no-op (every
+ * tick broadcasts anyway).
+ */
+export interface SyncMessage {
+  type: "sync";
+}
+
 export type ClientMessage =
   | InputMessage
   | PingMessage
   | ReclaimMessage
+  | AuthMessage
   | SetNicknameMessage
   | SetReadyMessage
   | SelectTrackMessage
@@ -362,7 +421,8 @@ export type ClientMessage =
   | SetMatchLengthMessage
   | PickRoundSlotMessage
   | StartMessage
-  | StandingsReadyMessage;
+  | StandingsReadyMessage
+  | SyncMessage;
 
 /** A nickname longer than this is truncated (M4 ticket 07) — long enough for a real name, short enough not to blow out a Lobby row. */
 export const NICKNAME_MAX_LENGTH = 24;
@@ -371,8 +431,9 @@ export const NICKNAME_MAX_LENGTH = 24;
 export const DEFAULT_SERVER_PORT = 8080;
 
 /**
- * Default port track-service (ADR 0028/0029) listens on. The Match server
- * fetches its Track from here at startup — a real runtime dependency, not
- * optional (ADR 0028's accepted trade-off).
+ * Default port the single API service (ADR 0058) listens on — tracks,
+ * assets, auth, and lobbies on one origin. Takes over 8081 (the API's
+ * old port) so every existing Track fetcher keeps working unchanged; only
+ * lobby-broker clients move (8082 → here).
  */
-export const DEFAULT_TRACK_SERVICE_PORT = 8081;
+export const DEFAULT_API_PORT = 8081;

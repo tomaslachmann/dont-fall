@@ -9,7 +9,9 @@ Screen without it and ticket 14 adds the betting panel once its dependencies lan
 **Blocked by:** ticket 01 (overlay-vs-HUD boundary decision — a live spectate view sits over the
 running scene, same category question as the reaction overlays), ticket 03 (component kit).
 
-**Status:** planned
+**Status:** shipped 2026-09-11 (with ticket 14's betting panel BUILT, not cut — explicit user scope call overriding this ticket's "cut it, don't stub it").
+
+What shipped: `onRunEnd` (once-per-Round verdict facts: outcome, placement, points, server-clock race/survived time) + `onSpectate` (following, runners, beansLeft, freeCam) game→shell events; finisher spectate (camera-only `spectateRequested` gate) + `spectateFollow/Next/Prev`, `setFreeCam`, `enterSpectate` on `GameHandle`; the FinishedOrOut verdict as a transparent overlay (SPECTATE on both outcomes per scope call, SCOREBOARD cut — no mid-Round table exists, LEAVE kept); the Spectator panel with bean switching, FREE CAM (frozen-pose hold), and the live betting board. Reference 1j/1r presentation kept: no full-bleed backgrounds in-Match, HUD chrome settles over the live feed. Still owed: real two-browser verification (sandbox can't listen).
 
 ## Why
 

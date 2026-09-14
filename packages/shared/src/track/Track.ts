@@ -44,23 +44,63 @@ export interface Segment {
 export type Track = Segment[];
 
 /**
- * One row of track-service's `GET /tracks` listing (ticket 09/ADR 0032) — a
- * Track's id/name/author/createdAt without its full Segment data. Shared
- * between track-service (the producer) and the Track builder (the consumer)
- * so the two never silently drift apart (code review, ticket 09 — this used
- * to be declared separately in each).
+ * How many checkpoints a Track crosses — one per Segment whose Module
+ * authors one (a Module carries at most one `checkpoint`). What the
+ * Countdown's `CHECKPOINT 00 / N` counts down from. A Segment referencing
+ * an unknown Module counts zero here; `buildTrack` owns that validation
+ * and throws at boot, this is a label, not a load.
+ */
+export const countCheckpoints = (track: Track, modules: Record<string, Module>): number =>
+  track.filter((segment) => modules[segment.moduleId]?.checkpoint !== undefined).length;
+
+/**
+ * Whether `track` carries a Finish Zone anywhere (M9 ticket 16) — true when
+ * any placed Segment's Module authors one. The listing's cheap answer to
+ * the question `resolveTrack(...).finishZones.length > 0` answers
+ * expensively: no geometry is placed, only Module authorship is read, which
+ * is all raceability ever depended on. Lenient like {@link countCheckpoints}
+ * (a Segment referencing an unknown Module contributes nothing instead of
+ * throwing) for the same reason: this is a label, not a load — a listing
+ * must never 500 because one stored Track references a since-removed
+ * Module, and such a Track can't load (and so can't be raced) anyway.
+ */
+export const trackHasFinishZone = (track: Track, modules: Record<string, Module>): boolean =>
+  track.some((segment) => modules[segment.moduleId]?.finishZone !== undefined);
+
+/**
+ * One row of the API's `GET /tracks` listing (ticket 09/ADR 0032) — a
+ * Track's id/name/author/createdAt without its full Segment data, plus the
+ * two facts Discover's category tabs filter and sort on (M9 ticket 16):
+ * how often the Track has been played, and whether a Race can run on it at
+ * all. Shared between the API (the producer) and the Track builder (the
+ * consumer) so the two never silently drift apart (code review, ticket 09 —
+ * this used to be declared separately in each).
  */
 export interface TrackListing {
   id: string;
   name: string | null;
   authorId: string;
   createdAt: number;
+  /**
+   * Rounds ever started on this Track (M9 ticket 16) — an anonymous counter,
+   * no per-Account data. Feeds TRENDING's sort and nothing else.
+   */
+  plays: number;
+  /**
+   * Whether the latest Revision carries a Finish Zone (M9 ticket 16) — the
+   * same derived fact `roundStartBlockedReason` already reads, computed
+   * against the current Module library on every listing so it can never
+   * disagree with what the server itself would refuse. Not a Round-type tag
+   * (ADR 0041 forbids those): a Track with no Finish Zone still hosts
+   * Survival, it just can't be raced.
+   */
+  hasFinishZone: boolean;
 }
 
 /**
- * One stored Track Revision, in full — track-service's own `GET /tracks/:id`
+ * One stored Track Revision, in full — the API's own `GET /tracks/:id`
  * response shape (M4.5 ticket 04). Shared for the same reason as
- * `TrackListing`: track-service (the producer) and the Track builder (the
+ * `TrackListing`: the API (the producer) and the Track builder (the
  * consumer, previously `StoredTrackResponse` — a hand-written subset that
  * silently dropped `revision`/`authorId`/`contentHash`, which the wire
  * always carried) must agree on this without a second declaration to drift.

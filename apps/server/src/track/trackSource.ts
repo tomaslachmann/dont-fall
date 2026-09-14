@@ -17,19 +17,19 @@ export interface FetchedTrack extends TrackRoundDefaults {
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Fetches a fully-resolved Track from track-service (ADR 0028) — the Match
+ * Fetches a fully-resolved Track from the API (ADR 0028) — the Match
  * server never holds Module data or generates a Track itself, whether it's
  * hand-built or randomly assembled makes no difference here. `id`/`revision`
  * are carried into every client's `welcome` (ticket 11) so a client fetches
  * this *exact* Revision, never "latest" independently — a publish landing
  * mid-Match could otherwise desync a client from what the server is running.
  *
- * Retries with backoff (ticket 12) — track-service may still be starting up
+ * Retries with backoff (ticket 12) — the API may still be starting up
  * (e.g. Docker container ordering isn't instant); a single-shot fetch failing
- * on that transient race isn't the same problem as track-service being
+ * on that transient race isn't the same problem as the API being
  * genuinely gone. Still fails loudly (and unmasked) once the budget runs out.
  * Each attempt itself is bounded ({@link TRACK_FETCH_ATTEMPT_TIMEOUT_MS}) —
- * without that, a single hung request (track-service accepts the connection
+ * without that, a single hung request (the API accepts the connection
  * but never responds) could block past the whole retry budget instead of
  * being abandoned and retried.
  *
@@ -64,12 +64,12 @@ export const fetchTrack = async (
         timeLimitMs?: number;
         survivorTarget?: number;
       };
-      if (attempt > 1) console.log(`DON'T FALL: track-service reachable after ${attempt} attempts`);
+      if (attempt > 1) console.log(`DON'T FALL: the API reachable after ${attempt} attempts`);
       return {
         id: body.id,
         revision: body.revision,
         track: body.track,
-        // Defaulted rather than required, so a track-service that predates
+        // Defaulted rather than required, so a the API that predates
         // either column (ADR 0038/0041's own backfills haven't run yet) still
         // yields a playable Round rather than a Match server that won't start.
         timeLimitMs: body.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS,
@@ -77,11 +77,11 @@ export const fetchTrack = async (
       };
     } catch (err) {
       lastError = err;
-      console.warn(`DON'T FALL: track-service fetch attempt ${attempt} failed, retrying: ${(err as Error).message}`);
+      console.warn(`DON'T FALL: the API fetch attempt ${attempt} failed, retrying: ${(err as Error).message}`);
       await sleep(retryDelayMs);
     }
   }
   throw new Error(
-    `track-service unreachable or has no Track at ${trackServiceUrl} after ${attempt} attempts (ADR 0028): ${(lastError as Error)?.message}`,
+    `the API unreachable or has no Track at ${trackServiceUrl} after ${attempt} attempts (ADR 0028): ${(lastError as Error)?.message}`,
   );
 };

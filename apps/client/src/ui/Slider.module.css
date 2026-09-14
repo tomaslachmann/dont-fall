@@ -1,0 +1,52 @@
+/* Plastic slider. The knob is a rounded slab, not a circle handle. */
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, calc(var(--df-u) * 14)) minmax(0, 1fr) calc(var(--df-u) * 4);
+  align-items: center;
+  gap: var(--df-space-7);
+}
+.label { font: var(--df-weight-label) var(--df-text-xs) / 1.2 var(--df-font-ui); }
+
+.control {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: calc(var(--df-u) * 2.65);
+}
+.track {
+  width: 100%;
+  height: calc(var(--df-u) * 1.4);
+  border-radius: var(--df-radius-pill);
+  background: #F2EDFC;
+  overflow: hidden;
+}
+.fill {
+  height: 100%;
+  width: var(--df-slider-value);
+  border-radius: inherit;
+  background: var(--df-slider-color, var(--df-color-brand));
+}
+/* Knob rides the fill without absolute page coordinates. */
+.knob {
+  position: absolute;
+  left: var(--df-slider-value);
+  translate: -50%;
+  width: calc(var(--df-u) * 2.65);
+  aspect-ratio: 1;
+  border-radius: calc(var(--df-u) * 0.95);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-1) 0 var(--df-color-shadow), 0 0 0 calc(var(--df-u) * 0.23) var(--df-slider-color, var(--df-color-brand));
+  pointer-events: none;
+}
+.input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.value {
+  text-align: right;
+  font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display);
+}

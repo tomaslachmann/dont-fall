@@ -782,12 +782,12 @@ export const INPUT_REDUNDANCY = 2;
  */
 export const MAX_QUEUED_INPUTS = 6;
 
-// --- track-service fetch (ADR 0028; ticket 12) ------------------------------
+// --- the API fetch (ADR 0028; ticket 12) ------------------------------
 
 /**
  * Total bounded time the Match server keeps retrying its startup Track fetch
- * before giving up loudly (ticket 12) — covers track-service still coming up
- * (e.g. Docker container start order isn't instant), not track-service being
+ * before giving up loudly (ticket 12) — covers the API still coming up
+ * (e.g. Docker container start order isn't instant), not the API being
  * genuinely gone.
  */
 export const TRACK_FETCH_MAX_WAIT_MS = 30_000;
@@ -797,11 +797,22 @@ export const TRACK_FETCH_RETRY_DELAY_MS = 1_000;
 
 /**
  * Per-attempt timeout on the startup Track fetch itself — bounds a single
- * request that hangs (track-service accepts the connection but never
+ * request that hangs (the API accepts the connection but never
  * responds) so it can't silently eat the whole {@link TRACK_FETCH_MAX_WAIT_MS}
  * budget on one stuck attempt instead of retrying.
  */
 export const TRACK_FETCH_ATTEMPT_TIMEOUT_MS = 5_000;
+
+// --- Spectator wagering (ticket 14) ------------------------------------------
+
+/**
+ * How long into a Round spectators may stake on it — measured from the
+ * Round's start, enforced by the API's `closesAtMs`, shown as the panel's
+ * CLOSES countdown. Long enough that an early knockout can still get a bet
+ * down, short enough that late-Round odds mean something. A balance value:
+ * move it when Rounds get longer or shorter on average.
+ */
+export const BETTING_WINDOW_MS = 60_000;
 
 // --- Round clock (M4 ticket 03, ADR 0038) -----------------------------------
 
@@ -816,7 +827,7 @@ export const DEFAULT_TIME_LIMIT_MS = 180_000;
 /**
  * Bounds on an authored Time Limit. Not balance values — a floor low enough
  * to be worth authoring at all and a ceiling that keeps a typo (a stray zero)
- * from producing a Round nobody can wait out. Enforced by track-service on
+ * from producing a Round nobody can wait out. Enforced by the API on
  * publish, so a Revision can never carry a nonsense clock.
  */
 export const MIN_TIME_LIMIT_MS = 10_000;
@@ -878,6 +889,15 @@ export const COUNTDOWN_TICKS = msToTicks(COUNTDOWN_MS);
 export const PLAYERS_TO_START = 2;
 
 /**
+ * How many connections one Match server accepts before refusing the next one
+ * outright (grilling session, 2026-09). Below ADR 0011's own architected
+ * ceiling ("validated at 2, shaped for 12") — 10 is today's chosen
+ * operational default, not a hard engineering limit, so it is configurable
+ * the same way {@link PLAYERS_TO_START} is (env var, then this constant).
+ */
+export const MAX_PLAYERS = 10;
+
+/**
  * How long ROUND_END holds before the Results (M4 ticket 05). A beat, not a
  * screen: long enough to see that the Round is over where you are standing,
  * before the view changes.
@@ -918,6 +938,33 @@ export const MAX_ROUND_SCORE = 100;
  */
 export const QUALIFICATION_SCORE_BONUS = 20;
 
+// --- Match earnings (XP + beans): the persisted-identity economy's first slice ---
+
+/**
+ * XP per point of Match Score — a 500-point Match pays 1,000 XP. Linear on
+ * purpose: Score is already percentile-normalised per Round (`roundScore`),
+ * so earnings stay comparable across field sizes without a second
+ * normalisation here.
+ */
+export const XP_PER_MATCH_SCORE = 2;
+
+/**
+ * Beans per placement step — winner of an N-Player Round takes `N` steps.
+ * Placement, not Score: beans are the shiny prize currency, and prizes read
+ * as ranks ("I won"), not fractions.
+ */
+export const BEANS_PER_PLACEMENT_STEP = 10;
+
+/** What every Round banks regardless of placement — showing up pays. */
+export const BEANS_PARTICIPATION_FLOOR = 10;
+
+/**
+ * Total XP a level costs to *leave* — triangular on purpose: each level
+ * costs `XP_LEVEL_BASE` more than the last, so early levels fly (hook) and
+ * later ones grind (retention), with no table to maintain.
+ */
+export const XP_LEVEL_BASE = 1_000;
+
 /**
  * How many Rounds a Match runs before it ends (M7 ticket 04, ADR 0049) —
  * the Lobby's own default (ticket 05 lets the host change it). Three:
@@ -955,3 +1002,15 @@ export const ASSET_FOOTPRINT_EPSILON = 0.02;
  * silent on rounding noise but catches a genuinely misplaced visual.
  */
 export const ASSET_VISUAL_WARN = 0.05;
+
+// --- Match end (ADR 0059) ----------------------------------------------------
+
+/**
+ * How long a match server waits after its results are saved before closing
+ * itself with Players still connected. Healthy clients navigate to the
+ * results page within a tick of `matchOver`; anyone still here after this is
+ * wedged, and holding a finished Match's simulation open for them is exactly
+ * what this closes. The ordinary path — last socket closes, server follows —
+ * needs no waiting at all.
+ */
+export const MATCH_OVER_CLOSE_GRACE_MS = 60_000;

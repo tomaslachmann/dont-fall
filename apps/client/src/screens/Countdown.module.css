@@ -1,0 +1,192 @@
+/* 1q — 3 · 2 · 1 · GO!. An overlay, not a screen: no background anywhere
+   in this file, so the live game and its own HUD stay visible underneath
+   while the chrome settles in over them at 75%. The active beat below is
+   the server's (`countdownMsLeft`), remounted on its key so each beat's
+   pop and ring-burn fire exactly once — never a looping clock. */
+/* Four rows: HUD chrome / which round / the count / the bottom band.
+   Three columns so the top and bottom bands can hold left, centre and right items. */
+.screen {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: var(--df-space-4) var(--df-space-5);
+  align-items: start;
+  justify-items: center;
+}
+
+/* ---- HUD chrome, sitting back ---- */
+.hud { opacity: .75; }
+
+.grid {
+  justify-self: start;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--df-space-5);
+  padding: var(--df-space-6) var(--df-space-7);
+  border-radius: var(--df-radius-card);
+  background: rgba(255, 255, 255, .35);
+}
+.gridPlace {
+  font: var(--df-weight-display) var(--df-text-hero) / .82 var(--df-font-display);
+  color: rgba(255, 255, 255, .9);
+}
+.gridMeta { display: flex; flex-direction: column; gap: var(--df-space-3); padding-bottom: var(--df-space-2); }
+.gridField { font: var(--df-weight-label) var(--df-text-sm) / 1 var(--df-font-ui); color: var(--df-color-on-brand-80); }
+.gridCaption {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand-80);
+}
+
+.checkpoints {
+  grid-column: 3;
+  justify-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--df-space-4);
+}
+.cpLabel {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand-80);
+}
+.pb {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-on-brand-60);
+}
+
+/* which round is starting */
+.round {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--df-space-4);
+  padding: var(--df-space-4) var(--df-space-6);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-plate);
+  color: var(--df-color-on-brand);
+}
+.roundNo {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-accent);
+}
+.roundTrack { font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui); }
+
+/* ---- the counter ---- */
+/* Sized off the row it sits in, so the bottom band always has room. */
+.counter {
+  grid-row: 3;
+  grid-column: 1 / -1;
+  place-self: center;
+  display: grid;
+  grid-template-areas: 'count';
+  place-items: center;
+  height: 100%;
+  aspect-ratio: 1;
+}
+.counter > * { grid-area: count; }
+
+.ring { height: 100%; display: block; }
+/* dark disc + white track behind the sweep */
+.ringDisc { fill: var(--df-color-ink-35); stroke: rgba(255, 255, 255, .25); stroke-width: 6; }
+/* the sweep itself burns down once per beat — remounted on the beat's key */
+.ringSweep {
+  fill: none;
+  stroke: var(--df-color-accent);
+  stroke-width: 8;
+  stroke-linecap: round;
+  stroke-dasharray: 327 327;
+  animation: df-cd-ring 1s linear 1;
+}
+
+.beat {
+  font: var(--df-weight-display) calc(var(--df-u) * 13) / 1 var(--df-font-display);
+  color: var(--df-color-on-brand);
+  text-shadow: 0 calc(var(--df-u) * .78) 0 rgba(43, 27, 77, .45);
+  opacity: 1;
+  animation: df-cd-beat .55s cubic-bezier(.2, 1.4, .4, 1) 1;
+}
+/* GO! is the release — mint, and a size smaller so the word fits the ring */
+.go {
+  font-size: calc(var(--df-u) * 9.6);
+  color: var(--df-color-go);
+  text-shadow: 0 calc(var(--df-u) * .78) 0 rgba(14, 71, 54, .5);
+}
+
+/* ---- beat chips under the ring ---- */
+/* bottom band, centre */
+.beats {
+  grid-row: 4;
+  grid-column: 2;
+  align-self: end;
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-4);
+}
+/* A chip lights the moment its beat arrives and stays lit — the storyboard
+   is the server's remaining ms, not a looping keyframe. */
+.beatChip {
+  display: grid;
+  place-items: center;
+  min-width: calc(var(--df-u) * 3.75);
+  height: calc(var(--df-u) * 3.75);
+  padding-inline: var(--df-space-5);
+  border-radius: var(--df-radius-icon);
+  background: rgba(255, 255, 255, .22);
+  color: var(--df-color-on-brand-60);
+  font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display);
+}
+.beatChipLit {
+  background: var(--df-color-accent);
+  color: var(--df-color-ink);
+}
+
+/* ---- start line ---- */
+/* bottom band, right */
+.line {
+  grid-row: 4;
+  grid-column: 3;
+  justify-self: end;
+  align-self: end;
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-4);
+  padding: var(--df-space-5) var(--df-space-7);
+  border-radius: var(--df-radius-panel);
+  background: var(--df-color-plate);
+  color: var(--df-color-on-brand);
+  text-align: right;
+}
+.lineLabel {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  opacity: .7;
+}
+.lineBeans { display: flex; gap: var(--df-space-2); }
+.more {
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 2.65);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .2);
+  color: var(--df-color-on-brand);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+}
+
+/* bottom band, left */
+.feed {
+  grid-row: 4;
+  grid-column: 1;
+  align-self: end;
+  justify-self: start;
+  max-width: 100%;
+  font: var(--df-weight-display) var(--df-text-2xs) / 2 var(--df-font-mono);
+  letter-spacing: var(--df-tracking-wide);
+  color: rgba(255, 255, 255, .45);
+}

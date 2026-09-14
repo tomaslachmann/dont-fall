@@ -17,7 +17,7 @@ import { resolveTrack } from "./track/Track.js";
  * including M1's own, now comes from `resolveTrack` directly — nothing in
  * `RapierSimulation`, the client scene, or the Match server imports this
  * file any more. Kept for tests that want a known, stable world without
- * publishing/track-service (a real Track's geometry) or hand-rolling a
+ * publishing/the API (a real Track's geometry) or hand-rolling a
  * minimal one — not re-exported from the package's main index, so a cross-
  * package test imports it by its own subpath (`@dont-fall/shared/playground.js`).
  */

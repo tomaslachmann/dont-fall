@@ -1,0 +1,83 @@
+/* Edge treatments that carry game feel. Each fills the stage cell and never takes pointer input.
+   These are stacking layers, not layout — they intentionally cover the whole stage. */
+.layer {
+  display: grid;
+  grid-template-areas: 'fx';
+  place-items: center;
+  pointer-events: none;
+}
+.layer > * { grid-area: fx; width: 100%; height: 100%; }
+
+.danger {
+  background: radial-gradient(70% 60% at 50% 50%, transparent 40%, var(--df-color-danger) 100%);
+  opacity: .55;
+}
+.pulsing { animation: df-danger 1.1s ease-in-out infinite; }
+
+.hitBlack { background: var(--df-color-ink); animation: df-hit-black 3s ease-out infinite; }
+.hitRed {
+  background: radial-gradient(75% 65% at 50% 50%, transparent 30%, var(--df-color-hit) 100%);
+  animation: df-hit-red 3s ease-out infinite;
+}
+
+/* direction-of-damage wedge — rotate the wrapper, not the gradient */
+.wedgeWrap {
+  display: grid;
+  place-items: center;
+  rotate: var(--df-hit-angle, 0deg);
+}
+.wedge {
+  width: 42%;
+  height: 45%;
+  transform-origin: left center;
+  background: linear-gradient(90deg, transparent, var(--df-color-on-brand));
+  opacity: .85;
+  clip-path: polygon(100% 0, 100% 100%, 0 62%, 0 38%);
+  animation: df-hit-wedge 3s ease-out infinite;
+}
+
+/* dash wind */
+.fov {
+  background: radial-gradient(60% 55% at 50% 50%, transparent 45%, var(--df-color-speed) 100%);
+  animation: df-fov-push 1.6s ease-in-out infinite;
+}
+.trails, .arcs {
+  display: grid;
+  align-content: center;
+  justify-items: end;
+  gap: var(--df-space-4);
+  padding-inline-end: 20%;
+}
+.trail {
+  width: 20%;
+  height: calc(var(--df-u) * 0.47);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-speed-lite);
+  animation: df-wind-trail 1.6s var(--df-fx-delay, 0s) linear infinite;
+}
+.trail:nth-child(even) { background: var(--df-color-on-brand-80); width: 16%; }
+
+.arcs { justify-items: center; align-content: center; }
+.arc {
+  width: 18%;
+  aspect-ratio: 1.1;
+  border: calc(var(--df-u) * 0.39) solid var(--df-color-on-brand-60);
+  border-radius: 50%;
+  clip-path: polygon(50% 0, 100% 0, 100% 100%, 50% 100%);
+  animation: df-wind-arc 1.8s var(--df-fx-delay, 0s) linear infinite;
+}
+
+/* ragdoll dust */
+.dust {
+  display: grid;
+  align-content: end;
+  justify-items: center;
+  padding-bottom: 18%;
+}
+.puff {
+  width: 22%;
+  aspect-ratio: 2.4;
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-on-brand-35);
+  animation: df-dust 2.6s var(--df-fx-delay, 0s) ease-out infinite;
+}

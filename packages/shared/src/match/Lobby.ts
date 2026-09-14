@@ -10,6 +10,15 @@ export interface LobbyPlayer {
   ready: boolean;
   /** Monotonic connection order — the same counter that already picks each joiner's spawn slot. */
   joinOrder: number;
+  /**
+   * The Account behind this connection (M9 ticket 11 phase 2b) — bound when
+   * the client sends `auth` with a session token the API accepts. `null`
+   * until (or unless) that resolves: auth is enrichment, never a start
+   * gate, so an anonymous connection simply plays unattributed. What
+   * friends presence and RECENT read; never shown raw (display names come
+   * from the API's accounts table, nicknames stay cosmetic).
+   */
+  accountId: string | null;
 }
 
 /**

@@ -1,0 +1,122 @@
+/* 1l — headline / three-place podium / your run / actions.
+   The podium is a 3-track grid aligned to the bottom; 1st is simply taller and yellow. */
+.screen {
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  justify-items: center;
+  gap: var(--df-space-6);
+}
+
+.headline { display: flex; flex-direction: column; align-items: center; gap: var(--df-space-3); text-align: center; }
+.kicker {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-mega);
+  color: var(--df-color-ink-55);
+}
+.title {
+  font: var(--df-weight-display) var(--df-text-hero) / 1 var(--df-font-display);
+  color: var(--df-color-on-brand);
+  text-shadow: 0 var(--df-bevel-3) 0 var(--df-color-ink-35);
+  text-wrap: balance;
+}
+
+.podium {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.18fr) minmax(0, 1fr);
+  align-items: end;
+  gap: var(--df-space-6);
+  min-height: 0;
+  width: min(72%, 100%);
+}
+/* Smaller fields keep their plinths the same size — the grid just narrows. */
+.podium.two {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.18fr);
+  width: min(52%, 100%);
+}
+.podium.one {
+  grid-template-columns: minmax(0, 1fr);
+  width: min(30%, 100%);
+}
+
+.place {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--df-space-4);
+  min-height: 0;
+  padding: var(--df-space-6) var(--df-space-6) var(--df-space-7);
+  border-radius: calc(var(--df-u) * 2.4);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-4) 0 var(--df-color-drop);
+  text-align: center;
+}
+/* First place: bigger, yellow, and it wobbles. */
+.first {
+  padding: var(--df-space-7) var(--df-space-6) var(--df-space-8);
+  border-radius: calc(var(--df-u) * 2.65);
+  background: var(--df-color-accent);
+  box-shadow: 0 var(--df-bevel-6) 0 var(--df-color-accent-shade), var(--df-drop);
+}
+
+.render {
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: var(--df-space-4);
+  border: var(--df-bevel-1) dashed var(--df-color-ink-35);
+  border-radius: var(--df-radius-row);
+  background: repeating-linear-gradient(115deg, var(--df-color-ink-08) 0 calc(var(--df-u) * .78), transparent calc(var(--df-u) * .78) calc(var(--df-u) * 1.56));
+}
+.first .render {
+  border-radius: var(--df-radius-panel);
+  background: repeating-linear-gradient(115deg, rgba(255,255,255,.5) 0 calc(var(--df-u) * .78), transparent calc(var(--df-u) * .78) calc(var(--df-u) * 1.56));
+  animation: df-wobble 4s ease-in-out infinite;
+}
+.renderCaption {
+  font: var(--df-weight-display) var(--df-text-3xs) / 1.7 var(--df-font-mono);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-55);
+}
+
+.rank {
+  font: var(--df-weight-display) var(--df-text-md) / 1 var(--df-font-display);
+  color: var(--df-color-ink-45);
+}
+.first .rank { font-size: var(--df-text-title); color: var(--df-color-ink); }
+.name { font: var(--df-weight-label) var(--df-text-xs) / 1.2 var(--df-font-ui); }
+.first .name { font-size: var(--df-text-sm); }
+.score { font: var(--df-weight-display) var(--df-text-md) / 1 var(--df-font-display); }
+.first .score { font-size: calc(var(--df-u) * 3.75); }
+
+/* ---- your run ---- */
+.yourRun {
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-7);
+  width: 100%;
+  padding: var(--df-space-5) var(--df-space-7);
+  border-radius: var(--df-radius-row);
+  background: var(--df-color-plate);
+  color: var(--df-color-on-brand);
+  flex-wrap: wrap;
+}
+.you { display: flex; align-items: center; gap: var(--df-space-4); }
+.youText { font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui); letter-spacing: var(--df-tracking-label); }
+.sep { width: calc(var(--df-u) * .16); height: calc(var(--df-u) * 1.9); background: var(--df-color-on-brand-18); }
+.stat {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1 var(--df-font-ui);
+  color: var(--df-color-on-brand-80);
+}
+.statValue { color: var(--df-color-accent); }
+.gap { margin-inline-start: auto; font: var(--df-weight-kicker) var(--df-text-2xs) / 1 var(--df-font-ui); color: var(--df-color-on-brand-60); }
+
+/* ---- actions ---- */
+.actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--df-space-5);
+  width: 100%;
+}

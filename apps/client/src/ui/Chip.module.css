@@ -1,0 +1,29 @@
+/* Small status/mode tag. The workhorse label across lobby, spectator and results. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--df-space-2);
+  padding: var(--df-space-2) var(--df-space-4);
+  border-radius: var(--df-radius-pill);
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  white-space: nowrap;
+}
+.dot { width: calc(var(--df-u) * 0.55); aspect-ratio: 1; border-radius: 50%; background: currentColor; }
+
+.ready { background: #DFFAEF; color: var(--df-color-go-ink); }
+.waiting { background: var(--df-color-ink-14); color: var(--df-color-ink-55); }
+.race { background: var(--df-color-speed); color: #08344A; }
+.survival { background: var(--df-color-danger); color: var(--df-color-on-brand); }
+.any { background: var(--df-color-accent); color: var(--df-color-ink); }
+.host { background: var(--df-color-accent); color: var(--df-color-ink); }
+.plate { background: var(--df-color-plate); color: var(--df-color-on-brand); }
+.glass { background: var(--df-color-on-brand-18); color: var(--df-color-on-brand); }
+.out { background: #FF5A3C; color: var(--df-color-on-brand); }
+.closing { background: #FFEEEA; color: #FF5A3C; }
+
+/* size step up for standalone status pills over gameplay */
+.lg {
+  padding: var(--df-space-3) var(--df-space-5);
+  font-size: var(--df-text-2xs);
+}

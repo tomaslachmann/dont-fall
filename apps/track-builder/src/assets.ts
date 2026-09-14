@@ -84,7 +84,7 @@ export const parseAssetVisual = async (moduleId: string, bytes: Uint8Array): Pro
 };
 
 /**
- * Fetch every tab Module's visual template through track-service (M8 ticket
+ * Fetch every tab Module's visual template through the API (M8 ticket
  * 05, ADR 0050 as amended — fetched at tab open, never a builder-local
  * copy). `fetchBytes`/`baseUrl` are injected, not builder-hardcoded,
  * mirroring the client's own loader pattern through its own fetch. The URL

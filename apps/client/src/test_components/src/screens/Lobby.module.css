@@ -1,0 +1,215 @@
+/* 1i — two columns: the room on the left, host round setup on the right.
+   Each column is header / body / action, so the CTAs line up along the bottom. */
+.screen {
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--df-space-6) var(--df-space-7);
+}
+
+.topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--df-space-6);
+}
+.crumb { display: flex; align-items: center; gap: var(--df-space-5); }
+.back {
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 3.4);
+  aspect-ratio: 1;
+  border-radius: var(--df-radius-icon);
+  background: var(--df-color-glass);
+  box-shadow: 0 var(--df-bevel-2) 0 var(--df-color-shadow-strong);
+}
+.back svg { width: 40%; fill: none; stroke: var(--df-color-brand); stroke-width: 3; stroke-linecap: round; }
+.title {
+  font: var(--df-weight-display) var(--df-text-lg) / 1 var(--df-font-display);
+  color: var(--df-color-on-brand);
+  text-shadow: 0 var(--df-bevel-1) 0 var(--df-color-drop);
+}
+.room {
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-3);
+  padding: var(--df-space-3) var(--df-space-5);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-plate);
+  color: var(--df-color-on-brand);
+}
+.roomLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  opacity: .7;
+}
+.roomCode {
+  font: var(--df-weight-label) var(--df-text-xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-accent);
+}
+.topActions { display: flex; gap: var(--df-space-3); }
+
+/* ---- left: the room ---- */
+.room_col {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--df-space-5);
+  min-height: 0;
+}
+.count { display: flex; align-items: baseline; gap: var(--df-space-4); }
+.countLabel {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand-80);
+}
+.countValue {
+  font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display);
+  color: var(--df-color-accent);
+}
+.countTotal { color: var(--df-color-on-brand-60); }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: var(--df-space-4);
+  min-height: 0;
+}
+
+.player {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--df-space-4);
+  padding: var(--df-space-5);
+  border-radius: var(--df-radius-row);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-3) 0 var(--df-color-shadow-strong);
+}
+/* Empty seats read as lighter plastic, not as a different component. */
+.pending { background: rgba(255, 255, 255, .62); box-shadow: 0 var(--df-bevel-3) 0 rgba(43, 27, 77, .18); }
+.playerHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--df-space-3);
+  width: 100%;
+}
+.playerName {
+  font: var(--df-weight-label) var(--df-text-xs) / 1.2 var(--df-font-ui);
+  overflow-wrap: anywhere;
+}
+
+.slots {
+  display: grid;
+  place-items: center;
+  gap: var(--df-space-2);
+  padding: var(--df-space-5);
+  border: var(--df-bevel-1) dashed var(--df-color-on-brand-35);
+  border-radius: var(--df-radius-row);
+  text-align: center;
+}
+.slotsPlus {
+  font: var(--df-weight-display) var(--df-text-md) / 1 var(--df-font-display);
+  color: var(--df-color-on-brand-80);
+}
+.slotsLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1.6 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-on-brand-60);
+}
+
+/* ---- right: rounds ---- */
+.setup {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--df-space-5);
+  min-height: 0;
+  padding: var(--df-space-6);
+  border-radius: calc(var(--df-u) * 2.5);
+  box-shadow: 0 var(--df-bevel-5) 0 var(--df-color-drop);
+}
+.setupHead { display: flex; align-items: center; justify-content: space-between; gap: var(--df-space-5); }
+.setupTitle { font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display); }
+.setupSub {
+  display: block;
+  margin-top: var(--df-space-2);
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-brand);
+}
+
+.rounds {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-3);
+  min-height: 0;
+  overflow-y: auto;
+}
+.round {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-4);
+  border: calc(var(--df-u) * 0.16) solid transparent;
+  border-radius: var(--df-radius-row);
+  background: var(--df-color-surface-1);
+}
+.roundActive { background: #FFF8E0; border-color: var(--df-color-accent); }
+.roundNo {
+  width: calc(var(--df-u) * 2);
+  text-align: center;
+  font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display);
+  color: var(--df-color-ink-35);
+}
+.roundActive .roundNo { color: var(--df-color-ink); }
+.thumb {
+  width: calc(var(--df-u) * 5);
+  aspect-ratio: 4 / 3;
+  display: grid;
+  place-items: center;
+  border-radius: var(--df-radius-chip);
+  font: var(--df-weight-display) var(--df-text-sm) / 1 var(--df-font-display);
+  color: var(--df-color-ink-45);
+}
+.roundText { display: flex; flex-direction: column; gap: var(--df-space-3); min-width: 0; }
+.roundName {
+  font: var(--df-weight-label) var(--df-text-xs) / 1.2 var(--df-font-ui);
+  overflow-wrap: anywhere;
+}
+.swap {
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 2.8);
+  aspect-ratio: 1;
+  border-radius: calc(var(--df-u) * 1);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-1) 0 var(--df-color-ink-14);
+}
+.swap svg { width: 55%; fill: none; stroke: var(--df-color-brand); stroke-width: 2.6; stroke-linecap: round; }
+
+.addRound {
+  padding: var(--df-space-5);
+  border: var(--df-bevel-1) dashed var(--df-color-ink-35);
+  border-radius: var(--df-radius-tile);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-55);
+}
+.addRound:hover { color: var(--df-color-ink); border-color: var(--df-color-brand); }
+
+.setupFoot { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--df-space-3); }
+.ghost {
+  padding: var(--df-space-4);
+  border-radius: var(--df-radius-icon);
+  background: #F2EDFC;
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+}
+.ghost:hover { background: var(--df-color-surface-2); }
+
+/* ---- bottom row ---- */
+.foot { display: flex; align-items: center; }
+.start { width: 100%; }

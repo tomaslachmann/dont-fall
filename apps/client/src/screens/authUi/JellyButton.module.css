@@ -1,0 +1,120 @@
+/* The one button in the system: a plastic slab that presses into its own bevel.
+   --df-btn-depth is the bevel; pressing shrinks it by exactly the distance the slab travels,
+   so the button compresses rather than just moving. */
+.btn {
+  --df-btn-bg: var(--df-color-accent);
+  --df-btn-shade: var(--df-color-accent-shade);
+  --df-btn-ink: var(--df-color-ink);
+  --df-btn-depth: var(--df-bevel-5);
+  --df-btn-travel: 0px;
+
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--df-space-4);
+  overflow: hidden;
+  text-align: left;
+  background: var(--df-btn-bg);
+  color: var(--df-btn-ink);
+  box-shadow:
+    0 calc(var(--df-btn-depth) - var(--df-btn-travel)) 0 var(--df-btn-shade),
+    var(--df-drop);
+  transform: translateY(var(--df-btn-travel));
+  transition:
+    transform var(--df-dur-up) var(--df-ease),
+    box-shadow var(--df-dur-up) var(--df-ease);
+}
+
+.btn:hover:not(:disabled) { --df-btn-travel: var(--df-lift); }
+
+.btn:active:not(:disabled) {
+  --df-btn-travel: var(--df-squash);
+  transition-duration: var(--df-dur-down);
+}
+
+.btn:focus-visible {
+  outline: var(--df-bevel-1) solid var(--df-color-on-brand);
+  outline-offset: var(--df-space-1);
+}
+
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---- variants ---- */
+.hero {
+  padding: var(--df-space-7) var(--df-space-8);
+  border-radius: var(--df-radius-hero);
+  --df-btn-depth: var(--df-bevel-5);
+}
+.tile {
+  padding: var(--df-space-6) var(--df-space-6);
+  border-radius: var(--df-radius-card);
+  --df-btn-depth: var(--df-bevel-4);
+}
+.pill {
+  padding: var(--df-space-4) var(--df-space-6);
+  border-radius: var(--df-radius-pill);
+  --df-btn-depth: var(--df-bevel-3);
+}
+.centered { justify-content: center; }
+
+/* ---- inner text stack ---- */
+.body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-2);
+  min-width: 0;
+}
+
+/* One line, always — the label sets the button's width, not the kicker. */
+.kicker {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-70);
+  white-space: nowrap;
+}
+
+.icon { display: flex; margin-bottom: var(--df-space-3); }
+.icon svg { width: calc(var(--df-u) * 2.05); height: calc(var(--df-u) * 2.05); }
+
+.label { font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display); }
+.hero .label { font-size: var(--df-text-hero); }
+.tile .label { font-size: var(--df-text-sm); }
+.tile .label, .pill .label { white-space: nowrap; }
+.pill .label {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+}
+
+.sub {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1.4 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  opacity: .8;
+  white-space: nowrap;
+}
+
+/* ---- hero play glyph ---- */
+.glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 4.8);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--df-color-ink);
+  box-shadow: 0 var(--df-bevel-2) 0 rgba(0, 0, 0, .25);
+}
+.glyph svg { width: calc(var(--df-u) * 2.05); fill: var(--df-color-accent); }
+
+/* ---- click impact ring ---- */
+.ring {
+  position: absolute;
+  translate: -50% -50%;
+  width: calc(var(--df-u) * 9.4);
+  aspect-ratio: 1;
+  border: var(--df-bevel-2) solid var(--df-color-accent);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: df-pop-ring 420ms ease-out forwards;
+}

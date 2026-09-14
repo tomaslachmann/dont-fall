@@ -8,6 +8,7 @@ import {
   roundStartBlockedReason,
   roundTypeOverrides,
   trackSpawn,
+  type DnfEntry,
   type LobbyPlayer,
   type MatchState,
   type Module,
@@ -18,6 +19,10 @@ import {
 } from "@dont-fall/shared";
 import type { WebSocket } from "ws";
 import { InputRouter } from "../net/inputRouter.js";
+import { httpAccountResolver, type AccountResolver } from "./accountResolution.js";
+import { httpBettingNotifier, type BettingNotifier } from "./betting.js";
+import { httpMatchResultsNotifier, type MatchResultsNotifier } from "./matchResults.js";
+import { httpTrackPlayRecorder, type TrackPlayRecorder } from "./trackPlays.js";
 import { drawRound, type RoundSlotPick } from "./roundDraw.js";
 import type { FetchedTrack } from "../track/trackSource.js";
 
@@ -29,6 +34,12 @@ export interface MatchStructureEntry {
 
 /** Everything `startServer`'s config resolved to, fixed for the life of the process. */
 export interface MatchConfig {
+  /**
+   * This Match's own id (ticket 14) — a boot UUID. Rides every snapshot so
+   * the API (betting pools keyed by `(matchId, round)`) and every client
+   * share one stable name for the Match.
+   */
+  matchId: string;
   trackServiceUrl: string;
   trackFetchRetryOptions: { maxWaitMs?: number; retryDelayMs?: number; attemptTimeoutMs?: number };
   countdownMs: number;
@@ -36,6 +47,8 @@ export interface MatchConfig {
   /** Ceiling on how long Standings waits for every connected Player to confirm Ready (M7 ticket 10, ADR 0051) before advancing anyway. */
   standingsReadyTimeoutMs: number;
   playersToStart: number;
+  /** How many connections this server accepts before refusing the next one outright (grilling session, 2026-09). */
+  maxPlayers: number;
   timeLimitMsOverride?: number | undefined;
   /**
    * Force this Match's `RoundRules.survivorTarget` over whatever Track it
@@ -131,12 +144,26 @@ export class MatchRuntime {
    * unconditionally, from before any client connects (ADR 0027).
    */
   serverTick = 0;
+  /**
+   * The shared (non-per-client) payload of the last broadcast snapshot, as
+   * JSON — what the idle-phase dirty check in `matchLoop.ts` compares
+   * against (ADR 0057). `null` until the first broadcast.
+   */
+  lastBroadcastJson: string | null = null;
+  /**
+   * Whether the next tick must broadcast even in an idle phase (ADR 0057) —
+   * set when a client joins (a newcomer has nothing yet while the shared
+   * payload may be unchanged for everyone else). Spent by the broadcast
+   * itself. Phase transitions and Lobby mutations need no flag: they change
+   * the compared payload, so the dirty check catches them on its own.
+   */
+  snapshotDirty = true;
   /** The Tick this Round's clock counts from — set by the COUNTDOWN → RUNNING transition (ADR 0038). */
   roundStartTick = 0;
   match: MatchState = { phase: "LOBBY", phaseStartTick: 0 };
 
   /** Players who dropped while the Round was being raced (M4 ticket 05). */
-  dnf: { id: string; nickname: string }[] = [];
+  dnf: DnfEntry[] = [];
 
   /**
    * Ids who have confirmed Ready on the current Standings Screen (M7 ticket
@@ -162,6 +189,42 @@ export class MatchRuntime {
    * computed by whoever needs it rather than stored.
    */
   roundResults: RoundResult[] = [];
+  /**
+   * Every racer's nickname, kept for the results save (ADR 0059) —
+   * Match-scoped, cleared on a fresh Match ({@link resetToFreshLobby}).
+   * Accumulated from each finished Round's own rows rather than read live at
+   * Match end: a Player who dropped mid-Match has no `LobbyPlayer` row left
+   * to read, but their earlier Rounds still name them.
+   */
+  matchNicknames = new Map<string, string>();
+  /**
+   * Every authed racer's Account id, kept for the results save (M9 ticket 11
+   * phase 2b) — Match-scoped and accumulated exactly like `matchNicknames`
+   * above, for the same reason: a dropped Player's row is gone by Match
+   * end. What RECENT reads. Anonymous seats are simply absent, never null.
+   */
+  matchAccountIds = new Map<string, string>();
+  /**
+   * Every racer's falls across every Round they raced (ADR 0059) — the one
+   * MatchOver stat Score derivation can't recover (the sim only ever holds
+   * the current Round's counts). Match-scoped, like `matchNicknames` above.
+   */
+  totalFalls: Record<string, number> = {};
+  /**
+   * The Match id whose results landed in the API (ADR 0059) — `null` until
+   * the terminal save succeeds, which is exactly what the snapshot's
+   * `matchOver` reads. Set once per Match; a fresh Match clears it
+   * ({@link resetToFreshLobby}), never a fresh Round.
+   */
+  resultsSavedMatchId: string | null = null;
+  /** Wall clock of the save above — what the straggler close-grace measures from. */
+  resultsSavedAtMs: number | null = null;
+  /** A save is in flight — the tick loop never stacks a second one on top of it. */
+  savingResults = false;
+  /** Last `serverTick` a save was attempted on — retries back off in ticks, never hammer the API. */
+  lastSaveAttemptTick: number | null = null;
+  /** The self-close below already fired — the tick loop asks once, never every tick after. */
+  closeRequested = false;
   /**
    * The host's own picks for Rounds after the one about to start (M7 ticket
    * 05) — keyed by 0-based Round index (`1` is Round 2's slot; `0`, Round
@@ -221,12 +284,12 @@ export class MatchRuntime {
   /**
    * Set once `startServer`'s own `close()` runs (M7 ticket 05) — checked by
    * {@link buildMatchStructure} between draws so a background Match-structure
-   * build stops making track-service requests the moment its server is gone,
+   * build stops making the API requests the moment its server is gone,
    * rather than continuing to draw for a Match nothing is listening to
    * anymore. Without this, a closed-but-still-drawing runtime is real,
-   * indefinite background load on track-service — harmless in production
+   * indefinite background load on the API — harmless in production
    * (a process exit kills it outright) but real in a test suite that starts
-   * and closes many servers against one shared track-service instance in a
+   * and closes many servers against one shared the API instance in a
    * single process, where it compounds across every test that ever called
    * `start` without pinning `matchLengthOverride: 1`.
    */
@@ -240,13 +303,51 @@ export class MatchRuntime {
    */
   readonly library: Record<string, Module>;
 
+  /**
+   * The match server's half of spectator wagering (ticket 14) — opened and
+   * settled from the tick loop, injectable so tests pin the hooks' arguments
+   * without HTTP. Defaults to the real API calls over this Match's own
+   * track-service URL (the merged API, ADR 0058).
+   */
+  readonly betting: BettingNotifier;
+
+  /**
+   * The match server's half of persisted results (ADR 0059) — saved from the
+   * tick loop at the terminal RESULTS, injectable so tests pin the save
+   * without HTTP, the same seam `betting` above already follows.
+   */
+  readonly matchResults: MatchResultsNotifier;
+
+  /**
+   * The match server's half of anonymous play counts (M9 ticket 16) —
+   * reported from the tick loop on every Countdown entry, injectable so
+   * tests pin the hook without HTTP, the same seam `betting` above already
+   * follows.
+   */
+  readonly trackPlays: TrackPlayRecorder;
+
+  /**
+   * Session-token → Account resolution (M9 ticket 11 phase 2b) — the `auth`
+   * message's verifier, injectable so tests bind accounts without HTTP, the
+   * same seam `betting` follows.
+   */
+  readonly accounts: AccountResolver;
+
   constructor(
     readonly config: MatchConfig,
     fetched: FetchedTrack,
     library: Record<string, Module> = MODULE_LIBRARY,
+    betting: BettingNotifier = httpBettingNotifier(config.trackServiceUrl),
+    matchResults: MatchResultsNotifier = httpMatchResultsNotifier(config.trackServiceUrl),
+    trackPlays: TrackPlayRecorder = httpTrackPlayRecorder(config.trackServiceUrl),
+    accounts: AccountResolver = httpAccountResolver(config.trackServiceUrl),
   ) {
     this.library = library;
     this.fetched = fetched;
+    this.betting = betting;
+    this.matchResults = matchResults;
+    this.trackPlays = trackPlays;
+    this.accounts = accounts;
     this.matchLength = config.matchLengthOverride ?? DEFAULT_MATCH_LENGTH;
     // The Match starts with no players; ticket 01's single-player default
     // Character is opted out here rather than added and immediately disposed.
@@ -380,7 +481,7 @@ export class MatchRuntime {
    * Draws every not-yet-drawn Round slot for this Match (M7 ticket 05, ADR
    * 0049) — kicked off once, the instant `start` fires (`lobby.ts`), well
    * before any Round but the first needs an answer: Round 1 alone almost
-   * always outlasts a track-service fetch. `matchStructure[0]` is filled in
+   * always outlasts a the API fetch. `matchStructure[0]` is filled in
    * synchronously, right here, from whatever `fetched`/`roundType` already
    * are — Round 1 keeps its existing pick mechanism (`selectTrack`/
    * `setRoundType`), this adds no second one for it.
@@ -390,7 +491,7 @@ export class MatchRuntime {
    * pool is exhausted" holds across the whole Match, not just within one
    * batch of concurrent fetches.
    *
-   * A single Round's draw failing (track-service unreachable mid-fetch, no
+   * A single Round's draw failing (the API unreachable mid-fetch, no
    * published Track supports a forced Race) is caught and logged rather
    * than left to reject the whole Promise — every other Round still gets
    * its own attempt, and `matchLoop.ts`'s own COUNTDOWN transition falls
@@ -584,6 +685,14 @@ export class MatchRuntime {
     this.match = { phase: "LOBBY", phaseStartTick: this.serverTick };
     this.startRequested = false;
     this.roundResults = [];
+    this.matchNicknames.clear();
+    this.matchAccountIds.clear();
+    this.totalFalls = {};
+    this.resultsSavedMatchId = null;
+    this.resultsSavedAtMs = null;
+    this.savingResults = false;
+    this.lastSaveAttemptTick = null;
+    this.closeRequested = false;
     this.pendingRoundPicks.clear();
     this.matchStructure = [];
     this.matchStructurePromise = undefined;

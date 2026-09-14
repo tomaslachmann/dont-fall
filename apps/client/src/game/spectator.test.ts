@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { isMatchSpectator, isSpectating, livingIds, nextSpectatorTarget, SpectatorController } from "./spectator.js";
+import {
+  isMatchSpectator,
+  isSpectating,
+  livingIds,
+  nextSpectatorTarget,
+  prevSpectatorTarget,
+  SpectatorController,
+} from "./spectator.js";
 
 const chars = (entries: [id: string, eliminated: boolean][]): Record<string, { eliminated: boolean }> =>
   Object.fromEntries(entries.map(([id, eliminated]) => [id, { eliminated }]));
@@ -64,6 +71,48 @@ describe("nextSpectatorTarget", () => {
   it("cycles forward and wraps around", () => {
     expect(nextSpectatorTarget(["a", "b", "c"], "a")).toBe("b");
     expect(nextSpectatorTarget(["a", "b", "c"], "c")).toBe("a");
+  });
+});
+
+describe("prevSpectatorTarget", () => {
+  it("returns null when nobody is living", () => {
+    expect(prevSpectatorTarget([], null)).toBeNull();
+    expect(prevSpectatorTarget([], "a")).toBeNull();
+  });
+
+  it("starts on the last living Character", () => {
+    expect(prevSpectatorTarget(["a", "b"], null)).toBe("b");
+  });
+
+  it("restarts on the last living Character when the followed one is gone", () => {
+    expect(prevSpectatorTarget(["a", "b"], "gone")).toBe("b");
+  });
+
+  it("cycles backward and wraps around", () => {
+    expect(prevSpectatorTarget(["a", "b", "c"], "a")).toBe("c");
+    expect(prevSpectatorTarget(["a", "b", "c"], "c")).toBe("b");
+  });
+});
+
+describe("SpectatorController follow/cyclePrev", () => {
+  it("follows one bean exactly, and ignores anyone not living", () => {
+    const spectator = new SpectatorController();
+    spectator.update(["a", "b"]);
+    spectator.follow(["a", "b"], "b");
+    expect(spectator.target).toBe("b");
+    spectator.update(["a"]);
+    expect(spectator.target).toBe("a");
+    spectator.follow(["a"], "b");
+    expect(spectator.target).toBe("a");
+  });
+
+  it("cyclePrev walks the living list backward and wraps", () => {
+    const spectator = new SpectatorController();
+    spectator.update(["a", "b"]);
+    spectator.cyclePrev(["a", "b"]);
+    expect(spectator.target).toBe("b");
+    spectator.cyclePrev(["a", "b"]);
+    expect(spectator.target).toBe("a");
   });
 });
 

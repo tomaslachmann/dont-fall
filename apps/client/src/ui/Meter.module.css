@@ -1,0 +1,43 @@
+.meter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-3);
+  min-width: 0;
+}
+.label {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand-80);
+}
+.track {
+  height: var(--df-meter-height, calc(var(--df-u) * 1.4));
+  border-radius: var(--df-radius-chip);
+  background: var(--df-color-ink-35);
+  overflow: hidden;
+}
+.fill {
+  height: 100%;
+  width: var(--df-meter-value, 0%);
+  border-radius: inherit;
+  background: var(--df-color-accent);
+  transition: width 160ms var(--df-ease-snappy);
+}
+.animated { animation: df-mash 2.2s ease-out infinite; }
+.go { background: var(--df-color-go); }
+.danger { background: var(--df-color-danger); }
+.speed { background: var(--df-color-speed); }
+
+/* Checkpoint pips. */
+.pips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--df-space-2);
+  justify-content: flex-end;
+}
+.pip {
+  width: calc(var(--df-u) * 2.35);
+  height: calc(var(--df-u) * 0.78);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-ink-35);
+}
+.done { background: var(--df-color-accent); }

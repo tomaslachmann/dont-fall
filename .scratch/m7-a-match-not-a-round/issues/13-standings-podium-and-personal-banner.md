@@ -9,7 +9,11 @@ without it.
 
 **Blocked by:** ticket 12 (the footer/data shape this panel sits inside).
 
-**Status:** not started
+**Status:** superseded by ADR 0059 — `StandingsScreen` is deleted (Match end
+moved to the fetched `/match/:matchId` page) and `MatchOver` already renders
+a 1–3-place podium there, so there is no panel left to rebuild. Only the
+live-rendered Characters (vs `RenderSlot` placeholders) remain genuinely open,
+and that belongs wherever `MatchOver`'s poses get built, not here.
 
 ## Why
 

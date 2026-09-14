@@ -1,0 +1,51 @@
+/* The stage owns the sizing model: it is a size container, and --df-u resolves to 1cqw
+   inside it. Everything below scales from that, so there is no fixed pixel canvas and no
+   scale transform anywhere. */
+.outer {
+  container-type: inline-size;
+  width: 100dvw;
+  height: 100dvh;
+}
+
+.stage {
+  --df-u: 1cqw;
+  position: relative;
+  display: grid;
+  grid-template-areas: 'stage';
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: var(--df-color-ink);
+  font-family: var(--df-font-ui);
+  box-shadow: var(--df-drop-stage);
+}
+
+/* Every direct child stacks in the same cell. Order in the DOM is the z order:
+   field -> sheen -> content -> overlays. No absolute positioning needed. */
+.stage > * {
+  grid-area: stage;
+  min-width: 0;
+  min-height: 0;
+}
+
+.field, .sheen {
+  pointer-events: none;
+}
+
+.jolt {
+  /* the jolt scales past the edges so no seam shows */
+  margin: calc(var(--df-u) * -2);
+  animation: df-hit-jolt 3s ease-out infinite;
+}
+
+/* Content layer: the screen's own grid. Screens add a class here to declare their tracks;
+   with none, content fills the cell as a single track. */
+.content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--df-space-6);
+  padding: var(--df-space-9) var(--df-space-10);
+  min-width: 0;
+  min-height: 0;
+}

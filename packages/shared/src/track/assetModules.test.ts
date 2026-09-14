@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -55,12 +55,17 @@ const assetLibrary = async (): Promise<Record<string, Module>> => {
 
 describe("asset module definitions", () => {
   it("names every committed asset, with the filename stem enforced as the id", () => {
-    expect(ASSET_MODULE_DEFS.map((def) => def.id).sort()).toEqual([
-      "corner_lshape",
-      "platform_straight",
-      "ramp_45",
-      "stairs_4step",
-    ]);
+    // Read off the directory rather than a list copied into this file: a
+    // hardcoded list drifts silently the moment an asset drop lands, and
+    // this catches BOTH directions — a committed file nobody wired up, and
+    // a def pointing at a file that isn't there (which would take down the
+    // whole library load, and with it server boot and every Track load).
+    const committed = readdirSync(assetsRoot)
+      .filter((file) => file.endsWith(".glb"))
+      .map((file) => file.slice(0, -".glb".length))
+      .sort();
+
+    expect(ASSET_MODULE_DEFS.map((def) => def.id).sort()).toEqual(committed);
     for (const def of ASSET_MODULE_DEFS) expect(assetFileName(def.id)).toBe(`${def.id}.glb`);
   });
 
@@ -154,18 +159,9 @@ describe("loadAssetLibrary", () => {
     const seen: string[] = [];
     const library = await loadAssetLibrary(realFetch(seen), "http://assets.test");
 
-    expect(seen.sort()).toEqual([
-      "http://assets.test/corner_lshape.glb",
-      "http://assets.test/platform_straight.glb",
-      "http://assets.test/ramp_45.glb",
-      "http://assets.test/stairs_4step.glb",
-    ]);
-    expect(Object.keys(library).sort()).toEqual([
-      "corner_lshape",
-      "platform_straight",
-      "ramp_45",
-      "stairs_4step",
-    ]);
+    const ids = ASSET_MODULE_DEFS.map((def) => def.id).sort();
+    expect(seen.sort()).toEqual(ids.map((id) => `http://assets.test/${id}.glb`));
+    expect(Object.keys(library).sort()).toEqual(ids);
   });
 });
 
@@ -299,6 +295,117 @@ describe("asset physics (ticket 02 Done-when)", () => {
     expect(c.position.y).toBeCloseTo(0.5 + CAPSULE_BOTTOM_OFFSET, 1);
     expect(c.grounded).toBe(true);
     sim.dispose();
+  });
+
+  it("the M9 deck set chains flush — three different lengths, one seamless walk", async () => {
+    const library = await assetLibrary();
+    const track = chainTrack(["straight_1x1", "straight_1x2", "straight_1x4"], library, { x: 0, y: 0, z: 0 });
+    const sim = clientWorld(library, track, { x: 0, y: 1.5, z: 0.5 });
+    for (let n = 0; n < Math.round(20 * TICK_RATE_HZ); n += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z < -12) break;
+    }
+
+    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(c.fallCount).toBe(0);
+    // Past both seams and well into the 1x4: 2 + 4 + most of 8.
+    expect(c.position.z).toBeLessThan(-12);
+    expect(c.grounded).toBe(true);
+    // Still on the same deck it started on — the M9 set's top face, y = 0.25.
+    expect(c.position.y).toBeCloseTo(0.25 + CAPSULE_BOTTOM_OFFSET, 1);
+    sim.dispose();
+  });
+
+  it("ramp_up actually climbs in the travel direction — unlike M8's ramp_45", async () => {
+    // The whole reason "up" is in the name. M8's 45° wedge had to be seated
+    // descending (unclimbable, ADR 0037); this one rises 0.5 over 4 (~7°),
+    // so walking it gains height rather than sliding back.
+    const library = await assetLibrary();
+    const track = chainTrack(["straight_1x2", "ramp_up_1x2", "straight_1x2"], library, { x: 0, y: 0, z: 0 });
+    const sim = clientWorld(library, track, { x: 0, y: 1.5, z: 1.5 });
+    for (let n = 0; n < Math.round(20 * TICK_RATE_HZ); n += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z < -9) break;
+    }
+
+    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(c.fallCount).toBe(0);
+    expect(c.position.z).toBeLessThan(-9);
+    expect(c.grounded).toBe(true);
+    // Half a unit higher than the deck it set off from — it climbed.
+    expect(c.position.y).toBeCloseTo(0.75 + CAPSULE_BOTTOM_OFFSET, 1);
+    sim.dispose();
+  });
+
+  it("ramp_down loses exactly what ramp_up gains — the pair cancels", async () => {
+    const library = await assetLibrary();
+    const track = chainTrack(["straight_1x2", "ramp_up_1x2", "ramp_down_1x2", "straight_1x2"], library, { x: 0, y: 0, z: 0 });
+    const sim = clientWorld(library, track, { x: 0, y: 1.5, z: 1.5 });
+    for (let n = 0; n < Math.round(25 * TICK_RATE_HZ); n += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z < -13) break;
+    }
+
+    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(c.fallCount).toBe(0);
+    expect(c.position.z).toBeLessThan(-13);
+    expect(c.position.y).toBeCloseTo(0.25 + CAPSULE_BOTTOM_OFFSET, 1);
+    sim.dispose();
+  });
+
+  it("corner_90_r1 seats the next Segment heading +X — a right-hand turn", async () => {
+    // The Socket maths, checked where it is cheapest to read: chaining a
+    // straight after the corner must put that straight off to the +X side,
+    // rotated a quarter turn, rather than continuing down -Z.
+    const library = await assetLibrary();
+    const track = chainTrack(["corner_90_r1", "straight_1x2"], library, { x: 0, y: 0, z: 0 });
+    const after = track[1]!;
+
+    expect(after.position.x).toBeGreaterThan(3);
+    expect(Math.abs(after.position.z)).toBeLessThan(1e-6);
+    // Quarter turn, in whichever direction the convention spells it.
+    expect(Math.abs(Math.sin(after.rotation))).toBeCloseTo(1, 5);
+  });
+
+  it("a walker crosses corner_90_r1 and leaves on its +X side", async () => {
+    const sim = clientWorld(await assetLibrary(), [{ moduleId: "corner_90_r1", position: { x: 0, y: 0, z: 0 }, rotation: 0 }], {
+      x: 0,
+      y: 1.5,
+      z: 1.5,
+    });
+    for (let n = 0; n < Math.round(20 * TICK_RATE_HZ); n += 1) {
+      const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      // In on +Z, turn at the middle of the deck, out on +X — the path the
+      // Sockets describe.
+      sim.tick({ [DEFAULT_CHARACTER_ID]: c.position.z > 0 ? NORTH : EAST });
+      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x > 1.5) break;
+    }
+
+    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(c.fallCount).toBe(0);
+    expect(c.position.x).toBeGreaterThan(1.5);
+    expect(c.grounded).toBe(true);
+    expect(c.position.y).toBeCloseTo(0.25 + CAPSULE_BOTTOM_OFFSET, 1);
+    sim.dispose();
+  });
+
+  it("the bounce pad is a bouncing Surface, not just a deck named one", async () => {
+    const library = await assetLibrary();
+    const resolved = resolveTrack(library, [{ moduleId: "special_bounce_pad_1x1", position: { x: 0, y: 0, z: 0 }, rotation: 0 }]);
+
+    expect(resolved.staticTrimeshes[0]!.surface).toBe("bounce");
+  });
+
+  it("scenery carries no Sockets at all — nothing chains onto a bollard", () => {
+    const scenery = ["barrier_1x1", "bumper_1x1", "cone_post_1x1", "pillar_1x1", "side_rail_left_1x1", "side_rail_right_1x1"];
+    const byId = Object.fromEntries(ASSET_MODULE_DEFS.map((def) => [def.id, def]));
+
+    for (const id of scenery) expect(byId[id]!.sockets, id).toEqual([]);
+    // ...and every walkable piece does have both, so chaining can rely on it.
+    for (const def of ASSET_MODULE_DEFS) {
+      if (scenery.includes(def.id)) continue;
+      expect(def.sockets.map((socket) => socket.id), def.id).toEqual(["entry", "exit"]);
+    }
   });
 
   it("the L's missing quadrant is void — walking it falls", async () => {

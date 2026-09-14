@@ -1,0 +1,188 @@
+/* Copied from apps/client/src/test_components/src/styles/tokens.css (the
+   Auth mock's own design tokens) — verbatim, except `:root` is `.authTheme`
+   here so these variables only cascade inside the Auth Screen and never
+   leak into (or fight with) the real app's own tokens.css loaded in
+   main.tsx. Every component in ./ (Stage, Panel, JellyButton, Logo,
+   RenderSlot) is copied unmodified from the same source and expects these
+   names exactly as they are — do not rename values here without checking
+   every file in this folder. */
+
+.authTheme {
+  --df-u: 0.8rem;
+
+  /* ---- ink ---- */
+  --df-color-ink:            #2B1B4D;
+  --df-color-ink-70:         rgba(43, 27, 77, .7);
+  --df-color-ink-55:         rgba(43, 27, 77, .55);
+  --df-color-ink-45:         rgba(43, 27, 77, .45);
+  --df-color-ink-35:         rgba(43, 27, 77, .35);
+  --df-color-ink-14:         rgba(43, 27, 77, .14);
+  --df-color-ink-08:         rgba(43, 27, 77, .08);
+
+  /* ---- surfaces: 0 is the top-most plastic, higher steps sit further back ---- */
+  --df-color-surface-0:      #ffffff;
+  --df-color-surface-1:      #F7F3FF;
+  --df-color-surface-2:      #EDE5FB;
+  --df-color-surface-3:      #EFE9FA;
+  --df-color-surface-ink:    var(--df-color-ink);
+
+  /* ---- brand ---- */
+  --df-color-brand:          #7B3FE4;
+  --df-color-brand-mid:      #8B57E0;
+  --df-color-brand-lite:     #9C6BE8;
+  --df-color-brand-deep:     #6A3AC8;
+  --df-color-brand-deep-lite:#7A45D6;
+  --df-color-brand-orchid:   #A94FE0;
+  --df-color-brand-magenta:  #C15AD6;
+  --df-color-brand-shade:    #5F2FBF;
+
+  /* ---- semantic ---- */
+  --df-color-accent:         #FFD23F;
+  --df-color-accent-shade:   #D9A400;
+  --df-color-danger:         #FF5DA2;
+  --df-color-danger-shade:   #D13C80;
+  --df-color-danger-soft:    #FF7AC0;
+  --df-color-go:             #2FD9A0;
+  --df-color-go-shade:       #17B07D;
+  --df-color-go-ink:         #0E4736;
+  --df-color-speed:          #3FC4FF;
+  --df-color-speed-lite:     #7FE3FF;
+  --df-color-win:            #FFB43D;
+  --df-color-hit:            rgba(214, 26, 60, .95);
+
+  /* ---- on-dark inks ---- */
+  --df-color-on-brand:       #ffffff;
+  --df-color-on-brand-80:    rgba(255, 255, 255, .8);
+  --df-color-on-brand-60:    rgba(255, 255, 255, .6);
+  --df-color-on-brand-35:    rgba(255, 255, 255, .35);
+  --df-color-on-brand-18:    rgba(255, 255, 255, .18);
+  --df-color-on-brand-10:    rgba(255, 255, 255, .1);
+
+  /* ---- overlay plastics ---- */
+  --df-color-glass:          rgba(255, 255, 255, .9);
+  --df-color-plate:          rgba(43, 27, 77, .5);
+  --df-color-plate-strong:   rgba(43, 27, 77, .55);
+  --df-color-scrim:          rgba(43, 27, 77, .55);
+  --df-color-shadow:         rgba(43, 27, 77, .22);
+  --df-color-shadow-strong:  rgba(43, 27, 77, .25);
+  --df-color-drop:           rgba(43, 27, 77, .3);
+
+  /* ---- stage backgrounds ---- */
+  --df-stage-menu:    linear-gradient(165deg, #7B3FE4 0%, #A94FE0 46%, #FF7AC0 100%);
+  --df-stage-lobby:   linear-gradient(165deg, #7B3FE4, #A94FE0 60%, #C15AD6);
+  --df-stage-victory: linear-gradient(165deg, #FFB43D, #FF7AC0 55%, #A94FE0);
+  --df-stage-reward:  linear-gradient(165deg, #5F2FBF, #8B44D8 55%, #C15AD6);
+  --df-stage-race:    var(--df-color-brand-mid);
+  --df-stage-tension: var(--df-color-brand-deep);
+  --df-stage-dash:    var(--df-color-brand-deep-lite);
+  --df-stage-builder: var(--df-color-surface-3);
+
+  --df-field-race: repeating-linear-gradient(120deg,
+    var(--df-color-brand-lite) 0 calc(var(--df-u) * 1.72),
+    var(--df-color-brand-mid) calc(var(--df-u) * 1.72) calc(var(--df-u) * 3.44));
+  --df-field-dash: repeating-linear-gradient(120deg,
+    var(--df-color-brand-mid) 0 calc(var(--df-u) * 1.72),
+    var(--df-color-brand-deep-lite) calc(var(--df-u) * 1.72) calc(var(--df-u) * 3.44));
+  --df-field-hazard: repeating-linear-gradient(45deg,
+    var(--df-color-accent) 0 calc(var(--df-u) * 2),
+    var(--df-color-ink) calc(var(--df-u) * 2) calc(var(--df-u) * 4));
+
+  --df-sheen-lift: radial-gradient(110% 90% at 50% 40%, rgba(255,255,255,.18), transparent 65%);
+  --df-sheen-menu: radial-gradient(circle at 20% 18%, rgba(255,255,255,.22), transparent 42%),
+                   radial-gradient(circle at 84% 82%, rgba(63,196,255,.3), transparent 46%);
+  --df-sheen-top:  radial-gradient(circle at 50% 8%, rgba(255,255,255,.35), transparent 45%);
+
+  /* ---- type ---- */
+  --df-font-display: Fredoka, system-ui, sans-serif;
+  --df-font-ui:      Nunito, system-ui, sans-serif;
+  --df-font-mono:    ui-monospace, Menlo, monospace;
+
+  --df-weight-display: 700;
+  --df-weight-label:   900;
+  --df-weight-kicker:  800;
+
+  --df-text-mega:  calc(var(--df-u) * 10.3);
+  --df-text-giant: calc(var(--df-u) * 7.2);
+  --df-text-hero:  calc(var(--df-u) * 4.85);
+  --df-text-title: calc(var(--df-u) * 3.6);
+  --df-text-lg:    calc(var(--df-u) * 2.65);
+  --df-text-md:    calc(var(--df-u) * 2.05);
+  --df-text-base:  calc(var(--df-u) * 1.72);
+  --df-text-sm:    calc(var(--df-u) * 1.25);
+  --df-text-xs:    calc(var(--df-u) * 1.05);
+  --df-text-2xs:   calc(var(--df-u) * 0.86);
+  --df-text-3xs:   calc(var(--df-u) * 0.72);
+
+  --df-tracking-label:  .06em;
+  --df-tracking-kicker: .14em;
+  --df-tracking-wide:   .2em;
+  --df-tracking-mega:   .3em;
+
+  /* ---- space ---- */
+  --df-space-1: calc(var(--df-u) * 0.35);
+  --df-space-2: calc(var(--df-u) * 0.5);
+  --df-space-3: calc(var(--df-u) * 0.7);
+  --df-space-4: calc(var(--df-u) * 0.95);
+  --df-space-5: calc(var(--df-u) * 1.15);
+  --df-space-6: calc(var(--df-u) * 1.4);
+  --df-space-7: calc(var(--df-u) * 1.9);
+  --df-space-8: calc(var(--df-u) * 2.35);
+  --df-space-9: calc(var(--df-u) * 2.8);
+  --df-space-10: calc(var(--df-u) * 3.4);
+  --df-space-11: calc(var(--df-u) * 4.4);
+
+  /* ---- radii ---- */
+  --df-radius-chip:  calc(var(--df-u) * 0.95);
+  --df-radius-icon:  calc(var(--df-u) * 1.4);
+  --df-radius-tile:  calc(var(--df-u) * 1.55);
+  --df-radius-row:   calc(var(--df-u) * 1.72);
+  --df-radius-panel: calc(var(--df-u) * 2.05);
+  --df-radius-card:  calc(var(--df-u) * 2.2);
+  --df-radius-hero:  calc(var(--df-u) * 2.65);
+  --df-radius-pill:  999px;
+
+  /* ---- bevels ---- */
+  --df-bevel-1: calc(var(--df-u) * 0.23);
+  --df-bevel-2: calc(var(--df-u) * 0.39);
+  --df-bevel-3: calc(var(--df-u) * 0.47);
+  --df-bevel-4: calc(var(--df-u) * 0.63);
+  --df-bevel-5: calc(var(--df-u) * 0.78);
+  --df-bevel-6: calc(var(--df-u) * 0.94);
+
+  --df-drop:        0 calc(var(--df-u) * 1.72) calc(var(--df-u) * 2.65) var(--df-color-drop);
+  --df-drop-stage:  0 calc(var(--df-u) * 2.35) calc(var(--df-u) * 5.5) rgba(0, 0, 0, .45);
+
+  /* ---- motion: two press personalities ---- */
+  --df-ease-snappy: cubic-bezier(.2, .9, .25, 1);
+  --df-ease-jelly:  cubic-bezier(.34, 1.56, .64, 1);
+
+  --df-dur-down: 70ms;
+  --df-dur-up:   110ms;
+  --df-ease:     var(--df-ease-snappy);
+  --df-lift:     calc(var(--df-u) * -0.23);
+  --df-squash:   calc(var(--df-u) * 0.31);
+}
+
+/* Applied by <Stage feel="jelly">. */
+.authTheme[data-df-feel='jelly'] {
+  --df-dur-down: 120ms;
+  --df-dur-up:   260ms;
+  --df-ease:     var(--df-ease-jelly);
+  --df-lift:     calc(var(--df-u) * -0.31);
+  --df-squash:   calc(var(--df-u) * 0.47);
+}
+
+/* Scoped equivalent of the mock's global.css button/input reset (global.css
+   itself is never loaded here — only this file and keyframes.css are, so
+   the real app's own `@dont-fall/ui` buttons elsewhere are untouched). */
+.authTheme button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+.authTheme input {
+  font: inherit;
+}

@@ -7,10 +7,9 @@ FK target `track-service`'s `authorId` already anticipates.
 **Blocked by:** nothing — ticket 04 is decided (**ADR 0052**). This is now the first ticket to
 build in the backend group; tickets 12–14 are blocked by it.
 
-**Status:** phase 1 (track-service backend) done and code-reviewed — now covers *both* login
-methods (ADR 0053 corrected ADR 0052's original Discord-only reading of the grilling session).
-Phase 2 (client mandatory-login gate + real Login/Signup screens, match-server socket integration)
-not started — see "What's left" below.
+**Status:** phase 1 (track-service backend) done. Phase 2a (client mandatory-login gate + real
+Login/Signup screens + OAuth callback) done. Phase 2b (match-server socket integration) done —
+see below. The remaining phase-2 items below not started.
 
 ## Decided scope (ADR 0052, corrected by ADR 0053)
 
@@ -70,23 +69,50 @@ not started — see "What's left" below.
   Discord-only shape it guards against is now real committed history (commit 87b1426), and
   deduplicated the repeated parse-JSON-body-or-400 pattern into one `readJsonBody` helper.
 
-## What's left (phase 2, not started)
+## Phase 2a — client mandatory-login gate + real Screens (done)
 
-- [ ] **Client mandatory-login gate**: every `apps/client` route redirects to `/auth` without a
-      valid session (`GET /auth/me` check on boot). This is new work, not a reskin — `Auth.tsx`/
-      `Login.tsx` in `test_components/` add Steam/Console/Guest buttons and a "remember me" model
-      that don't match the decided scope; the real screens need their own small design pass, not
-      a port, even though the two real methods (email/password + Discord) do overlap with what
-      the mocks show.
-- [ ] Client's `/auth/callback` route: reads `#token=`/`#linked=discord`/`#error=...` off the URL
-      fragment, stores a token when present, strips it from the address bar
-      (`history.replaceState`), redirects into the app.
+- `apps/client/src/lib/auth.ts`: token storage (localStorage), `parseAuthCallbackFragment`,
+  `signup`/`login`/`logout`/`fetchAccount`/`discordAuthorizeUrl` — thin fetch wrappers over
+  track-service's `/auth/*` routes, no React.
+- `apps/client/src/lib/useAccount.ts`: the gate's own state — resolves the stored token against
+  `GET /auth/me` once per mount; a 401 clears the stale token, a network failure fails closed
+  *without* clearing it (a transient blip isn't a real logout).
+- `apps/client/src/components/AuthGate.tsx`: a React Router layout route wrapping `/` and `/play`
+  — `checking` shows a wait state, `unauthed` redirects to `/auth`, `authed` renders the real
+  route via `<Outlet/>`. Mounted once for the whole authed subtree, not re-checked per navigation.
+- `apps/client/src/screens/AuthScreen.tsx`: the real `/auth` — a "Log in with Discord" button plus
+  an email/password form with a login/signup toggle (signup also asks for a display name). Built
+  fresh against the decided scope, not a port of `test_components`' `Auth.tsx`/`Login.tsx` (those
+  show Steam/Console/Guest and a "remember me" model that were never decided).
+- `apps/client/src/screens/AuthCallbackScreen.tsx`: `/auth/callback` — parses the fragment via
+  `useLocation().hash` (not the global `window.location`, so it behaves identically under
+  `BrowserRouter` and a test's `MemoryRouter`), stores a fresh token and lands on `/`, or routes a
+  `linked=discord`/`error=...` back to `/auth`.
+- `App.tsx`: `/auth` and `/auth/callback` are the only routes reachable without a session; `/` and
+  `/play` (including `?freeroam=1` Practice — no exemption) sit behind `<AuthGate>`.
+- 22 new/changed tests (331/331 client total), full typecheck clean (the pre-existing
+  `test_components/` typecheck failures are untouched, confirmed unrelated before this pass too).
+
+## Phase 2b — match-server socket integration (done)
+
+- New `auth` client message (`{type:"auth", token}`) sent right after open; the server resolves
+  it via the API's own `GET /auth/me` (injectable `AccountResolver`, betting-notifier posture:
+  invalid/unreachable → anonymous seat + log, never a close — auth is enrichment, never a gate).
+- `LobbyPlayer` + `DnfEntry` carry `accountId: string | null` (null until/unless bound);
+  nicknames stay cosmetic. `GET /status` gains `accounts[]` (authed only) + current `round`
+  for friends presence. `PersistedMatchResult` gains sparse `accountIds` (pre-2b rows default
+  to `{}` on read) — what RECENT reads.
+- ADR 0024 interplay resolved by absence: reconnect parking is unimplemented ("M2 defines the
+  shape; the server does not act on it yet"), so there is no parked binding to restore —
+  binding is per-connection.
+- Covered by resolver unit tests, real-runtime binding tests (incl. departed-mid-resolution
+  and re-auth), and two live `matchServer.test.ts` cases — the live two are written but
+  unrunnable in this sandbox (bind denied), pending a live run.
+
+## What's left (phase 2b done, remainder not started)
 - [ ] A "link the other method" UI for an already-logged-in Player (calls `/auth/link/password` or
-      the Discord authorize route with their existing session) — ties into ticket 07/Profile.
-- [ ] Match-server socket integration: `apps/server` calls `GET /auth/me` (or an equivalent) to
-      resolve the account behind a connecting client, replacing/augmenting today's anonymous
-      nickname-only identity. Exact shape (a new join-time message carrying the token; how it
-      interacts with ADR 0024's own separate reconnect `sessionToken`) is undecided.
+      the Discord authorize route with their existing session) — the backend endpoints exist
+      (phase 1); no client UI calls them yet. Ties into ticket 07/Profile.
 - [ ] Logout UI, and what "logged in as" looks like in the Main Menu (ties into ticket 07).
 - [ ] Password reset (deferred — needs a transactional-email provider decision first).
 
@@ -105,12 +131,14 @@ See `docs/research/test-components-design-screens-gap-analysis.md`, "Backend/dom
 
 ## Done when
 
-- [x] Phase 1: track-service issues real Discord sessions, verifiable via `/auth/me`, tested
-      end-to-end over real HTTP (no browser needed — confirmed in this sandbox)
-- [ ] Phase 2: a fresh `/apps/client` visit with no session redirects to a real Discord login;
-      completing it lands back in the app, logged in, reachable by every route including Practice;
-      `apps/server` knows which Account a connecting Player is
-- [ ] Typecheck clean, full suite green (both already true for phase 1; recheck after phase 2)
+- [x] Phase 1: track-service issues real sessions (Discord or email/password), verifiable via
+      `/auth/me`, tested end-to-end over real HTTP (no browser needed — confirmed in this sandbox)
+- [x] Phase 2a: a fresh `apps/client` visit with no session redirects to `/auth` on every route
+      including Practice; logging in (either method) lands back in the app — proven by component
+      tests (`MemoryRouter`, mocked `fetch`), not yet live-verified in a real browser (no browser
+      automation in this sandbox, same limitation M8/M8.1 already noted)
+- [x] Phase 2b: `apps/server` knows which Account a connecting Player is
+- [x] Typecheck clean, full suite green for everything built so far
 
 ## Watch out
 

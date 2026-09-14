@@ -1,0 +1,43 @@
+/* Every animation in the shell. Ported verbatim from the design mock.
+   NOTE: these loop here so the mock could show them. In the game, fire each beat ONCE per
+   event — remount on a key, or swap `infinite` for `1`. */
+
+@keyframes df-wobble { 0%,100% { transform: rotate(-1.5deg) translateY(0); } 50% { transform: rotate(1.5deg) translateY(-1.4%); } }
+@keyframes df-danger { 0%,100% { opacity: .35; } 50% { opacity: .9; } }
+@keyframes df-bounce { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+@keyframes df-pop-ring { 0% { opacity: .55; transform: scale(.2); } 100% { opacity: 0; transform: scale(1); } }
+
+/* countdown */
+@keyframes df-cd-tick { 0% { opacity: 0; transform: scale(1.7); } 5% { opacity: 1; transform: scale(.94); } 9% { transform: scale(1.04); } 13% { transform: scale(1); } 23% { opacity: 1; transform: scale(1); } 26% { opacity: 0; transform: scale(.6); } 100% { opacity: 0; transform: scale(.6); } }
+@keyframes df-cd-ring { 0% { stroke-dashoffset: 0; } 75%,100% { stroke-dashoffset: -327; } }
+@keyframes df-cd-chip { 0%,23% { background: var(--df-color-on-brand-18); color: var(--df-color-on-brand-60); transform: translateY(0); } 3%,20% { background: var(--df-color-accent); color: var(--df-color-ink); transform: translateY(-12%); } 25%,100% { background: var(--df-color-on-brand-18); color: var(--df-color-on-brand-60); transform: translateY(0); } }
+
+/* verdict slam */
+@keyframes df-slam { 0% { opacity: 0; transform: scale(1.9) rotate(-7deg); } 5% { opacity: 1; transform: scale(.94) rotate(-2deg); } 9% { transform: scale(1.05) rotate(1.5deg); } 14% { transform: scale(1) rotate(0); } 44% { opacity: 1; transform: scale(1); } 50% { opacity: 0; transform: scale(.86); } 100% { opacity: 0; transform: scale(.86); } }
+@keyframes df-flash-out { 0% { opacity: .9; } 18%,100% { opacity: 0; } }
+
+/* hit */
+@keyframes df-hit-red { 0% { opacity: 0; } 4% { opacity: .92; } 12% { opacity: .5; } 34% { opacity: .28; } 52%,100% { opacity: 0; } }
+@keyframes df-hit-black { 0% { opacity: 0; } 3% { opacity: .85; } 9% { opacity: .2; } 16%,100% { opacity: 0; } }
+@keyframes df-hit-wedge { 0% { opacity: 0; transform: scaleX(.4); } 5% { opacity: .95; transform: scaleX(1); } 30% { opacity: .55; } 52%,100% { opacity: 0; } }
+@keyframes df-hit-jolt { 0%,100% { transform: translate(0,0); } 2% { transform: translate(1.1%,-1.1%); } 5% { transform: translate(-.9%,.8%); } 8% { transform: translate(.5%,.6%); } 12% { transform: translate(-.2%,-.3%); } 16% { transform: translate(0,0); } }
+
+/* dash — fortnite-style wind */
+@keyframes df-wind-trail { 0% { opacity: 0; transform: translateX(20%) scaleX(.5); } 12% { opacity: .9; } 55% { opacity: .5; transform: translateX(-90%) scaleX(1.35); } 80%,100% { opacity: 0; transform: translateX(-140%) scaleX(1.5); } }
+@keyframes df-wind-arc { 0% { opacity: 0; transform: translateX(18%) rotate(0deg); } 14% { opacity: .75; } 60% { opacity: .35; transform: translateX(-90%) rotate(-6deg); } 85%,100% { opacity: 0; transform: translateX(-145%) rotate(-8deg); } }
+@keyframes df-wind-pull { 0%,100% { transform: scale(1); opacity: .5; } 50% { transform: scale(1.06); opacity: .8; } }
+@keyframes df-fov-push { 0%,100% { opacity: .35; transform: scale(1); } 50% { opacity: .7; transform: scale(1.03); } }
+@keyframes df-charge { 0%,100% { opacity: .25; transform: scale(1); } 50% { opacity: .6; transform: scale(1.04); } }
+
+/* pop-in for damage numbers and combo counters */
+@keyframes df-fx-pop { 0% { opacity: 0; transform: scale(.3) rotate(-14deg); } 6% { opacity: 1; transform: scale(1.25) rotate(4deg); } 12% { transform: scale(1) rotate(0); } 22% { opacity: 1; } 30%,100% { opacity: 0; transform: scale(.9); } }
+@keyframes df-crack { 0% { opacity: 0; transform: scale(1.25); } 5% { opacity: .95; transform: scale(1); } 30% { opacity: .7; } 48%,100% { opacity: 0; } }
+
+/* ragdoll */
+@keyframes df-ragdoll { 0% { opacity: 0; transform: scale(1.8) rotate(9deg); } 5% { opacity: 1; transform: scale(.9) rotate(-4deg); } 9% { transform: scale(1.06) rotate(2deg); } 14% { transform: scale(1) rotate(0); } 40% { opacity: 1; } 52%,100% { opacity: 0; transform: scale(.94); } }
+@keyframes df-dust { 0% { opacity: 0; transform: scale(.4) translateY(0); } 8% { opacity: .8; } 40%,100% { opacity: 0; transform: scale(1.6) translateY(-40%); } }
+@keyframes df-mash { 0%,10% { width: 0; } 30%,100% { width: 78%; } }
+
+/* social */
+@keyframes df-toast-in { 0% { opacity: 0; transform: translateX(120%); } 5% { opacity: 1; transform: translateX(-4%); } 8%,72% { opacity: 1; transform: translateX(0); } 80%,100% { opacity: 0; transform: translateX(120%); } }
+@keyframes df-badge-pulse { 0%,100% { transform: scale(1); } 12% { transform: scale(1.35); } 24% { transform: scale(1); } }

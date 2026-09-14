@@ -1,0 +1,116 @@
+/* 1o — the main settings surface: a full plastic sheet over a scrim, sidebar + pane.
+   The in-game pause version is SettingsModal, not this. */
+.screen { padding: var(--df-space-9) var(--df-space-11); }
+
+.sheet {
+  display: grid;
+  grid-template-columns: minmax(0, calc(var(--df-u) * 20.6)) minmax(0, 1fr);
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: calc(var(--df-u) * 3.4);
+  box-shadow: 0 calc(var(--df-u) * 1.1) 0 var(--df-color-drop), var(--df-drop);
+}
+
+/* ---- sidebar ---- */
+.sidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--df-space-7);
+  padding: var(--df-space-8) var(--df-space-6);
+  background: var(--df-color-surface-1);
+}
+.brand {
+  padding-inline-start: var(--df-space-3);
+  font: var(--df-weight-display) var(--df-text-md) / 1 var(--df-font-display);
+}
+.nav { display: flex; flex-direction: column; gap: var(--df-space-3); align-content: start; }
+.tab {
+  padding: var(--df-space-5) var(--df-space-6);
+  border-radius: var(--df-radius-icon);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-ink-55);
+  text-align: left;
+}
+.tab:hover { background: var(--df-color-surface-2); color: var(--df-color-ink); }
+.tabOn, .tabOn:hover { background: var(--df-color-ink); color: var(--df-color-on-brand); }
+
+.logout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-3);
+  padding: var(--df-space-5) var(--df-space-6);
+  border-radius: var(--df-radius-tile);
+  background: #FFEEEA;
+  text-align: left;
+}
+.logoutLabel {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: #FF5A3C;
+}
+.logoutWho {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1.4 var(--df-font-ui);
+  color: var(--df-color-ink-55);
+}
+
+/* ---- pane ---- */
+.pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--df-space-7);
+  min-height: 0;
+  padding: var(--df-space-8) var(--df-space-9);
+}
+.paneTitle { font: var(--df-weight-display) var(--df-text-md) / 1 var(--df-font-display); }
+
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-7);
+  min-height: 0;
+  overflow-y: auto;
+}
+.sliders { display: flex; flex-direction: column; gap: var(--df-space-6); }
+.divider { height: calc(var(--df-u) * 0.16); background: #F2EDFC; }
+.rows { display: flex; flex-direction: column; gap: var(--df-space-4); }
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--df-space-6);
+  padding: var(--df-space-6) var(--df-space-7);
+  border-radius: var(--df-radius-row);
+  background: var(--df-color-surface-1);
+}
+.rowText { display: flex; flex-direction: column; gap: var(--df-space-3); min-width: 0; }
+.rowLabel { font: var(--df-weight-label) var(--df-text-xs) / 1.2 var(--df-font-ui); }
+.rowSub {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1.4 var(--df-font-ui);
+  color: var(--df-color-ink-55);
+  text-wrap: pretty;
+}
+
+.foot { display: flex; justify-content: flex-end; align-items: center; gap: var(--df-space-4); }
+.reset {
+  padding: var(--df-space-6) var(--df-space-8);
+  border-radius: var(--df-radius-row);
+  background: #F2EDFC;
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+}
+.reset:hover { background: var(--df-color-surface-2); }
+
+.empty {
+  display: grid;
+  place-items: center;
+  padding: var(--df-space-10);
+  border: var(--df-bevel-1) dashed var(--df-color-ink-35);
+  border-radius: var(--df-radius-row);
+  font: var(--df-weight-display) var(--df-text-2xs) / 1.9 var(--df-font-mono);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-45);
+  text-align: center;
+}

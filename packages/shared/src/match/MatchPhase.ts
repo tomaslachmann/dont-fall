@@ -98,6 +98,32 @@ export interface MatchPhaseInputs {
 export const phaseLocksInput = (phase: MatchPhase): boolean => phase !== "RUNNING";
 
 /**
+ * Whether the physics world needs to step this tick at all (grilling
+ * session, 2026-09) — `COUNTDOWN` and `RUNNING` only. Characters are already
+ * spawned and visible with live cameras from `COUNTDOWN` (ADR 0040), so
+ * gravity/Spinners/Bump keep running through it exactly like `RUNNING`; a
+ * Match sitting in `LOBBY`, `ROUND_END`, or `RESULTS` has `phaseLocksInput`
+ * true for every Character already (nothing is moving on its own input
+ * regardless), so pausing `world.step()` there changes nothing a Player
+ * could have driven — it only stops ambient physics (gravity settling,
+ * shoves, Spinners) nobody asked for while no Round is live.
+ *
+ * Shared, not server-only, for the same reason `phaseLocksInput` is: the
+ * client predicts through this same `RapierSimulation.tick()` call, so its
+ * own local prediction stops burning CPU stepping physics for a Character
+ * sitting in a Lobby/Standings Screen nobody can even see move.
+ *
+ * `RapierSimulation.tick()` still increments its own tick counter every
+ * call regardless of this — never gating that is what keeps `state.tick`
+ * wall-clock-synced with the server's real-time loop and the client's own
+ * prediction tick numbering (ADR 0027); freezing the counter itself instead
+ * of just the physics step is exactly the class of bug M5 ticket 08 found
+ * live (a paused/reset tick epoch stranding every already-connected client's
+ * prediction on a Tick the server would never produce again).
+ */
+export const phaseNeedsPhysicsStep = (phase: MatchPhase): boolean => phase === "COUNTDOWN" || phase === "RUNNING";
+
+/**
  * The Match phase for `tick`, given the phase it was in (ADR 0040). Pure, and
  * never mutates the state it is handed — the server calls it once per tick
  * and keeps whatever comes back.

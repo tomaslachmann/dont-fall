@@ -1,0 +1,94 @@
+/* 1z2 — error / connection lost. One narrow centred column: mark, sentence, the two
+   strings support needs, then the retry. Danger tone lives in the badge and mark only —
+   the card stays the same white plastic as everything else. */
+.screen {
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--df-space-6);
+  justify-items: stretch;
+}
+
+.head { display: flex; align-items: center; justify-content: space-between; gap: var(--df-space-5); }
+
+.card {
+  justify-self: center;
+  align-self: center;
+  width: min(calc(var(--df-u) * 52), 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--df-space-3);
+  padding: var(--df-space-6) var(--df-space-7);
+  border-radius: var(--df-radius-panel);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-5) 0 var(--df-color-shadow);
+  text-align: center;
+}
+
+.alert { width: calc(var(--df-u) * 3.8); line-height: 0; }
+.alert svg { width: 100%; height: 100%; overflow: visible; }
+.alertDisc {
+  fill: var(--df-color-danger);
+  filter: drop-shadow(0 calc(var(--df-u) * .34) 0 var(--df-color-danger-shade));
+}
+.alertGlyph { fill: var(--df-color-surface-0); }
+
+.title {
+  margin: 0;
+  font: var(--df-weight-display) var(--df-text-md) / 1.1 var(--df-font-display);
+  text-wrap: balance;
+}
+.lede {
+  margin: 0;
+  max-width: 38ch;
+  font: var(--df-weight-kicker) var(--df-text-xs) / 1.5 var(--df-font-ui);
+  color: var(--df-color-ink-55);
+  text-wrap: pretty;
+}
+
+.rows { margin-top: var(--df-space-2); align-self: stretch; display: flex; flex-direction: column; gap: var(--df-space-3); }
+
+.codeRow, .detailRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-4) var(--df-space-5);
+  border-radius: var(--df-radius-row);
+  background: var(--df-color-surface-1);
+  text-align: left;
+}
+.detailRow { grid-template-columns: auto minmax(0, 1fr); }
+.codeRow { transition: transform var(--df-dur-up) var(--df-ease); }
+.codeRow:hover { transform: translateY(var(--df-lift)); }
+.codeRow:active { transform: translateY(var(--df-squash)); }
+
+.rowLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-ink-45);
+  white-space: nowrap;
+}
+.code {
+  font: var(--df-weight-display) var(--df-text-sm) / 1 var(--df-font-mono);
+  color: var(--df-color-ink);
+  letter-spacing: var(--df-tracking-label);
+}
+.detail {
+  font: var(--df-weight-display) var(--df-text-3xs) / 1.3 var(--df-font-mono);
+  color: var(--df-color-ink-45);
+  overflow-wrap: anywhere;
+}
+.copyHint {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-brand);
+  white-space: nowrap;
+}
+
+.actions { align-self: stretch; display: flex; flex-direction: column; gap: var(--df-space-3); }
+.retryNote {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-ink-45);
+  text-align: center;
+}

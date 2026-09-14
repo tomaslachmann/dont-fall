@@ -1,0 +1,170 @@
+/* 1n — Log in / sign up. One card, no web-form energy.
+   Two columns: the character render greets the player on the left, the card sits on the right. */
+.screen {
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--df-space-6);
+}
+
+.body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: end;
+  gap: var(--df-space-8);
+  min-height: 0;
+}
+
+.greeter { height: 100%; }
+
+/* ---- the card ---- */
+.card {
+  align-self: center;
+  gap: var(--df-space-6);
+  padding: var(--df-space-8);
+  border-radius: calc(var(--df-u) * 3.4);
+  box-shadow: 0 calc(var(--df-u) * 1.1) 0 var(--df-color-drop), var(--df-drop);
+}
+
+/* ---- mode tabs ---- */
+.tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--df-space-2);
+  padding: var(--df-space-2);
+  border-radius: var(--df-radius-icon);
+  background: var(--df-color-surface-2);
+}
+.tab {
+  padding: var(--df-space-4);
+  border-radius: var(--df-radius-chip);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-55);
+  transition: background var(--df-dur-up) var(--df-ease);
+}
+.tab:hover { color: var(--df-color-ink); }
+.tabOn, .tabOn:hover {
+  background: var(--df-color-ink);
+  color: var(--df-color-on-brand);
+}
+
+.title {
+  font: var(--df-weight-display) var(--df-text-lg) / 1.1 var(--df-font-display);
+  text-wrap: balance;
+}
+
+/* ---- fields ---- */
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-4);
+}
+
+/* Label sits above the value inside the plastic well — never a placeholder-only field. */
+.field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-5) var(--df-space-6);
+  border: calc(var(--df-u) * 0.16) solid var(--df-color-surface-2);
+  border-radius: var(--df-radius-tile);
+  background: var(--df-color-surface-1);
+}
+.field:focus-within { border-color: var(--df-color-brand); }
+
+.fieldText { display: flex; flex-direction: column; gap: var(--df-space-3); min-width: 0; }
+.fieldLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-ink-45);
+}
+.input {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--df-color-ink);
+  font: var(--df-weight-label) var(--df-text-sm) / 1 var(--df-font-ui);
+}
+.input:focus { outline: none; }
+.input::placeholder { color: var(--df-color-ink-35); }
+.masked { letter-spacing: .2em; }
+
+.reveal { display: grid; place-items: center; padding: var(--df-space-2); }
+.reveal svg {
+  width: calc(var(--df-u) * 1.56);
+  fill: none;
+  stroke: var(--df-color-ink-45);
+  stroke-width: 2.4;
+}
+.reveal:hover svg { stroke: var(--df-color-ink); }
+
+/* ---- checkbox row ---- */
+.meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--df-space-4);
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-4);
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1.3 var(--df-font-ui);
+  color: var(--df-color-ink-70);
+  text-align: left;
+}
+.box {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 1.72);
+  aspect-ratio: 1;
+  border-radius: calc(var(--df-u) * 0.62);
+  background: var(--df-color-surface-2);
+}
+.boxOn { background: var(--df-color-go); }
+.box svg { width: 60%; fill: none; stroke: var(--df-color-on-brand); stroke-width: 2.6; stroke-linecap: round; opacity: 0; }
+.boxOn svg { opacity: 1; }
+
+.link {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1 var(--df-font-ui);
+  color: var(--df-color-brand);
+  white-space: nowrap;
+}
+.link:hover { color: var(--df-color-ink); }
+
+/* ---- OR divider ---- */
+.divider {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--df-space-4);
+}
+.rule { height: calc(var(--df-u) * 0.16); background: var(--df-color-surface-2); }
+.or {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-ink-45);
+}
+
+/* ---- third-party row ---- */
+.providers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--df-space-3);
+}
+.provider {
+  padding: var(--df-space-5) var(--df-space-3);
+  border-radius: var(--df-radius-icon);
+  background: var(--df-color-surface-2);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  transition: transform var(--df-dur-up) var(--df-ease);
+}
+.provider:hover { transform: translateY(var(--df-lift)); }
+.provider:active { transform: translateY(var(--df-squash)); }
+
+/* Sign-up gets one more field, so the card breathes a little tighter. */
+.signup .fields { gap: var(--df-space-3); }

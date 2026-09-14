@@ -52,7 +52,7 @@ const ASSET_IDS = new Set(assetTabModuleIds());
 
 /**
  * Visual templates by asset Module id, loaded once per session from
- * track-service at Assets-tab open (M8 ticket 05, ADR 0050 as amended) —
+ * the API at Assets-tab open (M8 ticket 05, ADR 0050 as amended) —
  * `null` until then. The viewport renders whatever is cached (possibly
  * nothing on a procedural-only session); placing from the tab always
  * follows a load, so its Segments never miss their visuals.
@@ -248,7 +248,7 @@ for (const [moduleId, module] of Object.entries(MODULE_LIBRARY)) {
 
 // Assets tab (M8 ticket 05) — the registry's fixed asset set, each previewing
 // its authored visual. Bytes load once per session, on first tab open (ADR
-// 0050 as amended: from track-service, never a builder-local copy), through
+// 0050 as amended: from the API, never a builder-local copy), through
 // the tab's own fetch — the same loader pattern as the game, not shared code.
 let assetsTabOpened = false;
 const setActiveTab = (tab: "procedural" | "assets"): void => {
@@ -275,7 +275,7 @@ const openAssetsTab = async (): Promise<void> => {
     rerender();
     setStatus(`${history.track.length} Segment(s)`);
   } catch (err) {
-    // Let the next tab click retry — track-service may just not be up yet.
+    // Let the next tab click retry — the API may just not be up yet.
     assetsTabOpened = false;
     setStatus(`assets failed: ${(err as Error).message}`);
   }
@@ -470,7 +470,7 @@ $("load").addEventListener("click", () => {
 });
 
 // Browse (ticket 09) — fetch-by-known-id-only isn't a real "share" mechanism
-// once there are multiple user-created Tracks; this lists what track-service
+// once there are multiple user-created Tracks; this lists what the API
 // actually has instead of requiring a typed-in id.
 $("browse-toggle").addEventListener("click", () => {
   if (!browsePanel.hidden) {
@@ -508,12 +508,11 @@ $("browse-toggle").addEventListener("click", () => {
   })();
 });
 
-// Playtest ("true simulation, not some bean" — grilling session, 2026-09):
-// publishes the in-progress (possibly never-`Save`d) Track under a fixed
-// reserved id and opens the real `apps/client` in a new tab, which forwards
-// it on to the real `apps/server` (its own `?track=` handling) — testing
-// through the exact render/prediction/network pipeline a player uses,
-// replacing the old local-only preview scene entirely.
+// Playtest (m8.1 ticket 04): publishes the in-progress (possibly
+// never-`Save`d) Track under a fixed reserved id and opens the free-roam
+// session in a new tab — spawn-and-run with no Lobby, no ready, no Rounds,
+// through the same local sim the match server runs. The ceremony path this
+// bypasses stays available through the normal client Play flow.
 playtestButton.addEventListener("click", () => {
   if (history.track.length === 0) {
     setStatus("cannot playtest an empty Track — place a Module first");
@@ -525,12 +524,13 @@ playtestButton.addEventListener("click", () => {
       const { id } = await publishPlaytestTrack(serviceUrlInput.value, history.track, draftRoundDefaults());
       // 5173 is apps/client's own fixed dev port (its `vite.config.ts`) — a
       // local-dev-only detail, not a shared runtime constant the way the
-      // server/track-service ports are (ADR 0028's own network protocol).
+      // server/the API ports are (ADR 0028's own network protocol).
       // `/play` (M4 ticket 06): opening straight into a running game is the
       // whole point of Playtest, so this targets the game route directly
-      // rather than the Main Menu now sitting at `/`.
-      window.open(`http://${location.hostname}:5173/play?track=${encodeURIComponent(id)}`, "_blank");
-      setStatus(`playtest opened in a new tab (Track "${id}")`);
+      // rather than the Main Menu now sitting at `/` — plus `freeroam=1`
+      // (m8.1 ticket 01): the free-roam session, not the match Lobby.
+      window.open(`http://${location.hostname}:5173/play?track=${encodeURIComponent(id)}&freeroam=1`, "_blank");
+      setStatus(`free-roam opened in a new tab (Track "${id}")`);
     } catch (err) {
       setStatus(`playtest failed: ${(err as Error).message}`);
     }

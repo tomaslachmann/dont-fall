@@ -1,3 +1,4 @@
+import { ASSET_MODULE_DEFS } from "@dont-fall/shared";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -177,8 +178,10 @@ describe("builder live-WebGL-context budget", () => {
     await flush(20);
 
     const assetEntries = (getElementById("assets-list").children as ElStub[]).filter((c) => c.tag === "div");
-    expect(assetEntries).toHaveLength(4);
-    // No new renderer for the four asset previews — the shared one is reused.
+    expect(assetEntries).toHaveLength(ASSET_MODULE_DEFS.length);
+    // No new renderer however many asset previews the tab holds — the shared
+    // one is reused. This is the whole point of the test, and it matters more
+    // the larger the set gets: one drop took it from 4 previews to 28.
     expect(liveRenderers).toBe(1);
 
     // Placing from the tab reaches the viewport with templates attached
@@ -186,7 +189,7 @@ describe("builder live-WebGL-context budget", () => {
     assetEntries[0]!.fire("click");
     const lastSetTrack = viewportStub.setTrack.mock.calls.at(-1)!;
     expect(lastSetTrack[1].map((s: { moduleId: string }) => s.moduleId)).toContain("platform_straight");
-    expect(Object.keys(lastSetTrack[2] ?? {})).toHaveLength(4);
+    expect(Object.keys(lastSetTrack[2] ?? {})).toHaveLength(ASSET_MODULE_DEFS.length);
 
     // The real viewport owns exactly one renderer outside this harness
     // (mocked here); everything else counted above must fit under the

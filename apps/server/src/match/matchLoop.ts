@@ -1,20 +1,103 @@
 import {
+  MATCH_OVER_CLOSE_GRACE_MS,
   SNAPSHOT_HZ,
   TICK_MS,
   TICK_RATE_HZ,
   advanceMatchPhase,
   allQualified,
+  buildResults,
   buildRoundResult,
   countdownMsLeft,
   resolveHostId,
   roundTimeLeftMs,
   survivorTargetReached,
+  type PersistedMatchResult,
   type ServerMessage,
   type SimInputs,
   type SimState,
 } from "@dont-fall/shared";
 import { trySend } from "../net/wire.js";
+import { openBettingArgs, roundWinners } from "./betting.js";
 import type { MatchRuntime } from "./matchRuntime.js";
+
+/**
+ * The idle-phase broadcast decision (ADR 0057) — pure, so tests can pin the
+ * table without a socket: send when a join (or a `sync`) set the dirty flag,
+ * when this is the first broadcast yet, or when the shared payload changed;
+ * otherwise stay silent. Level-triggered by construction — the caller
+ * compares the *current* payload every tick, so there is no "event" to miss.
+ */
+export const shouldBroadcastIdle = (
+  snapshotDirty: boolean,
+  sharedJson: string,
+  lastBroadcastJson: string | null,
+): boolean => snapshotDirty || sharedJson !== lastBroadcastJson;
+
+/** Ticks between results-save retries — a down API gets one attempt per window, never 30 hammering ones per second. */
+export const SAVE_RETRY_TICKS = 2 * TICK_RATE_HZ;
+
+/** The smallest `MatchRuntime` surface the results save needs — the loop passes the real runtime, tests a fake. */
+export interface SaveRuntime {
+  savingResults: boolean;
+  lastSaveAttemptTick: number | null;
+  resultsSavedMatchId: string | null;
+  resultsSavedAtMs: number | null;
+  closed: boolean;
+  config: { matchId: string };
+  roundResults: MatchRuntime["roundResults"];
+  matchNicknames: Map<string, string>;
+  matchAccountIds: Map<string, string>;
+  totalFalls: Record<string, number>;
+  matchResults: MatchRuntime["matchResults"];
+}
+
+/**
+ * Kicks off the terminal results save unless one is already in flight or the
+ * last attempt is still inside its retry window (ADR 0059). Fire-and-observe:
+ * success lands `resultsSavedMatchId` (which is what the snapshot's
+ * `matchOver` reads), failure just frees the in-flight flag so a later tick
+ * retries. Never throws — the notifier reports, it doesn't raise.
+ */
+export const saveMatchResultIfDue = (rt: SaveRuntime, thisTick: number): void => {
+  if (rt.savingResults) return;
+  if (rt.lastSaveAttemptTick !== null && thisTick - rt.lastSaveAttemptTick < SAVE_RETRY_TICKS) return;
+  rt.savingResults = true;
+  rt.lastSaveAttemptTick = thisTick;
+  const result: PersistedMatchResult = {
+    matchId: rt.config.matchId,
+    results: [...rt.roundResults],
+    nicknames: Object.fromEntries(rt.matchNicknames),
+    accountIds: Object.fromEntries(rt.matchAccountIds),
+    totalFalls: { ...rt.totalFalls },
+    endedAtMs: Date.now(),
+  };
+  void rt.matchResults.saveResult(result).then((saved) => {
+    rt.savingResults = false;
+    if (rt.closed) return;
+    if (saved) {
+      rt.resultsSavedMatchId = result.matchId;
+      rt.resultsSavedAtMs = Date.now();
+    }
+  });
+};
+
+/** The smallest `MatchRuntime` surface the terminal self-close needs — same fake-runtime seam as above. */
+export interface CloseRuntime {
+  closeRequested: boolean;
+  resultsSavedAtMs: number | null;
+  sockets: { size: number };
+}
+
+/**
+ * Whether this tick should close a finished server (ADR 0059): its results
+ * are saved and either nobody is left to serve, or the straggler grace ran
+ * out on whoever is. The caller owns the once-guard (`closeRequested`) and
+ * the actual close — this only answers.
+ */
+export const terminalCloseDue = (rt: CloseRuntime, nowMs: number): boolean => {
+  if (rt.closeRequested || rt.resultsSavedAtMs === null) return false;
+  return rt.sockets.size === 0 || nowMs - rt.resultsSavedAtMs > MATCH_OVER_CLOSE_GRACE_MS;
+};
 
 /**
  * The Match's fixed 30 Hz loop (ADR 0004): advance the phase, apply each
@@ -28,7 +111,12 @@ import type { MatchRuntime } from "./matchRuntime.js";
  *
  * Returns the interval handle so the server can clear it on close.
  */
-export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
+export interface MatchLoopHooks {
+  /** Fired once when a finished server should close itself (ADR 0059) — the server owns the actual close. */
+  onTerminalClose?: () => void;
+}
+
+export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS.Timeout => {
   let consecutiveTickFailures = 0;
   // Snapshot rate is decoupled from the tick rate (ADR 0020): the sim steps
   // every tick, but a snapshot goes out only every `1000 / SNAPSHOT_HZ` ms of
@@ -128,7 +216,33 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       // is still the identical, unmutated world by the time `state` is read.
       if (nextMatch.phase === "RESULTS" && rt.match.phase === "ROUND_END") {
         precomputedState = rt.simulation.snapshot();
-        rt.roundResults.push(buildRoundResult(precomputedState.characters, [...rt.lobbyPlayers.values()], rt.dnf));
+        const finished = buildRoundResult(precomputedState.characters, [...rt.lobbyPlayers.values()], rt.dnf);
+        rt.roundResults.push(finished);
+        // Ticket 14: the Round's winners settle its betting pool — placement
+        // 1 takes it, ties share it. Fire-and-forget: a down API strands the
+        // settlement in the server log, never the Match (the notifier swallows).
+        void rt.betting.settleRound({
+          matchId: rt.config.matchId,
+          round: rt.roundResults.length,
+          winnerIds: roundWinners(finished),
+        });
+        // ADR 0059: every finished Round names its racers and their falls for
+        // the results save — accumulated here, every Round, because a Player
+        // who drops later has no row left to read at Match end. A second
+        // `buildResults` next to `buildRoundResult`'s own above (pure and
+        // cheap): nicknames and falls are display data, not score, so they
+        // stay out of `RoundResult` itself.
+        const detailed = buildResults(precomputedState.characters, [...rt.lobbyPlayers.values()], rt.dnf);
+        for (const row of detailed) {
+          if (row.dnf) continue;
+          rt.matchNicknames.set(row.id, row.nickname);
+          // M9 ticket 11 phase 2b: the Account behind this racer, when the
+          // seat authed — read off the live row (or the drop record when the
+          // row is already gone), never off the display projection above.
+          const accountId = rt.lobbyPlayers.get(row.id)?.accountId ?? rt.dnf.find((d) => d.id === row.id)?.accountId;
+          if (accountId) rt.matchAccountIds.set(row.id, accountId);
+          rt.totalFalls[row.id] = (rt.totalFalls[row.id] ?? 0) + row.fallCount;
+        }
         if (rt.canContinueMatch()) {
           // The whole Match's structure was already kicked off back when
           // `start` fired (`lobby.ts`) — Round 1 alone almost always
@@ -141,6 +255,11 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
             await rt.matchStructurePromise;
             rt.nextRoundReady = true;
           })();
+        } else {
+          // Terminal RESULTS: the Match is over, its results save now
+          // (ADR 0059). One attempt here, on the entry tick; the per-tick
+          // check below retries while unsaved and closes once saved.
+          saveMatchResultIfDue(rt, thisTick);
         }
       }
       // A fresh Countdown is a fresh Round: last Round's DNFs are not this
@@ -151,6 +270,18 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       if (nextMatch.phase === "COUNTDOWN" && rt.match.phase !== "COUNTDOWN") {
         rt.dnf = [];
         rt.standingsReady.clear();
+        // Ticket 14: a fresh Countdown opens a fresh betting Round — roster,
+        // Round number and close time go to the API, which owns pools from
+        // here. Fire-and-forget: no round row reads as closed, never as open.
+        void rt.betting.openRound(
+          openBettingArgs({
+            matchId: rt.config.matchId,
+            finishedRounds: rt.roundResults.length,
+            players: rt.lobbyPlayers,
+            sidelined: rt.spectators,
+            nowMs: Date.now(),
+          }),
+        );
       }
       if (nextMatch.phase === "COUNTDOWN" && rt.match.phase === "RESULTS") {
         // M7 ticket 04/05: a Match's later Rounds go straight from Standings
@@ -170,35 +301,74 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
           rt.roundType = drawn.roundType;
         }
         rt.startNextRound(rt.fetched.track);
+        // M9 ticket 16: this Round counts as a play on its own Track.
+        // Reported here, after `fetched` points at the new Round — not up
+        // next to betting's open, where `fetched` is still the previous
+        // Round's Track and the play would credit the wrong row.
+        void rt.trackPlays.recordPlay(rt.fetched.id);
       } else if (nextMatch.phase === "LOBBY" && rt.match.phase !== "LOBBY") {
-        // Every way back to a Lobby gets a genuinely fresh one, never a
-        // resumed one: the host going again from Results (M4 ticket 08), and
-        // the last Player leaving mid-Round (`advanceMatchPhase`'s "a Round
-        // with nobody in it is over").
-        //
-        // Both need the world rebuilt, not just the phase reset (M5 ticket
-        // 08, found live). Since ticket 04 a Character that drops mid-Round
-        // is *marked* eliminated rather than removed (ADR 0042) — right for
-        // the Round it was racing, and wrong forever after: if that drop was
-        // the last one, the phase snapped back to LOBBY around a world still
-        // holding its body. Those ghosts then counted as connected Players on
-        // every client's HUD, and — because `allQualified` needs a
-        // `finishTick` from *every* Character and a ghost can never earn one
-        // — no Race on that server could ever again end by everyone
-        // Qualifying, only by running out its clock.
-        //
-        // Everyone still connected gets a fresh Round on the same Track,
-        // re-seated at their spawn slot. Last Round's DNFs are not this
-        // Round's (same reasoning as the Countdown-triggered clear above),
-        // and everyone's Ready goes back to false — otherwise a Lobby the
-        // host returns to would start itself the instant it existed, since
-        // both Players necessarily left the last Round Ready.
-        rt.resetToFreshLobby(rt.fetched.track);
-        rt.dnf = [];
-        rt.standingsReady.clear();
-        for (const player of rt.lobbyPlayers.values()) player.ready = false;
+        // ADR 0059: leaving a *finished* Match never reopens a Lobby around
+        // it. Saved → this server is done, close it (rebuilding a world just
+        // to throw the server away would be pure waste). Still saving (everyone
+        // left in the milliseconds between the terminal tick and the save
+        // landing) → hold this phase uncommitted until the save lands — the
+        // per-tick check below retries it — then close on a later tick.
+        if (rt.match.phase === "RESULTS" && !rt.canContinueMatch()) {
+          if (rt.resultsSavedMatchId !== null) {
+            rt.match = nextMatch;
+            if (!rt.closeRequested) {
+              rt.closeRequested = true;
+              hooks?.onTerminalClose?.();
+            }
+          }
+        } else {
+          // Every way back to a Lobby gets a genuinely fresh one, never a
+          // resumed one: the host going again from Results (M4 ticket 08), and
+          // the last Player leaving mid-Round (`advanceMatchPhase`'s "a Round
+          // with nobody in it is over").
+          //
+          // Both need the world rebuilt, not just the phase reset (M5 ticket
+          // 08, found live). Since ticket 04 a Character that drops mid-Round
+          // is *marked* eliminated rather than removed (ADR 0042) — right for
+          // the Round it was racing, and wrong forever after: if that drop was
+          // the last one, the phase snapped back to LOBBY around a world still
+          // holding its body. Those ghosts then counted as connected Players on
+          // every client's HUD, and — because `allQualified` needs a
+          // `finishTick` from *every* Character and a ghost can never earn one
+          // — no Race on that server could ever again end by everyone
+          // Qualifying, only by running out its clock.
+          //
+          // Everyone still connected gets a fresh Round on the same Track,
+          // re-seated at their spawn slot. Last Round's DNFs are not this
+          // Round's (same reasoning as the Countdown-triggered clear above),
+          // and everyone's Ready goes back to false — otherwise a Lobby the
+          // host returns to would start itself the instant it existed, since
+          // both Players necessarily left the last Round Ready.
+          rt.resetToFreshLobby(rt.fetched.track);
+          rt.dnf = [];
+          rt.standingsReady.clear();
+          for (const player of rt.lobbyPlayers.values()) player.ready = false;
+        }
+      } else if (nextMatch.phase === "COUNTDOWN" && rt.match.phase === "LOBBY") {
+        // M9 ticket 16: Round 1 starts on the Lobby's own loaded Track — no
+        // draw, no rebuild, so this branch is the only place its play gets
+        // reported (later Rounds report from the RESULTS branch above, after
+        // their own draw lands).
+        void rt.trackPlays.recordPlay(rt.fetched.id);
+        rt.match = nextMatch;
       } else {
         rt.match = nextMatch;
+      }
+      // ADR 0059, every tick in a terminal RESULTS: a save that failed (a
+      // down API) retries here until it lands, and once it has, the server
+      // is done — it closes as soon as everyone has left for the results
+      // page, or past the grace even with stragglers still connected.
+      if (rt.match.phase === "RESULTS" && !rt.canContinueMatch()) {
+        if (rt.resultsSavedMatchId === null) saveMatchResultIfDue(rt, thisTick);
+        else if (terminalCloseDue(rt, Date.now())) {
+          rt.closeRequested = true;
+          hooks?.onTerminalClose?.();
+        }
       }
       consecutiveTickFailures = 0;
 
@@ -247,6 +417,16 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
       // binary + delta encoding will need anyway.
       const serverTimeMs = performance.now();
       const countdown = countdownMsLeft(rt.match, rt.serverTick, rt.config.countdownMs);
+      // Idle phases (ADR 0057) — LOBBY and RESULTS, where input is locked,
+      // the world doesn't step, and the clock doesn't run: the full payload
+      // below would be byte-identical 15× a second, so broadcast only when
+      // the shared (non-per-client) content actually changed, or when a join
+      // set `snapshotDirty` (a newcomer has nothing yet). Level-triggered,
+      // never edge-triggered: two mutations within one tick still send the
+      // final state, and nothing can be lost by a missed "event". COUNTDOWN
+      // stays live (`countdownMsLeft` ticks every tick) and so do RUNNING
+      // and the short ROUND_END hold.
+      const livePhase = rt.match.phase === "COUNTDOWN" || rt.match.phase === "RUNNING" || rt.match.phase === "ROUND_END";
       // Built once per snapshot, not once per client — every connected
       // client sees the identical Lobby (M4 ticket 07), and `hostId` is
       // recomputed from who's here now rather than stored anywhere.
@@ -273,12 +453,42 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
         matchLength: rt.matchLength,
         roundPicks,
       };
+      if (!livePhase) {
+        // Deliberately everything *except* `state`: the tick number inside
+        // it advances every interval even in an idle phase, which would make
+        // this comparison useless — and the world it describes can't move
+        // there anyway (no `world.step()`, locked input), so there is no
+        // content in it a client could be missing.
+        const sharedJson = JSON.stringify({
+          matchId: rt.config.matchId,
+          phase: rt.match.phase,
+          lobby: lobbySnapshot,
+          trackId: rt.fetched.id,
+          trackRevision: rt.fetched.revision,
+          roundRules: rt.roundRules,
+          timeLeftMs,
+          countdown,
+          dnf: rt.dnf,
+          standingsReady: [...rt.standingsReady],
+          roundResults: rt.roundResults,
+          roundsRemaining: rt.canContinueMatch(),
+          matchOver: rt.resultsSavedMatchId === null ? null : { matchId: rt.resultsSavedMatchId },
+        });
+        if (!shouldBroadcastIdle(rt.snapshotDirty, sharedJson, rt.lastBroadcastJson)) return;
+        rt.snapshotDirty = false;
+        rt.lastBroadcastJson = sharedJson;
+      } else {
+        // A live broadcast reaches every connected socket, newcomer
+        // included — no pending push survives past it.
+        rt.snapshotDirty = false;
+      }
       for (const [id, socket] of rt.sockets) {
         if (socket.readyState !== socket.OPEN) continue;
         trySend(
           socket,
           JSON.stringify({
             type: "snapshot",
+            matchId: rt.config.matchId,
             state,
             serverTimeMs,
             commandQueueDepth: rt.inputs.depth(id),
@@ -299,6 +509,9 @@ export const startMatchLoop = (rt: MatchRuntime): NodeJS.Timeout => {
             // as of *this* snapshot — after the push, on the exact tick a
             // Round ends, those two disagree by one `RoundResult`.
             roundsRemaining: rt.canContinueMatch(),
+            // ADR 0059: set once the terminal save lands (never before),
+            // which is also a payload change the idle check above pushes.
+            matchOver: rt.resultsSavedMatchId === null ? null : { matchId: rt.resultsSavedMatchId },
           } satisfies ServerMessage),
         );
       }

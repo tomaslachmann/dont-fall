@@ -1,0 +1,26 @@
+/* Dashed slot where an existing 3D character render composites in.
+   Only used where a render earns it: menu hero, character select, podium, profile. */
+.slot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  min-width: 0;
+  padding: var(--df-space-10) var(--df-space-6);
+  border: var(--df-bevel-1) dashed var(--df-color-on-brand-35);
+  border-radius: var(--df-radius-hero);
+  text-align: center;
+}
+/* Hero renders stand on the stage floor — no bottom edge. */
+.grounded {
+  border-bottom: 0;
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+  align-self: end;
+}
+.wobble { animation: df-wobble 5s ease-in-out infinite; }
+
+.caption {
+  font: var(--df-weight-display) var(--df-text-2xs) / 1.9 var(--df-font-mono);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-on-brand-60);
+}

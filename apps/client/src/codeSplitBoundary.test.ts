@@ -110,9 +110,9 @@ describe("the code split (ADR 0008)", () => {
   it("catches the engine arriving through a neutral helper, not just directly", () => {
     // The transitive case, proven rather than assumed: `lib/` is a leaf today,
     // so the direct-only version of this test would pass either way.
-    expect(fileFor("lib/connection")).toBe("lib/connection.ts");
+    expect(fileFor("lib/socket/connection")).toBe("lib/socket/connection.ts");
     expect(sideOf("render/scene")).toBe("game");
-    expect(sideOf("lib/connection")).toBe("neither");
+    expect(sideOf("lib/socket/connection")).toBe("neither");
   });
 
   it("still has a shell and a game side to tell apart", () => {
