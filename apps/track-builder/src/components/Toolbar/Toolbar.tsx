@@ -13,8 +13,8 @@ import { Kicker } from "../Kicker/Kicker";
 import { UndoIcon, RedoIcon, TrashIcon } from "../icons/Icons";
 import type { BuilderEngine } from "../../engine.js";
 import { useEngineVersion } from "../../hooks/useEngine.js";
-import { parseDraftSurvivorTarget } from "../../survivorTargetField.js";
-import { parseDraftTimeLimitMs } from "../../timeLimitField.js";
+import { parseDraftSurvivorTarget } from "../../api/survivorTargetField.js";
+import { parseDraftTimeLimitMs } from "../../api/timeLimitField.js";
 
 interface Props {
   engine: BuilderEngine;

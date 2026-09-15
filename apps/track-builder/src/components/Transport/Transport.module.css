@@ -14,8 +14,8 @@
 .btn {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   border-radius: var(--tb-r-lg);
   background: var(--df-color-surface-0);
   box-shadow: var(--tb-bevel-2);

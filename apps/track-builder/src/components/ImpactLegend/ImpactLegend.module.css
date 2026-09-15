@@ -19,8 +19,8 @@
 .badge {
   display: grid;
   place-items: center;
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
   border-radius: var(--tb-s-4);
   font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
 }

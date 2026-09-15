@@ -33,7 +33,7 @@
   justify-content: space-between;
   gap: var(--tb-s-4);
   width: 100%;
-  padding: var(--tb-s-3) var(--tb-s-4);
+  padding: var(--tb-s-4) var(--tb-s-5);
   border-radius: var(--tb-r-md);
   background: var(--df-color-surface-1);
 }
@@ -44,6 +44,7 @@
 .active .rev { color: var(--df-color-on-brand-60); }
 
 .name {
+  min-width: 0;
   font: var(--df-weight-label) var(--tb-t-xs) / 1.2 var(--df-font-ui);
   white-space: nowrap;
   overflow: hidden;

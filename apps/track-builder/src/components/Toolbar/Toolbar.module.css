@@ -22,7 +22,7 @@
   display: flex;
   align-items: center;
   gap: var(--tb-s-3);
-  padding: var(--tb-s-3) var(--tb-s-4);
+  padding: var(--tb-s-4) var(--tb-s-6);
   border-radius: var(--tb-r-md);
   background: var(--df-color-surface-0);
   box-shadow: var(--tb-bevel-1);
@@ -67,15 +67,18 @@
 
 /* demoted to a quiet status-row label that expands on click */
 .apiUrl {
+  max-width: 220px;
   font: var(--df-weight-kicker) var(--tb-t-2xs) / 1 var(--df-font-ui);
   letter-spacing: var(--df-tracking-label);
   color: var(--df-color-ink-45);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .apiUrl:hover { color: var(--df-color-ink); }
 
 .segments {
-  padding: var(--tb-s-2) var(--tb-s-4);
+  padding: var(--tb-s-3) var(--tb-s-5);
   border-radius: var(--tb-r-pill);
   background: var(--tb-color-trough);
   font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
@@ -87,11 +90,15 @@
   display: flex;
   align-items: center;
   gap: var(--tb-s-3);
-  padding: var(--tb-s-2) var(--tb-s-4);
+  min-width: 0;
+  max-width: 360px;
+  padding: var(--tb-s-3) var(--tb-s-5);
   border-radius: var(--tb-r-pill);
   font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
   letter-spacing: var(--df-tracking-label);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .statusOk { background: var(--df-color-go); color: var(--df-color-go-ink); }
 .statusQuiet { background: var(--tb-color-trough); color: var(--df-color-ink-55); }

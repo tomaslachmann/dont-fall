@@ -1,6 +1,8 @@
 /* TRACK BUILDER scope tokens.
-   The kit's --df-* tokens are fluid (1cqw of a stage). The builder is a dev tool: density is
-   fixed in px, type goes down to 9-11px, radii are halved. Colors still come from --df-*.
+   The kit's --df-* tokens are fluid (1cqw of a stage). The builder is a dev tool, so density
+   stays fixed in px — but it is one app with the game: controls sit on the client's own
+   metrics (13px standard label, 11px kicker), only the layout stays denser. Colors still
+   come from --df-*.
 
    Everything below is scoped to [data-tb-scope] (set by TrackBuilderScreen), so the game
    stages are untouched. Every .module.css in the builder reads only --tb-* + --df-color-*. */
@@ -29,13 +31,13 @@
   --tb-s-7: 14px;
   --tb-s-8: 22px;
 
-  --tb-t-3xs: 8px;
-  --tb-t-2xs: 9px;
-  --tb-t-xs:  10px;
-  --tb-t-sm:  11px;
-  --tb-t-md:  13px;
-  --tb-t-lg:  15px;
-  --tb-t-xl:  17px;
+  --tb-t-3xs: 10px;
+  --tb-t-2xs: 11px;
+  --tb-t-xs:  12px;
+  --tb-t-sm:  13px;
+  --tb-t-md:  15px;
+  --tb-t-lg:  18px;
+  --tb-t-xl:  20px;
 
   /* plastic bevel: offset shadow, zero blur, never upward */
   --tb-bevel-1: 0 2px 0 var(--df-color-ink-14);
@@ -49,8 +51,8 @@
              repeating-linear-gradient(90deg, rgba(43, 27, 77, .07) 0 1px, transparent 1px 36px);
 
   /* overridden per tier by the screen's container queries */
-  --tb-palette-w: 236px;
-  --tb-inspector-w: 296px;
+  --tb-palette-w: 264px;
+  --tb-inspector-w: 336px;
   --tb-toolbar-h: 62px;
   --tb-float-inset: 14px;
 

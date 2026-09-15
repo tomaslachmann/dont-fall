@@ -12,7 +12,7 @@
   display: flex;
   align-items: center;
   gap: var(--tb-s-3);
-  padding: var(--tb-s-3) var(--tb-s-4);
+  padding: var(--tb-s-4) var(--tb-s-5);
   border-radius: var(--tb-r-md);
   background: var(--df-color-surface-0);
   box-shadow: var(--tb-inset-field);
@@ -85,7 +85,8 @@
   gap: var(--tb-s-4);
 }
 
-.tile { display: flex; flex-direction: column; gap: var(--tb-s-1); cursor: pointer; }
+/* min-width: 0 — without it a long tile name forces its grid column past 1fr and the whole grid blows the palette frame */
+.tile { display: flex; flex-direction: column; gap: var(--tb-s-1); min-width: 0; cursor: pointer; }
 
 /* previews render lazily: a shimmering tile means queued, never a blank hole */
 .preview {
@@ -108,8 +109,8 @@
   position: absolute;
   left: 5px;
   top: 5px;
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
 }
 .star {
@@ -140,6 +141,9 @@
   font: var(--df-weight-kicker) var(--tb-t-3xs) / 1.1 var(--df-font-ui);
   color: var(--df-color-ink-70);
   text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .errorName { color: var(--df-color-danger-shade); font-weight: var(--df-weight-label); }
 

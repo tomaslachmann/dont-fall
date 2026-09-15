@@ -16,7 +16,7 @@
   display: flex;
   align-items: center;
   gap: var(--tb-s-2);
-  padding: var(--tb-s-2) var(--tb-s-3);
+  padding: var(--tb-s-3) var(--tb-s-4);
   border-radius: var(--tb-r-sm);
   background: var(--tb-color-trough);
   box-shadow: var(--tb-inset-field);

@@ -15,8 +15,10 @@
   align-items: center;
   justify-content: center;
   gap: var(--tb-s-2);
-  padding: var(--tb-s-3) var(--tb-s-4);
+  min-width: 0;
+  padding: var(--tb-s-4) var(--tb-s-5);
   border-radius: inherit;
+  overflow: hidden;
   color: var(--df-color-ink-55);
   font: var(--df-weight-label) var(--tb-t-xs) / 1 var(--df-font-ui);
   letter-spacing: var(--df-tracking-label);
@@ -24,8 +26,13 @@
   transition: background var(--df-dur-up) var(--df-ease), color var(--df-dur-up) var(--df-ease);
 }
 
+/* stacked: the count drops under the label — three counted tabs (PLATFORM /
+   OBSTACLE / SCENERY + 3-digit counts) never fit side by side in the palette */
+.stack > .item { flex-direction: column; gap: 3px; padding: var(--tb-s-3) var(--tb-s-2); }
+.stack .count { font-size: var(--tb-t-2xs); }
+
 .plate > .item { border-radius: calc(var(--tb-r-lg) - var(--tb-s-1)); }
-.sm > .item { padding: var(--tb-s-2) var(--tb-s-3); font-size: var(--tb-t-2xs); }
+.sm > .item { padding: var(--tb-s-3) var(--tb-s-4); font-size: var(--tb-t-2xs); }
 
 .item:hover { color: var(--df-color-ink); }
 

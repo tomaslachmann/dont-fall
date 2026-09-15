@@ -6,8 +6,8 @@ import { Chip } from "../Chip/Chip";
 import { SearchIcon } from "../icons/Icons";
 import { IMPACT } from "../../lib/impact";
 import type { BuilderEngine } from "../../engine.js";
-import { assetCategoryById, assetTabModuleIds } from "../../assets.js";
-import { assetPackOf, filterAssetIds, packLabel } from "../../assetFilter.js";
+import { assetCategoryById, assetTabModuleIds } from "../../assets/assets.js";
+import { assetPackOf, filterAssetIds, packLabel } from "../../assets/assetFilter.js";
 import { useEngineVersion } from "../../hooks/useEngine.js";
 
 const IDS = assetTabModuleIds();
@@ -162,7 +162,7 @@ export function AssetsTab({ engine, hidden }: { engine: BuilderEngine; hidden?: 
         <span className={css.hits}>{visible.length} hits</span>
       </label>
 
-      <SegmentedControl size="sm" value={category} onChange={setCategory}
+      <SegmentedControl size="sm" layout="stack" value={category} onChange={setCategory}
         items={(["platform", "obstacle", "scenery"] as const).map((c) => ({
           value: c,
           label: c.toUpperCase(),

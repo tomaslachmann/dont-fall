@@ -1,10 +1,10 @@
 import { MODULE_LIBRARY } from "@dont-fall/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { assetTabModuleIds } from "./assets.js";
+import { assetTabModuleIds } from "./assets/assets.js";
 import { createBuilderEngine, type BuilderEngine } from "./engine.js";
-import { MOVE_STEP_FINE } from "./trackEdit.js";
+import { MOVE_STEP_FINE } from "./track/trackEdit.js";
 import { triangleGlb } from "./test/glb.js";
-import type { TrackViewport } from "./viewport.js";
+import type { TrackViewport } from "./scene/viewport.js";
 
 // ---- Counting WebGLRenderer stand-in (real three otherwise) ----
 let liveRenderers = 0;

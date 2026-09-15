@@ -16,17 +16,17 @@ import {
   loadTrack,
   publishPlaytestTrack,
   saveTrack,
-} from "./api.js";
+} from "./api/api.js";
 import {
   assetCategoryById,
   assetTabModuleIds,
   builderLibrary,
   loadAssetVisuals,
   loadAssetVisualsProgressive,
-} from "./assets.js";
-import { createMotionPanel, type MotionPanel } from "./motionPanel.js";
-import { PreviewScheduler, type PreviewSlot } from "./previewScheduler.js";
-import { templateParts } from "./render.js";
+} from "./assets/assets.js";
+import { createMotionPanel, type MotionPanel } from "./motion/motionPanel.js";
+import { PreviewScheduler, type PreviewSlot } from "./scene/previewScheduler.js";
+import { templateParts } from "./scene/render.js";
 import {
   deleteSegment,
   duplicateSegment,
@@ -45,13 +45,13 @@ import {
   setSegmentTransforms,
   type RotateAxis,
   type SegmentTransform,
-} from "./trackEdit.js";
-import { TrackHistory } from "./trackHistory.js";
+} from "./track/trackEdit.js";
+import { TrackHistory } from "./track/trackHistory.js";
 import {
   createModulePreview,
   createTrackViewport,
   type TrackViewport,
-} from "./viewport.js";
+} from "./scene/viewport.js";
 
 export type { RotateAxis };
 export type StatusKind = "ok" | "quiet" | "error";

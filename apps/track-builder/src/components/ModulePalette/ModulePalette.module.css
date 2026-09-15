@@ -30,7 +30,7 @@
   display: flex;
   align-items: center;
   gap: var(--tb-s-3);
-  padding: var(--tb-s-3) var(--tb-s-4);
+  padding: var(--tb-s-4) var(--tb-s-5);
   border-radius: var(--tb-r-lg);
   background: var(--df-color-surface-1);
   box-shadow: var(--tb-inset-field);

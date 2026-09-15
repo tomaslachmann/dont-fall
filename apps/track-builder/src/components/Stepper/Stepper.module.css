@@ -10,8 +10,8 @@
 .btn {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   border-radius: var(--tb-r-sm);
   background: var(--df-color-surface-0);
   box-shadow: var(--tb-bevel-1);

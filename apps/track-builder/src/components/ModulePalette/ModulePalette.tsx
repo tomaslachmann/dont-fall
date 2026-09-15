@@ -6,8 +6,8 @@ import { ModuleRow } from "../ModuleRow/ModuleRow";
 import { AssetsTab } from "../AssetsTab/AssetsTab";
 import { SearchIcon } from "../icons/Icons";
 import type { BuilderEngine } from "../../engine.js";
-import { assetTabModuleIds } from "../../assets.js";
-import { filterModuleIds, groupProceduralModules, moduleMeta, prettyModuleName } from "../../palette.js";
+import { assetTabModuleIds } from "../../assets/assets.js";
+import { filterModuleIds, groupProceduralModules, moduleMeta, prettyModuleName } from "./palette.js";
 import type { PaletteMode, PaletteTab } from "../../types/builder";
 
 const GROUPS = groupProceduralModules(MODULE_LIBRARY);
@@ -52,7 +52,7 @@ export function ModulePalette({ engine }: { engine: BuilderEngine }) {
               placeholder="search modules…" aria-label="search modules" />
           </label>
         )}
-        <SegmentedControl tone="plastic" value={tab} onChange={setTab}
+        <SegmentedControl tone="plastic" layout="stack" value={tab} onChange={setTab}
           items={[
             { value: "procedural", label: "PROCEDURAL", count: PROCEDURAL_COUNT },
             { value: "assets", label: "ASSETS", count: ASSET_COUNT },

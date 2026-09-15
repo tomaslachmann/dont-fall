@@ -3,7 +3,7 @@
   align-items: center;
   gap: var(--tb-s-3);
   width: 100%;
-  padding: var(--tb-s-2) var(--tb-s-3);
+  padding: var(--tb-s-3) var(--tb-s-4);
   border-radius: var(--tb-r-lg);
   background: var(--df-color-surface-1);
   text-align: left;
@@ -20,8 +20,8 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border-radius: var(--tb-r-md);
   background: var(--df-color-surface-2);
   box-shadow: inset 0 -2px 0 rgba(43, 27, 77, .1);
@@ -30,8 +30,8 @@
 
 /* the live 3D still renders at 96px and scales into the 40px box */
 .swatchBox canvas {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
 }
 
 .meta {

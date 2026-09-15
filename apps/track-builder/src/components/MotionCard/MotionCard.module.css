@@ -86,7 +86,7 @@
   flex: 1;
   display: grid;
   place-items: center;
-  padding: var(--tb-s-2) 0;
+  padding: var(--tb-s-3) 0;
   border-radius: var(--tb-s-4);
   background: var(--df-color-surface-0);
   box-shadow: 0 2px 0 rgba(43, 27, 77, .12);

@@ -64,8 +64,8 @@
 
 @container tbscreen (max-width: 1400px) {
   .body {
-    --tb-palette-w: 200px;
-    --tb-inspector-w: 264px;
+    --tb-palette-w: 224px;
+    --tb-inspector-w: 300px;
   }
 }
 

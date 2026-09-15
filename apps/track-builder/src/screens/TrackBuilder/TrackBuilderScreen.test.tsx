@@ -16,8 +16,8 @@ vi.mock("three", async (importOriginal) => {
   return { ...actual, WebGLRenderer: CountingRenderer };
 });
 
-vi.mock("../../viewport.js", async (importActual) => {
-  const actual = await importActual<typeof import("../../viewport.js")>();
+vi.mock("../../scene/viewport.js", async (importActual) => {
+  const actual = await importActual<typeof import("../../scene/viewport.js")>();
   return {
     ...actual,
     createTrackViewport: () => ({
