@@ -54,4 +54,10 @@ describe("palette overflow guards", () => {
     const browse = css("components/BrowsePanel/BrowsePanel.module.css");
     expect(browse).toMatch(/\.name\s*\{[^}]*min-width:\s*0/);
   });
+
+  it("browse modal never covers more than half the visible builder; its list scrolls", () => {
+    const browse = css("components/BrowsePanel/BrowsePanel.module.css");
+    expect(browse).toMatch(/\.root\s*\{[^}]*max-height:\s*50vh/);
+    expect(browse).toMatch(/\.list\s*\{[^}]*overflow-y:\s*auto/);
+  });
 });
