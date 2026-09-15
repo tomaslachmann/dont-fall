@@ -17,6 +17,11 @@ describe("builder scale (one app with the game)", () => {
     const tokens = css("styles/builder.css");
     expect(tokens).toMatch(/--tb-t-sm:\s*13px/);
     expect(tokens).toMatch(/--tb-t-2xs:\s*11px/);
+    // Pack section headers and dropdown selects read at the same 13px as
+    // every other control, not the 11px kicker size they shipped with.
+    const assets = css("components/AssetsTab/AssetsTab.module.css");
+    expect(assets).toMatch(/\.packLabel\s*\{[^}]*var\(--tb-t-sm\)/);
+    expect(assets).toMatch(/\.dropdown\s*\{[^}]*var\(--tb-t-sm\)/);
     expect(tokens).toMatch(/--tb-palette-w:\s*264px/);
     expect(tokens).toMatch(/--tb-inspector-w:\s*336px/);
   });

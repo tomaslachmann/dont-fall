@@ -43,11 +43,11 @@
   justify-content: space-between;
   gap: var(--tb-s-2);
   min-width: 0;
-  padding: var(--tb-s-2) var(--tb-s-3);
+  padding: var(--tb-s-3) var(--tb-s-4);
   border-radius: var(--tb-s-4);
   background: var(--df-color-surface-0);
   box-shadow: var(--tb-inset-field);
-  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  font: var(--df-weight-label) var(--tb-t-sm) / 1 var(--df-font-ui);
 }
 .select {
   width: 100%;
@@ -71,13 +71,13 @@
   display: flex;
   align-items: center;
   gap: var(--tb-s-3);
-  padding: var(--tb-s-2) var(--tb-s-3);
+  padding: var(--tb-s-3) var(--tb-s-4);
   border-radius: var(--tb-s-4);
   background: var(--df-color-surface-2);
 }
-.packLabel { font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui); color: var(--df-color-ink-70); }
-.packCount { font: var(--df-weight-kicker) var(--tb-t-2xs) / 1 var(--df-font-ui); color: var(--df-color-ink-45); }
-.packCaret { margin-left: auto; font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui); color: var(--df-color-ink-45); }
+.packLabel { font: var(--df-weight-label) var(--tb-t-sm) / 1 var(--df-font-ui); color: var(--df-color-ink-70); }
+.packCount { font: var(--df-weight-kicker) var(--tb-t-xs) / 1 var(--df-font-ui); color: var(--df-color-ink-45); }
+.packCaret { margin-left: auto; font: var(--df-weight-label) var(--tb-t-sm) / 1 var(--df-font-ui); color: var(--df-color-ink-45); }
 
 .grid {
   display: grid;
