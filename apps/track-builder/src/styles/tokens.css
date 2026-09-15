@@ -1,0 +1,182 @@
+/* DON'T FALL — design tokens.
+   Every value the UI uses lives here. Components never hard-code a color, radius or size.
+
+   SIZING MODEL
+   ------------
+   `--df-u` is the one length unit. Inside a stage it resolves to 1cqw of the stage width,
+   so the whole UI is fluid: type, spacing, radii and bevels scale together at any size and
+   nothing needs a transform or a fixed pixel canvas. Outside a stage it falls back to a rem
+   value so tokens still work in ordinary page chrome (the dev harness).
+
+   1280px-wide stage => --df-u = 12.8px. Comments give the px value at that width.
+
+   ONE RULE: never put `container-type` on anything inside a stage. Container query units
+   resolve against the NEAREST container, so a nested one makes --df-u re-resolve against that
+   element and every size inside it collapses. The stage is the only container. */
+
+:root {
+  --df-u: 0.8rem;
+
+  /* ---- ink ---- */
+  --df-color-ink:            #2B1B4D;
+  --df-color-ink-70:         rgba(43, 27, 77, .7);
+  --df-color-ink-55:         rgba(43, 27, 77, .55);
+  --df-color-ink-45:         rgba(43, 27, 77, .45);
+  --df-color-ink-35:         rgba(43, 27, 77, .35);
+  --df-color-ink-14:         rgba(43, 27, 77, .14);
+  --df-color-ink-08:         rgba(43, 27, 77, .08);
+
+  /* ---- surfaces: 0 is the top-most plastic, higher steps sit further back ---- */
+  --df-color-surface-0:      #ffffff;
+  --df-color-surface-1:      #F7F3FF;  /* row inside a panel */
+  --df-color-surface-2:      #EDE5FB;  /* segmented-control trough */
+  --df-color-surface-3:      #EFE9FA;  /* builder canvas */
+  --df-color-surface-ink:    var(--df-color-ink);
+
+  /* ---- brand ---- */
+  --df-color-brand:          #7B3FE4;  /* accent for text on white */
+  --df-color-brand-mid:      #8B57E0;  /* race stage */
+  --df-color-brand-lite:     #9C6BE8;  /* stripe partner for brand-mid */
+  --df-color-brand-deep:     #6A3AC8;  /* tension / endgame stage */
+  --df-color-brand-deep-lite:#7A45D6;
+  --df-color-brand-orchid:   #A94FE0;
+  --df-color-brand-magenta:  #C15AD6;
+  --df-color-brand-shade:    #5F2FBF;  /* wordmark extrude */
+
+  /* ---- semantic ---- */
+  --df-color-accent:         #FFD23F;  /* PRIMARY action — one per screen */
+  --df-color-accent-shade:   #D9A400;
+  --df-color-danger:         #FF5DA2;  /* danger, deficit, being grabbed */
+  --df-color-danger-shade:   #D13C80;
+  --df-color-danger-soft:    #FF7AC0;
+  --df-color-go:             #2FD9A0;  /* confirm, gain, ready */
+  --df-color-go-shade:       #17B07D;
+  --df-color-go-ink:         #0E4736;
+  --df-color-speed:          #3FC4FF;  /* dash */
+  --df-color-speed-lite:     #7FE3FF;
+  --df-color-win:            #FFB43D;
+  --df-color-hit:            rgba(214, 26, 60, .95);
+
+  /* ---- on-dark inks ---- */
+  --df-color-on-brand:            #ffffff;
+  --df-color-on-brand-80:    rgba(255, 255, 255, .8);
+  --df-color-on-brand-60:    rgba(255, 255, 255, .6);
+  --df-color-on-brand-35:    rgba(255, 255, 255, .35);
+  --df-color-on-brand-18:    rgba(255, 255, 255, .18);
+  --df-color-on-brand-10:    rgba(255, 255, 255, .1);
+
+  /* ---- overlay plastics ---- */
+  --df-color-glass:          rgba(255, 255, 255, .9);   /* white chip on a brand stage */
+  --df-color-plate:          rgba(43, 27, 77, .5);      /* dark plate over gameplay */
+  --df-color-plate-strong:   rgba(43, 27, 77, .55);
+  --df-color-scrim:          rgba(43, 27, 77, .55);     /* modal scrim */
+  --df-color-shadow:         rgba(43, 27, 77, .22);     /* neutral bevel under white */
+  --df-color-shadow-strong:  rgba(43, 27, 77, .25);
+  --df-color-drop:           rgba(43, 27, 77, .3);      /* the one soft drop shadow */
+
+  /* ---- stage backgrounds: max two per flow ---- */
+  --df-stage-menu:    linear-gradient(165deg, #7B3FE4 0%, #A94FE0 46%, #FF7AC0 100%);
+  --df-stage-lobby:   linear-gradient(165deg, #7B3FE4, #A94FE0 60%, #C15AD6);
+  --df-stage-victory: linear-gradient(165deg, #FFB43D, #FF7AC0 55%, #A94FE0);
+  --df-stage-reward:  linear-gradient(165deg, #5F2FBF, #8B44D8 55%, #C15AD6);
+  --df-stage-race:    var(--df-color-brand-mid);
+  --df-stage-tension: var(--df-color-brand-deep);
+  --df-stage-dash:    var(--df-color-brand-deep-lite);
+  --df-stage-builder: var(--df-color-surface-3);
+
+  /* diagonal stripe field — reads as "in a race" */
+  --df-field-race: repeating-linear-gradient(120deg,
+    var(--df-color-brand-lite) 0 calc(var(--df-u) * 1.72),
+    var(--df-color-brand-mid) calc(var(--df-u) * 1.72) calc(var(--df-u) * 3.44));
+  --df-field-dash: repeating-linear-gradient(120deg,
+    var(--df-color-brand-mid) 0 calc(var(--df-u) * 1.72),
+    var(--df-color-brand-deep-lite) calc(var(--df-u) * 1.72) calc(var(--df-u) * 3.44));
+  --df-field-hazard: repeating-linear-gradient(45deg,
+    var(--df-color-accent) 0 calc(var(--df-u) * 2),
+    var(--df-color-ink) calc(var(--df-u) * 2) calc(var(--df-u) * 4));
+
+  /* soft light that lifts the middle of a stage */
+  --df-sheen-lift: radial-gradient(110% 90% at 50% 40%, rgba(255,255,255,.18), transparent 65%);
+  --df-sheen-menu: radial-gradient(circle at 20% 18%, rgba(255,255,255,.22), transparent 42%),
+                   radial-gradient(circle at 84% 82%, rgba(63,196,255,.3), transparent 46%);
+  --df-sheen-top:  radial-gradient(circle at 50% 8%, rgba(255,255,255,.35), transparent 45%);
+
+  /* ---- type ---- */
+  --df-font-display: Fredoka, system-ui, sans-serif;   /* headlines + numerals, 700 only */
+  --df-font-ui:      Nunito, system-ui, sans-serif;    /* labels, 800/900 only */
+  --df-font-mono:    ui-monospace, Menlo, monospace;   /* spec/placeholder text only */
+
+  --df-weight-display: 700;
+  --df-weight-label:   900;
+  --df-weight-kicker:  800;
+
+  --df-text-mega:  calc(var(--df-u) * 10.3);  /* 132 — full-screen verdict word */
+  --df-text-giant: calc(var(--df-u) * 7.2);   /*  92 — match-over headline */
+  --df-text-hero:  calc(var(--df-u) * 4.85);  /*  62 — PLAY, position numeral */
+  --df-text-title: calc(var(--df-u) * 3.6);   /*  46 — race timer */
+  --df-text-lg:    calc(var(--df-u) * 2.65);  /*  34 — panel headings */
+  --df-text-md:    calc(var(--df-u) * 2.05);  /*  26 — mode tiles */
+  --df-text-base:  calc(var(--df-u) * 1.72);  /*  22 */
+  --df-text-sm:    calc(var(--df-u) * 1.25);  /*  16 */
+  --df-text-xs:    calc(var(--df-u) * 1.05);  /*  13 — standard label */
+  --df-text-2xs:   calc(var(--df-u) * 0.86);  /*  11 — kicker */
+  --df-text-3xs:   calc(var(--df-u) * 0.72);  /*   9 — stat caption */
+
+  --df-tracking-label:  .06em;
+  --df-tracking-kicker: .14em;
+  --df-tracking-wide:   .2em;
+  --df-tracking-mega:   .3em;
+
+  /* ---- space ---- */
+  --df-space-1: calc(var(--df-u) * 0.35);   /*  4.5 */
+  --df-space-2: calc(var(--df-u) * 0.5);    /*  6 */
+  --df-space-3: calc(var(--df-u) * 0.7);    /*  9 */
+  --df-space-4: calc(var(--df-u) * 0.95);   /* 12 */
+  --df-space-5: calc(var(--df-u) * 1.15);   /* 15 */
+  --df-space-6: calc(var(--df-u) * 1.4);    /* 18 */
+  --df-space-7: calc(var(--df-u) * 1.9);    /* 24 */
+  --df-space-8: calc(var(--df-u) * 2.35);   /* 30 */
+  --df-space-9: calc(var(--df-u) * 2.8);    /* 36 */
+  --df-space-10: calc(var(--df-u) * 3.4);   /* 44 */
+  --df-space-11: calc(var(--df-u) * 4.4);   /* 56 */
+
+  /* ---- radii ---- */
+  --df-radius-chip:  calc(var(--df-u) * 0.95);  /* 12 */
+  --df-radius-icon:  calc(var(--df-u) * 1.4);   /* 18 */
+  --df-radius-tile:  calc(var(--df-u) * 1.55);  /* 20 */
+  --df-radius-row:   calc(var(--df-u) * 1.72);  /* 22 */
+  --df-radius-panel: calc(var(--df-u) * 2.05);  /* 26 */
+  --df-radius-card:  calc(var(--df-u) * 2.2);   /* 28 */
+  --df-radius-hero:  calc(var(--df-u) * 2.65);  /* 34 */
+  --df-radius-pill:  999px;
+
+  /* ---- bevels: an offset shadow with ZERO blur. never a glow, never upward ---- */
+  --df-bevel-1: calc(var(--df-u) * 0.23);  /*  3 */
+  --df-bevel-2: calc(var(--df-u) * 0.39);  /*  5 */
+  --df-bevel-3: calc(var(--df-u) * 0.47);  /*  6 */
+  --df-bevel-4: calc(var(--df-u) * 0.63);  /*  8 */
+  --df-bevel-5: calc(var(--df-u) * 0.78);  /* 10 */
+  --df-bevel-6: calc(var(--df-u) * 0.94);  /* 12 */
+
+  --df-drop:        0 calc(var(--df-u) * 1.72) calc(var(--df-u) * 2.65) var(--df-color-drop);
+  --df-drop-stage:  0 calc(var(--df-u) * 2.35) calc(var(--df-u) * 5.5) rgba(0, 0, 0, .45);
+
+  /* ---- motion: two press personalities ---- */
+  --df-ease-snappy: cubic-bezier(.2, .9, .25, 1);
+  --df-ease-jelly:  cubic-bezier(.34, 1.56, .64, 1);
+
+  --df-dur-down: 70ms;
+  --df-dur-up:   110ms;
+  --df-ease:     var(--df-ease-snappy);
+  --df-lift:     calc(var(--df-u) * -0.23);  /* hover rise */
+  --df-squash:   calc(var(--df-u) * 0.31);   /* press sink */
+}
+
+/* Applied by <Stage feel="jelly"> and the harness switch. */
+[data-df-feel='jelly'] {
+  --df-dur-down: 120ms;
+  --df-dur-up:   260ms;
+  --df-ease:     var(--df-ease-jelly);
+  --df-lift:     calc(var(--df-u) * -0.31);
+  --df-squash:   calc(var(--df-u) * 0.47);
+}

@@ -1,0 +1,6 @@
+.kicker {
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+}
+.quiet { color: var(--df-color-ink-55); }
+.ink { color: var(--df-color-ink); }

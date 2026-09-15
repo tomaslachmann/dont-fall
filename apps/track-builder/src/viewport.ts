@@ -1,14 +1,41 @@
-import { orientBox, quatToEuler, type Module, type Track } from "@dont-fall/shared";
+import {
+  hasMotion,
+  motionPose,
+  orientBox,
+  scaleBox,
+  segmentScale,
+  quatToEuler,
+  TICK_RATE_HZ,
+  type Module,
+  type MotionPose,
+  type Track,
+} from "@dont-fall/shared";
+import { footprintCorners, motionPath, OUTCOME_COLOURS } from "./motionPreview.js";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
-import { applySegmentTransform, boundingRadius, buildModuleGroup, buildSegmentGroup, disposeGroup } from "./render.js";
+import { addImpactTint, type ImpactTint } from "./impactTint.js";
+import type { SchedulablePreview } from "./previewScheduler.js";
+import {
+  MOTION_NODE,
+  SHARES_TEMPLATE_RESOURCES,
+  meshBoundsIn,
+  applyMotionAt,
+  applySegmentTransform,
+  boundingRadius,
+  buildModuleGroup,
+  buildSegmentGroup,
+  disposeGroup,
+} from "./render.js";
 import {
   MOVE_STEP_FINE,
   ROTATE_STEP,
   ROTATE_STEP_FINE,
+  SCALE_STEP,
+  SCALE_STEP_FINE,
   segmentOverlapsAnyOther,
-  snapPositionToNeighborSocket,
+  snapScale,
+  snapDragPosition,
   type SegmentTransform,
 } from "./trackEdit.js";
 
@@ -29,16 +56,16 @@ let thumbnailCanvas: HTMLCanvasElement | null = null;
 /**
  * A small, self-contained preview of one Module — the palette's "visual
  * preview of every Module" requirement (ticket 04). Framed automatically from
- * the Module's own bounding box, with a slow auto-rotate so the shape reads
- * as 3D even from a single still frame.
+ * the Module's own bounding box, from a 3/4 camera so the shape reads as 3D
+ * even from a single still frame; `spin` adds the slow auto-rotate.
  *
  * Implementation: a single WebGLRenderer can only ever draw into its own
  * canvas, so the shared renderer draws offscreen and each entry keeps a
- * plain 2D still, refreshed by the returned per-frame closure exactly like
- * before (same auto-rotate, same framing — only where the pixels come from
- * changed).
+ * plain 2D still. Nothing here decides when to draw — `PreviewScheduler`
+ * does, because drawing every preview every frame is what made a large
+ * asset set lag the whole builder.
  */
-export const createModulePreview = (canvas: HTMLCanvasElement, module: Module, template?: THREE.Group): (() => void) => {
+export const createModulePreview = (canvas: HTMLCanvasElement, module: Module, template?: THREE.Group): SchedulablePreview => {
   const target = canvas.getContext("2d");
   if (!target) throw new Error("module preview needs a fresh canvas (one already bound to WebGL cannot take a 2D copy)");
   if (!thumbnailRenderer || !thumbnailCanvas) {
@@ -63,22 +90,36 @@ export const createModulePreview = (canvas: HTMLCanvasElement, module: Module, t
   dir.position.set(3, 6, 4);
   scene.add(dir);
 
+  // Aimed at the shape's own centre, from far enough that its bounding
+  // sphere fits the 40° view — a tall piece seated on y = 0 used to crop.
   const radius = boundingRadius(group);
-  const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 200);
-  camera.position.set(radius * 1.4, radius * 1.1, radius * 1.4);
-  camera.lookAt(0, radius * 0.2, 0);
+  const center = new THREE.Box3().setFromObject(group).getCenter(new THREE.Vector3());
+  if (!Number.isFinite(center.y)) center.set(0, 0, 0);
+  const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, radius * 20 + 200);
+  const distance = radius / Math.sin(THREE.MathUtils.degToRad(20));
+  camera.position.copy(center).addScaledVector(new THREE.Vector3(1.4, 1.1, 1.4).normalize(), distance);
+  camera.lookAt(center);
 
-  let angle = 0;
-  return () => {
-    angle += 0.008;
-    group.rotation.y = angle;
-    renderer.setSize(width, height, false);
+  const draw = (): void => {
+    // `setSize` reassigns the canvas's width/height, which reallocates its
+    // drawing buffer even at an unchanged size — only resize on a change.
+    if (offscreen.width !== width || offscreen.height !== height) renderer.setSize(width, height, false);
     renderer.render(scene, camera);
+    // The offscreen render has a transparent background, so drawing it over
+    // the last frame without clearing smeared a spinning preview into a disc.
+    target.clearRect(0, 0, width, height);
     target.drawImage(offscreen, 0, 0, width, height);
+  };
+  return {
+    draw,
+    spin() {
+      group.rotation.y += 0.008;
+      draw();
+    },
   };
 };
 
-const SELECTION_COLOR = 0xfacc15;
+const SELECTION_COLOR = 0x7b3fe4;
 
 export interface TrackViewport {
   /**
@@ -99,6 +140,28 @@ export interface TrackViewport {
    */
   retransformSegments: (track: Track) => void;
   /**
+   * Pose every Segment's Motion (ADR 0061) at simulation tick `tick`
+   * (fractional) — the builder's clock, through the same `motionPose` the
+   * simulation uses. The rest placement the gizmo edits never moves.
+   */
+  setMotionTime: (tick: number) => void;
+  /**
+   * Mark where Segment `index`'s Motion turns and slides (M11 ticket 06
+   * follow-up): a dot at each pivot with a line along its axis (Spin orange,
+   * Swing purple) and an arrow along a Slide. Drawn through geometry, riding
+   * the Segment's rest placement. `undefined`, or a Segment with no Motion,
+   * clears it.
+   */
+  showMotionGuide: (index: number | undefined) => void;
+  /** Show or hide the Impact tint on moving and Spiked Segments (M11 ticket 07). */
+  setImpactTintVisible: (visible: boolean) => void;
+  /**
+   * Aims the orbit camera at the middle of the current Track. `setTrack` does
+   * this by itself only for a Track's first Segment — re-aiming on every
+   * add/delete swung the whole view, which read as everything placed moving.
+   */
+  frameTrack: () => void;
+  /**
    * Highlights every Segment in `indices` (or clears all highlights if
    * empty) — also attaches/detaches the drag gizmo (ticket 03). A single
    * index attaches the gizmo directly to that Segment; more than one
@@ -107,7 +170,7 @@ export interface TrackViewport {
    */
   setSelected: (indices: number[]) => void;
   /** Switches the gizmo between moving and rotating the selected Segment (ticket 03). No-op if nothing is selected. */
-  setGizmoMode: (mode: "translate" | "rotate") => void;
+  setGizmoMode: (mode: "translate" | "rotate" | "scale") => void;
   /**
    * Whether the pointer is currently over, or dragging, a gizmo handle
    * (ticket 03) — callers doing their own click-to-pick/deselect on the
@@ -115,6 +178,12 @@ export interface TrackViewport {
    * a gizmo handle would also be misread as "clicked empty space."
    */
   isGizmoActive: () => boolean;
+  /**
+   * The centre of the part of Segment `index` under the pointer, in that
+   * Segment's own rest frame — where a Spin or Swing picked "on the model"
+   * turns about (M11 ticket 06 follow-up). `undefined` when the click misses it.
+   */
+  pickPartPivot: (clientX: number, clientY: number, index: number) => { x: number; y: number; z: number } | undefined;
   /** Raycasts from a mouse event's client coordinates; returns the Segment index hit, if any. */
   pick: (clientX: number, clientY: number) => number | undefined;
   render: () => void;
@@ -131,12 +200,12 @@ export const createTrackViewport = (
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x05070b);
+  scene.background = new THREE.Color(0xefe9fa);
   scene.add(new THREE.AmbientLight(0xffffff, 0.6));
   const dir = new THREE.DirectionalLight(0xffffff, 0.9);
   dir.position.set(10, 20, 10);
   scene.add(dir);
-  scene.add(new THREE.GridHelper(200, 40, 0x2f3b4c, 0x1c2430));
+  scene.add(new THREE.GridHelper(200, 40, 0xb79ced, 0xd9cff2));
 
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 2000);
   camera.position.set(10, 12, 20);
@@ -197,6 +266,55 @@ export const createTrackViewport = (
   let modules: Record<string, Module> = {};
   let track: Track = [];
   let attachedIndices: number[] = [];
+  let motionTick = 0;
+  let impactTintVisible = true;
+  // One per moving or Spiked Segment, rebuilt with the Track; index-keyed so a
+  // transform-only edit (which swaps `track` but keeps the groups) still
+  // reads the Segment's current Motion.
+  let tints: { index: number; tint: ImpactTint }[] = [];
+
+  // The Motion guide lives in the scene, not under the Segment's group — a
+  // child there would stretch the selection box — and follows the group's
+  // world matrix every frame instead.
+  let motionGuide: { object: THREE.Group; index: number; ownMaterials: THREE.Material[] } | undefined;
+  const clearMotionGuide = (): void => {
+    if (!motionGuide) return;
+    scene.remove(motionGuide.object);
+    disposeGroup(motionGuide.object);
+    for (const material of motionGuide.ownMaterials) material.dispose();
+    motionGuide = undefined;
+  };
+
+  /**
+   * A see-through copy of the Segment's piece posed at `pose` (its rest frame)
+   * — where a Swing or Slide reaches at its ends. Shares every geometry with
+   * the live piece, so it is flagged like an asset clone and only its one
+   * material is its own to free.
+   */
+  const ghostOf = (index: number, pose: MotionPose, material: THREE.Material): THREE.Object3D | undefined => {
+    const motionNode = findGroup(index)?.userData[MOTION_NODE] as THREE.Object3D | undefined;
+    if (!motionNode) return undefined;
+    const ghost = motionNode.clone(true);
+    const overlays: THREE.Object3D[] = [];
+    ghost.traverse((node) => {
+      if (node.userData.impactTint) overlays.push(node);
+      else if ((node as THREE.Mesh).isMesh) (node as THREE.Mesh).material = material;
+    });
+    for (const overlay of overlays) overlay.parent?.remove(overlay);
+    ghost.userData[SHARES_TEMPLATE_RESOURCES] = true;
+    ghost.position.set(pose.position.x, pose.position.y, pose.position.z);
+    ghost.quaternion.set(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w);
+    return ghost;
+  };
+  const guideMaterial = (color: number): THREE.MeshBasicMaterial =>
+    new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.95 });
+  const followMotionGuide = (): void => {
+    if (!motionGuide) return;
+    const group = findGroup(motionGuide.index);
+    if (!group) return;
+    group.updateWorldMatrix(true, false);
+    motionGuide.object.matrix.copy(group.matrixWorld);
+  };
   let shiftHeld = false;
 
   // Rebuilt by `setTrack` alongside `trackGroup` — an O(1) lookup for the
@@ -252,11 +370,12 @@ export const createTrackViewport = (
     const position = { x: object.position.x, y: object.position.y, z: object.position.z };
     const q = object.quaternion;
     const orientation = { x: q.x, y: q.y, z: q.z, w: q.w };
-    const box = orientBox(module.footprint.bounds, position, orientation);
+    const scale = object.scale.x;
+    const box = orientBox(scaleBox(module.footprint.bounds, scale), position, orientation);
     overlapGhost.position.set(box.center.x, box.center.y, box.center.z);
     overlapGhost.quaternion.set(q.x, q.y, q.z, q.w);
     overlapGhost.scale.set(box.halfExtents.x * 2, box.halfExtents.y * 2, box.halfExtents.z * 2);
-    const overlapping = segmentOverlapsAnyOther(track, modules, index, position, orientation);
+    const overlapping = segmentOverlapsAnyOther(track, modules, index, position, orientation, scale);
     overlapGhostMaterial.color.set(overlapping ? OVERLAP_RED : OVERLAP_GREEN);
     overlapGhost.visible = true;
   };
@@ -286,28 +405,38 @@ export const createTrackViewport = (
       const { yaw, pitch, roll } = quatToEuler({ x: q.x, y: q.y, z: q.z, w: q.w });
       updates.push({
         index,
-        transform: { position: { x: group.position.x, y: group.position.y, z: group.position.z }, rotation: yaw, pitch, roll },
+        transform: {
+          position: { x: group.position.x, y: group.position.y, z: group.position.z },
+          rotation: yaw,
+          pitch,
+          roll,
+          scale: group.scale.x,
+        },
       });
     }
     if (updates.length > 0) onSegmentTransformCommit(updates);
   });
 
-  // Live Socket-snap while translating (ticket 03) — TransformControls has
-  // no concept of "snap to another object's socket," only uniform grids, so
-  // this overrides the object's position on every drag update whenever the
-  // fine grid tier (Shift) isn't active. Never touches rotation — Socket-
-  // snap and rotate-snap are independent concerns. Single-Segment only — a
-  // multi-select's Socket-snap would have to pick which of the selected
-  // Segments' Sockets to chase, which the ticket doesn't ask for.
+  // Live snap while translating (ticket 03) — Socket-snap, then flush
+  // against other Segments' faces, then the grid (`snapDragPosition`).
+  // TransformControls only knows uniform grids, so this overrides the
+  // object's position on every drag update whenever the fine grid tier
+  // (Shift) isn't active; it recomputes from the drag start each time, so
+  // nothing accumulates. Only the dragged handle's axes are snapped. Never
+  // touches rotation. Single-Segment only — a multi-select would have to
+  // pick which selected Segment to snap, which no ticket asks for.
   transformControls.addEventListener("objectChange", () => {
     if (transformControls.mode !== "translate" || shiftHeld || attachedIndices.length !== 1) return;
     const object = transformControls.object;
     if (!object) return;
-    const snapped = snapPositionToNeighborSocket(track, modules, attachedIndices[0]!, {
-      x: object.position.x,
-      y: object.position.y,
-      z: object.position.z,
-    });
+    const handle = transformControls.axis ?? "";
+    const snapped = snapDragPosition(
+      track,
+      modules,
+      attachedIndices[0]!,
+      { x: object.position.x, y: object.position.y, z: object.position.z },
+      { x: handle.includes("X"), y: handle.includes("Y"), z: handle.includes("Z") },
+    );
     object.position.set(snapped.x, snapped.y, snapped.z);
   });
 
@@ -324,6 +453,26 @@ export const createTrackViewport = (
       group.quaternion.copy(pivotObject.quaternion).multiply(offset.quaternion);
       group.position.copy(offset.position).applyQuaternion(pivotObject.quaternion).add(pivotObject.position);
     }
+  });
+
+  // Scale gizmo (ADR 0062): whichever handle is dragged, the piece scales
+  // uniformly — the dragged axis (or the centre handle's average) decides —
+  // snapped to SCALE_STEP (Shift: SCALE_STEP_FINE) and held inside the stored
+  // bounds. Registered before the overlap ghost below, so the ghost reads the
+  // snapped scale. A multi-selection's pivot never scales: a rigid group has
+  // no single scale to commit.
+  transformControls.addEventListener("objectChange", () => {
+    if (transformControls.mode !== "scale") return;
+    const object = transformControls.object;
+    if (!object) return;
+    if (object === pivotObject) {
+      object.scale.setScalar(1);
+      return;
+    }
+    const handle = transformControls.axis ?? "XYZ";
+    const s = object.scale;
+    const raw = handle === "X" ? s.x : handle === "Y" ? s.y : handle === "Z" ? s.z : (s.x + s.y + s.z) / 3;
+    object.scale.setScalar(snapScale(raw, shiftHeld ? SCALE_STEP_FINE : SCALE_STEP));
   });
 
   // Live overlap ghost-feedback (ticket 04) — runs after the Socket-snap/
@@ -347,25 +496,140 @@ export const createTrackViewport = (
 
   return {
     setTrack(nextModules, nextTrack, assetTemplates = {}) {
+      const wasEmpty = track.length === 0;
       modules = nextModules;
       track = nextTrack;
       scene.remove(trackGroup);
       disposeGroup(trackGroup);
+      for (const { tint } of tints) tint.dispose();
+      tints = [];
       trackGroup = new THREE.Group();
       groupByIndex = new Map();
       nextTrack.forEach((segment, index) => {
         const group = buildSegmentGroup(nextModules, segment, assetTemplates);
         if (!group) return;
         group.userData.segmentIndex = index;
+        const module = nextModules[segment.moduleId];
+        if (hasMotion(segment.motion) || module?.hazard === "spiked") {
+          const tint = addImpactTint(group, module?.hazard === "spiked");
+          tint.update(segment, motionTick);
+          tints.push({ index, tint });
+        }
+        applyMotionAt(group, segment, motionTick);
         trackGroup.add(group);
         groupByIndex.set(index, group);
       });
       scene.add(trackGroup);
-      if (nextTrack.length > 0) {
-        const mid = nextTrack[Math.floor(nextTrack.length / 2)]!.position;
-        orbitControls.target.set(mid.x, mid.y, mid.z);
-      }
+      if (!impactTintVisible) this.setImpactTintVisible(false);
+      if (wasEmpty) this.frameTrack();
       clearSelectionBoxes();
+    },
+    showMotionGuide(index) {
+      clearMotionGuide();
+      const segment = index !== undefined ? track[index] : undefined;
+      const module = segment ? modules[segment.moduleId] : undefined;
+      if (index === undefined || !segment?.motion || !module || !findGroup(index)) return;
+      const h = module.footprint.bounds.halfExtents;
+      const reach = Math.max(h.x, h.y, h.z) + 1;
+      const object = new THREE.Group();
+      object.matrixAutoUpdate = false;
+      object.renderOrder = 999;
+      const ownMaterials: THREE.Material[] = [];
+
+      // Where it goes (research: Dreams' animation path): the fastest corner's
+      // track over one cycle, coloured by the Impact it would deal there.
+      const path = motionPath(segment.motion, footprintCorners(module), 120, segmentScale(segment));
+      const pathGeometry = new THREE.BufferGeometry().setFromPoints(path.points.map((p) => new THREE.Vector3(p.x, p.y, p.z)));
+      const colours = new Float32Array(path.outcomes.length * 3);
+      path.outcomes.forEach((outcome, i) => new THREE.Color(OUTCOME_COLOURS[outcome]).toArray(colours, i * 3));
+      pathGeometry.setAttribute("color", new THREE.BufferAttribute(colours, 3));
+      const pathLine = new THREE.Line(
+        pathGeometry,
+        new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, transparent: true, opacity: 0.95 }),
+      );
+      pathLine.renderOrder = 999;
+      object.add(pathLine);
+
+      // How far it goes: see-through copies at a Swing's two extremes and a Slide's far end.
+      // Brand purple, not white — the canvas is light now, white ghosts would vanish into it.
+      const ghostMaterial = new THREE.MeshBasicMaterial({ color: 0x7b3fe4, transparent: true, opacity: 0.18, depthWrite: false });
+      ownMaterials.push(ghostMaterial);
+      const ends: MotionPose[] = [];
+      const swing = segment.motion.swing;
+      if (swing) {
+        const travelTicks = ((swing.period - 2 * (swing.pause ?? 0)) / 2) * TICK_RATE_HZ;
+        const alone = { swing: { ...swing, phase: 0 } };
+        ends.push(motionPose(alone, 0), motionPose(alone, travelTicks));
+      }
+      const slideEnd = segment.motion.slide;
+      if (slideEnd) ends.push({ position: { ...slideEnd.offset }, rotation: { x: 0, y: 0, z: 0, w: 1 } });
+      for (const end of ends) {
+        const ghost = ghostOf(index, end, ghostMaterial);
+        if (ghost) object.add(ghost);
+      }
+      const pivotAndAxis = (pivot: { x: number; y: number; z: number }, axis: { x: number; y: number; z: number }, color: number): void => {
+        const dot = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 12), guideMaterial(color));
+        dot.position.set(pivot.x, pivot.y, pivot.z);
+        dot.renderOrder = 999;
+        object.add(dot);
+        const direction = new THREE.Vector3(axis.x, axis.y, axis.z).normalize();
+        const line = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, reach * 2, 8), guideMaterial(color));
+        line.position.set(pivot.x, pivot.y, pivot.z);
+        line.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+        line.renderOrder = 999;
+        object.add(line);
+      };
+      if (segment.motion.spin) pivotAndAxis(segment.motion.spin.pivot, segment.motion.spin.axis, 0xf97316);
+      if (segment.motion.swing) pivotAndAxis(segment.motion.swing.pivot, segment.motion.swing.axis, 0xa855f7);
+      const slide = segment.motion.slide;
+      const length = slide ? Math.hypot(slide.offset.x, slide.offset.y, slide.offset.z) : 0;
+      if (slide && length > 0) {
+        const c = module.footprint.bounds.center;
+        const arrow = new THREE.ArrowHelper(
+          new THREE.Vector3(slide.offset.x, slide.offset.y, slide.offset.z).normalize(),
+          new THREE.Vector3(c.x, c.y, c.z),
+          length,
+          0x38bdf8,
+          Math.min(0.6, length * 0.3),
+          Math.min(0.35, length * 0.2),
+        );
+        arrow.traverse((node) => {
+          const drawable = node as THREE.Mesh;
+          if (drawable.material) (drawable.material as THREE.Material).depthTest = false;
+          node.renderOrder = 999;
+        });
+        object.add(arrow);
+      }
+      scene.add(object);
+      motionGuide = { object, index, ownMaterials };
+      followMotionGuide();
+    },
+    setImpactTintVisible(visible) {
+      impactTintVisible = visible;
+      trackGroup.traverse((object) => {
+        if (object.userData.impactTint) object.visible = visible;
+      });
+    },
+    setMotionTime(tick) {
+      motionTick = tick;
+      if (impactTintVisible) {
+        for (const { index, tint } of tints) {
+          const segment = track[index];
+          if (segment) tint.update(segment, tick);
+        }
+      }
+      for (const group of trackGroup.children) {
+        const index = group.userData.segmentIndex as number | undefined;
+        const segment = index !== undefined ? track[index] : undefined;
+        if (segment) applyMotionAt(group, segment, tick);
+      }
+      for (const box of selectionBoxes) box.update();
+      followMotionGuide();
+    },
+    frameTrack() {
+      if (track.length === 0) return;
+      const mid = track[Math.floor(track.length / 2)]!.position;
+      orbitControls.target.set(mid.x, mid.y, mid.z);
     },
     retransformSegments(nextTrack) {
       track = nextTrack;
@@ -429,6 +693,18 @@ export const createTrackViewport = (
     isGizmoActive() {
       return transformControls.dragging || transformControls.axis !== null;
     },
+    pickPartPivot(clientX, clientY, index) {
+      const group = findGroup(index);
+      const frame = group?.userData[MOTION_NODE] as THREE.Object3D | undefined;
+      if (!group || !frame) return undefined;
+      const rect = renderer.domElement.getBoundingClientRect();
+      raycaster.setFromCamera(
+        new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1),
+        camera,
+      );
+      const hit = raycaster.intersectObject(group, true).find((h) => (h.object as THREE.Mesh).isMesh);
+      return hit ? meshBoundsIn(hit.object as THREE.Mesh, frame).center : undefined;
+    },
     pick(clientX, clientY) {
       const rect = renderer.domElement.getBoundingClientRect();
       const ndc = new THREE.Vector2(
@@ -461,6 +737,9 @@ export const createTrackViewport = (
       overlapGhost.geometry.dispose();
       overlapGhostMaterial.dispose();
       renderer.dispose();
+      // The canvas is ours (appended at creation) — a remount into the same
+      // container (StrictMode) must not pile a second canvas under the new one.
+      renderer.domElement.remove();
     },
   };
 };

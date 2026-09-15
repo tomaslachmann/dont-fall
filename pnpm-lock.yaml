@@ -8,6 +8,12 @@ importers:
 
   .:
     devDependencies:
+      '@dimforge/rapier3d-compat':
+        specifier: 0.20.0
+        version: 0.20.0
+      three:
+        specifier: 0.171.0
+        version: 0.171.0
       tsx:
         specifier: ^4.19.2
         version: 4.23.13
@@ -152,13 +158,37 @@ importers:
       '@dont-fall/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
       three:
         specifier: ^0.171.0
         version: 0.171.0
     devDependencies:
+      '@testing-library/jest-dom':
+        specifier: ^6.6.3
+        version: 6.10.0(@testing-library/dom@10.4.1)
+      '@testing-library/react':
+        specifier: ^16.1.0
+        version: 16.3.3(@testing-library/dom@10.4.1)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@types/react':
+        specifier: ^18.3.18
+        version: 18.3.31
+      '@types/react-dom':
+        specifier: ^18.3.5
+        version: 18.3.7(@types/react@18.3.31)
       '@types/three':
         specifier: ^0.171.0
         version: 0.171.0
+      '@vitejs/plugin-react':
+        specifier: ^4.3.4
+        version: 4.7.0(vite@6.4.3(@types/node@22.20.1)(tsx@4.23.13))
+      jsdom:
+        specifier: ^25.0.1
+        version: 25.0.1
       typescript:
         specifier: ^5.7.3
         version: 5.9.3

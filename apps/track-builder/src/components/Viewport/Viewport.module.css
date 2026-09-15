@@ -1,0 +1,103 @@
+.root {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(110% 90% at 50% 30%, rgba(255, 255, 255, .65), transparent 62%),
+    var(--tb-grid),
+    var(--tb-color-canvas);
+}
+
+.picking { box-shadow: inset 0 0 0 4px var(--df-color-accent); }
+
+/* the imperative Three.js canvas fills the region under the overlays */
+.mount { position: absolute; inset: 0; }
+.mount canvas { display: block; }
+
+.pickBanner {
+  position: absolute;
+  left: 50%;
+  top: var(--tb-float-inset);
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-3);
+  padding: var(--tb-s-4) var(--tb-s-5);
+  border-radius: var(--tb-r-xl);
+  background: var(--df-color-ink);
+  color: var(--df-color-on-brand);
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1.3 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  translate: -50% 0;
+  z-index: 3;
+}
+.pickGlyph {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--tb-s-3);
+  background: var(--df-color-accent);
+  color: var(--df-color-ink);
+}
+
+/* ---- floating slots ---- */
+.slotBrowse, .slotTransport, .slotHint, .slotLegend { position: absolute; }
+
+.slotBrowse { top: var(--tb-float-inset); left: var(--tb-float-inset); z-index: 2; }
+
+.slotTransport {
+  top: var(--tb-float-inset);
+  left: calc(var(--tb-float-inset) + 236px);
+  right: calc(var(--tb-inspector-w) + var(--tb-float-inset) * 2);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.slotTransport > * { pointer-events: auto; }
+
+.slotHint { bottom: var(--tb-s-6); left: var(--tb-float-inset); z-index: 2; }
+
+.slotLegend { bottom: var(--tb-s-6); right: calc(var(--tb-inspector-w) + var(--tb-float-inset) * 2); }
+
+/* ---- empty state ---- */
+.empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--tb-s-3);
+  text-align: center;
+  pointer-events: none;
+}
+
+.emptyPlate {
+  width: 44px;
+  height: 30px;
+  border: 3px dashed var(--df-color-brand);
+  border-radius: 6px;
+  transform: var(--tb-iso);
+}
+
+.emptyTitle { margin: 0; font: var(--df-weight-display) var(--tb-t-lg) / 1.2 var(--df-font-display); }
+
+.emptyBody {
+  max-width: 200px;
+  margin: 0;
+  font: var(--df-weight-kicker) var(--tb-t-2xs) / 1.5 var(--df-font-ui);
+  color: var(--df-color-ink-55);
+}
+
+/* ---- medium: no room for the legend, transport clears the browse panel by itself ---- */
+@container tbscreen (max-width: 1240px) {
+  .slotLegend { display: none; }
+  .slotTransport { left: var(--tb-float-inset); justify-content: flex-end; }
+}
+
+/* ---- narrow: the inspector stacks below, so the canvas keeps its full width ---- */
+@container tbscreen (max-width: 980px) {
+  .slotHint { display: none; }
+  .slotTransport { left: var(--tb-float-inset); right: var(--tb-float-inset); justify-content: center; }
+}

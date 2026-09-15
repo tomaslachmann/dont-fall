@@ -1,0 +1,88 @@
+/* Responsive app shell. Nothing here is a fixed canvas: the screen fills whatever box it gets
+   and reflows on its OWN width (container queries), so it behaves the same in a window, in a
+   split pane or embedded in another tool.
+
+   Three tiers:
+     wide    >1400   palette 236 · floating inspector 296 · full hint bar + legend
+     medium  980-1400 palette 200 · inspector 264 · hints lose their captions, legend hides
+     narrow  <980    single column: palette becomes a horizontal rail, inspector docks as a
+                     bottom sheet, toolbar wraps. */
+
+.screen {
+  container: tbscreen / inline-size;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 100%;
+  height: 100dvh;
+  background: var(--tb-color-canvas);
+  color: var(--df-color-ink);
+  font-family: var(--df-font-ui);
+}
+
+.masthead {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-6);
+  min-width: 0;
+  padding: var(--tb-s-4) var(--tb-s-6);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 2px 0 var(--df-color-ink-08);
+}
+
+.wordmark {
+  margin: 0;
+  font: var(--df-weight-display) var(--tb-t-xl) / 1 var(--df-font-display);
+  white-space: nowrap;
+}
+
+.note {
+  min-width: 0;
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1.4 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-45);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.body {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--tb-palette-w) minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* wide + medium: the inspector floats over the canvas, so the track keeps the full centre */
+.inspector {
+  position: absolute;
+  top: var(--tb-float-inset);
+  right: var(--tb-float-inset);
+  bottom: var(--tb-float-inset);
+  width: var(--tb-inspector-w);
+  z-index: 2;
+}
+
+@container tbscreen (max-width: 1400px) {
+  .body {
+    --tb-palette-w: 200px;
+    --tb-inspector-w: 264px;
+  }
+}
+
+@container tbscreen (max-width: 980px) {
+  .note { display: none; }
+  /* stacked: palette rail on top, canvas, inspector below. The body itself becomes the
+     scroll area — the screen is the query container, so it cannot restyle itself here. */
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+    /* the canvas takes a share of the screen, the inspector scrolls into view under it */
+    grid-template-rows: auto minmax(320px, 46dvh) auto;
+    overflow-y: auto;
+  }
+  /* stacked: the inspector becomes the third block instead of covering the canvas */
+  .inspector {
+    position: static;
+    width: auto;
+    padding: 0 var(--tb-float-inset) var(--tb-float-inset);
+  }
+}

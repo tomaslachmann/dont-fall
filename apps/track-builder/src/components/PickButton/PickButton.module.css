@@ -1,0 +1,9 @@
+.btn {
+  padding: var(--tb-s-3) var(--tb-s-4);
+  border-radius: var(--tb-r-sm);
+  background: var(--df-color-ink);
+  color: var(--df-color-accent);
+  font: var(--df-weight-label) var(--tb-t-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+}
+.btn:active { translate: 0 var(--df-squash); }

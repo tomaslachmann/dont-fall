@@ -1,0 +1,61 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-3);
+  width: 100%;
+  padding: var(--tb-s-2) var(--tb-s-3);
+  border-radius: var(--tb-r-lg);
+  background: var(--df-color-surface-1);
+  text-align: left;
+  transition: translate var(--df-dur-up) var(--df-ease), box-shadow var(--df-dur-up) var(--df-ease);
+}
+
+.row:hover {
+  background: var(--df-color-surface-0);
+  box-shadow: var(--tb-bevel-1);
+}
+.row:active { translate: 0 var(--df-squash); box-shadow: none; }
+
+.swatchBox {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--tb-r-md);
+  background: var(--df-color-surface-2);
+  box-shadow: inset 0 -2px 0 rgba(43, 27, 77, .1);
+  overflow: hidden;
+}
+
+/* the live 3D still renders at 96px and scales into the 40px box */
+.swatchBox canvas {
+  width: 40px;
+  height: 40px;
+}
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-1);
+  min-width: 0;
+}
+
+.name {
+  font: var(--df-weight-label) var(--tb-t-sm) / 1.1 var(--df-font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sub {
+  font: var(--df-weight-kicker) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-ink-55);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container tbscreen (max-width: 980px) {
+  .row { flex: none; width: 168px; }
+}

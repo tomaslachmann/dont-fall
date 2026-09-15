@@ -1,0 +1,50 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-1);
+  min-width: 0;
+}
+
+.label {
+  font: var(--df-weight-label) var(--tb-t-3xs) / 1 var(--df-font-ui);
+  letter-spacing: .1em;
+  color: var(--df-color-ink-55);
+}
+
+/* flat trough with a 2px inset — fields are recessed, not raised plastic */
+.box {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-2);
+  padding: var(--tb-s-2) var(--tb-s-3);
+  border-radius: var(--tb-r-sm);
+  background: var(--tb-color-trough);
+  box-shadow: var(--tb-inset-field);
+}
+
+.box:focus-within { box-shadow: inset 0 0 0 2px var(--df-color-brand); }
+
+.input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  outline: none;
+}
+
+.numeric .input { font: var(--df-weight-display) var(--tb-t-sm) / 1.2 var(--df-font-display); }
+.text .input,
+.select .input { font: var(--df-weight-label) var(--tb-t-xs) / 1.2 var(--df-font-ui); }
+
+/* the motion island's real selects ride the same trough (the React Field only ever renders inputs) */
+.box select {
+  appearance: none;
+  cursor: pointer;
+}
+.box select option { color: #2b1b4d; background: #ffffff; }
+
+.caret { color: var(--df-color-ink-45); font: var(--df-weight-label) var(--tb-t-xs) / 1 var(--df-font-ui); }
+
+.disabled { box-shadow: none; }
+.disabled .input { color: var(--df-color-ink-45); }

@@ -1,0 +1,22 @@
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--tb-s-3);
+  padding: var(--tb-s-2) var(--tb-s-4);
+  border-radius: var(--tb-r-pill);
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  white-space: nowrap;
+}
+
+.quiet { background: var(--tb-color-trough); color: var(--df-color-ink); }
+.brand { background: var(--df-color-brand); color: var(--df-color-on-brand); }
+.ink { background: var(--df-color-ink); color: var(--df-color-on-brand); }
+.accent { background: var(--df-color-accent); color: var(--df-color-ink); }
+.go { background: var(--df-color-go); color: var(--df-color-go-ink); }
+.danger { background: var(--df-color-danger); color: var(--df-color-on-brand); }
+
+.active { background: var(--df-color-brand); color: var(--df-color-on-brand); }
+
+button.chip:hover { translate: 0 -1px; }
+button.chip:active { translate: 0 1px; }

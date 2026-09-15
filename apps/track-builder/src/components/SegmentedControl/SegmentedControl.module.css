@@ -1,0 +1,46 @@
+.root {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: var(--tb-s-1);
+  padding: var(--tb-s-1);
+  background: var(--df-color-surface-2);
+}
+
+.plate { border-radius: var(--tb-r-lg); }
+.pill { border-radius: var(--tb-r-pill); }
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--tb-s-2);
+  padding: var(--tb-s-3) var(--tb-s-4);
+  border-radius: inherit;
+  color: var(--df-color-ink-55);
+  font: var(--df-weight-label) var(--tb-t-xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  white-space: nowrap;
+  transition: background var(--df-dur-up) var(--df-ease), color var(--df-dur-up) var(--df-ease);
+}
+
+.plate > .item { border-radius: calc(var(--tb-r-lg) - var(--tb-s-1)); }
+.sm > .item { padding: var(--tb-s-2) var(--tb-s-3); font-size: var(--tb-t-2xs); }
+
+.item:hover { color: var(--df-color-ink); }
+
+.on_brand {
+  background: var(--df-color-brand);
+  color: var(--df-color-on-brand);
+}
+.on_ink {
+  background: var(--df-color-ink);
+  color: var(--df-color-on-brand);
+}
+.on_plastic {
+  background: var(--df-color-surface-0);
+  box-shadow: var(--tb-bevel-1);
+  color: var(--df-color-ink);
+}
+
+.count { opacity: .55; }

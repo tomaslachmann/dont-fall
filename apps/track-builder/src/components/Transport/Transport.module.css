@@ -1,0 +1,115 @@
+.root {
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-3);
+  padding: var(--tb-s-5) var(--tb-s-7);
+  border-radius: var(--tb-r-panel);
+  background: var(--df-color-surface-0);
+  box-shadow: var(--tb-bevel-float);
+}
+
+.row { display: flex; align-items: center; gap: var(--tb-s-5); }
+
+.btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--tb-r-lg);
+  background: var(--df-color-surface-0);
+  box-shadow: var(--tb-bevel-2);
+  font: var(--df-weight-display) var(--tb-t-md) / 1 var(--df-font-display);
+}
+.btn:hover { translate: 0 var(--df-lift); }
+.btn:active { translate: 0 var(--df-squash); box-shadow: none; }
+
+.track {
+  position: relative;
+  flex: 1;
+  min-width: 90px;
+  max-width: 218px;
+  height: 8px;
+  border-radius: var(--tb-r-pill);
+  background: var(--df-color-surface-2);
+}
+
+.fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: var(--tb-r-pill);
+  background: var(--df-color-brand);
+}
+
+
+.time {
+  min-width: 52px;
+  font: var(--df-weight-display) var(--tb-t-lg) / 1 var(--df-font-display);
+}
+
+/* the native range rides over the styled track: invisible rail, kit knob */
+.scrub {
+  position: absolute;
+  inset: -5px 0;
+  width: 100%;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: ew-resize;
+}
+.scrub::-webkit-slider-runnable-track { height: 18px; background: transparent; }
+.scrub::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--df-color-surface-0);
+  box-shadow: 0 2px 0 var(--df-color-shadow), 0 0 0 3px var(--df-color-brand);
+}
+.scrub::-moz-range-track { height: 18px; background: transparent; }
+.scrub::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--df-color-surface-0);
+  box-shadow: 0 2px 0 var(--df-color-shadow), 0 0 0 3px var(--df-color-brand);
+}
+
+.impact {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-3);
+  padding: var(--tb-s-2) var(--tb-s-4);
+  border-radius: var(--tb-r-pill);
+  background: var(--df-color-ink);
+}
+.impactBox {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--tb-s-2);
+  background: var(--df-color-on-brand-18);
+  color: var(--df-color-go-ink);
+  font: var(--df-weight-label) var(--tb-t-xs) / 1 var(--df-font-ui);
+}
+.impactOn .impactBox { background: var(--df-color-go); }
+.impactLabel {
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: .1em;
+  color: var(--df-color-on-brand);
+}
+
+.caption {
+  font: var(--df-weight-kicker) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: .1em;
+  color: var(--df-color-ink-55);
+}
+
+@container tbscreen (max-width: 1240px) {
+  .caption { display: none; }
+}
+@container tbscreen (max-width: 720px) {
+  .impactLabel { display: none; }
+}

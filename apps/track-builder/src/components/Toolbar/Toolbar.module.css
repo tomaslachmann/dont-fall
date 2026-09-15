@@ -1,0 +1,139 @@
+.root {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--tb-s-3) var(--tb-s-4);
+  min-height: var(--tb-toolbar-h);
+  padding: var(--tb-s-3) var(--tb-s-6);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 -3px 0 var(--df-color-ink-08);
+}
+
+.cluster {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-2);
+  padding: var(--tb-s-2);
+  border-radius: var(--tb-r-lg);
+  background: var(--tb-color-trough);
+}
+
+.btn {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-3);
+  padding: var(--tb-s-3) var(--tb-s-4);
+  border-radius: var(--tb-r-md);
+  background: var(--df-color-surface-0);
+  box-shadow: var(--tb-bevel-1);
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  white-space: nowrap;
+}
+.btn:hover { translate: 0 var(--df-lift); }
+.btn:active { translate: 0 var(--df-squash); box-shadow: none; }
+.btn:disabled { opacity: .4; pointer-events: none; }
+
+.danger {
+  background: var(--df-color-danger);
+  box-shadow: 0 2px 0 var(--df-color-danger-shade);
+  color: var(--df-color-on-brand);
+}
+
+.inkBtn { background: var(--df-color-ink); box-shadow: none; color: var(--df-color-on-brand); }
+
+.divider { width: 2px; height: 20px; background: var(--df-color-ink-14); }
+.rule { width: 2px; height: 26px; background: rgba(43, 27, 77, .1); }
+
+.group { display: flex; align-items: center; gap: var(--tb-s-3); }
+
+.save {
+  padding: var(--tb-s-4) var(--tb-s-6);
+  border-radius: var(--tb-r-md);
+  background: var(--df-color-go);
+  box-shadow: 0 3px 0 var(--df-color-go-shade);
+  color: var(--df-color-go-ink);
+  font: var(--df-weight-label) var(--tb-t-xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+}
+.save:active { translate: 0 var(--df-squash); box-shadow: none; }
+
+.tail {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-4);
+}
+
+/* demoted to a quiet status-row label that expands on click */
+.apiUrl {
+  font: var(--df-weight-kicker) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-ink-45);
+  white-space: nowrap;
+}
+.apiUrl:hover { color: var(--df-color-ink); }
+
+.segments {
+  padding: var(--tb-s-2) var(--tb-s-4);
+  border-radius: var(--tb-r-pill);
+  background: var(--tb-color-trough);
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  white-space: nowrap;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-3);
+  padding: var(--tb-s-2) var(--tb-s-4);
+  border-radius: var(--tb-r-pill);
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  white-space: nowrap;
+}
+.statusOk { background: var(--df-color-go); color: var(--df-color-go-ink); }
+.statusQuiet { background: var(--tb-color-trough); color: var(--df-color-ink-55); }
+.statusError {
+  background: var(--tb-color-note-danger);
+  box-shadow: inset 0 0 0 2px var(--df-color-danger);
+  color: var(--df-color-danger-shade);
+}
+.bang {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--tb-s-2);
+  background: var(--df-color-danger);
+  color: var(--df-color-on-brand);
+}
+
+/* the one accent button on screen — the action that leaves the tool */
+.playtest {
+  padding: var(--tb-s-4) var(--tb-s-7);
+  border-radius: var(--tb-r-pill);
+  background: var(--df-color-accent);
+  box-shadow: 0 3px 0 var(--df-color-accent-shade);
+  font: var(--df-weight-label) var(--tb-t-xs) / 1 var(--df-font-ui);
+  letter-spacing: .1em;
+}
+.playtest:hover { translate: 0 var(--df-lift); }
+.playtest:active { translate: 0 var(--df-squash); box-shadow: none; }
+
+@container tbscreen (max-width: 1400px) {
+  .tail { width: 100%; margin-left: 0; }
+}
+
+@container tbscreen (max-width: 980px) {
+  .rule { display: none; }
+  .group { flex-wrap: wrap; }
+  .tail { flex-wrap: wrap; }
+  .apiUrl { order: 3; }
+}
+
+@container tbscreen (max-width: 720px) {
+  .btn span, .segments { white-space: normal; }
+  .playtest { flex: 1; text-align: center; }
+}

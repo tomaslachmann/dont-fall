@@ -1,0 +1,25 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-2);
+}
+
+.label {
+  font: var(--df-weight-label) var(--tb-t-3xs) / 1 var(--df-font-ui);
+  letter-spacing: .1em;
+  color: var(--df-color-ink-55);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, var(--cell));
+  grid-template-rows: repeat(3, var(--cell));
+  gap: var(--tb-s-1);
+}
+
+.cell {
+  border-radius: var(--tb-s-2);
+  background: var(--df-color-surface-2);
+}
+.cell:hover { background: var(--df-color-ink-35); }
+.on { background: var(--df-color-brand); }

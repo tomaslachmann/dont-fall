@@ -1,3 +1,7 @@
+// @vitest-environment node
+// Node, not the jsdom default: these tests parse real GLBs through
+// GLTFLoader, whose texture path needs `URL.createObjectURL` (jsdom lacks
+// it — the rejections crash the worker instead of failing the test).
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import {
@@ -14,6 +18,8 @@ import {
   builderLibrary,
   extractVisualRoot,
   loadAssetVisuals,
+  loadAssetVisualsProgressive,
+  type AssetVisualResult,
 } from "./assets.js";
 import { insertSegment, segmentOverlapsAnyOther } from "./trackEdit.js";
 
@@ -161,5 +167,41 @@ describe("extractVisualRoot (the twin of the client's role filter)", () => {
     scene.add(collision);
 
     expect(() => extractVisualRoot(scene)).toThrow(/no visual mesh/);
+  });
+});
+
+import { triangleGlb } from "./test/glb.js";
+
+describe("loadAssetVisualsProgressive", () => {
+  it("settles every id exactly once — ready files parse, bad ones name themselves", async () => {
+    const glb = triangleGlb();
+    const settled = new Map<string, AssetVisualResult>();
+    await loadAssetVisualsProgressive(
+      async (url) => {
+        if (url.endsWith("bad.glb")) return new TextEncoder().encode("not a glb");
+        if (url.endsWith("missing.glb")) throw new Error("GET answered 404");
+        return glb;
+      },
+      "http://assets.test",
+      ["good", "bad", "missing"],
+      (moduleId, result) => {
+        // `assetFileName` stems the URL off the id ("good" → "good.glb").
+        expect(settled.has(moduleId)).toBe(false);
+        settled.set(moduleId, result);
+      },
+    );
+
+    expect(settled.get("good")).toMatchObject({ ok: true });
+    const template = (settled.get("good") as { ok: true; template: THREE.Group }).template;
+    let meshes = 0;
+    template.traverse((object) => {
+      if ((object as THREE.Mesh).isMesh) meshes += 1;
+    });
+    expect(meshes).toBe(1);
+    // One bad file settles the other two — nothing here fails fast.
+    expect(settled.get("bad")).toMatchObject({ ok: false });
+    expect((settled.get("bad") as { ok: false; error: Error }).error.message).toMatch(/"bad"/);
+    expect(settled.get("missing")).toMatchObject({ ok: false });
+    expect((settled.get("missing") as { ok: false; error: Error }).error.message).toMatch(/"missing"/);
   });
 });

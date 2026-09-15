@@ -1,0 +1,52 @@
+.plate {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-3);
+  padding: var(--tb-s-4);
+  border-radius: var(--tb-r-lg);
+}
+
+.label {
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1.3 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+}
+
+.loading { background: var(--df-color-surface-1); color: var(--df-color-ink-55); }
+.ok { background: var(--df-color-go); color: var(--df-color-go-ink); }
+
+.empty {
+  justify-content: center;
+  text-align: center;
+  border: 2px dashed var(--df-color-ink-35);
+  color: var(--df-color-ink-55);
+}
+
+.error {
+  background: var(--tb-color-note-danger);
+  box-shadow: inset 0 0 0 2px var(--df-color-danger);
+  color: var(--df-color-danger-shade);
+}
+
+.spinner {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 3px solid var(--df-color-surface-2);
+  border-top-color: var(--df-color-brand);
+  animation: tb-spin .8s linear infinite;
+}
+
+.badge {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--tb-s-3);
+  background: var(--df-color-danger);
+  color: var(--df-color-on-brand);
+  font: var(--df-weight-label) var(--tb-t-sm) / 1 var(--df-font-ui);
+}
+
+.tick { font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui); }

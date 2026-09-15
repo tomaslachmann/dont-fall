@@ -1,0 +1,33 @@
+.root {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--tb-s-3);
+  max-width: 560px;
+  padding: var(--tb-s-4) var(--tb-s-5);
+  border-radius: var(--tb-r-xl);
+  background: var(--df-color-plate);
+  backdrop-filter: blur(6px);
+}
+
+.pair { display: flex; align-items: center; gap: var(--tb-s-2); }
+
+.key {
+  padding: var(--tb-s-1) var(--tb-s-3);
+  border-radius: var(--tb-s-3);
+  background: var(--df-color-glass);
+  color: var(--df-color-ink);
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+}
+.accent { background: var(--df-color-accent); }
+
+.action {
+  font: var(--df-weight-kicker) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  color: var(--df-color-on-brand-80);
+}
+
+/* keys keep their meaning at the medium tier; captions are the first thing to go */
+@container tbscreen (max-width: 1240px) {
+  .action { display: none; }
+  .root { max-width: 380px; }
+}

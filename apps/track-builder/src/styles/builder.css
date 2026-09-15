@@ -1,0 +1,62 @@
+/* TRACK BUILDER scope tokens.
+   The kit's --df-* tokens are fluid (1cqw of a stage). The builder is a dev tool: density is
+   fixed in px, type goes down to 9-11px, radii are halved. Colors still come from --df-*.
+
+   Everything below is scoped to [data-tb-scope] (set by TrackBuilderScreen), so the game
+   stages are untouched. Every .module.css in the builder reads only --tb-* + --df-color-*. */
+
+[data-tb-scope] {
+  /* trough: the flat field plate. sits between surface-1 and surface-2 */
+  --tb-color-trough:   #F2EDFC;
+  --tb-color-canvas:   var(--df-color-surface-3);
+  --tb-color-note-danger: #FFF0F7;
+  --tb-color-note-go:     #F0FFF9;
+
+  --tb-r-sm: 7px;
+  --tb-r-md: 9px;
+  --tb-r-lg: 11px;
+  --tb-r-xl: 13px;
+  --tb-r-panel: 18px;
+  --tb-r-frame: 20px;
+  --tb-r-pill: 999px;
+
+  --tb-s-1: 3px;
+  --tb-s-2: 4px;
+  --tb-s-3: 6px;
+  --tb-s-4: 8px;
+  --tb-s-5: 10px;
+  --tb-s-6: 12px;
+  --tb-s-7: 14px;
+  --tb-s-8: 22px;
+
+  --tb-t-3xs: 8px;
+  --tb-t-2xs: 9px;
+  --tb-t-xs:  10px;
+  --tb-t-sm:  11px;
+  --tb-t-md:  13px;
+  --tb-t-lg:  15px;
+  --tb-t-xl:  17px;
+
+  /* plastic bevel: offset shadow, zero blur, never upward */
+  --tb-bevel-1: 0 2px 0 var(--df-color-ink-14);
+  --tb-bevel-2: 0 3px 0 var(--df-color-ink-14);
+  --tb-bevel-frame: 0 6px 0 var(--df-color-shadow), 0 24px 48px var(--df-color-drop);
+  --tb-bevel-float: 0 3px 0 var(--df-color-ink-14), 0 12px 26px rgba(43, 27, 77, .16);
+  --tb-bevel-panel: 0 4px 0 rgba(43, 27, 77, .16), 0 16px 34px rgba(43, 27, 77, .2);
+  --tb-inset-field: inset 0 0 0 2px var(--df-color-ink-08);
+
+  --tb-grid: repeating-linear-gradient(0deg, rgba(43, 27, 77, .07) 0 1px, transparent 1px 36px),
+             repeating-linear-gradient(90deg, rgba(43, 27, 77, .07) 0 1px, transparent 1px 36px);
+
+  /* overridden per tier by the screen's container queries */
+  --tb-palette-w: 236px;
+  --tb-inspector-w: 296px;
+  --tb-toolbar-h: 62px;
+  --tb-float-inset: 14px;
+
+  /* 3/4 view of the placed track */
+  --tb-iso: rotateX(52deg) rotateZ(-38deg);
+}
+
+@keyframes tb-spin { to { transform: rotate(360deg); } }
+@keyframes tb-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }

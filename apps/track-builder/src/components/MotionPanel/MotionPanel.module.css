@@ -1,0 +1,35 @@
+.root {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-3);
+  min-height: 0;
+  padding: var(--tb-s-5) var(--tb-s-6) var(--tb-s-6);
+  background: var(--df-color-surface-1);
+  box-shadow: inset 0 3px 0 var(--df-color-ink-08);
+  overflow-y: auto;
+}
+
+.head { display: flex; align-items: center; justify-content: space-between; gap: var(--tb-s-4); }
+
+.title { margin: 0; font: var(--df-weight-display) var(--tb-t-lg) / 1 var(--df-font-display); }
+
+.order {
+  font: var(--df-weight-kicker) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-ink-55);
+}
+
+.groupNote {
+  margin: 0;
+  padding: var(--tb-s-4);
+  border-radius: var(--tb-r-lg);
+  background: var(--df-color-surface-0);
+  font: var(--df-weight-kicker) var(--tb-t-2xs) / 1.5 var(--df-font-ui);
+  color: var(--df-color-ink-70);
+  text-wrap: pretty;
+}
+
+@container tbscreen (max-width: 980px) {
+  .root { max-height: 440px; }
+}

@@ -1,0 +1,28 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-2);
+  padding: var(--tb-s-4) var(--tb-s-5);
+  border-radius: var(--tb-r-xl);
+  background: var(--df-color-surface-0);
+  box-shadow: var(--tb-bevel-2);
+}
+
+.kicker {
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-55);
+}
+
+.row { display: flex; align-items: center; gap: var(--tb-s-3); }
+
+.badge {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border-radius: var(--tb-s-4);
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+}
+
+.word { font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui); }

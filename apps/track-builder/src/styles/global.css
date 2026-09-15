@@ -1,0 +1,42 @@
+@import './tokens.css';
+@import './builder.css';
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--df-color-ink);
+  color: var(--df-color-ink);
+  font-family: var(--df-font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--df-color-accent); }
+a:hover { color: #ffe27a; }
+
+button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+
+input { font: inherit; }
+
+/* component display rules outrank the UA sheet — hidden must always win */
+[hidden] { display: none !important; }
+
+/* Race numerals must never jitter. */
+[data-df-numeric] { font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}

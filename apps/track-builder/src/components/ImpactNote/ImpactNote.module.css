@@ -1,0 +1,25 @@
+.note {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-3);
+  margin: 0;
+  padding: var(--tb-s-3) var(--tb-s-4);
+  border-radius: var(--tb-r-md);
+  border-left: 4px solid var(--stripe);
+  background: var(--plate);
+}
+
+.carry { --stripe: var(--df-color-go); --plate: var(--tb-color-note-go); --ink: var(--df-color-go-ink); }
+.stagger { --stripe: var(--df-color-accent); --plate: var(--df-color-surface-1); --ink: var(--df-color-ink); }
+.knockdown { --stripe: var(--df-color-danger); --plate: var(--tb-color-note-danger); --ink: var(--df-color-danger-shade); }
+
+.glyph {
+  color: var(--ink);
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+}
+
+.text {
+  font: var(--df-weight-kicker) var(--tb-t-xs) / 1.35 var(--df-font-ui);
+  color: var(--df-color-ink-70);
+  text-wrap: pretty;
+}

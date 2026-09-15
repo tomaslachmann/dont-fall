@@ -1,0 +1,102 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-3);
+  padding: var(--tb-s-4);
+  border-radius: var(--tb-r-xl);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 2px 0 rgba(43, 27, 77, .12);
+}
+
+.off { background: rgba(255, 255, 255, .55); box-shadow: none; }
+
+/* the collapsible body keeps the card's own column rhythm when open */
+.body { display: flex; flex-direction: column; gap: var(--tb-s-3); }
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-3);
+  width: 100%;
+  text-align: left;
+}
+
+.box {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--tb-s-4);
+  background: var(--df-color-surface-2);
+  box-shadow: inset 0 0 0 2px rgba(43, 27, 77, .12);
+  font: var(--df-weight-label) var(--tb-t-xs) / 1 var(--df-font-ui);
+}
+.boxOn { background: var(--df-color-go); box-shadow: none; color: var(--df-color-go-ink); }
+
+.name {
+  font: var(--df-weight-label) var(--tb-t-sm) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+}
+.nameOff { color: var(--df-color-ink-55); }
+
+.summary,
+.state {
+  margin-left: auto;
+  font: var(--df-weight-kicker) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  color: var(--df-color-ink-45);
+}
+
+.presets { display: flex; flex-wrap: wrap; gap: var(--tb-s-2); }
+
+.fields { display: grid; gap: var(--tb-s-2); }
+
+.pivotRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--tb-s-3);
+}
+
+.pivotXyz {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--tb-s-1);
+}
+
+.easing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-2);
+  padding: var(--tb-s-4);
+  border-radius: var(--tb-r-lg);
+  background: var(--df-color-surface-1);
+}
+
+.easingLabel {
+  font: var(--df-weight-label) var(--tb-t-3xs) / 1 var(--df-font-ui);
+  letter-spacing: .1em;
+  color: var(--df-color-ink-55);
+}
+
+.curves { display: flex; gap: var(--tb-s-2); }
+
+.curve {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: var(--tb-s-2) 0;
+  border-radius: var(--tb-s-4);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 2px 0 rgba(43, 27, 77, .12);
+  color: var(--df-color-ink);
+}
+.curveOn { background: var(--df-color-brand); box-shadow: none; color: var(--df-color-on-brand); }
+
+.blurb {
+  margin: 0;
+  font: var(--df-weight-kicker) var(--tb-t-2xs) / 1.4 var(--df-font-ui);
+  color: var(--df-color-ink-70);
+  text-wrap: pretty;
+}

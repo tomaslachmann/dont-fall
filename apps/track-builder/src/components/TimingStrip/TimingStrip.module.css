@@ -1,0 +1,51 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-2);
+}
+
+.caption {
+  font: var(--df-weight-label) var(--tb-t-3xs) / 1 var(--df-font-ui);
+  letter-spacing: .1em;
+  color: var(--df-color-ink-55);
+}
+
+.strip {
+  position: relative;
+  border-radius: var(--tb-s-4);
+  overflow: hidden;
+  color: var(--df-color-ink);
+  cursor: ew-resize;
+}
+
+/* impact bands: go at the ends, accent ramping, danger through the strike */
+.swing {
+  background: linear-gradient(90deg,
+    rgba(47, 217, 160, .35) 0 18%,
+    rgba(255, 210, 63, .4) 18% 38%,
+    rgba(255, 93, 162, .4) 38% 62%,
+    rgba(255, 210, 63, .4) 62% 82%,
+    rgba(47, 217, 160, .35) 82% 100%);
+}
+.slide { background: rgba(47, 217, 160, .3); }
+
+.curve { position: relative; display: block; }
+
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--df-color-brand);
+}
+
+.knob {
+  position: absolute;
+  top: 2px;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  border-radius: 50%;
+  background: var(--df-color-surface-0);
+  box-shadow: 0 0 0 3px var(--df-color-brand);
+}

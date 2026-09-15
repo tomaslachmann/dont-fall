@@ -1,0 +1,53 @@
+.root {
+  width: 222px;
+  padding: var(--tb-s-5);
+  border-radius: var(--tb-r-panel);
+  background: var(--df-color-surface-0);
+  box-shadow: var(--tb-bevel-float);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--tb-s-4);
+}
+
+.title { margin: 0; font: var(--df-weight-display) var(--tb-t-md) / 1 var(--df-font-display); }
+
+.close { color: var(--df-color-ink-45); font: var(--df-weight-label) var(--tb-t-md) / 1 var(--df-font-ui); }
+.close:hover { color: var(--df-color-ink); }
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--tb-s-4);
+  width: 100%;
+  padding: var(--tb-s-3) var(--tb-s-4);
+  border-radius: var(--tb-r-md);
+  background: var(--df-color-surface-1);
+}
+.row:hover { background: var(--df-color-surface-2); }
+
+.active { background: var(--df-color-brand); }
+.active .name { color: var(--df-color-on-brand); }
+.active .rev { color: var(--df-color-on-brand-60); }
+
+.name {
+  font: var(--df-weight-label) var(--tb-t-xs) / 1.2 var(--df-font-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rev { font: var(--df-weight-kicker) var(--tb-t-2xs) / 1 var(--df-font-ui); color: var(--df-color-ink-45); }
