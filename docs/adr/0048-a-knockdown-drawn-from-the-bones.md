@@ -65,3 +65,9 @@ a body shape, the objection is gone.
   M6.1 verifies it with several down at once rather than assuming.
 - **The rendering is still a leaf.** The capsule remains the authority for where a Character is and
   what it collides with (ADR 0006). Nothing here feeds back into the simulation.
+
+## Superseded by ADR 0076 (2026-09-16)
+
+BLIP's authored `KO_*` / `GetUp_*` clips now draw the knockdown. The ragdoll
+still simulates underneath and decides where the body is. Its bones no longer
+pose the rig, and `ragdollPose.ts` is deleted.

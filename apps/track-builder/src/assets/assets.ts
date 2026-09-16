@@ -2,7 +2,6 @@ import {
   ASSET_MODULE_DEFS,
   ASSET_PLACEMENT_MODULES,
   assetFileName,
-  MODULE_LIBRARY,
   type AssetCategory,
   type Module,
 } from "@dont-fall/shared";
@@ -21,13 +20,13 @@ export const assetCategoryById = (): Record<string, AssetCategory> =>
   Object.fromEntries(ASSET_MODULE_DEFS.map((def) => [def.id, def.category]));
 
 /**
- * Every Module the builder may place (M8 ticket 05): the procedural
- * registry composed with the asset defs' placement halves. Placement,
+ * Every Module the builder may place (M8 ticket 05): the asset defs'
+ * placement halves, and nothing procedural (ADR 0078). Placement,
  * chaining, Socket-snap and overlap all read Sockets and footprints — never
  * triangles — so asset entries need no bytes; anything that simulates
  * resolves the same ids against real geometry instead.
  */
-export const builderLibrary = (): Record<string, Module> => ({ ...MODULE_LIBRARY, ...ASSET_PLACEMENT_MODULES });
+export const builderLibrary = (): Record<string, Module> => ({ ...ASSET_PLACEMENT_MODULES });
 
 /**
  * The builder half of the asset role filter (M8 ticket 05, ADR 0050) — a

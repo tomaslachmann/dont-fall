@@ -36,6 +36,9 @@ const invalidMatchResultReason = (body: unknown): string | undefined => {
   // M9 ticket 11 phase 2b: pre-2b saves carry no such map at all (readers
   // default it) — but a present non-object is malformed, not legacy.
   if (body.accountIds !== undefined && !isRecord(body.accountIds)) return "accountIds must be an object";
+  // Same posture for the podium skins: pre-skins saves carry no map (readers
+  // default it) — but a present non-object is malformed, not legacy.
+  if (body.bodySkins !== undefined && !isRecord(body.bodySkins)) return "bodySkins must be an object";
   if (!isRecord(body.totalFalls)) return "totalFalls must be an object";
   if (typeof body.endedAtMs !== "number" || !Number.isFinite(body.endedAtMs)) {
     return "endedAtMs must be a number";
@@ -53,7 +56,7 @@ export const saveMatchResult = (db: ApiDb, body: unknown): { matchId: string } =
   const reason = invalidMatchResultReason(body);
   if (reason) throw new ServiceError(400, reason);
   const result = body as PersistedMatchResult;
-  storeMatchResult(db, { ...result, accountIds: result.accountIds ?? {} });
+  storeMatchResult(db, { ...result, accountIds: result.accountIds ?? {}, bodySkins: result.bodySkins ?? {} });
   return { matchId: result.matchId };
 };
 
@@ -66,5 +69,6 @@ export const getMatchResult = (db: ApiDb, matchId: string): PersistedMatchResult
   const result = readMatchResult(db, matchId);
   if (!result) throw new ServiceError(404, `no finished Match "${matchId}"`);
   // Pre-2b rows carry no `accountIds` map — default it so the type stays honest.
-  return { ...result, accountIds: result.accountIds ?? {} };
+  // Pre-skins rows likewise carry no `bodySkins`.
+  return { ...result, accountIds: result.accountIds ?? {}, bodySkins: result.bodySkins ?? {} };
 };

@@ -1,0 +1,7 @@
+mud_surface.jpg — the deck overlay for mud Surfaces (ADR 0067).
+
+Source: ambientCG "Ground 094 C" (https://ambientcg.com/a/Ground094C),
+Creative Commons CC0 1.0 Universal (public domain, no attribution required).
+Taken 2026-09-15: the Color map only, as shipped in the pack's 1K JPG.
+Seamless/tileable; the renderers repeat it every MUD_TILE_WORLD units across
+the deck.

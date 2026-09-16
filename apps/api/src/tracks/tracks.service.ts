@@ -1,5 +1,12 @@
 import {
   ASSET_PLACEMENT_MODULES,
+  invalidEnvironmentReason,
+  isEnvironmentId,
+  invalidTrackCourseReason,
+  LAUNCH_HEIGHT_MAX,
+  LAUNCH_HEIGHT_MIN,
+  MAX_SEGMENT_SCALE,
+  MIN_SEGMENT_SCALE,
   MODULE_LIBRARY,
   type Module,
   type StoredTrack,
@@ -10,7 +17,20 @@ import type { ApiDb } from "../db/db.js";
 import { ServiceError } from "../http/errors.js";
 import { generateRandomTrack } from "./generate.js";
 import { getAnyTrack, getTrackById, getTrackPlays, listTracks, recordTrackPlay, saveTrack } from "./tracks.dao.js";
-import { invalidSurvivorTargetReason, invalidTimeLimitReason, isTrack, unknownModuleIds } from "./tracks.validation.js";
+import {
+  invalidSurvivorTargetReason,
+  invalidTimeLimitReason,
+  invalidTrackConveyorReason,
+  invalidTrackCourseFieldsReason,
+  invalidTrackIceReason,
+  invalidTrackMotionReason,
+  invalidTrackBounceReason,
+  invalidTrackLaunchReason,
+  invalidTrackMudReason,
+  invalidTrackSurfaceConflictReason,
+  isTrack,
+  unknownModuleIds,
+} from "./tracks.validation.js";
 
 /**
  * Every Module id a publish may reference (M8 ticket 05): the procedural
@@ -27,6 +47,7 @@ export interface PublishInput {
   track?: unknown;
   timeLimitMs?: unknown;
   survivorTarget?: unknown;
+  environment?: unknown;
 }
 
 /**
@@ -36,19 +57,44 @@ export interface PublishInput {
  * mapping with no domain opinions of its own.
  */
 export const publishTrack = (db: ApiDb, input: PublishInput): { id: string } => {
+  const badMotion = invalidTrackMotionReason(input.track);
+  if (badMotion) throw new ServiceError(400, badMotion);
+  const badConveyor = invalidTrackConveyorReason(input.track);
+  if (badConveyor) throw new ServiceError(400, badConveyor);
+  const badIce = invalidTrackIceReason(input.track);
+  if (badIce) throw new ServiceError(400, badIce);
+  const badMud = invalidTrackMudReason(input.track);
+  if (badMud) throw new ServiceError(400, badMud);
+  const badBounce = invalidTrackBounceReason(input.track);
+  if (badBounce) throw new ServiceError(400, badBounce);
+  const badLaunch = invalidTrackLaunchReason(input.track);
+  if (badLaunch) throw new ServiceError(400, badLaunch);
+  const surfaceConflict = invalidTrackSurfaceConflictReason(input.track);
+  if (surfaceConflict) throw new ServiceError(400, surfaceConflict);
+  const badCourseField = invalidTrackCourseFieldsReason(input.track);
+  if (badCourseField) throw new ServiceError(400, badCourseField);
   if (!isTrack(input.track)) {
     throw new ServiceError(
       400,
       "body.track must be a Segment[]: each entry needs a string moduleId, a position with finite x/y/z, " +
-        "a finite rotation, and finite pitch/roll if present",
+        "a finite rotation, finite pitch/roll if present, a scale between " +
+        `${MIN_SEGMENT_SCALE} and ${MAX_SEGMENT_SCALE} if present, a conveyor with a known preset and a finite angle if present, ` +
+        "ice/mud/bounce exactly true if present (never more than one), " +
+        `and a launch height between ${LAUNCH_HEIGHT_MIN} and ${LAUNCH_HEIGHT_MAX} metres if present`,
     );
   }
   const unknown = unknownModuleIds(input.track, PUBLISH_MODULES);
   if (unknown.length > 0) throw new ServiceError(400, `unknown Module id(s): ${unknown.join(", ")}`);
+  const badCourse = invalidTrackCourseReason(input.track, PUBLISH_MODULES);
+  if (badCourse) throw new ServiceError(400, badCourse);
   const badTimeLimit = invalidTimeLimitReason(input.timeLimitMs);
   if (badTimeLimit) throw new ServiceError(400, badTimeLimit);
   const badSurvivorTarget = invalidSurvivorTargetReason(input.survivorTarget);
   if (badSurvivorTarget) throw new ServiceError(400, badSurvivorTarget);
+  // Absent means the default, like the two above (ADR 0074); anything present
+  // must name a preset this build has, so a typo is never stored forever.
+  const badEnvironment = input.environment === undefined ? undefined : invalidEnvironmentReason(input.environment);
+  if (badEnvironment) throw new ServiceError(400, badEnvironment);
   return saveTrack(db, {
     track: input.track,
     ...(typeof input.id === "string" ? { id: input.id } : {}),
@@ -57,6 +103,7 @@ export const publishTrack = (db: ApiDb, input: PublishInput): { id: string } => 
     // validated above, so anything still here is a real integer.
     ...(typeof input.timeLimitMs === "number" ? { timeLimitMs: input.timeLimitMs } : {}),
     ...(typeof input.survivorTarget === "number" ? { survivorTarget: input.survivorTarget } : {}),
+    ...(isEnvironmentId(input.environment) ? { environment: input.environment } : {}),
   });
 };
 

@@ -691,9 +691,11 @@ const dumpCorrections = (h: Harness, n = 30): void => {
   );
 };
 
-// Open sandbox platform (playground.ts): center z=-32, halfExtent 15, top y≈-2.1.
-// Clear of the Spinner (z=1) and every wall — pure straight-walk ground.
-const OPEN: { x: number; y: number; z: number } = { x: 0, y: -1.5, z: -30 };
+// Open sandbox platform (playground.ts): center z=-8, halfExtent 15, top y≈-1.1.
+// Clear of the Spinner (z=7) and every wall — pure straight-walk ground.
+// Tracks the sandbox Segment (ADR 0073 moved it two stops up the run);
+// the spawn keeps its old relative spot, so every walk behaves identically.
+const OPEN: { x: number; y: number; z: number } = { x: 0, y: -0.5, z: -18 };
 
 describe("prediction regression harness — walking straight (Phase 1 diagnostic)", () => {
   it("clean open ground, straight walk, 60 fps", () => {
@@ -890,7 +892,8 @@ const metrics = (
 // ---------------------------------------------------------------------------
 describe("60 fps render cap — proposal must hold here", () => {
   // spawn far west on the sandbox, walk east — ~27 units of clear x-room (4.5 s at walk speed)
-  const OPEN_W = { x: -14, y: -1.5, z: -32 };
+  // (same ADR 0073 tracking as OPEN above: the sandbox moved, the relative spot stays).
+  const OPEN_W = { x: -14, y: -0.5, z: -20 };
   const at60 = (over: Partial<HarnessOpts>): Partial<HarnessOpts> => ({
     spawnOverride: OPEN_W,
     walkDir: "east",

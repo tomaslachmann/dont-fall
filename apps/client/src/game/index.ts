@@ -1,5 +1,6 @@
 import {
   DEFAULT_KILL_PLANE_Y,
+  ENVIRONMENT_PRESETS,
   INITIAL_LEAD_TICKS_MAX,
   INITIAL_LEAD_TICKS_MIN,
   INPUT_REDUNDANCY,
@@ -36,9 +37,11 @@ import {
   type SimState,
   type Track,
   type Vec3,
+  trackSpawnYaw,
 } from "@dont-fall/shared";
 import { loadCharacterModel } from "../render/characterModel.js";
 import { assetPlacements, loadAssetVisuals } from "../render/assetVisuals.js";
+import { springTriggers } from "../render/springSquash.js";
 import { awaitWelcome, resolveEndpoints } from "../lib/socket/connection.js";
 import { createHud } from "../hud/hud.js";
 import { formatHudText } from "../hud/hudText.js";
@@ -341,12 +344,29 @@ const boot = async (
 
   // Track-service reads shared with the practice session (m8.1 ticket 01)
   // — one pipe, one cache, no fork to drift.
-  const { fetchTrack, loadLibrary, loadVisualTemplates } = createTrackLoading(host);
+  const { fetchTrack, loadLibrary, loadVisualTemplates, loadIceTexture, loadMudTexture, loadBounceTexture } =
+    createTrackLoading(host);
 
-  const { track } = await fetchTrack(welcome.trackId, welcome.trackRevision);
+  const { track, environment } = await fetchTrack(welcome.trackId, welcome.trackRevision);
   const library = await loadLibrary();
-  const { statics, staticSurfaces, staticTrimeshes, checkpoints, finishZones, spinners, props, speedPads, launchPads, volumes } =
-    resolveTrack(library, track);
+  const {
+    statics,
+    staticSurfaces,
+    staticConveyors,
+    staticTrimeshes,
+    checkpoints,
+    finishZones,
+    spinners,
+    props,
+    launchPads,
+    launchPadOwners,
+    volumes,
+    movingSegments,
+    conveyors,
+    iceDecks,
+    mudDecks,
+    bounceDecks,
+  } = resolveTrack(library, track);
 
   let stage = createStage({
     mount,
@@ -354,11 +374,23 @@ const boot = async (
     checkpoints,
     finishZones,
     killPlaneY: DEFAULT_KILL_PLANE_Y,
+    // The Revision's own Environment (ADR 0074) — render-only, never sent to the server.
+    environment: ENVIRONMENT_PRESETS[environment],
     spinners,
     props,
     characterModel,
     assetTemplates: await loadVisualTemplates(),
     assetPlacements: assetPlacements(track, library),
+    springs: springTriggers(launchPads, launchPadOwners),
+    movingSegments,
+    conveyors,
+    iceDecks,
+    iceTexture: await loadIceTexture(),
+    mudDecks,
+    mudTexture: await loadMudTexture(),
+    bounceDecks,
+    bounceTexture: await loadBounceTexture(),
+    volumes,
   });
   // These two close over the `let stage`/`let localSim` below and are
   // registered exactly once — a live Lobby Track pick (M4 ticket 07)
@@ -368,6 +400,8 @@ const boot = async (
   const keyboard = new KeyboardInput();
   teardown.add(() => keyboard.dispose());
   let look = new FreeLookCamera(stage.domElement);
+  // Start looking along the Start's forward (ADR 0068).
+  look.yaw = trackSpawnYaw(track) ?? look.yaw;
   teardown.add(() => look.dispose());
 
   const myId: string = welcome.playerId;
@@ -387,6 +421,7 @@ const boot = async (
   let localSim: RapierSimulation = new RapierSimulation({
     statics,
     staticSurfaces,
+    staticConveyors,
     staticTrimeshes,
     checkpoints,
     // Qualification is predicted locally (ADR 0039: a pure function of
@@ -395,8 +430,8 @@ const boot = async (
     // corrected — `reconcileCharacter` takes the server's `finishTick`.
     finishZones,
     spinners,
+    movingSegments,
     props,
-    speedPads,
     launchPads,
     volumes,
     withDefaultCharacter: false,
@@ -474,6 +509,8 @@ const boot = async (
   let lastRoundIsSurvival = false;
   /** Latest Lobby roster, id → nickname — names the followed Player on the banner. */
   let playerNames: Record<string, string> = {};
+  /** Latest Lobby roster, id → equipped body skin (M9 ticket 15) — tints every rig, local one included. */
+  let playerSkins: Record<string, number | null> = {};
   /**
    * Every nickname ever seen this session, id → nickname, never cleared
    * (M7 ticket 06/08) — `playerNames` only knows who is connected *right
@@ -535,7 +572,7 @@ const boot = async (
    * and re-seeded around.
    */
   const loadTrack = async (trackId: string, trackRevision: number, spawn: Vec3): Promise<void> => {
-    const { track: nextTrack } = await fetchTrack(trackId, trackRevision);
+    const { track: nextTrack, environment: nextEnvironment } = await fetchTrack(trackId, trackRevision);
     const nextLibrary = await loadLibrary();
     const resolved = resolveTrack(nextLibrary, nextTrack);
 
@@ -547,6 +584,7 @@ const boot = async (
       checkpoints: resolved.checkpoints,
       finishZones: resolved.finishZones,
       killPlaneY: DEFAULT_KILL_PLANE_Y,
+      environment: ENVIRONMENT_PRESETS[nextEnvironment],
       spinners: resolved.spinners,
       props: resolved.props,
       characterModel,
@@ -555,19 +593,31 @@ const boot = async (
       // the new stage clones afresh from the same templates.
       assetTemplates: await loadVisualTemplates(),
       assetPlacements: assetPlacements(nextTrack, nextLibrary),
+      springs: springTriggers(resolved.launchPads, resolved.launchPadOwners),
+      movingSegments: resolved.movingSegments,
+      conveyors: resolved.conveyors,
+      iceDecks: resolved.iceDecks,
+      iceTexture: await loadIceTexture(),
+      mudDecks: resolved.mudDecks,
+      mudTexture: await loadMudTexture(),
+      bounceDecks: resolved.bounceDecks,
+      bounceTexture: await loadBounceTexture(),
+      volumes: resolved.volumes,
     });
     look = new FreeLookCamera(stage.domElement);
+    look.yaw = trackSpawnYaw(nextTrack) ?? look.yaw;
 
     localSim.dispose();
     localSim = new RapierSimulation({
       statics: resolved.statics,
       staticSurfaces: resolved.staticSurfaces,
+      staticConveyors: resolved.staticConveyors,
       staticTrimeshes: resolved.staticTrimeshes,
       checkpoints: resolved.checkpoints,
       finishZones: resolved.finishZones,
       spinners: resolved.spinners,
+      movingSegments: resolved.movingSegments,
       props: resolved.props,
-      speedPads: resolved.speedPads,
       launchPads: resolved.launchPads,
       volumes: resolved.volumes,
       withDefaultCharacter: false,
@@ -629,6 +679,7 @@ const boot = async (
         // default (which a Match-level override can disagree with).
         localSim.syncRoundRules(message.roundRules);
         playerNames = Object.fromEntries(message.lobby.players.map((player) => [player.id, player.nickname]));
+        playerSkins = Object.fromEntries(message.lobby.players.map((player) => [player.id, player.bodySkin]));
         lastRoundIsSurvival = message.roundRules.fallBehavior === "eliminate";
         // Ticket 14: your run ended mid-Round — the verdict's facts, raised
         // once, off this exact snapshot. Outside RUNNING the edges re-sync
@@ -1009,7 +1060,20 @@ const boot = async (
     }
 
     stage.applyRenderState({ character: visualCharacter, props });
+    // Skins ahead of the rigs (M9 ticket 15) — a rig built this frame already
+    // wears its skin, and the local model follows the own row's bind.
+    stage.setPlayerSkins(new Map(Object.entries(playerSkins)));
+    stage.setLocalSkin(playerSkins[myId] ?? null);
     stage.applyRemoteCharacters(remoteCharacters, Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000, myId, visualCharacter.position);
+    // The local Character's own Epoch comes from the prediction (ADR 0069):
+    // its Spring squashes on the tick it fires, a round trip before the
+    // server says so; every other Character's arrives on the snapshot.
+    stage.applySpringSquash({ ...remoteCharacters, [myId]: visualCharacter }, now);
+    // The same cast for the bounce sheets (ADR 0070): they answer everyone
+    // standing on them, not only the Player looking at them.
+    stage.applyBounceSheets({ ...remoteCharacters, [myId]: visualCharacter }, now);
+    // Air columns (ADR 0075) — the flow every Volume on the Track promises, streamed every frame.
+    stage.updateAirColumns(now);
     // Cosmetic only, not a second lock: the sim itself already refused to
     // move the Character while locked (M5 ticket 01), so this just picks the
     // idle stance over animating legs toward a `moveDirection` it never
@@ -1037,10 +1101,9 @@ const boot = async (
     // server freezes the replicated `facing` over the same span, so every
     // other client's rig for this Character stays put too.
     const facingLocked = grabbingId !== null || (serverOwnCharacter?.heldByGrabberId ?? null) !== null;
-    // M6.1: the rig has no Grab clip, so a hold's own visual comes from the
-    // arms procedurally reaching toward whoever this Character is grabbing
-    // (`Stage.updateCharacterAnimation`'s own `armReach.ts`) — the target's
-    // position always comes from `remoteCharacters`, since Grab only ever
+    // Since ADR 0071 the rig has its own Grab clips and nothing aims any
+    // more; this is read only as "this Character is the one doing the
+    // holding". It still comes from `remoteCharacters`, since Grab only ever
     // engages another, non-local Character.
     const grabTargetPosition = grabbingId ? remoteCharacters[grabbingId]?.position : undefined;
     stage.updateCharacterAnimation(
@@ -1049,8 +1112,12 @@ const boot = async (
       c.grounded,
       c.dashing,
       c.dashSpeed,
+      c.velocity.y,
       c.hitEpoch,
       hitReactEpoch,
+      // Predicted, like `hitEpoch`: the reach starts on the press, and a
+      // catch confirmed a round trip later carries on from it.
+      c.grabEpoch,
       grabTargetPosition,
       facingLocked,
     );
@@ -1060,7 +1127,7 @@ const boot = async (
     // render tick (ADR 0025). Use the same render tick the Character itself is
     // drawn at: `render` interpolates [previous, snapshot] by `localAlpha`, and
     // `previous` is one tick behind `snapshot` (captured before `localSim.tick`).
-    stage.updateSpinners(snapshot.tick - 1 + localAlpha);
+    stage.updateMotion(snapshot.tick - 1 + localAlpha);
     // Spectator Mode (M7 ticket 07, CONTEXT.md): while eliminated and the
     // Round is still RUNNING, the camera follows a Character still in it —
     // the same collision-resolved spring arm, aimed at somebody else, not a

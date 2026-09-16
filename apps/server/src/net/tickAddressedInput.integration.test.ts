@@ -3,6 +3,7 @@ import {
   INITIAL_LEAD_TICKS_MAX,
   INITIAL_LEAD_TICKS_MIN,
   LEAD_DRAIN_FRACTION,
+  M1_TRACK,
   MAX_STEPS_PER_FRAME,
   RECONCILE_POSITION_EPSILON,
   RapierSimulation,
@@ -84,11 +85,23 @@ import { startServer, type MatchServer } from "../matchServer.js";
 // ADR 0028: startServer now fetches its Track from the API; one shared
 // instance for this file, via TRACK_SERVICE_URL (startServer's default reads it).
 let trackService: ApiService;
+/**
+ * The M1 Track, published here and loaded through the connection's
+ * `?track=` — the world `simConfig` predicts in. The API seeds only the base
+ * race (ADR 0078), which the server would otherwise boot on.
+ */
+let m1TrackId: string;
 
 beforeAll(async () => {
   await initPhysics();
   trackService = await startApi({ port: 0, dbPath: ":memory:" });
   process.env.TRACK_SERVICE_URL = `http://localhost:${trackService.port}`;
+  const res = await fetch(`http://localhost:${trackService.port}/tracks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ track: M1_TRACK }),
+  });
+  m1TrackId = ((await res.json()) as { id: string }).id;
 });
 
 afterAll(async () => {
@@ -104,7 +117,7 @@ afterEach(async () => {
 
 const NORTH: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false, grabHeld: false };
 const SOUTH: SimInputs = { moveDirection: { x: 0, y: 0, z: 1 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false, grabHeld: false };
-/** Ticks between direction flips — keeps the oscillation well within the ~4-unit clearance to the first narrow bridge. */
+/** Ticks between direction flips — keeps the oscillation well within the start platform, short of the next stop. */
 const OSCILLATE_TICKS = 10;
 const simConfig = {
   statics: PLAYGROUND_STATICS,
@@ -202,7 +215,7 @@ class FaithfulClient {
   constructor(port: number, profile: NetworkProfile) {
     this.profile = profile;
     this.sim = new RapierSimulation({ ...simConfig, authoritative: false });
-    this.socket = new WebSocket(`ws://localhost:${port}`);
+    this.socket = new WebSocket(`ws://localhost:${port}/?track=${encodeURIComponent(m1TrackId)}`);
     this.inbound = new OrderedDelay<string>(
       () => this.owdMs(),
       (raw) => this.handle(JSON.parse(raw) as ServerMessage),
@@ -301,8 +314,6 @@ class FaithfulClient {
       hitCooldownMs: 0,
       hitChargeMs: 0,
       grabCooldownMs: 0, // this client never dashes — walks only (north/south)
-      speedPadMsLeft: 0,
-      speedPadCapMultiplier: 1,
       finishTick: null, // this harness's Track has no Finish Zone
       eliminated: false,
       eliminatedTick: null,
@@ -361,9 +372,9 @@ class FaithfulClient {
       // Oscillate north/south every OSCILLATE_TICKS — keeps the Character
       // moving continuously (needed to expose the ~0.2u/tick bias at all)
       // while staying on the wide, flat start platform for the whole test:
-      // no narrow bridge, Spinner, or Fall to navigate. This test measures
-      // tick-alignment, not the (separately, extensively tested) ragdoll /
-      // motionState machinery this minimal client doesn't model.
+      // no Spinner or Fall to navigate. This test measures tick-alignment,
+      // not the (separately, extensively tested) ragdoll / motionState
+      // machinery this minimal client doesn't model.
       const input = Math.floor(this.predictionTick / OSCILLATE_TICKS) % 2 === 0 ? NORTH : SOUTH;
       this.inputBuffer.push({ tick: this.predictionTick, input });
       this.send({ type: "input", inputs: this.inputBuffer.slice(-3).map((e) => ({ ...e })) });

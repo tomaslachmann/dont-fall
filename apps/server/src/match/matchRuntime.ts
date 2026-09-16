@@ -205,6 +205,15 @@ export class MatchRuntime {
    */
   matchAccountIds = new Map<string, string>();
   /**
+   * Every racer's equipped body skin, kept for the results save — the
+   * podium wears these. Accumulated exactly like `matchNicknames` above:
+   * read off the live lobby row at each finished Round (or the drop record
+   * when the row is already gone), since a dropped Player's row is gone by
+   * Match end. Anonymous seats are simply absent, never null — the podium
+   * defaults them.
+   */
+  matchBodySkins = new Map<string, number>();
+  /**
    * Every racer's falls across every Round they raced (ADR 0059) — the one
    * MatchOver stat Score derivation can't recover (the sim only ever holds
    * the current Round's counts). Match-scoped, like `matchNicknames` above.
@@ -575,6 +584,9 @@ export class MatchRuntime {
   buildSimulationFor(track: Track): { simulation: RapierSimulation; roundRules: RoundRules; trackHasFinishZone: boolean } {
     const roundRules = this.resolveRules();
     const resolved = resolveTrack(this.library, track);
+    // Retired Modules (ADR 0064) resolve as plain geometry — audible here so
+    // a Track whose pads silently stopped firing gets re-authored, not wondered at.
+    for (const warning of resolved.warnings) console.warn(`DON'T FALL: ${warning}`);
     const simulation = new RapierSimulation({
       ...resolved,
       withDefaultCharacter: false,
@@ -592,7 +604,7 @@ export class MatchRuntime {
       // Score for Rounds they never played. They are seated by the next
       // fresh Match instead, once `resetToFreshLobby` has cleared the set.
       if (this.spectators.has(playerId)) continue;
-      simulation.addCharacter(playerId, trackSpawn(track, player.joinOrder));
+      simulation.addCharacter(playerId, trackSpawn(track, player.joinOrder, this.library));
     }
     return { simulation, roundRules, trackHasFinishZone: resolved.finishZones.length > 0 };
   }

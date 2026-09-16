@@ -53,9 +53,13 @@ export function MatchResultsRoute() {
   const mine = me === undefined ? undefined : view.table.find((row) => row.id === me);
   const spectating = mine === undefined || view.myStats === null;
 
+  // Poses are positional, matching the screen's own celebration/sulk/shrug —
+  // the fallback caption and the performance agree by construction.
+  const POSES = ["WINNER CELEBRATION LOOP", "SULK POSE", "SHRUG POSE"];
+
   return (
     <MatchOver
-      podium={view.table.slice(0, 3).map((row) => ({ name: row.nickname, points: row.score, pose: "" })) as [
+      podium={view.table.slice(0, 3).map((row, i) => ({ name: row.nickname, points: row.score, pose: POSES[i] ?? "", skin: row.bodySkin })) as [
         PodiumPlace,
         ...PodiumPlace[],
       ]}

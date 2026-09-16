@@ -1,0 +1,8 @@
+bounce_surface.jpg — the deck overlay for bounce Surfaces (ADR 0070).
+
+Source: ambientCG "Plastic 016 B" (https://ambientcg.com/a/Plastic016B),
+Creative Commons CC0 1.0 Universal (public domain, no attribution required).
+Taken 2026-09-15: the Color map only, as shipped in the pack's 1K JPG.
+Seamless/tileable; the renderers repeat it every BOUNCE_TILE_WORLD units
+across the deck, on a low-roughness material — the sheet reads as taut
+glossy plastic, and the shine is the material's, not the map's.

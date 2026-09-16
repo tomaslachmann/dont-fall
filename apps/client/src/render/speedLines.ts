@@ -96,12 +96,40 @@ export interface SpeedLines {
   dispose: () => void;
 }
 
+/**
+ * Samples per pixel in the composer's render targets (ADR 0074). The scene is
+ * drawn into them, not into the canvas, so the renderer's own `antialias: true`
+ * never reaches it; without samples here nothing in a Round is antialiased.
+ */
+export const COMPOSER_SAMPLES = 4;
+
+/**
+ * An `EffectComposer` whose targets are multisampled half-float buffers the
+ * size of the renderer's drawing buffer. Sized through `setSize` right away,
+ * before any pass is added: a composer given its own target otherwise takes
+ * the target's pixel size as its CSS size, and applies the pixel ratio twice
+ * on its next resize.
+ */
+export const createSceneComposer = (renderer: THREE.WebGLRenderer): EffectComposer => {
+  const size = renderer.getSize(new THREE.Vector2());
+  const pixelRatio = renderer.getPixelRatio();
+  const target = new THREE.WebGLRenderTarget(size.x * pixelRatio, size.y * pixelRatio, {
+    type: THREE.HalfFloatType,
+    samples: COMPOSER_SAMPLES,
+  });
+  target.texture.name = "EffectComposer.rt1";
+  // The composer clones it for its second buffer, samples and all, and frees both in `dispose`.
+  const composer = new EffectComposer(renderer, target);
+  composer.setSize(size.x, size.y);
+  return composer;
+};
+
 export const createSpeedLines = (
   renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,
   camera: THREE.Camera,
 ): SpeedLines => {
-  const composer = new EffectComposer(renderer);
+  const composer = createSceneComposer(renderer);
   const renderPass = new RenderPass(scene, camera);
   composer.addPass(renderPass);
 

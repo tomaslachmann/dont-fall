@@ -8,7 +8,10 @@ ownership data — needed by `CharacterSelect.tsx`'s turntable/pick UI.
 character models (a separate, already-in-progress art/pipeline workstream) and ticket 13 (needs
 cosmetic-ownership data to gate locked/owned skins), neither of which this ticket needs yet.
 
-**Status:** scoped — the near-term version is trivial; downgrade this to a wiring ticket.
+**Status:** done — the stub scope below was superseded mid-pass: body-color
+selection shipped as a full slice (persisted on the Account, replicated to
+the match, tinted in game) with a live 3D turntable, and the factory base
+joined as an eighth skin whose eyes keep their authored color.
 
 ## Decided scope (ADR 0052)
 
@@ -38,6 +41,34 @@ client-only cosmetic swap vs. replicated state other Players need to see, which 
 0046's remote-Character-model work.)*
 
 ## Done when
+
+Stub (this wiring pass):
+
+- [x] `CharacterSelect.tsx` wired behind AuthGate at `/character`, with a
+  CHARACTER pill on the Main Menu and back-to-menu navigation
+- [x] SAVE and OPEN SHOP honestly say the action isn't implemented (plain
+  alert, per the scope above) instead of pretending — no backend, no
+  ownership check, no persistence
+- [x] Covered: `CharacterSelect.test.tsx` (tabs/swatches/callbacks),
+  `CharacterSelectRoute.test.tsx` (render/back/alerts), App routing cases
+
+Body-color selection (shipped, superseding the stub above):
+
+- [x] SAVE persists via `PUT /auth/me/cosmetics` (`accounts.bodySkin`, shared
+  `invalidBodySkinReason`); the pick pre-selects off `GET /auth/me`
+- [x] The skin replicates to the match (lobby roster → snapshot) and tints
+  the local model, every remote rig, and the free-roam bean
+- [x] The turntable renders the real BLIP rig (idle, auto-rotate, ROTATE spin,
+  PLAY EMOTE wiggle, RANDOMISE) with a live preview tint; WebGL-less
+  environments degrade to the caption
+- [x] The factory base is the eighth skin (id 7, `BASE_BODY_SKIN_ID`) —
+  untinted, with a "BASE" panel label; eye materials never take the tint
+  (`playerTint.ts`, BLIP-specific by authored material name)
+- [x] Covered: `cosmetics.test.ts` (range + tri-state `bodySkinHue`),
+  `playerTint.test.ts` (eyes/base/restore), `CharacterSelect.test.tsx`,
+  `CharacterSelectRoute.test.tsx` (incl. base SAVE), API auth suite
+
+Real selection (deferred — revisit when new character art or ticket 13 lands):
 
 - [ ] Not yet scoped
 

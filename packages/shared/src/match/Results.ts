@@ -44,6 +44,12 @@ export interface DnfEntry {
    * is deleted on close. `null` for a connection that never authed.
    */
   accountId: string | null;
+  /**
+   * Their equipped body skin (M9 ticket 15) — captured at drop for the same
+   * reason, so a dropped racer's podium bean still wears their color.
+   * `null` for a seat with none.
+   */
+  bodySkin: number | null;
 }
 
 /**

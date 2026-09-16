@@ -1,12 +1,17 @@
 import Stage from '../ui/Stage';
 import Panel from '../ui/Panel';
 import JellyButton from '../ui/JellyButton';
-import RenderSlot from '../ui/RenderSlot';
+import { CharacterPreview, WIN_SEQUENCE } from './CharacterPreview.js';
 import type { Feel } from '../tokens';
 import s from './Rewards.module.css';
 
 export interface RewardsProps {
   level?: number;
+  /**
+   * Whose beans these are — the celebrating bean wears their skin, or the
+   * default when the Account didn't load.
+   */
+  skin?: number | null;
   xpGain?: number;
   /** Fraction of the bar you already had, 0-1. */
   xpBefore?: number;
@@ -40,6 +45,7 @@ const ReplayIcon = () => (
 export default function Rewards({
   level = 43, xpGain = 1240, xpBefore = 0.46, xpEarned = 0.31,
   breakdown = BREAKDOWN, beans = 860, beansSplit = SPLIT,
+  skin = null,
   unlock, onPlayAgain, onLobby, onEquip, onExit, feel,
 }: RewardsProps) {
   return (
@@ -54,11 +60,16 @@ export default function Rewards({
         <span className={s.level}>LEVEL {level}</span>
       </div>
 
-      <RenderSlot
+      <CharacterPreview
+        skin={skin}
+        animation={WIN_SEQUENCE}
+        autoRotate={false}
         className={s.render}
         label="3D CHARACTER RENDER"
-        sub="LEVEL-UP POSE + NEW HAT ON"
+        sub="LEVEL-UP POSE"
+        canvasLabel="3D preview of your bean celebrating"
       />
+      {/* No hat yet — nothing to put on until the inventory exists (see RewardsRoute). */}
 
       <div className={s.cards}>
         <Panel className={s.xp}>

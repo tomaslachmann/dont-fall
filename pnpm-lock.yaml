@@ -11,6 +11,9 @@ importers:
       '@dimforge/rapier3d-compat':
         specifier: 0.20.0
         version: 0.20.0
+      meshoptimizer:
+        specifier: 0.18.1
+        version: 0.18.1
       three:
         specifier: 0.171.0
         version: 0.171.0
@@ -69,6 +72,9 @@ importers:
 
   apps/client:
     dependencies:
+      '@dont-fall/render':
+        specifier: workspace:*
+        version: link:../../packages/render
       '@dont-fall/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -155,6 +161,9 @@ importers:
 
   apps/track-builder:
     dependencies:
+      '@dont-fall/render':
+        specifier: workspace:*
+        version: link:../../packages/render
       '@dont-fall/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -195,6 +204,25 @@ importers:
       vite:
         specifier: ^6.0.11
         version: 6.4.3(@types/node@22.20.1)(tsx@4.23.13)
+      vitest:
+        specifier: ^3.0.5
+        version: 3.2.7(@types/node@22.20.1)(jsdom@25.0.1)(tsx@4.23.13)
+
+  packages/render:
+    dependencies:
+      '@dont-fall/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@types/three':
+        specifier: ^0.171.0
+        version: 0.171.0
+      three:
+        specifier: ^0.171.0
+        version: 0.171.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
       vitest:
         specifier: ^3.0.5
         version: 3.2.7(@types/node@22.20.1)(jsdom@25.0.1)(tsx@4.23.13)

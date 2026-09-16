@@ -6,17 +6,46 @@ import { HitReactionPlayer } from "./hitReactionPlayer.js";
 const clip = (name: string, duration: number): THREE.AnimationClip =>
   new THREE.AnimationClip(name, duration, [new THREE.NumberKeyframeTrack(".rotation[x]", [0, duration], [0, 1])]);
 
+/**
+ * Every clip unbound — the rig's full action set is large (ADR 0071) and this
+ * suite only cares about the two one-shot overlays, so the rest is explicitly
+ * absent rather than listed.
+ */
+const silentActions = (): CharacterActions => ({
+  idle: null,
+  walk: null,
+  run: null,
+  jumpStart: null,
+  jumpRise: null,
+  jumpApex: null,
+  jumpFall: null,
+  jumpLand: null,
+  punch: null,
+  hitReact: null,
+  ko: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
+  getUp: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
+  death: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
+  grabReach: null,
+  grabPull: null,
+  grabHold: null,
+  grabDropOut: null,
+  struggleHeld: null,
+  struggleAir: null,
+  wobble: null,
+  wobbleWalk: null,
+});
+
 const setup = () => {
   const root = new THREE.Object3D();
   const mixer = new THREE.AnimationMixer(root);
   const punch = mixer.clipAction(clip("Punch", 0.8));
-  const hitReact = mixer.clipAction(clip("HitReact", 0.6));
+  const hitReact = mixer.clipAction(clip("Hit_React", 0.6));
   const run = mixer.clipAction(clip("Run", 1));
   punch.setLoop(THREE.LoopOnce, 1);
   punch.clampWhenFinished = false;
   hitReact.setLoop(THREE.LoopOnce, 1);
   hitReact.clampWhenFinished = false;
-  const actions: CharacterActions = { idle: null, walk: null, run: null, jump: null, death: null, punch, hitReact };
+  const actions: CharacterActions = { ...silentActions(), punch, hitReact };
   return { mixer, actions, punch, hitReact, run };
 };
 
@@ -87,7 +116,7 @@ describe("HitReactionPlayer (M6 ticket 03 — Punch/HitReact, one-shot overlays 
 
   it("is a harmless no-op when the model has no Punch/HitReact clip", () => {
     const player = new HitReactionPlayer();
-    const noClips: CharacterActions = { idle: null, walk: null, run: null, jump: null, death: null, punch: null, hitReact: null };
+    const noClips: CharacterActions = silentActions();
     player.update(0, 0, noClips, 0.1, null);
     expect(() => player.update(1, 0, noClips, 0.1, null)).not.toThrow();
     expect(player.update(1, 1, noClips, 0.1, null)).toBeNull();

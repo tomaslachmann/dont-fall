@@ -9,8 +9,8 @@ describe("buildResults", () => {
         b: { finishTick: 100, checkpointIndex: 4, fallCount: 0 },
       },
       [
-        { id: "a", nickname: "Alice", ready: true, joinOrder: 0, accountId: null },
-        { id: "b", nickname: "Bob", ready: true, joinOrder: 1, accountId: null },
+        { id: "a", nickname: "Alice", ready: true, joinOrder: 0, accountId: null, bodySkin: null },
+        { id: "b", nickname: "Bob", ready: true, joinOrder: 1, accountId: null, bodySkin: null },
       ],
       [],
     );
@@ -69,7 +69,7 @@ describe("buildResults", () => {
   it("carries falls and Checkpoint progress through for every row, Qualified or not", () => {
     const rows = buildResults(
       { a: { finishTick: 100, checkpointIndex: 4, fallCount: 7 } },
-      [{ id: "a", nickname: "Alice", ready: true, joinOrder: 0, accountId: null }],
+      [{ id: "a", nickname: "Alice", ready: true, joinOrder: 0, accountId: null, bodySkin: null }],
       [],
     );
 
@@ -79,8 +79,8 @@ describe("buildResults", () => {
   it("appends a DNF row for a Player who dropped mid-Round, last and unranked", () => {
     const rows = buildResults(
       { a: { finishTick: 100, checkpointIndex: 4, fallCount: 0 } },
-      [{ id: "a", nickname: "Alice", ready: true, joinOrder: 0, accountId: null }],
-      [{ id: "left-id", nickname: "Casey", accountId: null }],
+      [{ id: "a", nickname: "Alice", ready: true, joinOrder: 0, accountId: null, bodySkin: null }],
+      [{ id: "left-id", nickname: "Casey", accountId: null, bodySkin: null }],
     );
 
     expect(rows.map((r) => r.id)).toEqual(["a", "left-id"]);
@@ -156,8 +156,8 @@ describe("buildResults — a DNF'd Player whose Character is still in the world 
   // Screen twice, once as "Did not reach a Checkpoint" and again as "Left
   // early".
   const players = [
-    { id: "stayed", nickname: "Stayed", ready: true, joinOrder: 0, accountId: null },
-    { id: "left", nickname: "Left", ready: true, joinOrder: 1, accountId: null },
+    { id: "stayed", nickname: "Stayed", ready: true, joinOrder: 0, accountId: null, bodySkin: null },
+    { id: "left", nickname: "Left", ready: true, joinOrder: 1, accountId: null, bodySkin: null },
   ];
 
   it("gives them one row, not two", () => {
@@ -167,7 +167,7 @@ describe("buildResults — a DNF'd Player whose Character is still in the world 
         left: { finishTick: null, checkpointIndex: 0, fallCount: 2 },
       },
       players,
-      [{ id: "left", nickname: "Left", accountId: null }],
+      [{ id: "left", nickname: "Left", accountId: null, bodySkin: null }],
     );
 
     expect(rows.map((r) => r.id)).toEqual(["stayed", "left"]);
@@ -178,7 +178,7 @@ describe("buildResults — a DNF'd Player whose Character is still in the world 
     const rows = buildResults(
       { left: { finishTick: null, checkpointIndex: 0, fallCount: 2 } },
       players,
-      [{ id: "left", nickname: "Left", accountId: null }],
+      [{ id: "left", nickname: "Left", accountId: null, bodySkin: null }],
     );
 
     expect(rows[0]).toMatchObject({ id: "left", dnf: true, qualified: false });
@@ -188,7 +188,7 @@ describe("buildResults — a DNF'd Player whose Character is still in the world 
     const rows = buildResults(
       { left: { finishTick: null, checkpointIndex: 1, fallCount: 3 } },
       players,
-      [{ id: "left", nickname: "Left", accountId: null }],
+      [{ id: "left", nickname: "Left", accountId: null, bodySkin: null }],
     );
 
     expect(rows[0]).toMatchObject({ checkpointIndex: 1, fallCount: 3 });
@@ -203,7 +203,7 @@ describe("buildResults — a DNF'd Player whose Character is still in the world 
         stayed: { finishTick: 90, checkpointIndex: 2, fallCount: 0 },
       },
       players,
-      [{ id: "left", nickname: "Left", accountId: null }],
+      [{ id: "left", nickname: "Left", accountId: null, bodySkin: null }],
     );
 
     expect(rows.map((r) => ({ id: r.id, placement: r.placement, dnf: r.dnf }))).toEqual([
@@ -216,7 +216,7 @@ describe("buildResults — a DNF'd Player whose Character is still in the world 
     const rows = buildResults(
       { stayed: { finishTick: 90, checkpointIndex: 1, fallCount: 0 } },
       players,
-      [{ id: "left", nickname: "Left", accountId: null }],
+      [{ id: "left", nickname: "Left", accountId: null, bodySkin: null }],
     );
 
     expect(rows.map((r) => r.id)).toEqual(["stayed", "left"]);

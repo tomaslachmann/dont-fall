@@ -78,6 +78,8 @@ export interface MatchTableRow {
   nickname: string;
   score: number;
   placement: number;
+  /** Equipped skin at Match end — null for anonymous seats and pre-skins results: the default. */
+  bodySkin: number | null;
 }
 
 export interface MatchResultsView {
@@ -115,6 +117,7 @@ export const toMatchResultsView = (
     nickname: result.nicknames[id] ?? id,
     score: totals[id]!,
     placement: placements[i]!,
+    bodySkin: (result.bodySkins ?? {})[id] ?? null,
   }));
 
   const myRounds: ClaimedRoundRow[] = [];

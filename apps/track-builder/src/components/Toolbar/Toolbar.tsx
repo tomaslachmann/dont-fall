@@ -1,7 +1,9 @@
 import { useState } from "react";
 import {
+  BASE_RACE_TRACK_ID,
   DEFAULT_SURVIVOR_TARGET,
   DEFAULT_TIME_LIMIT_MS,
+  ENVIRONMENT_IDS,
   MAX_SURVIVOR_TARGET,
   MAX_TIME_LIMIT_MS,
   MIN_SURVIVOR_TARGET,
@@ -10,6 +12,7 @@ import {
 import css from "./Toolbar.module.css";
 import { Field } from "../Field/Field";
 import { Kicker } from "../Kicker/Kicker";
+import { SegmentedControl } from "../SegmentedControl/SegmentedControl";
 import { UndoIcon, RedoIcon, TrashIcon } from "../icons/Icons";
 import type { BuilderEngine } from "../../engine.js";
 import { useEngineVersion } from "../../hooks/useEngine.js";
@@ -80,6 +83,11 @@ export function Toolbar({ engine, onBrowse }: Props) {
         <Field value={survivors} width={40} type="number" min={MIN_SURVIVOR_TARGET} max={MAX_SURVIVOR_TARGET}
           step={1} title={`survivor target (${MIN_SURVIVOR_TARGET}–${MAX_SURVIVOR_TARGET})`}
           onChange={setSurvivors} />
+        <Kicker>ENVIRONMENT</Kicker>
+        {/* Held by the engine, not a local field: the viewport's preview follows the pick live. */}
+        <SegmentedControl shape="pill" size="sm" tone="ink" value={engine.environment}
+          items={ENVIRONMENT_IDS.map((id) => ({ value: id, label: id.toUpperCase(), title: `draw this Track under ${id}` }))}
+          onChange={(id) => engine.setEnvironment(id)} />
       </div>
 
       <span className={css.rule} />
@@ -87,9 +95,9 @@ export function Toolbar({ engine, onBrowse }: Props) {
       <div className={css.group}>
         <button type="button" className={css.save}
           onClick={() => void engine.saveTrack(name, defaults())}>SAVE</button>
-        <Field value={trackId} variant="text" width={74} placeholder="m1-playground" onChange={setTrackId} />
+        <Field value={trackId} variant="text" width={74} placeholder={BASE_RACE_TRACK_ID} onChange={setTrackId} />
         <button type="button" className={css.btn}
-          onClick={() => void engine.loadTrackById(trackId.trim() || "m1-playground")}>LOAD</button>
+          onClick={() => void engine.loadTrackById(trackId.trim() || BASE_RACE_TRACK_ID)}>LOAD</button>
         <button type="button" className={[css.btn, css.inkBtn].join(" ")} onClick={onBrowse}>BROWSE</button>
       </div>
 

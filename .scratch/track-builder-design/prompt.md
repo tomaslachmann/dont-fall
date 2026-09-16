@@ -88,6 +88,17 @@ Tři regiony, neměnit jejich smysl, jen vzhled a uspořádání uvnitř:
 
 ### C. Inspector (plovoucí panel vpravo nahoře, jen při výběru)
 
+> NOTE (2026-09-15): inspector je od teď **stack skládacích sekcí** (accordion)
+> s vlastním scrollem — TRANSFORM · COURSE · MOTION · SURFACE, každá sekce má
+> hlavičku s názvem a shrnutím svého stavu (složená sekce skrývá ovládání, ne
+> to, co drží). Rozhodnuto s uživatelem, protože stará varianta — každá
+> vlastnost jako trvale otevřený panel s vlastním ATTACH tlačítkem — vytlačila
+> Motion mimo kartu, která navíc vůbec nescrollovala. Nová vlastnost = jedna
+> složená hlavička, ne dalších 80 px. Panel si sekci renderuje sám
+> (`InspectorSection`), inspector jen určuje pořadí. Belt/Ice/Mud se slily do
+> jedné sekce SURFACE, kde jsou led a bahno **jedna volba** (PLAIN/ICE/MUD) —
+> ADR 0067 je stejně vzájemně vylučuje a publish dvojici odmítá.
+
 - Nadpis „Selected" + **label vybraného** (id Modulu, index Segmentu;
   u multi-selectu počet/co je vybráno).
 - **Gizmo mód:** tlačítka Move / Rotate / Scale.

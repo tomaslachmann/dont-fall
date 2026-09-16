@@ -7,10 +7,17 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "dev": "bash scripts/dev.sh",
-    "check:assets": "tsx scripts/check-assets.ts"
+    "check:assets": "tsx scripts/check-assets.ts",
+    "convert:kaykit": "tsx scripts/convert-kaykit.ts",
+    "convert:traps": "tsx scripts/convert-imagetostl.ts",
+    "convert:fan": "tsx scripts/convert-fan.ts",
+    "fit:gates": "tsx scripts/fit-gates.ts"
   },
   "devDependencies": {
-    "typescript": "^5.7.3",
-    "tsx": "^4.19.2"
+    "@dimforge/rapier3d-compat": "0.20.0",
+    "meshoptimizer": "0.18.1",
+    "three": "0.171.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
   }
 }

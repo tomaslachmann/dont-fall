@@ -11,6 +11,7 @@ const RESULT = {
   results: [{ rows: [{ id: "a", placement: 1, qualified: true }] }],
   nicknames: { a: "Ann" },
   accountIds: { a: "acc-1" },
+  bodySkins: { a: 2 },
   totalFalls: { a: 2 },
   endedAtMs: 60_000,
 };

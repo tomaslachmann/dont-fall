@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { MODULE_LIBRARY, STANDINGS_READY_TIMEOUT_MS, countCheckpoints } from "@dont-fall/shared";
+import { ASSET_PLACEMENT_MODULES, MODULE_LIBRARY, STANDINGS_READY_TIMEOUT_MS, countCheckpoints } from "@dont-fall/shared";
 import { Button } from "@dont-fall/ui";
 import type { ExitReason, GameHandle, StandingsSnapshot } from "../game/index.js";
 import type { HitTakenEvent } from "../game/hitTaken.js";
@@ -181,7 +181,7 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
   const betting = useBettingState(lobby?.matchId, panelWanted ? roundNumber : undefined, panelWanted);
   const beanBalance = useBeanBalance();
   const placeBet = usePlaceBet();
-  const totalCheckpoints = trackDetail ? countCheckpoints(trackDetail.track, MODULE_LIBRARY) : 0;
+  const totalCheckpoints = trackDetail ? countCheckpoints(trackDetail.track, { ...MODULE_LIBRARY, ...ASSET_PLACEMENT_MODULES }) : 0;
   const navigate = useNavigate();
 
   // Latest-ref, not a dependency: onMatchEnd/onExit are typically a fresh

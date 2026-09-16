@@ -18,7 +18,7 @@ export type { CharacterMotionState, BoneSnapshot, PropSnapshot };
  * distinct from `"Bump"` even though both feed the identical Impact
  * pipeline, since one was thrown on purpose and the other wasn't.
  */
-export type RagdollCause = "Bump" | "Fall" | "WallImpact" | "Spinner" | "Disconnect" | "Hit";
+export type RagdollCause = "Bump" | "Fall" | "WallImpact" | "Spinner" | "Obstacle" | "Disconnect" | "Hit";
 
 export interface CharacterSnapshot {
   /** The point the camera follows: capsule centre while upright, pelvis while ragdolling. */
@@ -78,38 +78,12 @@ export interface CharacterSnapshot {
    */
   heldByGrabberId: string | null;
   /**
-   * Rises every time a speed/slow pad fires (M3.7 ticket 01, ADR 0035) — the
-   * Epoch idiom (CONTEXT.md), same as {@link ragdollEpoch}/{@link respawnCount}.
-   * Not restored during reconciliation: like `ragdollEpoch`, it's a pure
-   * function of this Character's own local trigger detection, which
-   * re-derives the same count independently on both sides as long as they
-   * agree on position.
-   */
-  speedPadEpoch: number;
-  /**
-   * Ms remaining until the currently-active pad effect (if any) has fully
-   * faded back to neutral; 0 when no effect is active. Mirrors
-   * `dashCooldownMs` — a reconciling client restores its `SpeedPadController`
-   * from this rather than re-deriving it, exactly like
-   * `DashController.restoreCooldownMs`.
-   */
-  speedPadMsLeft: number;
-  /**
-   * The peak multiplier the currently-active pad effect is holding/fading
-   * from. Meaningless whenever `speedPadMsLeft` is 0, but always carries the
-   * last one latched — needed alongside `speedPadMsLeft` to reconstruct the
-   * fade curve exactly on reconciliation (the remaining time alone can't
-   * distinguish a speed pad's peak from a slow pad's).
-   */
-  speedPadCapMultiplier: number;
-  /**
-   * Rises every time a launch pad fires (M3.7 ticket 02) — the Epoch idiom,
-   * same as {@link speedPadEpoch}. Not restored during reconciliation, for
-   * the same reason `speedPadEpoch` isn't: a pure function of this
-   * Character's own local trigger detection, re-derived independently on
-   * both sides as long as they agree on position. A launch pad has no
-   * decay curve alongside it (unlike `speedPadMsLeft`/`speedPadCapMultiplier`)
-   * — its whole effect already lives in the ordinary `velocity` field.
+   * Rises every time a launch pad fires (M3.7 ticket 02) — the Epoch idiom
+   * (CONTEXT.md), same as {@link ragdollEpoch}. Not restored during
+   * reconciliation: a pure function of this Character's own local trigger
+   * detection, re-derived independently on both sides as long as they agree
+   * on position — its whole effect already lives in the ordinary `velocity`
+   * field.
    */
   launchPadEpoch: number;
   /**
@@ -164,6 +138,13 @@ export interface CharacterSnapshot {
    * the HitReact animation.
    */
   hitReactEpoch: number;
+  /**
+   * Rises every time this Character's own grab attempt fires (ADR 0071) — the
+   * Grab's counterpart of `hitEpoch`, and just as indifferent to whether the
+   * attempt catches anyone (that is `grabbingId`). Drives the reach a Grab at
+   * nobody still shows.
+   */
+  grabEpoch: number;
   /**
    * The sim tick the current `motionState` phase began. The client derives the
    * GettingUp blend from it locally (anchor-tick + local derivation, the
@@ -231,15 +212,13 @@ export interface CharacterSnapshotFields {
   grabCooldownMs?: number;
   grabbingId?: string | null;
   heldByGrabberId?: string | null;
-  speedPadEpoch?: number;
-  speedPadMsLeft?: number;
-  speedPadCapMultiplier?: number;
   launchPadEpoch?: number;
   facing?: number;
   lastInputTick?: number;
   ragdollEpoch?: number;
   hitEpoch?: number;
   hitReactEpoch?: number;
+  grabEpoch?: number;
   ragdollCause?: RagdollCause;
   phaseStartTick?: number;
   bones?: BoneSnapshot[];
@@ -249,8 +228,8 @@ export interface CharacterSnapshotFields {
 }
 
 /**
- * The exact slice of a `CharacterSnapshot` a reconciliation needs (ticket 05;
- * `speedPad*` added M3.7 ticket 01) — one shared alias rather than the same
+ * The exact slice of a `CharacterSnapshot` a reconciliation needs (ticket 05)
+ * — one shared alias rather than the same
  * field-name union hand-typed twice (`RapierSimulation.reconcileCharacter`
  * and `CharacterController.reconcileTo`, code review), where a future
  * reconciliation-relevant field could easily be added to only one of the two
@@ -268,8 +247,6 @@ export type ReconcileBase = Pick<
   | "hitCooldownMs"
   | "hitChargeMs"
   | "grabCooldownMs"
-  | "speedPadMsLeft"
-  | "speedPadCapMultiplier"
   // M4 ticket 02: Qualification is latched and locks input, so the client
   // must be able to take the server's answer rather than keep its own.
   | "finishTick"
@@ -297,15 +274,13 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   grabCooldownMs: fields.grabCooldownMs ?? 0,
   grabbingId: fields.grabbingId ?? null,
   heldByGrabberId: fields.heldByGrabberId ?? null,
-  speedPadEpoch: fields.speedPadEpoch ?? 0,
-  speedPadMsLeft: fields.speedPadMsLeft ?? 0,
-  speedPadCapMultiplier: fields.speedPadCapMultiplier ?? 1,
   launchPadEpoch: fields.launchPadEpoch ?? 0,
   facing: fields.facing ?? 0,
   lastInputTick: fields.lastInputTick ?? 0,
   ragdollEpoch: fields.ragdollEpoch ?? 0,
   hitEpoch: fields.hitEpoch ?? 0,
   hitReactEpoch: fields.hitReactEpoch ?? 0,
+  grabEpoch: fields.grabEpoch ?? 0,
   ragdollCause: fields.ragdollCause ?? "Fall",
   phaseStartTick: fields.phaseStartTick ?? 0,
   bones: fields.bones ?? [],

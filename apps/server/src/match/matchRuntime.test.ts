@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  BASE_RACE_TRACK,
   IDLE_INPUTS,
   MODULE_LIBRARY,
   TICK_RATE_HZ,
@@ -10,6 +11,7 @@ import {
   RapierSimulation,
   loadAssetLibrary,
   resolveTrack,
+  trackSpawn,
   type Track,
 } from "@dont-fall/shared";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -47,11 +49,11 @@ const seat = (
   ids.forEach((entry, joinOrder) => {
     const id = typeof entry === "string" ? entry : entry.id;
     const accountId = typeof entry === "string" ? null : entry.accountId;
-    rt.lobbyPlayers.set(id, { id, nickname: id, ready: true, joinOrder, accountId });
+    rt.lobbyPlayers.set(id, { id, nickname: id, ready: true, joinOrder, accountId, bodySkin: null });
   });
 };
 
-const authedRuntime = (resolveAccount: (token: string) => Promise<string | null>): MatchRuntime =>
+const authedRuntime = (resolveAccount: (token: string) => Promise<{ accountId: string; bodySkin: number | null } | null>): MatchRuntime =>
   new MatchRuntime(config, fetched, undefined, undefined, undefined, undefined, { resolveAccount });
 
 const characterIds = (rt: MatchRuntime): string[] => Object.keys(rt.simulation.snapshot().characters).sort();
@@ -128,19 +130,20 @@ describe("MatchRuntime asset worlds (M8 ticket 02)", () => {
       return new Uint8Array(readFileSync(join(assetsRoot, fileName)));
     }, "http://assets.test");
     const library = { ...MODULE_LIBRARY, ...assets };
-    const track: Track = [
-      { moduleId: "platform_straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
-      { moduleId: "stairs_4step", position: { x: 0, y: -0.375, z: -4 }, rotation: Math.PI },
-    ];
+    // The seeded base race — maintained where the asset set is, so this
+    // equivalence pin never hardcodes module ids that can be deleted.
+    const track: Track = BASE_RACE_TRACK;
 
     // Server path: the runtime builds (seats nobody — no lobby players yet).
     const rt = new MatchRuntime(config, { ...fetched, track }, library);
     const serverSim = rt.simulation;
-    serverSim.addCharacter("p", { x: 0, y: 3, z: 1.5 });
+    // Spawned on the Start, where a Round seats its first Player.
+    const spawn = trackSpawn(track, 0, library);
+    serverSim.addCharacter("p", spawn);
 
     // Client path: resolve plus construct, the way prediction builds it.
     const clientSim = new RapierSimulation({ ...resolveTrack(library, track), withDefaultCharacter: false });
-    clientSim.addCharacter("p", { x: 0, y: 3, z: 1.5 });
+    clientSim.addCharacter("p", spawn);
 
     const walk = { ...IDLE_INPUTS, moveDirection: { x: 0, y: 0, z: -1 } };
     for (let n = 0; n < Math.round(4 * TICK_RATE_HZ); n += 1) {
@@ -163,7 +166,7 @@ describe("auth message binding (M9 ticket 11 phase 2b)", () => {
   const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
   it("binds a resolving token's Account to the sender's Lobby row", async () => {
-    const resolveAccount = vi.fn(async () => "acc-1");
+    const resolveAccount = vi.fn(async () => ({ accountId: "acc-1", bodySkin: 2 }));
     const rt = authedRuntime(resolveAccount);
     try {
       seat(rt, "a");
@@ -173,6 +176,7 @@ describe("auth message binding (M9 ticket 11 phase 2b)", () => {
 
       expect(resolveAccount).toHaveBeenCalledWith("tok");
       expect(rt.lobbyPlayers.get("a")?.accountId).toBe("acc-1");
+      expect(rt.lobbyPlayers.get("a")?.bodySkin).toBe(2);
     } finally {
       rt.simulation.dispose();
     }
@@ -193,8 +197,8 @@ describe("auth message binding (M9 ticket 11 phase 2b)", () => {
   });
 
   it("a resolution landing after the Player left binds nothing and throws nothing", async () => {
-    let release!: (id: string | null) => void;
-    const gate = new Promise<string | null>((resolve) => {
+    let release!: (id: { accountId: string; bodySkin: number | null } | null) => void;
+    const gate = new Promise<{ accountId: string; bodySkin: number | null } | null>((resolve) => {
       release = resolve;
     });
     const rt = authedRuntime(() => gate);
@@ -203,7 +207,7 @@ describe("auth message binding (M9 ticket 11 phase 2b)", () => {
       handleLobbyMessage(rt, "a", { type: "auth", token: "tok" });
       rt.lobbyPlayers.delete("a");
 
-      release("acc-1");
+      release({ accountId: "acc-1", bodySkin: 2 });
       await flush();
 
       expect(rt.lobbyPlayers.has("a")).toBe(false);
@@ -213,7 +217,7 @@ describe("auth message binding (M9 ticket 11 phase 2b)", () => {
   });
 
   it("re-auth re-binds — latest send wins", async () => {
-    const rt = authedRuntime(async (token) => `acc-for-${token}`);
+    const rt = authedRuntime(async (token) => ({ accountId: `acc-for-${token}`, bodySkin: null }));
     try {
       seat(rt, "a");
 
@@ -228,7 +232,7 @@ describe("auth message binding (M9 ticket 11 phase 2b)", () => {
   });
 
   it("ignores a malformed auth — no token, no resolution, row untouched", async () => {
-    const resolveAccount = vi.fn(async () => "acc-1");
+    const resolveAccount = vi.fn(async () => ({ accountId: "acc-1", bodySkin: 2 }));
     const rt = authedRuntime(resolveAccount);
     try {
       seat(rt, "a");

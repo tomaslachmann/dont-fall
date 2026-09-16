@@ -2,4 +2,3 @@
 export type ImpactKind = 'carry' | 'stagger' | 'knockdown';
 
 export type PaletteMode = 'build' | 'compose';
-export type PaletteTab = 'procedural' | 'assets';

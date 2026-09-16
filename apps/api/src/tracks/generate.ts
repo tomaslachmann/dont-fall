@@ -17,9 +17,9 @@ export const generateRandomTrack = (
 ): Track => {
   const allIds = Object.keys(modules);
   if (allIds.length === 0) throw new Error("cannot generate a Track from an empty Module library");
-  // Only Modules that can actually be chained (M5 ticket 06). Not every Module
-  // has Sockets: one meant to be dropped on its own by free placement (ADR
-  // 0034) — the Survival arena is the first — has none, and `chainTrack`
+  // Only Modules that can actually be chained. Not every Module has Sockets:
+  // one meant to be dropped on its own by free placement (ADR 0034) — every
+  // converted asset — has none, and `chainTrack`
   // rightly throws rather than guessing where to put it. A generated Race
   // Track is chained end to end by definition, so a standalone piece simply
   // is not a candidate for one.

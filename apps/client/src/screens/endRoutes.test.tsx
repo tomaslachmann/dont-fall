@@ -19,7 +19,14 @@ describe("RewardsRoute", () => {
       <MemoryRouter initialEntries={["/rewards"]}>
         <Routes>
           <Route path="/" element={<div>Main Menu</div>} />
-          <Route path="/rewards" element={<RewardsRoute />} />
+          <Route
+            path="/rewards"
+            element={
+              <WithQuery>
+                <RewardsRoute />
+              </WithQuery>
+            }
+          />
         </Routes>
       </MemoryRouter>,
     );

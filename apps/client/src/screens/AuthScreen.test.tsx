@@ -36,6 +36,14 @@ describe("AuthScreen", () => {
     expect(assignedHref).toMatch(/\/auth\/discord\/authorize$/);
   });
 
+  it("FORGOT says inline that reset isn't available — never a window.alert", () => {
+    renderAt("/auth");
+
+    fireEvent.click(screen.getByRole("button", { name: "FORGOT?" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Password reset isn't available yet.");
+  });
+
   it("logs in with email/password, stores the token, and lands on the Main Menu", async () => {
     vi.stubGlobal(
       "fetch",

@@ -370,7 +370,9 @@ describe("validateAssetModule", () => {
 
 describe("the real files in assets/", () => {
   const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "assets");
-  const names = ["platform_straight", "ramp_45", "stairs_4step", "corner_lshape"];
+  // Off the registry, never a hardcoded list — a converted drop must not
+  // silently escape parsing.
+  const names = ASSET_MODULE_DEFS.map((def) => def.id);
 
   it.each(names)("parses %s: both roles present, indices in range", (name) => {
     const model = readAssetModel(new Uint8Array(readFileSync(join(root, `${name}.glb`))));

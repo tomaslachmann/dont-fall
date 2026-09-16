@@ -1,6 +1,7 @@
 import {
   DEFAULT_CHARACTER_ID,
   DEFAULT_KILL_PLANE_Y,
+  ENVIRONMENT_PRESETS,
   FIXED_STEP_EPSILON_MS,
   MAX_STEPS_PER_FRAME,
   RapierSimulation,
@@ -8,15 +9,19 @@ import {
   initPhysics,
   interpolateState,
   movementDirection,
+  passesThroughGate,
   pointInOrientedBox,
   resolveTrack,
   trackSpawn,
+  trackSpawnYaw,
   type SimInputs,
 } from "@dont-fall/shared";
 import { loadCharacterModel } from "../render/characterModel.js";
 import { assetPlacements } from "../render/assetVisuals.js";
+import { springTriggers } from "../render/springSquash.js";
 import { FreeLookCamera, KeyboardInput } from "../input/input.js";
 import { createTeardown, type Teardown } from "../lib/utils/teardown.js";
+import { fetchAccount } from "../lib/api/auth.js";
 import { createStage } from "../render/scene.js";
 import { createTrackLoading } from "./trackLoading.js";
 import type { GameHandle } from "./index.js";
@@ -70,8 +75,9 @@ export const startPracticeGame = async (config: PracticeConfig): Promise<GameHan
 const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise<GameHandle> => {
   const [, characterModel] = await Promise.all([initPhysics(), loadCharacterModel()]);
 
-  const { fetchTrack, loadLibrary, loadVisualTemplates } = createTrackLoading(config.host);
-  const { track, name } = await fetchTrack(config.trackId);
+  const { fetchTrack, loadLibrary, loadVisualTemplates, loadIceTexture, loadMudTexture, loadBounceTexture } =
+    createTrackLoading(config.host);
+  const { track, name, environment } = await fetchTrack(config.trackId);
   const trackName = name ?? config.trackId;
   const library = await loadLibrary();
   const resolved = resolveTrack(library, track);
@@ -82,16 +88,37 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     checkpoints: resolved.checkpoints,
     finishZones: resolved.finishZones,
     killPlaneY: DEFAULT_KILL_PLANE_Y,
+    // The Revision's own Environment (ADR 0074), the same one a Match draws.
+    environment: ENVIRONMENT_PRESETS[environment],
     spinners: resolved.spinners,
     props: resolved.props,
     characterModel,
     assetTemplates: await loadVisualTemplates(),
     assetPlacements: assetPlacements(track, library),
+    springs: springTriggers(resolved.launchPads, resolved.launchPadOwners),
+    bounceDecks: resolved.bounceDecks,
+    movingSegments: resolved.movingSegments,
+    conveyors: resolved.conveyors,
+    iceDecks: resolved.iceDecks,
+    iceTexture: await loadIceTexture(),
+    mudDecks: resolved.mudDecks,
+    mudTexture: await loadMudTexture(),
+    bounceTexture: await loadBounceTexture(),
+    volumes: resolved.volumes,
   });
   teardown.add(() => stage.dispose());
+  // The bean wears its skin in practice too (M9 ticket 15) — best effort, a
+  // failed fetch leaves the model natural rather than blocking the boot. The
+  // stored token authenticates against the page-host API (that's where login
+  // happened), so no host threading even when the Track came from elsewhere.
+  void fetchAccount()
+    .then((account) => stage.setLocalSkin(account?.bodySkin ?? null))
+    .catch(() => stage.setLocalSkin(null));
   const keyboard = new KeyboardInput();
   teardown.add(() => keyboard.dispose());
   const look = new FreeLookCamera(stage.domElement);
+  // Start looking along the Start's forward (ADR 0068).
+  look.yaw = trackSpawnYaw(track) ?? look.yaw;
   teardown.add(() => look.dispose());
 
   // Authoritative, like the server runs it — its own settle-checks end
@@ -104,24 +131,26 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
   const sim = new RapierSimulation({
     statics: resolved.statics,
     staticSurfaces: resolved.staticSurfaces,
+    staticConveyors: resolved.staticConveyors,
     staticTrimeshes: resolved.staticTrimeshes,
     checkpoints: resolved.checkpoints,
     spinners: resolved.spinners,
+    movingSegments: resolved.movingSegments,
     props: resolved.props,
-    speedPads: resolved.speedPads,
     launchPads: resolved.launchPads,
     volumes: resolved.volumes,
     withDefaultCharacter: false,
     authoritative: true,
   });
   teardown.add(() => sim.dispose());
-  sim.addCharacter(DEFAULT_CHARACTER_ID, trackSpawn(track, 0));
+  sim.addCharacter(DEFAULT_CHARACTER_ID, trackSpawn(track, 0, library));
 
   config.onPracticeState?.({ trackName, finished: false });
 
   let accumulatorMs = 0;
   let previousSnapshot = sim.snapshot();
   let finishAnnounced = false;
+  let lastPosition = previousSnapshot.characters[DEFAULT_CHARACTER_ID]!.position;
   let lastFrame = performance.now();
   let frameHandle = 0;
   teardown.add(() => cancelAnimationFrame(frameHandle));
@@ -163,6 +192,10 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     // Solo world: Props render straight from the local sim (no server
     // snapshot to pin them to), nobody remote to draw, nothing to spectate.
     stage.applyRenderState({ character: visualCharacter, props: render.props });
+    stage.applySpringSquash({ [DEFAULT_CHARACTER_ID]: visualCharacter }, now);
+    stage.applyBounceSheets({ [DEFAULT_CHARACTER_ID]: visualCharacter }, now);
+    // Air columns (ADR 0075) — practice draws the same flow a Match does.
+    stage.updateAirColumns(now);
     stage.updateCharacterAnimation(
       // Same backgrounded-tab clamp as match play (`MAX_ANIMATION_DELTA_MS`
       // in `game/index.ts`) — animation delta only, never sim time.
@@ -171,19 +204,31 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
       c.grounded,
       c.dashing,
       c.dashSpeed,
+      c.velocity.y,
       c.hitEpoch,
       0,
+      // G still reaches: every attempt bumps `grabEpoch`, caught or not.
+      c.grabEpoch,
+      // Solo: a Grab only ever engages another Character (`activeGrabs` is
+      // keyed grabber → held), and free-roam has none — so an attempt never
+      // becomes a hold, and there is no hold to draw or facing to freeze.
+      // Literal rather than read off `c`, which can only ever report null
+      // here (ADR 0071).
       undefined,
       false,
     );
-    stage.updateSpinners(snapshot.tick - 1 + accumulatorMs / TICK_MS);
+    stage.updateMotion(snapshot.tick - 1 + accumulatorMs / TICK_MS);
     stage.updateCamera(visualCharacter.position, look.yaw, look.pitch);
 
     // The finish that reports instead of ending (m8.1 ticket 02) — position
     // in a finish trigger, read off the same resolved zones the stage
     // draws. The sim itself never learns (see above), so this fires without
     // side effects and the author runs on.
-    const insideNow = resolved.finishZones.some((zone) => pointInOrientedBox(c.position, zone.trigger));
+    // A finish sign counts the frame you pass under it (ADR 0068), a retired block while you're in it.
+    const insideNow = resolved.finishZones.some((zone) =>
+      zone.gate ? passesThroughGate(lastPosition, c.position, zone.gate) : pointInOrientedBox(c.position, zone.trigger),
+    );
+    lastPosition = c.position;
     if (shouldAnnounceFinish(finishAnnounced, insideNow)) {
       finishAnnounced = true;
       config.onPracticeState?.({ trackName, finished: true });

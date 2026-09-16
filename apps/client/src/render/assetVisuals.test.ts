@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import {
+  ASSET_MODULE_DEFS,
   loadAssetLibrary,
   MODULE_LIBRARY,
   readAssetModel,
@@ -17,7 +18,9 @@ const realBytes = (moduleId: string): Uint8Array => new Uint8Array(readFileSync(
 const realFetch = async (url: string): Promise<Uint8Array> =>
   realBytes(url.substring(url.lastIndexOf("/") + 1, url.lastIndexOf(".glb")));
 
-const ASSET_IDS = ["platform_straight", "ramp_45", "stairs_4step", "corner_lshape"];
+// Off the registry, like the builder twin — a hardcoded four drifted silently
+// the moment the M9 block set landed, and would again with every drop.
+const ASSET_IDS = ASSET_MODULE_DEFS.map((def) => def.id);
 
 const assetLibrary = async (): Promise<Record<string, Module>> => ({
   ...MODULE_LIBRARY,
@@ -65,12 +68,7 @@ describe("loadAssetVisuals", () => {
       return realFetch(url);
     }, "http://assets.test", ASSET_IDS);
 
-    expect(seen.sort()).toEqual([
-      "http://assets.test/corner_lshape.glb",
-      "http://assets.test/platform_straight.glb",
-      "http://assets.test/ramp_45.glb",
-      "http://assets.test/stairs_4step.glb",
-    ]);
+    expect(seen.sort()).toEqual(ASSET_IDS.map((id) => `http://assets.test/${id}.glb`).sort());
   });
 
   it.each(ASSET_IDS)("keeps %s's visual mesh and drops its collision geometry", async (moduleId) => {
@@ -93,17 +91,17 @@ describe("loadAssetVisuals", () => {
   it("names the module when its fetch fails", async () => {
     await expect(
       loadAssetVisuals(async (url) => {
-        if (url.endsWith("ramp_45.glb")) throw new Error("GET answered 404");
+        if (url.endsWith("kaykit_arch_blue.glb")) throw new Error("GET answered 404");
         return realFetch(url);
       }, "http://assets.test", ASSET_IDS),
-    ).rejects.toThrow(/ramp_45/);
+    ).rejects.toThrow(/kaykit_arch_blue/);
   });
 });
 
 describe("extractVisualRoot", () => {
   it("detaches collision nodes instead of hiding them — nothing kept invisible", async () => {
-    const templates = await loadAssetVisuals(realFetch, "http://assets.test", ["platform_straight"]);
-    const template = templates["platform_straight"]!;
+    const templates = await loadAssetVisuals(realFetch, "http://assets.test", ["kaykit_floor_wood_2x2"]);
+    const template = templates["kaykit_floor_wood_2x2"]!;
 
     const hidden: THREE.Object3D[] = [];
     template.traverse((object) => {
@@ -145,14 +143,14 @@ describe("assetPlacements", () => {
   it("places one visual per asset Segment at the Segment's own origin and orientation", async () => {
     const library = await assetLibrary();
     const track = [
-      { moduleId: "platform_straight", position: { x: 10, y: 1, z: -3 }, rotation: Math.PI / 2, pitch: 0.1 },
-      { moduleId: "platform_straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { moduleId: "kaykit_floor_wood_2x2", position: { x: 10, y: 1, z: -3 }, rotation: Math.PI / 2, pitch: 0.1 },
+      { moduleId: "kaykit_floor_wood_2x2", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
     ];
 
     const placements = assetPlacements(track, library);
 
     expect(placements).toHaveLength(2);
-    expect(placements[0]!.moduleId).toBe("platform_straight");
+    expect(placements[0]!.moduleId).toBe("kaykit_floor_wood_2x2");
     expect(placements[0]!.position).toEqual({ x: 10, y: 1, z: -3 });
     // The same shared orientation `resolveTrack` rotates collision by — the
     // visual and the trimesh must never be positioned by separate code.
@@ -165,27 +163,29 @@ describe("assetPlacements", () => {
     const proceduralId = Object.keys(MODULE_LIBRARY)[0]!;
     const track = [
       { moduleId: proceduralId, position: { x: 0, y: 0, z: 0 }, rotation: 0 },
-      { moduleId: "ramp_45", position: { x: 0, y: 0, z: -4 }, rotation: 0 },
+      { moduleId: "kaykit_arch_blue", position: { x: 0, y: 0, z: -4 }, rotation: 0 },
     ];
 
     const placements = assetPlacements(track, library);
 
-    expect(placements.map((p) => p.moduleId)).toEqual(["ramp_45"]);
+    expect(placements.map((p) => p.moduleId)).toEqual(["kaykit_arch_blue"]);
   });
 });
 
 describe("buildAssetVisuals", () => {
   it("clones one transformed instance per placement without touching the template", async () => {
-    const templates = await loadAssetVisuals(realFetch, "http://assets.test", ["platform_straight"]);
-    const templateMeshCount = meshCount(templates["platform_straight"]!);
+    const templates = await loadAssetVisuals(realFetch, "http://assets.test", ["kaykit_floor_wood_2x2"]);
+    const templateMeshCount = meshCount(templates["kaykit_floor_wood_2x2"]!);
     const placements = [
       {
-        moduleId: "platform_straight",
+        moduleId: "kaykit_floor_wood_2x2",
+        segmentIndex: 0,
         position: { x: 10, y: 1, z: -3 },
         orientation: segmentOrientation({ rotation: Math.PI / 2, pitch: 0.1 }),
       },
       {
-        moduleId: "platform_straight",
+        moduleId: "kaykit_floor_wood_2x2",
+        segmentIndex: 1,
         position: { x: 0, y: 0, z: 0 },
         orientation: segmentOrientation({ rotation: 0 }),
       },
@@ -199,7 +199,7 @@ describe("buildAssetVisuals", () => {
     expect(group.children[0]!.quaternion.toArray()).toEqual([q.x, q.y, q.z, q.w]);
     // Clones share the template's geometry — four templates cover a Track of
     // any length with no per-Segment upload.
-    const templateMesh = templates["platform_straight"]!.children.flatMap((c) =>
+    const templateMesh = templates["kaykit_floor_wood_2x2"]!.children.flatMap((c) =>
       c instanceof THREE.Mesh ? [c] : [],
     )[0]!;
     const instanceMeshes: THREE.Mesh[] = [];
@@ -209,22 +209,23 @@ describe("buildAssetVisuals", () => {
     expect(instanceMeshes.length).toBeGreaterThan(0);
     for (const mesh of instanceMeshes) expect(mesh.geometry).toBe(templateMesh.geometry);
     // The template itself is untouched — still unparented, still whole.
-    expect(templates["platform_straight"]!.parent).toBeNull();
-    expect(meshCount(templates["platform_straight"]!)).toBe(templateMeshCount);
+    expect(templates["kaykit_floor_wood_2x2"]!.parent).toBeNull();
+    expect(meshCount(templates["kaykit_floor_wood_2x2"]!)).toBe(templateMeshCount);
   });
 
   it("fails loudly on a placement with no loaded template", () => {
     expect(() =>
       buildAssetVisuals({}, [
-        { moduleId: "platform_straight", position: { x: 0, y: 0, z: 0 }, orientation: segmentOrientation({ rotation: 0 }) },
+        { moduleId: "kaykit_floor_wood_2x2", segmentIndex: 0, position: { x: 0, y: 0, z: 0 }, orientation: segmentOrientation({ rotation: 0 }) },
       ]),
-    ).toThrow(/platform_straight/);
+    ).toThrow(/kaykit_floor_wood_2x2/);
   });
 
   it("removing a Segment removes its mesh, and a Track reload frees them all", async () => {
-    const templates = await loadAssetVisuals(realFetch, "http://assets.test", ["platform_straight"]);
+    const templates = await loadAssetVisuals(realFetch, "http://assets.test", ["kaykit_floor_wood_2x2"]);
     const placements = [0, 1].map((i) => ({
-      moduleId: "platform_straight",
+      moduleId: "kaykit_floor_wood_2x2",
+      segmentIndex: i,
       position: { x: i * 4, y: 0, z: 0 },
       orientation: segmentOrientation({ rotation: 0 }),
     }));
@@ -244,6 +245,35 @@ describe("buildAssetVisuals", () => {
     disposeSceneGraph(group);
     group.clear();
     expect(group.children).toHaveLength(0);
-    expect(meshCount(templates["platform_straight"]!)).toBe(1);
+    expect(meshCount(templates["kaykit_floor_wood_2x2"]!)).toBe(1);
+  });
+});
+
+describe("a scaled asset Segment (ADR 0062)", () => {
+  // Synthetic: what is under test is the scale reaching the instance, not GLB parsing.
+  const piece = {
+    id: "piece",
+    statics: [],
+    asset: { meshes: [] },
+    sockets: [],
+    footprint: { bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } }, clearance: 0.5 },
+  };
+
+  it("places the visual at the Segment's scale, and says nothing of scale at 1×", () => {
+    const placements = assetPlacements(
+      [
+        { moduleId: "piece", position: { x: 0, y: 0, z: 0 }, rotation: 0, scale: 2 },
+        { moduleId: "piece", position: { x: 5, y: 0, z: 0 }, rotation: 0 },
+      ],
+      { piece },
+    );
+    expect(placements[0]!.scale).toBe(2);
+    expect(placements[1]).not.toHaveProperty("scale");
+
+    const template = new THREE.Group();
+    template.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1)));
+    const group = buildAssetVisuals({ piece: template }, placements);
+    expect(group.children[0]!.scale.toArray()).toEqual([2, 2, 2]);
+    expect(group.children[1]!.scale.toArray()).toEqual([1, 1, 1]);
   });
 });

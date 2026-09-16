@@ -1,4 +1,7 @@
+import { createEnvironment, findSpinningParts, spinParts, type Environment } from "@dont-fall/render";
 import {
+  cloudFloorY,
+  DEFAULT_KILL_PLANE_Y,
   hasMotion,
   motionPose,
   orientBox,
@@ -6,24 +9,31 @@ import {
   segmentScale,
   quatToEuler,
   TICK_RATE_HZ,
+  type EnvironmentPreset,
   type Module,
   type MotionPose,
   type Track,
 } from "@dont-fall/shared";
-import { footprintCorners, motionPath, OUTCOME_COLOURS } from "./motionPreview.js";
+import { footprintCorners, motionPath, OUTCOME_COLOURS } from "../motion/motionPreview.js";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { addImpactTint, type ImpactTint } from "./impactTint.js";
+import { createCourseOverlay } from "./courseOverlay.js";
+import { lowestSegmentY } from "./environmentPreview.js";
+import { launchArcOf } from "./launchArc.js";
 import type { SchedulablePreview } from "./previewScheduler.js";
 import {
   MOTION_NODE,
   SHARES_TEMPLATE_RESOURCES,
   meshBoundsIn,
+  addConveyorBelt,
+  addBounceOverlay,
+  addIceOverlay,
+  addMudOverlay,
   applyMotionAt,
   applySegmentTransform,
   boundingRadius,
-  buildModuleGroup,
   buildSegmentGroup,
   disposeGroup,
 } from "./render.js";
@@ -37,9 +47,28 @@ import {
   snapScale,
   snapDragPosition,
   type SegmentTransform,
-} from "./trackEdit.js";
+} from "../track/trackEdit.js";
 
 export type { SegmentTransform };
+
+/**
+ * Lazily loaded deck-sheet textures (ADR 0066/0067) — each present once the
+ * engine's load for it lands, absent before (or when its Surface never
+ * appears on the Track, in which case it is never fetched at all).
+ */
+export interface SurfaceTextures {
+  ice?: THREE.Texture | undefined;
+  mud?: THREE.Texture | undefined;
+  bounce?: THREE.Texture | undefined;
+}
+
+/**
+ * The game's tone-mapping operator (ADR 0074; set in the client's
+ * `createStage`). Both builder renderers draw straight to a canvas, so each
+ * material tone-maps itself with it; a flat-colour `scene.background` is a
+ * clear colour and is left as authored.
+ */
+const GAME_TONE_MAPPING = THREE.NeutralToneMapping;
 
 /**
  * Shared offscreen thumbnail renderer — every palette preview rasterizes
@@ -73,6 +102,7 @@ export const createModulePreview = (canvas: HTMLCanvasElement, module: Module, t
     thumbnailCanvas.width = 96;
     thumbnailCanvas.height = 96;
     thumbnailRenderer = new THREE.WebGLRenderer({ canvas: thumbnailCanvas, antialias: true, alpha: true });
+    thumbnailRenderer.toneMapping = GAME_TONE_MAPPING;
   }
   const renderer = thumbnailRenderer;
   const offscreen = thumbnailCanvas;
@@ -81,9 +111,8 @@ export const createModulePreview = (canvas: HTMLCanvasElement, module: Module, t
 
   const scene = new THREE.Scene();
   // An asset Module previews its authored visual (M8 ticket 05) — what the
-  // author places is what the game plays. Everything else previews its
-  // boxes-and-markers group exactly as before.
-  const group = template ? template.clone(true) : buildModuleGroup(module);
+  // author places is what the game plays — and nothing until its bytes land.
+  const group = template ? template.clone(true) : new THREE.Group();
   scene.add(group);
   scene.add(new THREE.AmbientLight(0xffffff, 0.7));
   const dir = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -127,8 +156,16 @@ export interface TrackViewport {
    * the loaded visual template per asset Module id — placed asset Segments
    * render a clone each, everything else its boxes-and-markers group.
    * Optional and default-empty, so procedural-only callers pass nothing.
+   * `surfaceTextures` (ADR 0066/0067) sheets icy/muddy decks; each absent
+   * until the engine's lazy load lands, in which case those decks render
+   * unsheeted this sync.
    */
-  setTrack: (modules: Record<string, Module>, track: Track, assetTemplates?: Record<string, THREE.Group>) => void;
+  setTrack: (
+    modules: Record<string, Module>,
+    track: Track,
+    assetTemplates?: Record<string, THREE.Group>,
+    surfaceTextures?: SurfaceTextures,
+  ) => void;
   /**
    * Re-applies every existing Segment group's position/orientation from
    * `track` without disposing/rebuilding any geometry (code review, ticket
@@ -153,8 +190,22 @@ export interface TrackViewport {
    * clears it.
    */
   showMotionGuide: (index: number | undefined) => void;
+  /**
+   * Draw where the selected Spring throws (ADR 0069) — its ballistic arc and
+   * the apex it reaches, in world space — or clear it (`undefined`, or a
+   * Segment that is not a Spring). Rebuilt on selection and on every height
+   * edit, like the Motion guide.
+   */
+  showLaunchArc: (index: number | undefined) => void;
   /** Show or hide the Impact tint on moving and Spiked Segments (M11 ticket 07). */
   setImpactTintVisible: (visible: boolean) => void;
+  /**
+   * Draws the Track inside `preset` (ADR 0074) in place of the lavender
+   * authoring canvas, grid and lights, or `null` to put those back. The
+   * Environment is the game's own, with its fog off (the orbit camera frames
+   * whole Tracks from far outside the fog's distances) and no shadows.
+   */
+  setEnvironment: (preset: EnvironmentPreset | null) => void;
   /**
    * Aims the orbit camera at the middle of the current Track. `setTrack` does
    * this by itself only for a Track's first Segment — re-aiming on every
@@ -186,6 +237,17 @@ export interface TrackViewport {
   pickPartPivot: (clientX: number, clientY: number, index: number) => { x: number; y: number; z: number } | undefined;
   /** Raycasts from a mouse event's client coordinates; returns the Segment index hit, if any. */
   pick: (clientX: number, clientY: number) => number | undefined;
+  /**
+   * The spot on a still Segment's surface under the pointer (world) — where a
+   * Checkpoint's Respawn is being picked to stand (ADR 0068).
+   */
+  pickFloor: (clientX: number, clientY: number) => { index: number; point: { x: number; y: number; z: number } } | undefined;
+  /**
+   * Where Checkpoint `index`'s Respawn stands as drawn (world) — its picked
+   * spot, or the floor found under its opening; `floor` absent when there is
+   * none. `undefined` off a Checkpoint.
+   */
+  respawnOf: (index: number) => { floor: { x: number; y: number; z: number } | undefined } | undefined;
   render: () => void;
   dispose: () => void;
 }
@@ -197,15 +259,20 @@ export const createTrackViewport = (
 ): TrackViewport => {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.toneMapping = GAME_TONE_MAPPING;
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xefe9fa);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  // The authoring view (ADR 0063): the default, and what an Environment preview hides.
+  const authoringBackground = new THREE.Color(0xefe9fa);
+  scene.background = authoringBackground;
+  const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+  scene.add(ambient);
   const dir = new THREE.DirectionalLight(0xffffff, 0.9);
   dir.position.set(10, 20, 10);
   scene.add(dir);
-  scene.add(new THREE.GridHelper(200, 40, 0xb79ced, 0xd9cff2));
+  const grid = new THREE.GridHelper(200, 40, 0xb79ced, 0xd9cff2);
+  scene.add(grid);
 
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 2000);
   camera.position.set(10, 12, 20);
@@ -215,6 +282,42 @@ export const createTrackViewport = (
 
   let trackGroup = new THREE.Group();
   scene.add(trackGroup);
+
+  // The Environment preview (ADR 0074). Its cloud floor is placed once, under
+  // the Track as it stood; an edit that moves the Track's lowest point far
+  // enough to move the floor rebuilds it (a bake and a few buffers — rare,
+  // since the floor only follows a Track reaching down near the kill height).
+  let environmentPreset: EnvironmentPreset | null = null;
+  let environment: { drawn: Environment; floorY: number } | undefined;
+  const showEnvironment = (): void => {
+    environment?.drawn.dispose();
+    environment = undefined;
+    const authoring = environmentPreset === null;
+    scene.background = authoring ? authoringBackground : null;
+    ambient.visible = authoring;
+    dir.visible = authoring;
+    grid.visible = authoring;
+    if (!environmentPreset) return;
+    const lowest = lowestSegmentY(trackGroup.children, track);
+    environment = {
+      drawn: createEnvironment(scene, renderer, environmentPreset, {
+        killPlaneY: DEFAULT_KILL_PLANE_Y,
+        lowestSegmentY: lowest,
+        fog: false,
+        detail: "full",
+        // The shadow box covers 70 units around one focus, a fraction of a
+        // Track framed whole, so shadows would end mid-Track; the playtest
+        // shows the real ones.
+        shadows: false,
+      }),
+      floorY: cloudFloorY(environmentPreset, DEFAULT_KILL_PLANE_Y, lowest),
+    };
+  };
+  const followTrackWithEnvironment = (): void => {
+    if (!environmentPreset || !environment) return;
+    const floorY = cloudFloorY(environmentPreset, DEFAULT_KILL_PLANE_Y, lowestSegmentY(trackGroup.children, track));
+    if (floorY !== environment.floorY) showEnvironment();
+  };
 
   // One BoxHelper per selected Segment (ticket 05 — a single-Segment
   // selection is just the length-1 case of this).
@@ -272,11 +375,26 @@ export const createTrackViewport = (
   // transform-only edit (which swaps `track` but keeps the groups) still
   // reads the Segment's current Motion.
   let tints: { index: number; tint: ImpactTint }[] = [];
+  /** Conveyor march drivers (ADR 0064) — rebuilt with the Track, ticked with the motion clock. */
+  let belts: ((tick: number) => void)[] = [];
+  /** Mud slosh drivers (ADR 0067) — same lifecycle as the belts; the preview breathes, it never ripples (no Characters). */
+  let mudBreaths: ((tick: number) => void)[] = [];
 
   // The Motion guide lives in the scene, not under the Segment's group — a
   // child there would stretch the selection box — and follows the group's
   // world matrix every frame instead.
   let motionGuide: { object: THREE.Group; index: number; ownMaterials: THREE.Material[] } | undefined;
+  // The launch arc is world-space from the start (it is where a Character
+  // flies, not part of the piece), so unlike the Motion guide it follows no
+  // group matrix — it is rebuilt whenever the Spring moves or is retuned.
+  let launchArcObject: { object: THREE.Group; ownMaterials: THREE.Material[] } | undefined;
+  const clearLaunchArc = (): void => {
+    if (!launchArcObject) return;
+    scene.remove(launchArcObject.object);
+    disposeGroup(launchArcObject.object);
+    for (const material of launchArcObject.ownMaterials) material.dispose();
+    launchArcObject = undefined;
+  };
   const clearMotionGuide = (): void => {
     if (!motionGuide) return;
     scene.remove(motionGuide.object);
@@ -483,6 +601,16 @@ export const createTrackViewport = (
   });
 
   const raycaster = new THREE.Raycaster();
+  /** Start, Checkpoints and finishes, drawn over the Track (ADR 0068). */
+  const course = createCourseOverlay(scene);
+  const rayFrom = (clientX: number, clientY: number): THREE.Raycaster => {
+    const rect = renderer.domElement.getBoundingClientRect();
+    raycaster.setFromCamera(
+      new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1),
+      camera,
+    );
+    return raycaster;
+  };
 
   const resize = (): void => {
     const w = container.clientWidth || 1;
@@ -495,7 +623,7 @@ export const createTrackViewport = (
   resize();
 
   return {
-    setTrack(nextModules, nextTrack, assetTemplates = {}) {
+    setTrack(nextModules, nextTrack, assetTemplates = {}, surfaceTextures = {}) {
       const wasEmpty = track.length === 0;
       modules = nextModules;
       track = nextTrack;
@@ -503,6 +631,8 @@ export const createTrackViewport = (
       disposeGroup(trackGroup);
       for (const { tint } of tints) tint.dispose();
       tints = [];
+      belts = [];
+      mudBreaths = [];
       trackGroup = new THREE.Group();
       groupByIndex = new Map();
       nextTrack.forEach((segment, index) => {
@@ -515,14 +645,65 @@ export const createTrackViewport = (
           tint.update(segment, motionTick);
           tints.push({ index, tint });
         }
+        if (module) {
+          // A belt's strip parents under the Motion node (ADR 0064) so it
+          // follows its carrier; its march driver runs off the same
+          // motion-preview clock as the tint updates below.
+          const motionNode = group.userData[MOTION_NODE] as THREE.Group;
+          const belt = addConveyorBelt(motionNode, segment, module, assetTemplates[segment.moduleId]);
+          if (belt) {
+            belt(motionTick);
+            belts.push(belt);
+          }
+          // An icy deck's sheet (ADR 0066) — same Motion-node parenting as
+          // the belt, so it follows a carrier too. Nothing when the Segment
+          // runs no ice or the texture hasn't loaded; the engine re-syncs on
+          // arrival.
+          addIceOverlay(
+            motionNode,
+            segment,
+            module,
+            assetTemplates[segment.moduleId],
+            surfaceTextures.ice,
+            renderer.capabilities.getMaxAnisotropy(),
+          );
+          // A muddy deck's block (ADR 0067) — same parenting, same
+          // load-then-re-sync contract as the ice sheet above, plus its
+          // slosh driver on the motion clock, like the belt's march.
+          const mud = addMudOverlay(
+            motionNode,
+            segment,
+            index,
+            module,
+            assetTemplates[segment.moduleId],
+            surfaceTextures.mud,
+            renderer.capabilities.getMaxAnisotropy(),
+          );
+          if (mud) {
+            mud.update(motionTick);
+            mudBreaths.push(mud.update);
+          }
+          // A bouncy deck's inflatable sheet (ADR 0070), at rest — the
+          // builder has nobody standing on it to dent it.
+          addBounceOverlay(
+            motionNode,
+            segment,
+            module,
+            assetTemplates[segment.moduleId],
+            surfaceTextures.bounce,
+            renderer.capabilities.getMaxAnisotropy(),
+          );
+        }
         applyMotionAt(group, segment, motionTick);
         trackGroup.add(group);
         groupByIndex.set(index, group);
       });
       scene.add(trackGroup);
+      followTrackWithEnvironment();
       if (!impactTintVisible) this.setImpactTintVisible(false);
       if (wasEmpty) this.frameTrack();
       clearSelectionBoxes();
+      course.rebuild(nextTrack, nextModules, groupByIndex);
     },
     showMotionGuide(index) {
       clearMotionGuide();
@@ -604,6 +785,45 @@ export const createTrackViewport = (
       motionGuide = { object, index, ownMaterials };
       followMotionGuide();
     },
+    showLaunchArc(index) {
+      clearLaunchArc();
+      const segment = index !== undefined ? track[index] : undefined;
+      const def = segment ? modules[segment.moduleId]?.launch : undefined;
+      if (!segment || !def) return;
+
+      const arc = launchArcOf(segment, def);
+      const object = new THREE.Group();
+      object.renderOrder = 999;
+      const material = new THREE.LineDashedMaterial({
+        color: 0x38bdf8,
+        dashSize: 0.5,
+        gapSize: 0.3,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.95,
+      });
+      const geometry = new THREE.BufferGeometry().setFromPoints(
+        arc.points.map((p) => new THREE.Vector3(p.x, p.y, p.z)),
+      );
+      const line = new THREE.Line(geometry, material);
+      line.computeLineDistances(); // dashes need them, and they are never free
+      line.renderOrder = 999;
+      object.add(line);
+
+      // The apex: the one number the author is judging, marked where it lands.
+      const apexMaterial = new THREE.MeshBasicMaterial({ color: 0x38bdf8, depthTest: false, transparent: true, opacity: 0.9 });
+      const apex = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), apexMaterial);
+      apex.position.set(arc.apex.x, arc.apex.y, arc.apex.z);
+      apex.renderOrder = 999;
+      object.add(apex);
+
+      scene.add(object);
+      launchArcObject = { object, ownMaterials: [material, apexMaterial] };
+    },
+    setEnvironment(preset) {
+      environmentPreset = preset;
+      showEnvironment();
+    },
     setImpactTintVisible(visible) {
       impactTintVisible = visible;
       trackGroup.traverse((object) => {
@@ -612,6 +832,8 @@ export const createTrackViewport = (
     },
     setMotionTime(tick) {
       motionTick = tick;
+      for (const belt of belts) belt(tick);
+      for (const breathe of mudBreaths) breathe(tick);
       if (impactTintVisible) {
         for (const { index, tint } of tints) {
           const segment = track[index];
@@ -638,6 +860,9 @@ export const createTrackViewport = (
         const segment = index !== undefined ? nextTrack[index] : undefined;
         if (segment) applySegmentTransform(group, segment);
       }
+      // Respawn floors are found under where the gates now stand.
+      course.rebuild(nextTrack, modules, groupByIndex);
+      followTrackWithEnvironment();
     },
     setSelected(indices) {
       attachedIndices = [...indices];
@@ -722,15 +947,27 @@ export const createTrackViewport = (
       }
       return undefined;
     },
+    pickFloor(clientX, clientY) {
+      return course.pickFloor(rayFrom(clientX, clientY));
+    },
+    respawnOf: (index) => course.respawnOf(index),
     render() {
       orbitControls.update();
+      course.follow();
+      const now = performance.now();
+      // A fan's rotor turns in the preview too (ADR 0075). Found every frame:
+      // the Track is being edited, and a few hundred nodes is nothing to walk.
+      spinParts(findSpinningParts(trackGroup), now);
+      environment?.drawn.update(camera, now, orbitControls.target);
       renderer.render(scene, camera);
     },
     dispose() {
       window.removeEventListener("resize", resize);
       window.removeEventListener("keydown", onShiftDown);
       window.removeEventListener("keyup", onShiftUp);
+      environment?.drawn.dispose();
       disposeGroup(trackGroup);
+      course.dispose();
       transformControls.dispose();
       orbitControls.dispose();
       clearSelectionBoxes();

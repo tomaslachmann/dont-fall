@@ -117,6 +117,7 @@ describe("interpolateState — facing and locomotion fields (M6 ticket 02, ADR 0
     dashing?: boolean;
     hitEpoch?: number;
     hitReactEpoch?: number;
+    grabEpoch?: number;
   }): SimState => ({
     tick: 0,
     characters: { [ID]: characterSnapshot({ position: { x: 0, y: 0, z: 0 }, ...fields }) },
@@ -132,11 +133,12 @@ describe("interpolateState — facing and locomotion fields (M6 ticket 02, ADR 0
     expect(render.characters[ID]!.dashing).toBe(true);
   });
 
-  it("carries hitEpoch and hitReactEpoch straight from next, uninterpolated (M6 ticket 03)", () => {
-    const prev = locomotionStateAt({ hitEpoch: 1, hitReactEpoch: 2 });
-    const next = locomotionStateAt({ hitEpoch: 2, hitReactEpoch: 2 });
+  it("carries hitEpoch, hitReactEpoch and grabEpoch straight from next, uninterpolated (M6 ticket 03, ADR 0071)", () => {
+    const prev = locomotionStateAt({ hitEpoch: 1, hitReactEpoch: 2, grabEpoch: 4 });
+    const next = locomotionStateAt({ hitEpoch: 2, hitReactEpoch: 2, grabEpoch: 5 });
     const render = interpolateState(prev, next, 0.5);
     expect(render.characters[ID]!.hitEpoch).toBe(2);
     expect(render.characters[ID]!.hitReactEpoch).toBe(2);
+    expect(render.characters[ID]!.grabEpoch).toBe(5);
   });
 });

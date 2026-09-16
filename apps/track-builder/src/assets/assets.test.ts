@@ -21,9 +21,9 @@ import {
   loadAssetVisualsProgressive,
   type AssetVisualResult,
 } from "./assets.js";
-import { insertSegment, segmentOverlapsAnyOther } from "./trackEdit.js";
+import { insertSegment, segmentOverlapsAnyOther } from "../track/trackEdit.js";
 
-const assetsRoot = path.resolve(import.meta.dirname, "../../../assets");
+const assetsRoot = path.resolve(import.meta.dirname, "../../../../assets");
 const realFetch = async (url: string): Promise<Uint8Array> => {
   const fileName = url.substring(url.lastIndexOf("/") + 1);
   return new Uint8Array(readFileSync(path.join(assetsRoot, fileName)));
@@ -40,11 +40,11 @@ describe("assetTabModuleIds", () => {
 });
 
 describe("builderLibrary", () => {
-  it("composes every procedural Module with every asset Module", () => {
+  it("is exactly the asset Modules — nothing procedural places (ADR 0078)", () => {
     const library = builderLibrary();
 
-    for (const id of Object.keys(MODULE_LIBRARY)) expect(library[id]).toBe(MODULE_LIBRARY[id]);
-    for (const def of ASSET_MODULE_DEFS) expect(library[def.id]).toBeDefined();
+    expect(Object.keys(library).sort()).toEqual(ASSET_MODULE_DEFS.map((def) => def.id).sort());
+    for (const id of Object.keys(MODULE_LIBRARY)) expect(library[id]).toBeUndefined();
   });
 
   it("carries sockets and footprints on asset entries, and no box statics to draw", () => {
@@ -56,48 +56,6 @@ describe("builderLibrary", () => {
       expect(entry.footprint).toEqual(def.footprint);
       expect(entry.statics).toEqual([]);
     }
-  });
-});
-
-describe("placing asset Modules through the existing insert flow", () => {
-  it("chains an asset Module after a procedural one through Sockets", () => {
-    const library = builderLibrary();
-    const start = [{ moduleId: "start", position: { x: 0, y: 0, z: 10 }, rotation: 0 }];
-
-    const track = insertSegment(start, library, 1, "platform_straight");
-
-    expect(track).toHaveLength(2);
-    expect(track[1]!.moduleId).toBe("platform_straight");
-    // Socket-seated, not stacked: the asset entry meets the start's exit.
-    expect(track[1]!.position).not.toEqual(track[0]!.position);
-    expect(Number.isFinite(track[1]!.position.x)).toBe(true);
-  });
-
-  it("chains an asset Module after another asset Module", () => {
-    const library = builderLibrary();
-    const start = [{ moduleId: "platform_straight", position: { x: 0, y: 0, z: 10 }, rotation: 0 }];
-
-    const track = insertSegment(start, library, 1, "corner_lshape");
-
-    expect(track).toHaveLength(2);
-    // The corner turns: its exit Socket must not sit on the entry axis.
-    expect(track[1]!.position).toBeDefined();
-  });
-
-  it("overlap-detects asset Footprints exactly like procedural ones", () => {
-    const library = builderLibrary();
-    // Three Segments: the candidate's immediate chain neighbors are excluded
-    // by design (connected Footprints touch by construction), so the overlap
-    // below is against the non-neighbor at the origin.
-    const track: Track = [
-      { moduleId: "platform_straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
-      { moduleId: "platform_straight", position: { x: 0, y: 0, z: -4 }, rotation: 0 },
-      { moduleId: "platform_straight", position: { x: 100, y: 0, z: 0 }, rotation: 0 },
-    ];
-
-    // At the origin it sits exactly on a non-neighbor; far away it overlaps nothing.
-    expect(segmentOverlapsAnyOther(track, library, 2, { x: 0, y: 0, z: 0 }, IDENTITY_QUAT)).toBe(true);
-    expect(segmentOverlapsAnyOther(track, library, 2, { x: 100, y: 0, z: 0 }, IDENTITY_QUAT)).toBe(false);
   });
 });
 
@@ -117,10 +75,10 @@ describe("loadAssetVisuals", () => {
   it("names the module when its fetch fails", async () => {
     await expect(
       loadAssetVisuals(async (url) => {
-        if (url.endsWith("stairs_4step.glb")) throw new Error("GET answered 404");
+        if (url.endsWith("kaykit_floor_wood_2x2.glb")) throw new Error("GET answered 404");
         return realFetch(url);
       }, "http://assets.test"),
-    ).rejects.toThrow(/stairs_4step/);
+    ).rejects.toThrow(/kaykit_floor_wood_2x2/);
   });
 });
 
@@ -170,7 +128,7 @@ describe("extractVisualRoot (the twin of the client's role filter)", () => {
   });
 });
 
-import { triangleGlb } from "./test/glb.js";
+import { triangleGlb } from "../test/glb.js";
 
 describe("loadAssetVisualsProgressive", () => {
   it("settles every id exactly once — ready files parse, bad ones name themselves", async () => {

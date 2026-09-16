@@ -5,7 +5,7 @@
  * and the auth Screens are the only callers. Origin, token storage, and
  * transport come from the shared base (`api.ts`) — no `baseUrl` threading.
  */
-import { ApiError, apiBaseUrl, apiFetch, apiPost, getStoredToken } from "./base.js";
+import { ApiError, apiBaseUrl, apiFetch, apiJson, apiPost, getStoredToken } from "./base.js";
 
 export interface Account {
   id: string;
@@ -16,6 +16,8 @@ export interface Account {
   /** Lifetime match earnings — the economy's persisted half. */
   xp: number;
   coins: number;
+  /** The body's equipped skin id (M9 ticket 15) — a small int, default bean until picked. */
+  bodySkin: number;
 }
 
 export interface AuthCallbackResult {
@@ -77,3 +79,16 @@ export const fetchAccount = async (): Promise<Account | null> => {
 
 /** Where the "Log in with Discord" button sends the browser — the API does the whole OAuth dance and redirects back to `/auth/callback`. */
 export const discordAuthorizeUrl = (): string => `${apiBaseUrl()}/auth/discord/authorize`;
+
+/**
+ * Equips a body skin (M9 ticket 15) — PUTs the cosmetics sub-resource and
+ * returns the updated Account, so the screen refreshes in the one round
+ * trip. Throws `ApiError` (a 400 for a locked skin, 401 for a dead token)
+ * like every other authed call.
+ */
+export const saveBodySkin = async (bodySkin: number): Promise<Account> =>
+  apiJson<Account>("/auth/me/cosmetics", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bodySkin }),
+  });

@@ -8,6 +8,7 @@ import {
   loginWithPassword,
   logout,
   signupWithPassword,
+  updateCosmetics,
   whoAmI,
   type DiscordOAuthConfig,
   type FetchLike,
@@ -69,6 +70,15 @@ export const registerAuthRoutes = (app: FastifyInstance, db: ApiDb, deps: AuthRo
   // to check the Bearer [REDACTED] it's holding. 401, not a redirect — this is a
   // JSON API; the client owns navigating to `/auth` on a 401.
   app.get("/auth/me", async (request) => whoAmI(db, bearerToken(request.headers.authorization)));
+
+  app.put("/auth/me/cosmetics", async (request, reply) => {
+    const updated = updateCosmetics(
+      db,
+      bearerToken(request.headers.authorization),
+      (request.body ?? {}) as Parameters<typeof updateCosmetics>[2],
+    );
+    return reply.code(200).send(updated);
+  });
 
   app.post("/auth/logout", async (request, reply) => {
     logout(db, bearerToken(request.headers.authorization));

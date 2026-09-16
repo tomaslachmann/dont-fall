@@ -19,6 +19,14 @@ export interface LobbyPlayer {
    * from the API's accounts table, nicknames stay cosmetic).
    */
   accountId: string | null;
+  /**
+   * The body's equipped skin (M9 ticket 15) — bound from the same `/auth/me`
+   * response as `accountId`, so no second round trip. `null` while
+   * anonymous: clients dress those seats in the default skin.
+   * Rides the already-every-snapshot lobby roster, so late joiners and
+   * slow `auth` resolutions learn it with no extra handshake.
+   */
+  bodySkin: number | null;
 }
 
 /**

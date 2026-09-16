@@ -42,7 +42,7 @@
 }
 
 /* ---- floating slots ---- */
-.slotBrowse, .slotTransport, .slotHint, .slotLegend { position: absolute; }
+.slotBrowse, .slotTransport, .slotCourse, .slotHint, .slotLegend { position: absolute; }
 
 .slotBrowse { top: var(--tb-float-inset); left: var(--tb-float-inset); z-index: 2; }
 
@@ -55,6 +55,17 @@
   pointer-events: none;
 }
 .slotTransport > * { pointer-events: auto; }
+
+/* the run order hangs under the transport, in the same span */
+.slotCourse {
+  top: calc(var(--tb-float-inset) + 84px);
+  left: calc(var(--tb-float-inset) + 236px);
+  right: calc(var(--tb-inspector-w) + var(--tb-float-inset) * 2);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.slotCourse > * { pointer-events: auto; }
 
 .slotHint { bottom: var(--tb-s-6); left: var(--tb-float-inset); z-index: 2; }
 
@@ -94,10 +105,12 @@
 @container tbscreen (max-width: 1240px) {
   .slotLegend { display: none; }
   .slotTransport { left: var(--tb-float-inset); justify-content: flex-end; }
+  .slotCourse { left: var(--tb-float-inset); justify-content: flex-end; }
 }
 
 /* ---- narrow: the inspector stacks below, so the canvas keeps its full width ---- */
 @container tbscreen (max-width: 980px) {
   .slotHint { display: none; }
   .slotTransport { left: var(--tb-float-inset); right: var(--tb-float-inset); justify-content: center; }
+  .slotCourse { left: var(--tb-float-inset); right: var(--tb-float-inset); justify-content: center; }
 }

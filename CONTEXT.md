@@ -106,9 +106,9 @@ the server enforces it.
 
 **Finish Zone**:
 The area at the end of a Race that grants Qualification on entry. Deliberately an
-area, not a line, so the end of a Round stays chaotic and contested. A detection-only
-trigger entity on a Module — like a Checkpoint's trigger region, never a Volume;
-distinct from Checkpoint, which sets a Respawn point.
+area, not a line, so the end of a Round stays chaotic and contested. A finish sign
+Gate's opening, or on older Tracks a detection-only trigger region on a retired
+block — never a Volume; distinct from Checkpoint, which sets a Respawn point.
 _Avoid_: finish line, goal
 
 **Lobby**:
@@ -164,7 +164,7 @@ never mutated.
 _Avoid_: version, save
 
 **Module**:
-A reusable template for a piece of Track (e.g. "Spinner", "Ice", "Moving
+A reusable template for a piece of Track (e.g. "Spinner", "Bounce", "Moving
 Platforms", "Straight", "Gap"). Authored once.
 _Avoid_: prefab, block, piece
 
@@ -178,6 +178,20 @@ The authored `role: collision` node of an Asset. Baked verbatim into the
 Module's colliders — the one geometry every Player simulates, identical for
 all. Never rendered.
 _Avoid_: UCX, hitbox
+
+**Asset pivot**:
+The origin every Asset is seated on: centred on X and Z, with its lowest point
+resting on y = 0. A Segment's position is this point, so it is where the Track
+builder's handle sits and what the Segment turns about.
+_Avoid_: anchor (see Socket), origin offset
+
+**Asset category**:
+Which group the Track builder lists an Asset Module under: Platform (what a route
+is built out of, including what holds it up), Obstacle, Spring, Gate or Scenery.
+A listing property: it gives a Module no behavior of its own. Two of the groups
+are named after a mechanic their members all carry in their own defs — a Gate its
+opening, a Spring its launch — and nothing outside those groups carries it.
+_Avoid_: type, kind, tag
 
 **Visual mesh**:
 The authored `role: visual` node of an Asset. Rendered, never simulated — it
@@ -209,23 +223,78 @@ wind tunnel. Contrast with Surface, which acts on a Character standing on it, an
 with a Checkpoint's trigger region, which only detects and never pushes.
 _Avoid_: zone, field, trigger, area
 
-**Speed pad** / **Slow pad**:
-A floor trigger that fires once as a Character crosses it: an instant velocity write
-plus a temporarily raised (speed pad) or lowered (slow pad) speed cap that fades back
-to normal. One mechanism, cap raised or lowered — never two separate ones. Contrast
-with Surface (a standing property of the floor itself, with no one-shot component) and
-Volume (continuous, not latched).
-_Avoid_: boost pad, zipper, jump pad (that's a bounce/launch pad, a different mechanic)
+**Floating**:
+A Character held up in the air by a Volume that pushes upward harder than gravity
+pulls: an updraft over a fan. The Character is still Controlled. Floating is how it
+is drawn (drifting, flailing), never a state of its own.
+_Avoid_: flying, hovering, levitating
+
+**Conveyor**:
+A belt attached to a Segment that carries any Character standing on it toward its
+direction at its preset speed — with the belt you run faster, against it slower
+or backwards, stepping off ends it. A standing property of the Segment, never a
+one-shot: contrast with Surface (grip and speed cap, no direction of its own) and
+Launch pad (a one-shot throw, a different mechanic).
+_Avoid_: speed pad, slow pad (both retired), boost pad, zipper, treadmill
+
+**Bounce**:
+A Surface that returns the speed you landed with — the harder the fall, the higher
+you go, and a walk-on still bounces a little. Attached to a Segment like ice and
+mud, and one of the same choice: a deck is made of one thing. Its deck wears an
+inflatable sheet that stands convex at rest, dents under whoever is on it and
+rings after a landing; the sheet is drawn, never simulated — the deck underneath
+stays flat. Contrast with a Launch pad, whose throw is the same however you arrive.
+_Avoid_: trampoline, bouncy, rubber, jump pad
+
+**Launch pad**:
+A floor region that throws a Character the instant it steps in — vertical speed is
+set outright, so the height is the same however you arrived, and any sideways shove
+is added to the run you brought. Fires once per crossing and re-arms when you leave.
+Contrast with Conveyor (a standing carry with no launch) and with a bounce Surface,
+whose throw depends on how hard you landed.
+_Avoid_: jump pad, booster, catapult, trampoline
+
+**Spring**:
+An Asset that is a Launch pad — a coil or a spring pad you bounce off, listed in
+its own Asset category. Its author sets how high it throws, in metres, and aims it
+by tilting the Segment. It fires when a Character is standing on it, never while
+one is still falling toward it; it squashes as it fires, and the squash is drawn,
+never simulated.
+_Avoid_: bouncer, jump pad, trampoline, spring pad
 
 **Segment**:
 One concrete instance of a Module placed at a position in a Track. A Track is a
 sequence of Segments.
 _Avoid_: section, tile, chunk, piece
 
+**Motion**:
+The authored, endlessly repeating movement of one Segment: a Spin (constant
+rotation about an axis), a Swing (rotation back and forth) and/or a Slide
+(movement back and forth), in that order. A pure function of the Tick, so every
+Player sees the same pose without it being sent. A Segment with one is a
+Moving Segment.
+_Avoid_: animation, tween, mover
+
+**Ride**:
+What a Character standing on a Moving Segment does: it is carried along, turned
+with it, and keeps its speed when it leaves.
+_Avoid_: attach, parent, stick
+
+**Spiked**:
+An Asset whose every contact knocks a Character down, whatever the speed —
+standing on it, running into it, or being moved into it.
+_Avoid_: deadly, lethal (a knockdown is never a Fall)
+
 **Obstacle**:
 A Module (or part of one) that actively threatens the Character — a Spinner,
 Pendulum, Falling Tiles. Contrast with connective Modules like Straight and Gap.
 _Avoid_: hazard, trap
+
+**Scenery**:
+A Module that neither carries the route nor threatens the Character — a sign,
+a flag, a railing, a fence. It may still block a Character that runs into it.
+Contrast with Obstacle and with Platform-category pieces.
+_Avoid_: decoration, prop (see Prop)
 
 **Prop**:
 A dynamic physics body that reacts to being bumped (a box, a ball) but never
@@ -241,7 +310,20 @@ Obstacle (stationary, pre-placed). Full spawn/replication design deferred
 _Avoid_: bullet, shot
 
 **Checkpoint**:
-A point on the Track that a Character respawns at after a Fall.
+A point on the Track that a Character respawns at after a Fall. Set by passing
+through a Gate switched on as a Checkpoint (numbered — only a higher number moves
+it), or, on older Tracks, by entering a retired checkpoint block's region.
+
+**Gate**:
+An Asset a Character passes through — a hoop, an arch or a finish sign. Passing
+means going through its opening, either way; around or over it never counts. A
+hoop or an arch is a Checkpoint only when switched on; a finish sign is always a
+Finish Zone. Also the Asset category that lists them.
+_Avoid_: ring, portal, trigger
+
+**Start**:
+The one Segment of a Track its Characters spawn on — any Segment can be it. A
+Track without one starts on its first Segment.
 
 **Spawn**:
 Where Characters start a Round, or reappear after a Respawn.
@@ -253,8 +335,11 @@ The Character state where the Player has normal movement input over the kinemati
 capsule.
 
 **Stagger**:
-A brief Character state after a minor Impact — movement input is dampened but the
-Character stays upright. Recovers automatically to Controlled.
+The Character state for being unsteady on your feet — movement input is dampened
+but the Character stays upright, and it recovers automatically to Controlled. How
+long it lasts depends on what caused it: a light Impact is short, coming back from
+a Respawn is longer (ADR 0072). Drawn with the Wobble animation, which is the only
+reason anyone can tell it is happening.
 
 **Sliding**:
 The Character state on a Surface too steep to walk on: the Character keeps
@@ -265,17 +350,28 @@ _Avoid_: slipping, skidding
 
 **Ragdoll**:
 The Character state where the articulated body takes over full physics and the
-Player has no movement control. Triggered by a hard Impact, a Fall, or dashing
-into a wall.
+Player has no movement control. Triggered by a hard Impact or dashing into a
+wall. (A Fall no longer triggers it: see Wobble.)
 
 **GettingUp**:
-The Character state that blends the ragdoll back into a standing pose and
-re-activates the kinematic capsule. Recovers to Controlled.
+The Character state after a Ragdoll: the Character gets back on its feet, still
+without movement control, and the kinematic capsule comes back. Recovers to
+Controlled once the feet are planted.
 _Avoid_: recovery (as a noun for the state — use GettingUp), standup
 
+**Knockdown**:
+What a hard Impact does, as the Player sees it from start to finish: the
+Character goes down the way it was pushed, lies there through Ragdoll, and gets
+up the same way through GettingUp. A knockdown always ends on the Character's
+feet.
+_Avoid_: death, KO (as the name of the whole event — `KO` is the rig's name for
+the falling clip alone)
+
 **Wobble**:
-The procedural, non-simulated lean/sway of the Character's visual mesh while
-Controlled. Cosmetic only; it never affects collision.
+What a Staggering Character looks like — the unsteady animation it plays while
+slowed, after a light Impact or a Respawn. (An earlier, unrelated Wobble was a
+procedural lean of the visual mesh while Controlled, cosmetic only; it is switched
+off — see ADR 0010.)
 
 **Impact**:
 A collision forceful enough to change Character state — into Stagger or Ragdoll
@@ -286,12 +382,14 @@ The visible response to an Impact (flinch, spin, knockdown).
 
 **Fall**:
 The core failure. A Character leaves the play volume (drops below the kill-plane).
-What follows is the Round type's rule: a Race Respawns it at the last Checkpoint
-with a time penalty, Survival eliminates it. "Don't fall" is this.
+What follows is the Round type's rule: a Race Respawns it at the last Checkpoint,
+Survival eliminates it. "Don't fall" is this. A Fall never knocks a Character down
+— it comes back on its feet, Staggering (ADR 0072).
 _Avoid_: death, out of bounds, KO
 
 **Respawn**:
-Returning a fallen Character to its last Checkpoint, with a short time penalty so
+Returning a fallen Character to its last Checkpoint — on its feet and Staggering,
+never as a knockdown — with a short time penalty so
 a Fall always costs something. Not every Round type has one — where a Fall
 eliminates, nothing comes back.
 
@@ -364,6 +462,13 @@ first to the top wins.
 
 ### Presentation
 
+**Environment**:
+The sky, clouds, fog and light a Round is drawn inside — a named preset
+(`day`, `sunset`, `night`) its Track's author picks. Never collides, is never
+simulated, and is never placed as a Segment. Contrast with Scenery, a placed
+Module that may block a Character (ADR 0074).
+_Avoid_: skybox, background, map theme, biome, weather
+
 **HUD**:
 The overlay drawn on top of the game view *during* a Round — Round timer, Dash
 cooldown, Power-up held, Checkpoint splits. Rendered by the game itself as plain
@@ -420,8 +525,8 @@ game state; a client never asserts its own position, only sends Commands.
 
 **Epoch**:
 A monotonic counter identifying a discrete episode (a knockdown —
-`ragdollEpoch`; a Respawn — `respawnCount`; a speed/slow pad firing —
-`speedPadEpoch`) so a one-shot effect fires exactly once even if the Snapshot
+`ragdollEpoch`; a Respawn — `respawnCount`; a launch pad firing —
+`launchPadEpoch`) so a one-shot effect fires exactly once even if the Snapshot
 carrying it is seen across many frames. Never a one-Tick boolean.
 
 **Contacted Prop**:

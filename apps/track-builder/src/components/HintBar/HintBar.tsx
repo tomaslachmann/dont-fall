@@ -5,7 +5,7 @@ const HINTS: { key: string; action: string; accent?: boolean }[] = [
   { key: "[ ]", action: "rotate on active axis" },
   { key: "− =", action: "size" },
   { key: "SHIFT", action: "fine step everywhere", accent: true },
-  { key: "ESC", action: "cancel pivot pick" },
+  { key: "ESC", action: "cancel pivot / respawn pick" },
 ];
 
 /** The keyboard cheat sheet — captions drop at 1240px, the whole bar at 980px (the design's own tiers). */

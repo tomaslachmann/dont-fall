@@ -41,6 +41,14 @@ export interface RenderCharacter {
   hitEpoch: number;
   /** Not interpolated — same idiom, triggers the HitReact animation exactly once. */
   hitReactEpoch: number;
+  /** Not interpolated — same idiom, triggers the grab reach exactly once per attempt, caught or not (ADR 0071). */
+  grabEpoch: number;
+  /**
+   * Not interpolated — the same idiom again (ADR 0069): diffed against the
+   * last-seen value to squash the Spring this Character just fired, exactly
+   * once. Replicated since M3.7, and the renderer is its only reader.
+   */
+  launchPadEpoch: number;
   /** Not interpolated — taken straight from `next`, like `dashing`. Drives a grabbing Character's arm-reach pose (M6.1); `null` for everyone not currently grabbing someone. */
   grabbingId: string | null;
   /** Not interpolated — the reverse of {@link grabbingId} (M6.1): whether (and by whom) this Character is currently held, which locks its own rendered facing to the server's frozen value instead of steering it from movement input. */
@@ -96,6 +104,8 @@ export const interpolateState = (
       dashing: n.dashing,
       hitEpoch: n.hitEpoch,
       hitReactEpoch: n.hitReactEpoch,
+      grabEpoch: n.grabEpoch,
+      launchPadEpoch: n.launchPadEpoch,
       grabbingId: n.grabbingId,
       heldByGrabberId: n.heldByGrabberId,
     };

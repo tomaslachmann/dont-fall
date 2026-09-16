@@ -1,13 +1,19 @@
 import {
   addVec3,
+  conjugateQuat,
   IDENTITY_QUAT,
+  orientBox,
   rotateVec3ByQuat,
-  MODULE_LIBRARY,
   placeAfter,
   rotateYaw,
+  scaleBox,
   segmentOrientation,
+  segmentScale,
+  subVec3,
+  type AssetCategory,
   type Module,
   type Track,
+  type Vec3,
 } from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
 import {
@@ -21,7 +27,13 @@ import {
   rotateSegment,
   segmentOverlapsAnyOther,
   setSegmentTransform,
+  setSegmentConveyor,
+  setSegmentIce,
+  setSegmentMotion,
+  setSegmentMud,
+  setSegmentScale,
   setSegmentTransforms,
+  snapDragPosition,
   snapPositionToNeighborSocket,
   SOCKET_SNAP_RADIUS,
 } from "./trackEdit.js";
@@ -37,6 +49,10 @@ const straightModule = (id: string): Module => ({
 });
 
 const MODULES = { start: straightModule("start"), bridge: straightModule("bridge"), gap: straightModule("gap") };
+
+/** A socketless piece (every converted asset): dropped by free placement, never chained. */
+const socketlessModule = (id: string): Module => ({ ...straightModule(id), sockets: [] });
+const MIXED = { start: straightModule("start"), pad: socketlessModule("pad") };
 
 describe("appendModule / insertSegment", () => {
   it("places the first Segment at the origin", () => {
@@ -68,6 +84,111 @@ describe("appendModule / insertSegment", () => {
 
   it("throws for an unknown Module id", () => {
     expect(() => appendModule([], "ghost", MODULES)).toThrow(/unknown Module/);
+  });
+});
+
+describe("building on the last platform (user decision, 2026-09-16)", () => {
+  /** A socketless Asset with footprint `bounds` — how every converted piece arrives. */
+  const asset = (id: string, center: Vec3, halfExtents: Vec3): Module => ({
+    id,
+    statics: [],
+    sockets: [],
+    footprint: { bounds: { center, halfExtents }, clearance: 0.5 },
+  });
+  // A deck whose top is at y 0, a long deck whose box sits off-centre, a pillar standing on y 0.
+  const PIECES = {
+    deck: asset("deck", { x: 0, y: -0.25, z: 0 }, { x: 2, y: 0.25, z: 3 }),
+    long: asset("long", { x: 1, y: -1, z: -2 }, { x: 2, y: 1, z: 5 }),
+    pillar: asset("pillar", { x: 0.5, y: 1, z: 0 }, { x: 0.5, y: 1, z: 0.5 }),
+    arch: asset("arch", { x: 0, y: 1.5, z: 0 }, { x: 2, y: 1.5, z: 0.25 }),
+  };
+  const CATEGORIES: Record<string, AssetCategory> = { deck: "platform", long: "platform", pillar: "obstacle", arch: "gate" };
+
+  /** Where `track[index]`'s footprint box is in the world, turned by its yaw. */
+  const worldBox = (track: Track, index: number) => {
+    const segment = track[index]!;
+    const bounds = scaleBox(PIECES[segment.moduleId as keyof typeof PIECES].footprint.bounds, segmentScale(segment));
+    return orientBox(bounds, segment.position, segmentOrientation(segment));
+  };
+  /** A world point moved into `track[index]`'s turned frame, relative to its footprint box's centre. */
+  const inFrameOf = (track: Track, index: number, point: Vec3): Vec3 => {
+    const box = worldBox(track, index);
+    return rotateVec3ByQuat(subVec3(point, box.center), conjugateQuat(segmentOrientation(track[index]!)));
+  };
+
+  const placed = (moduleIds: string[], turn = 0, scale?: number): Track => {
+    let track: Track = [{ moduleId: moduleIds[0]!, position: { x: 4, y: 2, z: -1 }, rotation: turn, ...(scale ? { scale } : {}) }];
+    for (const id of moduleIds.slice(1)) track = appendModule(track, id, PIECES, CATEGORIES);
+    return track;
+  };
+
+  it.each([0, Math.PI / 2, -2.3])("puts a new platform flush off the last one's far face, level, turned with it (yaw %s)", (turn) => {
+    const track = placed(["deck", "long"], turn);
+    const before = worldBox(track, 0);
+    const after = worldBox(track, 1);
+    // In the first deck's frame: same line, touching faces, tops level.
+    const offset = inFrameOf(track, 0, after.center);
+    expect(offset.x).toBeCloseTo(0, 9);
+    expect(offset.z).toBeCloseTo(-(before.halfExtents.z + after.halfExtents.z), 9);
+    expect(after.center.y + after.halfExtents.y).toBeCloseTo(before.center.y + before.halfExtents.y, 9);
+    expect(track[1]!.rotation).toBe(turn);
+    expect(segmentOverlapsAnyOther(track, PIECES, 1, track[1]!.position, segmentOrientation(track[1]!))).toBe(false);
+  });
+
+  it("measures the last platform at its own scale", () => {
+    const track = placed(["deck", "deck"], 0, 2);
+    const before = worldBox(track, 0);
+    const after = worldBox(track, 1);
+
+    expect(after.center.z + after.halfExtents.z).toBeCloseTo(before.center.z - before.halfExtents.z, 9);
+    expect(after.center.y + after.halfExtents.y).toBeCloseTo(before.center.y + before.halfExtents.y, 9);
+  });
+
+  it.each(["pillar", "arch"])("stands a %s on the middle of the last platform's top, turned with it", (piece) => {
+    const turn = 0.8;
+    const track = placed(["long", piece], turn);
+    const platform = worldBox(track, 0);
+    const standing = worldBox(track, 1);
+
+    const offset = inFrameOf(track, 0, standing.center);
+    expect(offset.x).toBeCloseTo(0, 9);
+    expect(offset.z).toBeCloseTo(0, 9);
+    expect(standing.center.y - standing.halfExtents.y).toBeCloseTo(platform.center.y + platform.halfExtents.y, 9);
+    expect(track[1]!.rotation).toBe(turn);
+  });
+
+  it("builds on the last platform, not on whatever was placed after it", () => {
+    const track = placed(["deck", "pillar", "arch", "deck"]);
+
+    // The second deck continues the first; the pillar and the arch both stand on the first.
+    expect(worldBox(track, 3).center.z).toBeCloseTo(worldBox(track, 0).center.z - 6, 9);
+    expect(worldBox(track, 2).center.x).toBeCloseTo(worldBox(track, 0).center.x, 9);
+    expect(worldBox(track, 2).center.z).toBeCloseTo(worldBox(track, 0).center.z, 9);
+  });
+
+  it("builds on the last platform before the insert point, when inserting mid-Track", () => {
+    const track = placed(["deck", "deck", "deck"]);
+    const inserted = insertSegment(track, PIECES, 1, "pillar", CATEGORIES);
+
+    expect(worldBox(inserted, 1).center.z).toBeCloseTo(worldBox(inserted, 0).center.z, 9);
+  });
+
+  it("falls back to beside the previous piece with no platform to build on, or without categories", () => {
+    const noPlatform = appendModule([{ moduleId: "pillar", position: { x: 0, y: 0, z: 0 }, rotation: 0 }], "pillar", PIECES, CATEGORIES);
+    const noCategories = appendModule(placed(["deck"]), "pillar", PIECES);
+
+    for (const track of [noPlatform, noCategories]) {
+      expect(track[1]!.position.x).toBeGreaterThan(track[0]!.position.x);
+      expect(track[1]!.position.z).toBe(track[0]!.position.z);
+      expect(track[1]!.rotation).toBe(0);
+    }
+  });
+
+  it("still Socket-chains what can be chained", () => {
+    // Both socketed platforms: the Sockets decide where the second goes, not the footprints.
+    const categories: Record<string, AssetCategory> = { start: "platform", bridge: "platform" };
+    const track = appendModule(appendModule([], "start", MODULES, categories), "bridge", MODULES, categories);
+    expect(track[1]!.position).toEqual({ x: 0, y: -0.5, z: -6 });
   });
 });
 
@@ -495,72 +616,349 @@ describe("segmentOverlapsAnyOther (ticket 04 — live overlap-feedback primitive
   });
 });
 
-describe("Modules without Sockets (M5 ticket 06 — the Survival arena)", () => {
-  // The arena carries no Sockets at all: it is meant to be dropped on its own
-  // by free placement (ADR 0034), not chained onto anything. `placeAfter`
-  // throws for a missing Socket, so before this the palette openly offered a
-  // Module that took the builder down on click for any non-empty Track.
+describe("Modules without Sockets (every converted asset)", () => {
+  // The `pad` carries no Sockets at all: it stands in for a converted asset
+  // (the Survival `arena` ADR 0073 deleted served here before), meant to be
+  // dropped on its own by free placement (ADR 0034), not chained onto
+  // anything. `placeAfter` throws for a missing Socket, so appending one to
+  // a Track must take the free-placement path instead of throwing.
   it("can be appended to an existing Track without throwing", () => {
-    const track = appendModule([], "start", MODULE_LIBRARY);
+    const track = appendModule([], "start", MIXED);
 
-    expect(() => appendModule(track, "arena", MODULE_LIBRARY)).not.toThrow();
+    expect(() => appendModule(track, "pad", MIXED)).not.toThrow();
   });
 
   it("can have another Module appended after it", () => {
-    const track = appendModule([], "arena", MODULE_LIBRARY);
+    const track = appendModule([], "pad", MIXED);
 
-    expect(() => appendModule(track, "start", MODULE_LIBRARY)).not.toThrow();
+    expect(() => appendModule(track, "start", MIXED)).not.toThrow();
   });
 
   it("can be duplicated", () => {
-    const track = appendModule([], "arena", MODULE_LIBRARY);
+    const track = appendModule([], "pad", MIXED);
 
-    expect(() => duplicateSegment(track, MODULE_LIBRARY, 0)).not.toThrow();
+    expect(() => duplicateSegment(track, MIXED, 0)).not.toThrow();
   });
 
   it("can be deleted from the middle without breaking the re-chain", () => {
-    let track = appendModule([], "start", MODULE_LIBRARY);
-    track = appendModule(track, "arena", MODULE_LIBRARY);
-    track = appendModule(track, "bridge", MODULE_LIBRARY);
+    let track = appendModule([], "start", MIXED);
+    track = appendModule(track, "pad", MIXED);
+    track = appendModule(track, "start", MIXED);
 
-    expect(() => deleteSegment(track, MODULE_LIBRARY, 1)).not.toThrow();
+    expect(() => deleteSegment(track, MIXED, 1)).not.toThrow();
   });
 
   it("lands beside what it follows, not on top of it", () => {
-    const track = appendModule([], "start", MODULE_LIBRARY);
-    const withArena = appendModule(track, "arena", MODULE_LIBRARY);
+    const track = appendModule([], "start", MIXED);
+    const withPad = appendModule(track, "pad", MIXED);
 
     // It keeps its own position rather than being chained — free placement is
     // the point — but that position must be somewhere the author can see it.
     // At the world origin it would be buried inside whatever is already there,
     // with only the Segment count to say it arrived.
-    expect(withArena[1]!.position).not.toEqual(withArena[0]!.position);
-    expect(withArena[1]!.position.x).toBeGreaterThan(
-      withArena[0]!.position.x + MODULE_LIBRARY.start!.footprint.bounds.halfExtents.x,
+    expect(withPad[1]!.position).not.toEqual(withPad[0]!.position);
+    expect(withPad[1]!.position.x).toBeGreaterThan(
+      withPad[0]!.position.x + MIXED.start!.footprint.bounds.halfExtents.x,
     );
     expect(
-      segmentOverlapsAnyOther(withArena, MODULE_LIBRARY, 1, withArena[1]!.position, segmentOrientation(withArena[1]!)),
+      segmentOverlapsAnyOther(withPad, MIXED, 1, withPad[1]!.position, segmentOrientation(withPad[1]!)),
     ).toBe(false);
   });
 
   it("keeps clear of an unchainable predecessor too", () => {
-    let track = appendModule([], "start", MODULE_LIBRARY);
-    track = appendModule(track, "arena", MODULE_LIBRARY);
-    track = appendModule(track, "bridge", MODULE_LIBRARY);
+    let track = appendModule([], "start", MIXED);
+    track = appendModule(track, "pad", MIXED);
+    track = appendModule(track, "start", MIXED);
 
-    // A Module following the arena cannot chain either (the arena has no exit
+    // A Module following the pad cannot chain either (the pad has no exit
     // Socket), so it takes the same treatment rather than stacking at origin.
     expect(
-      segmentOverlapsAnyOther(track, MODULE_LIBRARY, 2, track[2]!.position, segmentOrientation(track[2]!)),
+      segmentOverlapsAnyOther(track, MIXED, 2, track[2]!.position, segmentOrientation(track[2]!)),
     ).toBe(false);
   });
 
+  // Every converted asset is socketless, so this is how most of a Track gets
+  // built now. Each of these used to throw `has no Socket "entry"` for any
+  // such Segment past index 0: a gizmo drag moved the mesh on screen but its
+  // commit threw, the Track never recorded the move, and the next add or
+  // delete rebuilt everything back where it had been.
+  const socketlessTrack = (): Track => {
+    let track = appendModule([], "start", MIXED);
+    track = appendModule(track, "pad", MIXED);
+    return appendModule(track, "pad", MIXED);
+  };
+  const DRAGGED = { position: { x: 40, y: 2, z: -7 }, rotation: 0.5, pitch: 0, roll: 0 };
+
+  it("commits a gizmo drag, and an unrelated add or delete keeps it", () => {
+    const dragged = setSegmentTransform(socketlessTrack(), MIXED, 1, DRAGGED);
+    expect(dragged[1]!.position).toEqual(DRAGGED.position);
+
+    const added = insertSegment(dragged, MIXED, 3, "pad");
+    expect(added[1]!.position).toEqual(DRAGGED.position);
+    expect(added[2]!.position).toEqual(dragged[2]!.position);
+
+    const deleted = deleteSegment(added, MIXED, 0);
+    expect(deleted[0]!.position).toEqual(DRAGGED.position);
+    expect(deleted[1]!.position).toEqual(dragged[2]!.position);
+  });
+
+  it("nudges with the keyboard", () => {
+    const track = socketlessTrack();
+    const moved = moveSegment(track, MIXED, 2, { x: 0.5, y: 0, z: 0 });
+
+    expect(moved[2]!.position).toEqual(addVec3(track[2]!.position, { x: 0.5, y: 0, z: 0 }));
+    expect(moved[1]).toEqual(track[1]);
+  });
+
+  it("rotates in place about its own origin — there is no entry Socket to pivot on", () => {
+    const track = socketlessTrack();
+    const rotated = rotateSegment(track, MIXED, 1, Math.PI / 2);
+
+    expect(rotated[1]!.position).toEqual(track[1]!.position);
+    expect(rotated[1]!.rotation).toBeCloseTo(Math.PI / 2);
+    expect(rotated[2]).toEqual(track[2]);
+  });
+
+  it("drags without Socket-snapping, instead of throwing on every drag update", () => {
+    const track = socketlessTrack();
+    const candidate = { x: 12, y: 0, z: 3 };
+
+    expect(snapPositionToNeighborSocket(track, MIXED, 1, candidate)).toEqual(candidate);
+  });
+
   it("still chains every Module that does have Sockets, exactly as before", () => {
-    const chained = appendModule(appendModule([], "start", MODULE_LIBRARY), "bridge", MODULE_LIBRARY);
+    const chained = appendModule(appendModule([], "start", MODULES), "bridge", MODULES);
 
     expect(chained[1]!.position).not.toEqual({ x: 0, y: 0, z: 0 });
     expect(chained[1]!.position).toEqual(
-      placeAfter(chained[0]!, MODULE_LIBRARY.start!, "bridge", MODULE_LIBRARY.bridge!).position,
+      placeAfter(chained[0]!, MODULES.start, "bridge", MODULES.bridge).position,
     );
+  });
+});
+
+describe("snapDragPosition (gizmo translate: Socket, then faces, then grid)", () => {
+  // Socketless, seated on the Asset pivot: 2 × 1 × 2, resting on y = 0.
+  const block = (id: string): Module => ({
+    id,
+    statics: [],
+    sockets: [],
+    footprint: { bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } }, clearance: 0.5 },
+  });
+  const BLOCKS = { a: block("a"), b: block("b") };
+  const ALL = { x: true, y: true, z: true };
+  const pair = (): Track => [
+    { moduleId: "a", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+    { moduleId: "b", position: { x: 10, y: 0, z: 0 }, rotation: 0 },
+  ];
+
+  it("stacks onto another Segment's top face, and grids the axes it didn't face-snap", () => {
+    expect(snapDragPosition(pair(), BLOCKS, 1, { x: 0.3, y: 1.3, z: 0.2 }, ALL)).toEqual({ x: 0.5, y: 1, z: 0 });
+  });
+
+  it("lands flush against a side face", () => {
+    expect(snapDragPosition(pair(), BLOCKS, 1, { x: 2.3, y: 0.1, z: 0 }, ALL)).toEqual({ x: 2, y: 0, z: 0 });
+  });
+
+  it("tucks under a bottom face", () => {
+    const raised: Track = [{ ...pair()[0]!, position: { x: 0, y: 3, z: 0 } }, pair()[1]!];
+    expect(snapDragPosition(raised, BLOCKS, 1, { x: 0, y: 1.8, z: 0 }, ALL).y).toBe(2);
+  });
+
+  it("only snaps faces it overlaps across the other two axes", () => {
+    // Level with the top of `a` but well off to its side: nothing to stand on.
+    expect(snapDragPosition(pair(), BLOCKS, 1, { x: 5.2, y: 1.1, z: 0 }, ALL)).toEqual({ x: 5, y: 1, z: 0 });
+  });
+
+  it("leaves the axes the dragged handle doesn't move exactly where they were", () => {
+    expect(snapDragPosition(pair(), BLOCKS, 1, { x: 0.3, y: 1.3, z: 0.2 }, { x: false, y: true, z: false })).toEqual({
+      x: 0.3,
+      y: 1,
+      z: 0.2,
+    });
+  });
+
+  it("still Socket-snaps first, exactly as before", () => {
+    const track = [
+      { moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { moduleId: "bridge", position: { x: 0, y: -0.5, z: -6 }, rotation: 0 },
+    ];
+    const nearSocket = { x: 0.4, y: -0.3, z: -6.2 };
+
+    expect(snapDragPosition(track, MODULES, 1, nearSocket, ALL)).toEqual(
+      snapPositionToNeighborSocket(track, MODULES, 1, nearSocket),
+    );
+    expect(snapDragPosition(track, MODULES, 1, nearSocket, ALL)).not.toEqual(nearSocket);
+  });
+});
+
+describe("a Segment's Motion through every edit (M11 ticket 06)", () => {
+  const SLIDE = { slide: { offset: { x: 0, y: 2, z: 0 }, period: 3, easing: "easeInOut" as const } };
+  const chain = (): Track => {
+    let track = appendModule([], "start", MODULES);
+    track = appendModule(track, "bridge", MODULES);
+    return appendModule(track, "gap", MODULES);
+  };
+
+  it("sets and clears a Motion without moving anything", () => {
+    const track = chain();
+    const moving = setSegmentMotion(track, 1, SLIDE);
+
+    expect(moving[1]!.motion).toEqual(SLIDE);
+    expect(moving.map((s) => s.position)).toEqual(track.map((s) => s.position));
+    expect(setSegmentMotion(moving, 1, undefined)[1]!.motion).toBeUndefined();
+  });
+
+  it("survives its chained Segment being re-placed by an edit upstream", () => {
+    const moving = setSegmentMotion(chain(), 2, SLIDE);
+    const rotated = rotateSegment(moving, MODULES, 1, Math.PI / 2);
+    const nudged = moveSegment(moving, MODULES, 0, { x: 1, y: 0, z: 0 });
+
+    expect(rotated[2]!.motion).toEqual(SLIDE);
+    expect(nudged[2]!.motion).toEqual(SLIDE);
+    expect(deleteSegment(moving, MODULES, 0)[1]!.motion).toEqual(SLIDE);
+  });
+
+  it("is copied by Duplicate — a row of identical hammers", () => {
+    const moving = setSegmentMotion(chain(), 1, SLIDE);
+
+    expect(duplicateSegment(moving, MODULES, 1)[2]!.motion).toEqual(SLIDE);
+  });
+});
+
+describe("a Segment's Conveyor (ADR 0064)", () => {
+  const BELT = { preset: "fast" as const, angle: 1.2 };
+  const chain = (): Track => {
+    let track = appendModule([], "start", MODULES);
+    track = appendModule(track, "bridge", MODULES);
+    return appendModule(track, "gap", MODULES);
+  };
+
+  it("attaches and detaches a belt without moving anything", () => {
+    const track = chain();
+    const belted = setSegmentConveyor(track, 1, BELT);
+
+    expect(belted[1]!.conveyor).toEqual(BELT);
+    expect(belted.map((s) => s.position)).toEqual(track.map((s) => s.position));
+    expect(belted[0]).not.toHaveProperty("conveyor");
+    expect(setSegmentConveyor(belted, 1, undefined)[1]).not.toHaveProperty("conveyor");
+  });
+
+  it("survives re-chains and is copied by Duplicate, like a Motion", () => {
+    const belted = setSegmentConveyor(chain(), 2, BELT);
+
+    expect(rotateSegment(belted, MODULES, 1, Math.PI / 2)[2]!.conveyor).toEqual(BELT);
+    expect(duplicateSegment(setSegmentConveyor(chain(), 1, BELT), MODULES, 1)[2]!.conveyor).toEqual(BELT);
+  });
+
+  it("throws on an out-of-range index", () => {
+    expect(() => setSegmentConveyor(chain(), 9, BELT)).toThrow(/index 9 is out of range/);
+  });
+});
+
+describe("a Segment's ice (ADR 0066)", () => {
+  const chain = (): Track => {
+    let track = appendModule([], "start", MODULES);
+    track = appendModule(track, "bridge", MODULES);
+    return appendModule(track, "gap", MODULES);
+  };
+
+  it("attaches and detaches ice without moving anything", () => {
+    const track = chain();
+    const iced = setSegmentIce(track, 1, true);
+
+    expect(iced[1]!.ice).toBe(true);
+    expect(iced.map((s) => s.position)).toEqual(track.map((s) => s.position));
+    expect(iced[0]).not.toHaveProperty("ice");
+    expect(setSegmentIce(iced, 1, undefined)[1]).not.toHaveProperty("ice");
+  });
+
+  it("survives re-chains and is copied by Duplicate, like a belt", () => {
+    const iced = setSegmentIce(chain(), 2, true);
+
+    expect(rotateSegment(iced, MODULES, 1, Math.PI / 2)[2]!.ice).toBe(true);
+    expect(duplicateSegment(setSegmentIce(chain(), 1, true), MODULES, 1)[2]!.ice).toBe(true);
+  });
+
+  it("throws on an out-of-range index", () => {
+    expect(() => setSegmentIce(chain(), 9, true)).toThrow(/index 9 is out of range/);
+  });
+});
+
+describe("a Segment's mud (ADR 0067)", () => {
+  const chain = (): Track => {
+    let track = appendModule([], "start", MODULES);
+    track = appendModule(track, "bridge", MODULES);
+    return appendModule(track, "gap", MODULES);
+  };
+
+  it("attaches and detaches mud without moving anything", () => {
+    const track = chain();
+    const muddied = setSegmentMud(track, 1, true);
+
+    expect(muddied[1]!.mud).toBe(true);
+    expect(muddied.map((s) => s.position)).toEqual(track.map((s) => s.position));
+    expect(muddied[0]).not.toHaveProperty("mud");
+    expect(setSegmentMud(muddied, 1, undefined)[1]).not.toHaveProperty("mud");
+  });
+
+  it("survives re-chains and is copied by Duplicate, like a belt", () => {
+    const muddied = setSegmentMud(chain(), 2, true);
+
+    expect(rotateSegment(muddied, MODULES, 1, Math.PI / 2)[2]!.mud).toBe(true);
+    expect(duplicateSegment(setSegmentMud(chain(), 1, true), MODULES, 1)[2]!.mud).toBe(true);
+  });
+
+  it("throws on an out-of-range index", () => {
+    expect(() => setSegmentMud(chain(), 9, true)).toThrow(/index 9 is out of range/);
+  });
+});
+
+describe("scaling a Segment (ADR 0062)", () => {
+  const chain = (): Track => {
+    let track = appendModule([], "start", MODULES);
+    track = appendModule(track, "bridge", MODULES);
+    return appendModule(track, "gap", MODULES);
+  };
+
+  it("keeps a chained Segment attached at its entry and re-chains what follows", () => {
+    const track = chain();
+    const scaled = setSegmentScale(track, MODULES, 1, 2);
+
+    expect(scaled[1]!.scale).toBe(2);
+    // Still flush against its predecessor: re-placed through the scaled entry Socket.
+    expect(scaled[1]).toEqual(placeAfter(scaled[0]!, MODULES.start, "bridge", MODULES.bridge, "exit", "entry", 2));
+    // The next one now meets the scaled exit.
+    expect(scaled[2]!.position).toEqual(placeAfter(scaled[1]!, MODULES.bridge, "gap", MODULES.gap).position);
+    expect(scaled[2]!.position).not.toEqual(track[2]!.position);
+  });
+
+  it("clamps to the stored bounds and forgets a scale of exactly 1", () => {
+    const track = chain();
+    expect(setSegmentScale(track, MODULES, 1, 100)[1]!.scale).toBe(4);
+    expect(setSegmentScale(track, MODULES, 1, 0.01)[1]!.scale).toBe(0.25);
+    expect(setSegmentScale(setSegmentScale(track, MODULES, 1, 2), MODULES, 1, 1)[1]).not.toHaveProperty("scale");
+  });
+
+  it("grows a free-placed Segment about its own origin, where it stands", () => {
+    const track = setSegmentTransform(chain(), MODULES, 1, { position: { x: 20, y: 0, z: 0 }, rotation: 0, pitch: 0, roll: 0 });
+    expect(setSegmentScale(track, MODULES, 1, 3)[1]!.position).toEqual({ x: 20, y: 0, z: 0 });
+  });
+
+  it("keeps its scale through a gizmo drag that doesn't touch it, and through Duplicate", () => {
+    const scaled = setSegmentScale(chain(), MODULES, 1, 2);
+    expect(setSegmentTransform(scaled, MODULES, 1, { position: { x: 3, y: 0, z: 0 }, rotation: 0, pitch: 0, roll: 0 })[1]!.scale).toBe(2);
+    expect(duplicateSegment(scaled, MODULES, 1)[2]!.scale).toBe(2);
+  });
+
+  it("measures overlap and Socket-snap with the scaled Footprint and Sockets", () => {
+    const track: Track = [
+      { moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { moduleId: "bridge", position: { x: 0, y: 0, z: -20 }, rotation: 0 },
+      { moduleId: "gap", position: { x: 9, y: 0, z: 0 }, rotation: 0, scale: 2 },
+    ];
+    // 1×, the gap's Footprint (half 3, clearance 0.5) would clear the start at x = 9; at 2× (half 6) it reaches it.
+    expect(segmentOverlapsAnyOther(track, MODULES, 2, { x: 9, y: 0, z: 0 }, IDENTITY_QUAT)).toBe(true);
+    const { scale: _scale, ...unscaled } = track[2]!;
+    expect(segmentOverlapsAnyOther([...track.slice(0, 2), unscaled], MODULES, 2, { x: 9, y: 0, z: 0 }, IDENTITY_QUAT)).toBe(false);
   });
 });

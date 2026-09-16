@@ -20,6 +20,7 @@ const RESULT = {
   ],
   nicknames: { p1: "Floppo", p2: "Goopy" },
   accountIds: { p1: "acc-1" },
+  bodySkins: { p1: 2 },
   totalFalls: { p1: 1, p2: 3 },
   endedAtMs: 60_000,
 };
@@ -56,6 +57,7 @@ describe("match results service", () => {
       ).toThrowError(/placement/);
       expect(() => saveMatchResult(db, { ...RESULT, nicknames: [] })).toThrowError(/nicknames/);
       expect(() => saveMatchResult(db, { ...RESULT, accountIds: [] })).toThrowError(/accountIds/);
+      expect(() => saveMatchResult(db, { ...RESULT, bodySkins: [] })).toThrowError(/bodySkins/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -69,6 +71,19 @@ describe("match results service", () => {
 
       expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
       expect(getMatchResult(db, "m1")).toEqual({ ...legacy, accountIds: {} });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults a missing bodySkins map — pre-skins saves carry none", () => {
+    const dir = mkdtempSync(join(tmpdir(), "api-matches-test-"));
+    try {
+      const db = openDb(join(dir, "test.sqlite"));
+      const { bodySkins: _dropped, ...legacy } = RESULT;
+
+      expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
+      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, bodySkins: {} });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

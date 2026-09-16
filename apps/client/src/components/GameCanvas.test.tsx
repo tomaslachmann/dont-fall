@@ -123,9 +123,9 @@ const freshSeen = (overrides: Partial<ApiSeen> = {}): ApiSeen => ({
 });
 
 const lobbyPlayers = [
-  { id: "me", nickname: "Mushy", ready: true, joinOrder: 0, accountId: null },
-  { id: "p2", nickname: "Rival", ready: true, joinOrder: 1, accountId: null },
-  { id: "p3", nickname: "Third", ready: true, joinOrder: 2, accountId: null },
+  { id: "me", nickname: "Mushy", ready: true, joinOrder: 0, accountId: null, bodySkin: null },
+  { id: "p2", nickname: "Rival", ready: true, joinOrder: 1, accountId: null, bodySkin: null },
+  { id: "p3", nickname: "Third", ready: true, joinOrder: 2, accountId: null, bodySkin: null },
 ];
 
 const lobbyIn = (phase: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -415,7 +415,7 @@ describe("GameCanvas", () => {
   matchId: "match-1",
         phase: "LOBBY",
         hostId: "me",
-        players: [{ id: "me", nickname: "Player", ready: false, joinOrder: 0, accountId: null }],
+        players: [{ id: "me", nickname: "Player", ready: false, joinOrder: 0, accountId: null, bodySkin: null }],
         trackId: "t1",
         trackRevision: 1,
         timeLimitMs: 180_000,

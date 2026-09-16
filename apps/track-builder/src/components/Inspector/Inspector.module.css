@@ -8,6 +8,18 @@
   overflow: hidden;
 }
 
+/* the one scroll in the card: the folded sections stack, the header stays put */
+.sections {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--df-color-ink-14) transparent;
+}
+
 .head {
   display: flex;
   align-items: center;
@@ -38,17 +50,9 @@
   letter-spacing: var(--df-tracking-label);
 }
 
-/* stacked: transform and motion sit side by side, the card grows with its content */
+/* docked under the canvas: the card grows with its sections and rides the
+   body's own scroll instead of holding a second one inside a squeezed height */
 @container tbscreen (max-width: 980px) {
-  .root {
-    display: grid;
-    grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
-    grid-template-rows: auto auto;
-    height: auto;
-  }
-  .head { grid-column: 1 / -1; }
-}
-
-@container tbscreen (max-width: 620px) {
-  .root { grid-template-columns: minmax(0, 1fr); }
+  .root { height: auto; }
+  .sections { flex: none; overflow-y: visible; }
 }

@@ -168,3 +168,11 @@
 
 /* Sign-up gets one more field, so the card breathes a little tighter. */
 .signup .fields { gap: var(--df-space-3); }
+
+/* The login/signup error line — referenced since the screen was wired, defined only now. */
+.errorBanner {
+  margin: 0;
+  font: var(--df-weight-label) var(--df-text-2xs) / 1.4 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-danger-shade);
+}

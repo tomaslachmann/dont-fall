@@ -93,6 +93,39 @@ describe("openDb migrating the pre-ADR-0053 accounts schema", () => {
     ).toThrow();
   });
 
+  it("backfills body_skin = 0 onto pre-skins accounts, preserving rows (M9 ticket 15)", () => {
+    // The exact pre-skins shape by hand — every column except `body_skin`.
+    const raw = new Database(dbPath);
+    raw.exec(`
+      CREATE TABLE accounts (
+        id TEXT PRIMARY KEY,
+        discord_id TEXT UNIQUE,
+        email TEXT UNIQUE,
+        password_hash TEXT,
+        display_name TEXT NOT NULL,
+        avatar_url TEXT,
+        friend_code TEXT UNIQUE,
+        created_at INTEGER NOT NULL,
+        xp INTEGER NOT NULL DEFAULT 0,
+        coins INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    raw.prepare("INSERT INTO accounts (id, email, display_name, created_at) VALUES (?, ?, ?, ?)").run(
+      "old-id",
+      "old@example.com",
+      "Old Bean",
+      Date.now(),
+    );
+    raw.close();
+
+    const db = openDb(dbPath);
+
+    expect(db.select().from(accounts).where(eq(accounts.id, "old-id")).get()).toMatchObject({
+      displayName: "Old Bean",
+      bodySkin: 0,
+    });
+  });
+
   it("leaves an already-current accounts schema (and its data) untouched on reopen", () => {
     const db = openDb(dbPath);
     db.insert(accounts)

@@ -31,6 +31,23 @@
 .stack > .item { flex-direction: column; gap: 3px; padding: var(--tb-s-3) var(--tb-s-2); }
 .stack .count { font-size: var(--tb-t-2xs); }
 
+/* scrolled: the trough stops dividing its width and each tab takes the width its
+   own label needs — four counted categories never fit abreast in a 224px palette,
+   and a clipped word is worse than a row you push sideways. No visible scrollbar:
+   the last tab's cut edge is the affordance, like the course strip's. */
+.scroll {
+  grid-auto-columns: max-content;
+  /* a scroll container's automatic minimum size is 0, so a flex column would
+     squash the row to nothing — and `overflow-x: auto` alone would compute the
+     other axis to auto and scroll vertically too */
+  flex: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.scroll::-webkit-scrollbar { display: none; }
+
 .plate > .item { border-radius: calc(var(--tb-r-lg) - var(--tb-s-1)); }
 .sm > .item { padding: var(--tb-s-3) var(--tb-s-4); font-size: var(--tb-t-2xs); }
 

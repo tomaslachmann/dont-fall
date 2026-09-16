@@ -413,7 +413,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       const id = randomUUID();
       // Spawn in the loaded Track's own start frame (free placement puts the
       // start platform anywhere) — never M1's world coords (playtest bug, 2026-09).
-      const spawn = trackSpawn(rt.fetched.track, rt.joinCount);
+      const spawn = trackSpawn(rt.fetched.track, rt.joinCount, rt.library);
       const joinOrder = rt.joinCount;
       rt.joinCount += 1;
       rt.sockets.set(id, socket);
@@ -425,7 +425,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       // The host is the first joiner (M4 ticket 07, ADR 0040) — `joinOrder`
       // is what `resolveHostId` reads to decide that, recomputed from
       // whoever is still connected rather than stored.
-      rt.lobbyPlayers.set(id, { id, nickname: "Player", ready: false, joinOrder, accountId: null });
+      rt.lobbyPlayers.set(id, { id, nickname: "Player", ready: false, joinOrder, accountId: null, bodySkin: null });
       // A mid-Match spectator is in the Lobby's list, not in the Round (M7
       // ticket 08): registered and welcomed above, but seated by no
       // simulation — `buildSimulationFor` seats everyone else, and only a
@@ -506,7 +506,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         const midRound = rt.match.phase === "RUNNING";
         if (midRound && !spectating && !rt.dnf.some((entry) => entry.id === id)) {
           const row = rt.lobbyPlayers.get(id);
-          rt.dnf.push({ id, nickname: row?.nickname ?? "Player", accountId: row?.accountId ?? null });
+          rt.dnf.push({ id, nickname: row?.nickname ?? "Player", accountId: row?.accountId ?? null, bodySkin: row?.bodySkin ?? null });
         }
         rt.sockets.delete(id);
         rt.inputs.remove(id);

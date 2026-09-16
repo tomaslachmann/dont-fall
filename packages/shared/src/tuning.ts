@@ -167,6 +167,45 @@ export const JUMP_HOLD_MAX_TICKS = msToTicks(JUMP_HOLD_MAX_MS);
 /** {@link COYOTE_MS} in whole ticks. */
 export const COYOTE_TICKS = msToTicks(COYOTE_MS);
 
+// --- Launch (Springs and launch pads, ADR 0069) -----------------------------
+
+/**
+ * How high a Spring throws, in metres above the deck it fires from — the one
+ * number the Track author types (the builder's presets write this same field).
+ * A plain jump reaches `JUMP_VELOCITY² / (2·|GRAVITY_Y|)` ≈ 2.3 m, so even the
+ * low preset is unmistakably a Spring and not a jump. `MEDIUM` is where the
+ * deleted procedural pad always threw (`velocity.y = 16` ≈ 5.8 m).
+ * Provisional tuning — a measurement, not a decision.
+ */
+export const LAUNCH_HEIGHT_PRESETS = { low: 3, medium: 6, high: 10 } as const;
+
+/**
+ * How far from *standing on the deck* a Character may be and still fire a
+ * Spring (units, measured at its capsule centre) — small on purpose.
+ *
+ * The box wants to be tight around the standing pose, not tall enough to catch
+ * a fall in mid-air: a Character dropping onto a Spring is stopped by the
+ * Spring's own collision within the tick it arrives, so it is already standing
+ * when the trigger is tested. A generous box instead fires while the feet are
+ * still well above the piece, and the launch reads as bouncing off nothing
+ * (found live, 2026-09-15).
+ */
+export const LAUNCH_TRIGGER_MARGIN = 0.4;
+
+/** Author-settable range for a Spring's height (metres) — below this it reads as a jump, above it as a mistake. */
+export const LAUNCH_HEIGHT_MIN = 1;
+export const LAUNCH_HEIGHT_MAX = 20;
+
+/**
+ * The launch speed that apexes at `height` metres under {@link GRAVITY_Y} —
+ * `v = √(2·g·h)`, straight out of `v² = 2·g·h` at the top of the arc, where
+ * the vertical speed is zero. The whole reason a launch is authored as a
+ * height: `h` is what an author reasons about ("does this clear the gap"),
+ * `v` is what the simulation wants, and only one of the two should be typed by
+ * a human. Exact in both directions — `launchHeightToSpeed(h)² / (2·|g|) === h`.
+ */
+export const launchHeightToSpeed = (height: number): number => Math.sqrt(2 * Math.abs(GRAVITY_Y) * height);
+
 // --- Dash ------------------------------------------------------------------
 
 /** Peak horizontal speed (units/s) reached at the end of a dash's build-up. */
@@ -200,24 +239,6 @@ export const DASH_RELEASE_TICKS = msToTicks(DASH_RELEASE_MS);
 /** {@link DASH_COOLDOWN_MS} in whole ticks. */
 export const DASH_COOLDOWN_TICKS = msToTicks(DASH_COOLDOWN_MS);
 
-// --- Speed pads (M3.7 ticket 01, ADR 0035) ----------------------------------
-
-/**
- * How long a speed/slow pad's raised (or lowered) speed cap holds at full
- * magnitude after the one-shot trigger, before {@link SPEED_PAD_FADE_MS}
- * starts fading it back to 1 — SuperTuxKart's zipper model (`max-speed-
- * increase` held for `duration`, then a linear fade over `fade-out-time`;
- * `docs/research/surface-and-volume-mechanics.md` §1.2). A pure continuous
- * multiplier (no hold, no one-shot write) was rejected: on a short pad the
- * very next tick's cap would clip it right back down, doing almost nothing.
- * Provisional, like every other Surface/pad number in this project so far —
- * a measurement against a real pad, not a decision, once one exists.
- */
-export const SPEED_PAD_HOLD_MS = 3000;
-
-/** How long the cap takes to linearly fade from its peak back to 1 (ms), once {@link SPEED_PAD_HOLD_MS} elapses. */
-export const SPEED_PAD_FADE_MS = 1000;
-
 /** Capsule radius (units). */
 export const CAPSULE_RADIUS = 0.35;
 
@@ -240,8 +261,28 @@ export const IMPACT_STAGGER_MIN = 4;
 /** Impulse magnitude at or above which an Impact knocks the Character to Ragdoll. */
 export const IMPACT_RAGDOLL_MIN = 9;
 
-/** How long a Stagger lasts before recovering to Controlled (ms). */
-export const STAGGER_MS = 350;
+/**
+ * How long a Stagger — the game's Wobble (ADR 0072) — lasts after a light
+ * Impact before recovering to Controlled (ms).
+ *
+ * Long enough to read as "you're soft right now" and for whoever hit you to
+ * arrive and hit you again; short enough that one light hit is a setback and
+ * not a sentence. Was 350 ms, which was a stumble nobody could see (there was
+ * no animation for it either).
+ */
+export const STAGGER_MS = 1200;
+
+/**
+ * How long a Character wobbles after a Respawn (ADR 0072) — longer than a
+ * hit's, because it stands in for the whole knockdown a Fall used to cost.
+ *
+ * What it replaces was far harsher: a Fall used to ragdoll you for
+ * {@link RAGDOLL_MIN_MS}..{@link RAGDOLL_MAX_MS} plus {@link GETUP_MS} of
+ * getting up, all at zero input — one to four and a half seconds of no
+ * control. Two seconds at {@link STAGGER_INPUT_SCALE} is both gentler and
+ * predictable, which is what a Track author needs when placing a gap.
+ */
+export const RESPAWN_WOBBLE_MS = 2000;
 
 /** Movement input multiplier while Staggered. */
 export const STAGGER_INPUT_SCALE = 0.35;
@@ -267,8 +308,13 @@ export const SLIDE_INPUT_SCALE = 0.3;
  */
 export const SLIDE_STEER_BLEND = 0.15;
 
-/** Minimum time spent in Ragdoll before it can begin getting up (ms). */
-export const RAGDOLL_MIN_MS = 500;
+/**
+ * Minimum time spent in Ragdoll before it can begin getting up (ms). This is
+ * the length of the rig's `KO_*` clips, 50 frames at 30 fps (ADR 0076), so a
+ * Character never starts getting up before its fall has finished playing.
+ * Was 500.
+ */
+export const RAGDOLL_MIN_MS = 1667;
 
 /** Hard cap on Ragdoll time — get up even if the body has not settled (ms). */
 export const RAGDOLL_MAX_MS = 4000;
@@ -276,8 +322,14 @@ export const RAGDOLL_MAX_MS = 4000;
 /** Max speed (units/s) of any ragdoll bone for the body to count as settled. */
 export const RAGDOLL_SETTLE_SPEED = 1.2;
 
-/** How long the GettingUp blend from ragdoll pose back to standing takes (ms). */
-export const GETUP_MS = 450;
+/**
+ * How long GettingUp lasts at zero input (ms). This is the frame where the
+ * rig's `GetUp_*` clips plant both feet, frame 32 of 84 at 30 fps (ADR 0076).
+ * Control returns there, and the rest of the get-up plays out only while the
+ * Character stands still. Also the length of the sim's own blend from the
+ * settled pelvis back to the standing capsule. Was 450.
+ */
+export const GETUP_MS = 1067;
 
 /** Where the capsule centre is placed above the settled pelvis when GettingUp begins (units). */
 export const GETUP_CAPSULE_LIFT = 0.7;
@@ -324,8 +376,6 @@ export const RAGDOLL_CONTACT_SKIN = 0.01;
 /** Friction on ragdoll bone colliders (they should slide a little, not stick). */
 export const RAGDOLL_FRICTION = 0.9;
 
-/** Peak magnitude of the gentle, varied flop impulse applied on a post-Fall Respawn. */
-export const RESPAWN_FLOP_IMPULSE = 1.5;
 
 /**
  * Fraction of its pre-hit velocity a Character's ragdoll keeps when the
@@ -339,6 +389,9 @@ export const RAGDOLL_IMPACT_VELOCITY_SCALE = 0.2;
 
 /** {@link STAGGER_MS} in whole ticks. */
 export const STAGGER_TICKS = msToTicks(STAGGER_MS);
+
+/** {@link RESPAWN_WOBBLE_MS} in whole ticks. */
+export const RESPAWN_WOBBLE_TICKS = msToTicks(RESPAWN_WOBBLE_MS);
 
 /** {@link RAGDOLL_MIN_MS} in whole ticks. */
 export const RAGDOLL_MIN_TICKS = msToTicks(RAGDOLL_MIN_MS);
@@ -537,6 +590,29 @@ export const BUMP_IMPULSE_SCALE = 0.6;
  * a visible pop off the ground — same idea as {@link WALL_IMPACT_LIFT_RATIO}.
  */
 export const BUMP_LIFT_RATIO = 0.3;
+
+// --- Moving Segments (M11, ADR 0061) -------------------------------------------
+
+/**
+ * Impact magnitude per unit of closing speed when a Moving Segment moves into
+ * a Character — Bump's own scale, on purpose: ADR 0061 makes being hit by a
+ * moving piece the same Impact rule as being bumped, so a platform drifting
+ * into you at walking pace (~3.6) only shoves, and a hammer head at ≳ 15
+ * units/s knocks you down.
+ */
+export const MOVING_SEGMENT_IMPACT_SCALE = BUMP_IMPULSE_SCALE;
+
+/** Upward bias mixed into a Moving Segment's knockback direction — Bump's own pop. */
+export const MOVING_SEGMENT_LIFT_RATIO = BUMP_LIFT_RATIO;
+
+/**
+ * Impact magnitude of touching a Spiked Asset (ADR 0061) — exactly the Ragdoll
+ * threshold, so it always knocks down and no harder than it must.
+ */
+export const SPIKED_IMPACT_MAGNITUDE = IMPACT_RAGDOLL_MIN;
+
+/** Upward bias of a Spiked knockback — a bigger pop than a Bump's, so the body clears the spikes. */
+export const SPIKED_LIFT_RATIO = 1;
 
 // --- Hit (M6 ticket 03) ------------------------------------------------------
 
@@ -832,6 +908,10 @@ export const DEFAULT_TIME_LIMIT_MS = 180_000;
  */
 export const MIN_TIME_LIMIT_MS = 10_000;
 export const MAX_TIME_LIMIT_MS = 30 * 60_000;
+
+/** The smallest and largest uniform `Segment.scale` a Track may store (ADR 0062). */
+export const MIN_SEGMENT_SCALE = 0.25;
+export const MAX_SEGMENT_SCALE = 4;
 
 // --- Survival (M5 ticket 05, ADR 0041/0042) ---------------------------------
 

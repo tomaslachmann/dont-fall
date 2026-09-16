@@ -25,13 +25,19 @@ const STRAIGHT_FOOTPRINT: Footprint = {
 };
 
 /**
- * The M1 playground's five stops plus its end sandbox, ported from
+ * The M1 playground's stops plus its end sandbox, ported from
  * `playground.ts`'s hand-authored world-space geometry (ticket 06's Spinner
  * tuning, ticket 07's feel-tuning) into reusable Modules. Same beats, same
  * Spinner/Prop/Checkpoint tuning values, re-centered per-Module — not
  * byte-identical world geometry (M1's hand-tuned platform widths/gaps varied
  * per-stop, which a shared Footprint deliberately no longer allows), but the
- * same declining run of platforms and bridges with identical obstacle feel.
+ * same declining run of platforms with identical obstacle feel.
+ *
+ * Shrinking toward assets (ADR 0073): the plain connectors (`bridge`,
+ * `bridge-2`), the pad Modules (`bounce`, `launch-pad` — superseded by the
+ * Segment bounce attachment and asset Springs), and the Survival `arena`
+ * are deleted outright, not retired — Tracks stored before the deletion
+ * that place them now fail as unknown-Module, the same as any removed id.
  */
 export const M1_MODULES: Record<string, Module> = {
   start: {
@@ -43,12 +49,6 @@ export const M1_MODULES: Record<string, Module> = {
     sockets: STRAIGHT_SOCKETS,
     footprint: STRAIGHT_FOOTPRINT,
   },
-  bridge: {
-    id: "bridge",
-    statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
-    sockets: STRAIGHT_SOCKETS,
-    footprint: STRAIGHT_FOOTPRINT,
-  },
   "checkpoint-spinner": {
     id: "checkpoint-spinner",
     statics: [box({ x: 0, y: -0.1, z: 0 }, { x: 3, y: 0.5, z: 4 })],
@@ -57,12 +57,6 @@ export const M1_MODULES: Record<string, Module> = {
       trigger: { center: { x: 0, y: 1.35, z: 0 }, halfExtents: { x: 2.5, y: 2, z: 3.5 } },
     },
     spinners: [{ center: { x: 0, y: 0.95, z: 3 }, armLength: 2.5, halfHeight: 0.4, armRadius: 0.35, angularSpeed: 6.5 }],
-    sockets: STRAIGHT_SOCKETS,
-    footprint: STRAIGHT_FOOTPRINT,
-  },
-  "bridge-2": {
-    id: "bridge-2",
-    statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
     sockets: STRAIGHT_SOCKETS,
     footprint: STRAIGHT_FOOTPRINT,
   },
@@ -117,10 +111,16 @@ export const M1_MODULES: Record<string, Module> = {
     footprint: STRAIGHT_FOOTPRINT,
   },
   /**
-   * Mud: the first Surface (M3.6 ticket 01) — deliberately identical geometry
-   * to `bridge` above. The property is the deliverable, the look is not
-   * (ticket 01's own acceptance criterion): nothing here should tip a player
-   * off by sight, only by how much slower they walk across it.
+   * Mud: the first Surface (M3.6 ticket 01) — a plain 2×4 deck. The property
+   * is the deliverable, the look is not (ticket 01's own acceptance
+   * criterion): nothing here should tip a player off by sight, only by how
+   * much slower they walk across it.
+   */
+  /**
+   * Retired by ADR 0067 — kept with its Surface so Tracks stored before the
+   * retirement drag exactly where they always did. New mud attaches to the
+   * Segment instead; hidden from the builder palette by
+   * `DEPRECATED_MODULE_IDS`; never place this in a new Track.
    */
   mud: {
     id: "mud",
@@ -130,9 +130,11 @@ export const M1_MODULES: Record<string, Module> = {
     surface: "mud",
   },
   /**
-   * Ice: the second Surface (M3.6 ticket 06) — same deliberately-identical-
-   * geometry-to-`bridge` treatment as `mud` above, and the same reasoning:
-   * the Surface is the deliverable, not the look.
+   * Retired by ADR 0066 — kept with its Surface so Tracks stored before the
+   * retirement skate exactly where they always did (unlike the pads below,
+   * whose behaviour is gone, ice keeps working). New ice is attached to the
+   * Segment instead; hidden from the builder palette by
+   * `DEPRECATED_MODULE_IDS`; never place this in a new Track.
    */
   ice: {
     id: "ice",
@@ -142,104 +144,42 @@ export const M1_MODULES: Record<string, Module> = {
     surface: "ice",
   },
   /**
-   * Speed pad: the first Epoch-latched effect (M3.7 ticket 01) — same
-   * deliberately-identical-geometry-to-`bridge` treatment as `mud`/`ice`: the
-   * pad's `trigger` covers its floor's own footprint, invisible to a player
-   * looking at it.
+   * Retired by ADR 0064 — kept as a geometry-only stub so Tracks stored
+   * before the retirement still load (their pads warn via
+   * `resolveTrack`'s `warnings` instead of firing). What the statics always
+   * were: an ordinary 2×4 deck. Hidden from the builder palette by
+   * `DEPRECATED_MODULE_IDS`; never place these in a new Track.
    */
   "speed-pad": {
     id: "speed-pad",
     statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
-    speedPads: [{ trigger: box({ x: 0, y: 0.5, z: 0 }, { x: 1, y: 1, z: 2 }), capMultiplier: 2 }],
     sockets: STRAIGHT_SOCKETS,
     footprint: STRAIGHT_FOOTPRINT,
   },
-  /** Slow pad: the same mechanism as `speed-pad`, cap lowered instead of raised (M3.7 ticket 01). */
+  /** Retired by ADR 0064 — same geometry-only stub treatment as `speed-pad` above. */
   "slow-pad": {
     id: "slow-pad",
     statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
-    speedPads: [{ trigger: box({ x: 0, y: 0.5, z: 0 }, { x: 1, y: 1, z: 2 }), capMultiplier: 0.3 }],
     sockets: STRAIGHT_SOCKETS,
     footprint: STRAIGHT_FOOTPRINT,
   },
-  /**
-   * Bounce: a Surface, not a trigger (M3.7 ticket 02) — same deliberately-
-   * identical-geometry-to-`bridge` treatment as mud/ice/the pads: nothing
-   * here tips a player off by sight, only what happens the instant they land.
-   */
-  bounce: {
-    id: "bounce",
-    statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
-    sockets: STRAIGHT_SOCKETS,
-    footprint: STRAIGHT_FOOTPRINT,
-    surface: "bounce",
-  },
-  /**
-   * Launch pad: the second Epoch-latched trigger (M3.7 ticket 02) — a fixed,
-   * precomputed launch vector (Quake's jump-pad model), authored in the
-   * Module's own local space and rotated (never translated) into world space
-   * by `resolveTrack`. Points along this Module's own forward direction
-   * (`STRAIGHT_SOCKETS`' exit faces local -Z) with a large vertical
-   * component — comfortably clearing a multi-Module gap.
-   */
-  "launch-pad": {
-    id: "launch-pad",
-    statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
-    launchPads: [{ trigger: box({ x: 0, y: 0.5, z: 0 }, { x: 1, y: 1, z: 2 }), velocity: { x: 0, y: 16, z: -6 } }],
-    sockets: STRAIGHT_SOCKETS,
-    footprint: STRAIGHT_FOOTPRINT,
-  },
-  /**
-   * Updraft: the first Volume (M3.7 ticket 04, ADR 0036) — same deliberately-
-   * identical-geometry-to-`bridge` treatment as the pads/Surfaces: nothing
-   * about the floor tips a player off, only the column of air above it. The
-   * `bounds` stands well above the floor (a Character must actually walk
-   * into the column, not just cross its footprint) and wide enough to drift
-   * sideways out of before landing. `force.y` (40) comfortably beats
-   * `GRAVITY_Y` (-22) so the net effect genuinely lifts, capped by
-   * `maxInducedSpeed` — no flight mode, no new state: a Character rides it
-   * up exactly as Controlled/Stagger/whatever it already was, and simply
-   * falls again the instant it drifts out from under it.
-   */
+  /** Retired by ADR 0075 — same geometry-only stub treatment as `speed-pad` above. The field moved onto the fan asset. */
   updraft: {
     id: "updraft",
     statics: [box({ x: 0, y: -0.2, z: 0 }, { x: 1, y: 0.5, z: 2 })],
-    volumes: [
-      {
-        bounds: box({ x: 0, y: 3, z: 0 }, { x: 1.5, y: 3, z: 2 }),
-        force: { x: 0, y: 40, z: 0 },
-        maxInducedSpeed: 10,
-        priority: 1,
-      },
-    ],
     sockets: STRAIGHT_SOCKETS,
     footprint: STRAIGHT_FOOTPRINT,
   },
-  /**
-   * Arena: the one piece of content M5 adds (ticket 06) — an open platform
-   * over the void, no walls, no bridges, nothing to hide behind. What makes
-   * a Track a Survival Track is only that you can fall off it in every
-   * direction; the shoving is Bump, which has worked since M2 and needs
-   * nothing new. Deliberately no Checkpoint and no Finish Zone — Survival's
-   * own Qualification is `qualifySurvivors` (ticket 05), never a zone to
-   * reach, and Checkpoints mean nothing where a Fall eliminates instead of
-   * respawning (ADR 0042); the arena resolves cleanly with neither.
-   *
-   * `sockets: []` on purpose — meant to be dropped alone via free placement
-   * (ADR 0034), not auto-chained onto anything (`chainTrack`'s own docs:
-   * nothing requires a Module to have sockets at all).
-   */
-  arena: {
-    id: "arena",
-    statics: [box({ x: 0, y: -0.5, z: 0 }, { x: 6, y: 0.5, z: 6 })],
-    sockets: [],
-    footprint: { bounds: box({ x: 0, y: -0.5, z: 0 }, { x: 6, y: 2, z: 6 }), clearance: 0.5 },
-  },
 };
 
-/** The M1 playground, reassembled through the Module/Track system (ticket 01, re-chained via Sockets in round 2). */
+/**
+ * The M1 playground, reassembled through the Module/Track system (ticket 01,
+ * re-chained via Sockets in round 2). Four stops since ADR 0073 deleted the
+ * plain `bridge` connectors — every beat that matters (the Spinner, the
+ * Props, both Checkpoints, the sandbox finish) is still here.
+ */
 export const M1_TRACK: Track = chainTrack(
-  ["start", "bridge", "checkpoint-spinner", "bridge-2", "checkpoint-end-props", "sandbox"],
+  ["start", "checkpoint-spinner", "checkpoint-end-props", "sandbox"],
   M1_MODULES,
   { x: 0, y: 0, z: 10 },
 );

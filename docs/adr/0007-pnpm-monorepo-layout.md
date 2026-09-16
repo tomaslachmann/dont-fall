@@ -21,3 +21,14 @@ the kind of retrofit the architecture is designed to avoid.
   populated from M1.
 - Anything that must behave identically on both sides belongs in `packages/shared`;
   `apps/*` hold only their side-specific concerns.
+
+---
+
+## Amended by ADR 0074 (2026-09)
+
+- A third package, `packages/render` (`@dont-fall/render`), holds three.js rendering shared by
+  the game and the Track builder. It is imported only by `apps/client` and `apps/track-builder`,
+  never by `apps/server` or `apps/api`, and lists `three` as a peer dependency.
+- `packages/shared` keeps this ADR's mandate and stays three-free: rendering is not something that
+  "must behave identically on both sides". Render-only *data* the API validates (the Environment
+  presets) still lives there.

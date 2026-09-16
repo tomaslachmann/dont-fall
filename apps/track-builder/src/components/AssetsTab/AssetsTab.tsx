@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ASSET_MODULE_DEFS, type AssetCategory } from "@dont-fall/shared";
+import { ASSET_CATEGORIES, ASSET_MODULE_DEFS, type AssetCategory } from "@dont-fall/shared";
 import css from "./AssetsTab.module.css";
 import { SegmentedControl } from "../SegmentedControl/SegmentedControl";
 import { Chip } from "../Chip/Chip";
@@ -129,7 +129,7 @@ export function AssetsTab({ engine, hidden }: { engine: BuilderEngine; hidden?: 
     });
   }, []);
 
-  // Asset ids only — a procedural Segment in the Track must not inflate the chip count.
+  // Asset ids only — an unknown Module in a loaded Track must not inflate the chip count.
   const inTrack = useMemo(
     () => new Set(engine.track.map((s) => s.moduleId).filter((id) => id in CATEGORY_BY_ID)),
     [engine, engine.track],
@@ -162,8 +162,8 @@ export function AssetsTab({ engine, hidden }: { engine: BuilderEngine; hidden?: 
         <span className={css.hits}>{visible.length} hits</span>
       </label>
 
-      <SegmentedControl size="sm" layout="stack" value={category} onChange={setCategory}
-        items={(["platform", "obstacle", "scenery"] as const).map((c) => ({
+      <SegmentedControl size="sm" layout="scroll" value={category} onChange={setCategory}
+        items={ASSET_CATEGORIES.map((c) => ({
           value: c,
           label: c.toUpperCase(),
           count: CATEGORY_COUNT.get(c) ?? 0,

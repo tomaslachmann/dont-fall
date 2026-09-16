@@ -39,10 +39,16 @@ describe("palette overflow guards", () => {
     expect(segmented).toMatch(/\.item\s*\{[^}]*min-width:\s*0/);
     expect(segmented).toMatch(/\.item\s*\{[^}]*overflow:\s*hidden/);
     expect(segmented).toMatch(/\.stack\s*>\s*\.item/);
-    const palette = readFileSync(path.join(root, "src", "components", "ModulePalette", "ModulePalette.tsx"), "utf8");
-    expect(palette).toMatch(/layout="stack"/);
+  });
+
+  it("the asset categories scroll sideways rather than clip their names", () => {
+    const segmented = css("components/SegmentedControl/SegmentedControl.module.css");
+    // max-content columns: the trough stops dividing its width between the tabs,
+    // so every category keeps its whole word and the row overflows instead.
+    expect(segmented).toMatch(/\.scroll\s*\{[^}]*grid-auto-columns:\s*max-content/);
+    expect(segmented).toMatch(/\.scroll\s*\{[^}]*overflow-x:\s*auto/);
     const assets = readFileSync(path.join(root, "src", "components", "AssetsTab", "AssetsTab.tsx"), "utf8");
-    expect(assets).toMatch(/layout="stack"/);
+    expect(assets).toMatch(/layout="scroll"/);
   });
 
   it("long single-line texts clip with an ellipsis instead of pushing frames", () => {

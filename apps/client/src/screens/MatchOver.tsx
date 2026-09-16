@@ -3,6 +3,7 @@ import JellyButton from '../ui/JellyButton';
 import Avatar from '../ui/Avatar';
 import type { Skin } from '../ui/Avatar';
 import type { Feel } from '../tokens';
+import { CharacterPreview, SHRUG_SEQUENCE, SULK_SEQUENCE, WIN_SEQUENCE, type PreviewAnimation } from './CharacterPreview.js';
 import s from './MatchOver.module.css';
 
 export interface PodiumPlace {
@@ -10,7 +11,13 @@ export interface PodiumPlace {
   points: number;
   /** What the render is doing on this plinth. */
   pose: string;
+  /** Equipped skin at Match end — null for anonymous seats: the default. */
+  skin?: number | null;
 }
+
+/** The performance is positional: 1st celebrates, 2nd sulks, 3rd shrugs. Anything past that idles. */
+const performanceForPlace = (index: number): PreviewAnimation =>
+  index === 0 ? WIN_SEQUENCE : index === 1 ? SULK_SEQUENCE : index === 2 ? SHRUG_SEQUENCE : "Idle";
 
 export interface MatchOverProps {
   /** Finishing order, at least 1st — the podium renders only the places present, so a two-Player Match simply has no 3rd. */
@@ -39,13 +46,18 @@ const STATS: Array<[string, string]> = [
   ['LONGEST SURVIVAL', '05:07'],
 ];
 
-/** One plinth. 1st renders taller and in accent. */
-function Place({ place, rank, first }: { place: PodiumPlace; rank: string; first?: boolean }) {
+/** One plinth. 1st renders taller and in accent. The bean faces front — a celebration reads to the viewer, not around a turntable. */
+function Place({ place, rank, index, first }: { place: PodiumPlace; rank: string; index: number; first?: boolean }) {
   return (
     <div className={[s.place, first && s.first].filter(Boolean).join(' ')}>
-      <span className={s.render}>
-        <span className={s.renderCaption}>3D CHARACTER RENDER<br />{place.pose}</span>
-      </span>
+      <CharacterPreview
+        skin={place.skin ?? null}
+        animation={performanceForPlace(index)}
+        autoRotate={false}
+        sub={place.pose}
+        canvasLabel={`3D preview of ${place.name}`}
+        className={s.render}
+      />
       <span className={s.rank}>{rank}</span>
       <span className={s.name}>{place.name}</span>
       <span className={s.score} data-df-numeric>{place.points}</span>
@@ -70,9 +82,9 @@ export default function MatchOver({
       </div>
 
       <div className={[s.podium, podium.length === 1 && s.one, podium.length === 2 && s.two].filter(Boolean).join(' ')}>
-        {second && <Place place={second} rank="2ND" />}
-        <Place place={first} rank="1ST" first />
-        {third && <Place place={third} rank="3RD" />}
+        {second && <Place place={second} rank="2ND" index={1} />}
+        <Place place={first} rank="1ST" index={0} first />
+        {third && <Place place={third} rank="3RD" index={2} />}
       </div>
 
       {!spectator && (

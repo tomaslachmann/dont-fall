@@ -4,6 +4,7 @@ import { BrowsePanel } from "../BrowsePanel/BrowsePanel";
 import { Transport } from "../Transport/Transport";
 import { HintBar } from "../HintBar/HintBar";
 import { ImpactLegend } from "../ImpactLegend/ImpactLegend";
+import { CourseStrip } from "../CourseStrip/CourseStrip";
 import type { BuilderEngine } from "../../engine.js";
 import { useEngineVersion } from "../../hooks/useEngine.js";
 
@@ -47,7 +48,9 @@ export function Viewport({ engine, browseOpen, onCloseBrowse }: Props) {
       {picking && (
         <div className={css.pickBanner}>
           <span className={css.pickGlyph}>⌖</span>
-          PICKING PIVOT · CLICK THE MODEL · ESC CANCELS
+          {engine.pickingRespawn
+            ? "PICKING RESPAWN · CLICK THE PLATFORM TO STAND ON · ESC CANCELS"
+            : "PICKING PIVOT · CLICK THE MODEL · ESC CANCELS"}
         </div>
       )}
 
@@ -64,6 +67,9 @@ export function Viewport({ engine, browseOpen, onCloseBrowse }: Props) {
       </div>
       <div className={css.slotTransport} onClick={swallow} onPointerDown={swallow}>
         <Transport engine={engine} />
+      </div>
+      <div className={css.slotCourse} onClick={swallow} onPointerDown={swallow}>
+        <CourseStrip engine={engine} />
       </div>
       <div className={css.slotHint} onClick={swallow} onPointerDown={swallow}>
         <HintBar />

@@ -1,37 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
-import { MODULE_LIBRARY } from "@dont-fall/shared";
+import { useEffect } from "react";
 import css from "./ModulePalette.module.css";
 import { SegmentedControl } from "../SegmentedControl/SegmentedControl";
-import { ModuleRow } from "../ModuleRow/ModuleRow";
 import { AssetsTab } from "../AssetsTab/AssetsTab";
-import { SearchIcon } from "../icons/Icons";
 import type { BuilderEngine } from "../../engine.js";
-import { assetTabModuleIds } from "../../assets/assets.js";
-import { filterModuleIds, groupProceduralModules, moduleMeta, prettyModuleName } from "./palette.js";
-import type { PaletteMode, PaletteTab } from "../../types/builder";
+import type { PaletteMode } from "../../types/builder";
 
-const GROUPS = groupProceduralModules(MODULE_LIBRARY);
-const PROCEDURAL_COUNT = GROUPS.reduce((n, g) => n + g.moduleIds.length, 0);
-const ASSET_COUNT = assetTabModuleIds().length;
-
-/** Region A. BUILD places Modules; COMPOSE (M10) will edit a Module's interior. Same three regions. */
+/**
+ * Region A. BUILD places Modules; COMPOSE (M10) will edit a Module's interior. Same three regions.
+ * Asset Modules only (ADR 0078) — the procedural tab went once nothing procedural was left to place.
+ */
 export function ModulePalette({ engine }: { engine: BuilderEngine }) {
-  const [tab, setTab] = useState<PaletteTab>("procedural");
-  const [query, setQuery] = useState("");
   // The switch is M10's named room: rendered, but COMPOSE stays unwired until
   // the interior editor exists (its title says so).
   const mode: PaletteMode = "build";
 
-  // Bytes load once per session, on first Assets open — from the API, never
-  // a builder-local copy. The engine guards the double-invoke itself.
+  // Bytes load once per session, on mount — from the API, never a
+  // builder-local copy. The engine guards the double-invoke itself.
   useEffect(() => {
-    if (tab === "assets") engine.ensureAssetTemplates();
-  }, [engine, tab]);
-
-  const matches = useMemo(() => {
-    const ids = GROUPS.flatMap((g) => g.moduleIds);
-    return new Set(filterModuleIds(ids, query));
-  }, [query]);
+    engine.ensureAssetTemplates();
+  }, [engine]);
 
   return (
     <aside className={css.root}>
@@ -44,39 +31,7 @@ export function ModulePalette({ engine }: { engine: BuilderEngine }) {
           ]} />
       </header>
 
-      <div className={css.filters}>
-        {tab === "procedural" && (
-          <label className={css.search}>
-            <SearchIcon size={13} />
-            <input className={css.searchInput} value={query} onChange={(e) => setQuery(e.target.value)}
-              placeholder="search modules…" aria-label="search modules" />
-          </label>
-        )}
-        <SegmentedControl tone="plastic" layout="stack" value={tab} onChange={setTab}
-          items={[
-            { value: "procedural", label: "PROCEDURAL", count: PROCEDURAL_COUNT },
-            { value: "assets", label: "ASSETS", count: ASSET_COUNT },
-          ]} />
-      </div>
-
-      <div className={css.list} hidden={tab !== "procedural"}>
-        {GROUPS.map((g) => {
-          const visible = g.moduleIds.filter((id) => matches.has(id));
-          if (visible.length === 0) return null;
-          return (
-            <section key={g.id} className={css.group}>
-              <h3 className={css.groupLabel}>{g.label} · {g.moduleIds.length}</h3>
-              {visible.map((id) => (
-                <ModuleRow key={id} engine={engine} moduleId={id}
-                  name={prettyModuleName(id)} meta={moduleMeta(MODULE_LIBRARY[id]!)} visible />
-              ))}
-            </section>
-          );
-        })}
-      </div>
-
-      {/* Stays mounted while hidden: tab switches keep filters, scroll and previews. */}
-      <AssetsTab engine={engine} hidden={tab !== "assets"} />
+      <AssetsTab engine={engine} />
 
       <footer className={css.foot}>
         {mode === "build" ? "CLICK = PLACE AFTER SELECTION · APPENDS AT END" : "COMPOSE · EDIT THE MODULE INTERIOR"}

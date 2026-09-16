@@ -1,5 +1,6 @@
-import type { OrientedBox } from "../math/box.js";
+import { pointInOrientedBox, type OrientedBox } from "../math/box.js";
 import type { Vec3 } from "../math/vec3.js";
+import { GRAVITY_Y } from "../tuning.js";
 
 /**
  * A Volume (CONTEXT.md): a region of space that applies a continuous force
@@ -43,3 +44,30 @@ export interface VolumeConfig {
    */
   priority: number;
 }
+
+/**
+ * `volumes` in the order a Character's Volume is picked from: highest
+ * `priority` first, ties in authored order (the sort is stable). The
+ * simulation and the renderer both use this order, so both pick the same
+ * Volume for the same point.
+ */
+export const byVolumePriority = (volumes: readonly VolumeConfig[]): VolumeConfig[] =>
+  [...volumes].sort((a, b) => b.priority - a.priority);
+
+/**
+ * The Volume acting on a Character whose capsule centre is at `point`, or
+ * `undefined` if none does. `ordered` must already be in
+ * {@link byVolumePriority} order. The first Volume that contains the point
+ * wins outright (ADR 0036). A pure function of position, so a client can ask
+ * it of any Character it draws.
+ */
+export const volumeAt = (ordered: readonly VolumeConfig[], point: Vec3): VolumeConfig | undefined =>
+  ordered.find((volume) => pointInOrientedBox(point, volume.bounds));
+
+/**
+ * Whether `volume` can hold a Character up: its upward push outweighs
+ * gravity's pull, and it is allowed to push at all. A Character inside one
+ * is Floating (CONTEXT.md, ADR 0077). A sideways wind, or an updraft too weak
+ * to beat gravity, only bends a fall.
+ */
+export const holdsAloft = (volume: VolumeConfig): boolean => volume.force.y > -GRAVITY_Y && volume.maxInducedSpeed > 0;

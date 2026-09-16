@@ -26,6 +26,12 @@ export interface PersistedMatchResult {
    * 2b carry no such map at all; readers default it to `{}`.
    */
   accountIds: Record<string, string>;
+  /**
+   * `playerId` → equipped body skin at Match end — what the MatchOver
+   * podium wears. Sparse like `accountIds`: absent key, default skin.
+   * Rows persisted before skins carry no such map; readers default `{}`.
+   */
+  bodySkins: Record<string, number>;
   /** `playerId` → falls across every Round they raced. */
   totalFalls: Record<string, number>;
   endedAtMs: number;

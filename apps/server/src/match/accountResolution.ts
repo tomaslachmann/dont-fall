@@ -9,8 +9,20 @@
  * of throwing — the Match plays on, only friends presence and RECENT lose
  * attribution for that seat. Failures log, never throw.
  */
+export interface ResolvedAccount {
+  accountId: string;
+  /**
+   * The body's equipped skin id (M9 ticket 15) — bound from this same
+   * response, so skins cost no second round trip. `null` when the payload
+   * carries none (an older API, a hand-made mock): the seat plays in the
+   * default skin. Never range-checked here — the API validated on write,
+   * and future unlocks must flow through untouched.
+   */
+  bodySkin: number | null;
+}
+
 export interface AccountResolver {
-  resolveAccount: (token: string) => Promise<string | null>;
+  resolveAccount: (token: string) => Promise<ResolvedAccount | null>;
 }
 
 export const httpAccountResolver = (apiUrl: string, fetchFn: typeof fetch = fetch): AccountResolver => ({
@@ -23,12 +35,15 @@ export const httpAccountResolver = (apiUrl: string, fetchFn: typeof fetch = fetc
         console.error(`DON'T FALL: account resolution refused (${res.status}), connection stays anonymous`);
         return null;
       }
-      const account = (await res.json()) as { id?: unknown };
+      const account = (await res.json()) as { id?: unknown; bodySkin?: unknown };
       if (typeof account.id !== "string" || account.id.length === 0) {
         console.error("DON'T FALL: account resolution malformed, connection stays anonymous");
         return null;
       }
-      return account.id;
+      return {
+        accountId: account.id,
+        bodySkin: typeof account.bodySkin === "number" && Number.isFinite(account.bodySkin) ? account.bodySkin : null,
+      };
     } catch (err) {
       console.error("DON'T FALL: account resolution unreachable, connection stays anonymous", err);
       return null;

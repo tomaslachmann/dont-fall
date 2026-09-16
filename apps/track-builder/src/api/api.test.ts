@@ -15,14 +15,14 @@ describe("saveTrack", () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "abc" }), { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await saveTrack("http://x", "my track", SAMPLE, DEFAULTS);
+    const result = await saveTrack("http://x", "my track", SAMPLE, DEFAULTS, "sunset");
 
     expect(result).toEqual({ id: "abc" });
     expect(fetchMock).toHaveBeenCalledWith(
       "http://x/tracks",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ name: "my track", track: SAMPLE, timeLimitMs: 45_000, survivorTarget: 3 }),
+        body: JSON.stringify({ name: "my track", track: SAMPLE, timeLimitMs: 45_000, survivorTarget: 3, environment: "sunset" }),
       }),
     );
   });
@@ -31,11 +31,11 @@ describe("saveTrack", () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "abc" }), { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await saveTrack("http://x", "", SAMPLE, DEFAULTS);
+    await saveTrack("http://x", "", SAMPLE, DEFAULTS, "day");
 
     expect(fetchMock).toHaveBeenCalledWith(
       "http://x/tracks",
-      expect.objectContaining({ body: JSON.stringify({ track: SAMPLE, timeLimitMs: 45_000, survivorTarget: 3 }) }),
+      expect.objectContaining({ body: JSON.stringify({ track: SAMPLE, timeLimitMs: 45_000, survivorTarget: 3, environment: "day" }) }),
     );
   });
 
@@ -44,20 +44,20 @@ describe("saveTrack", () => {
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ error: "bad" }), { status: 400 })),
     );
-    await expect(saveTrack("http://x", "", SAMPLE, DEFAULTS)).rejects.toThrow(/400/);
+    await expect(saveTrack("http://x", "", SAMPLE, DEFAULTS, "day")).rejects.toThrow(/400/);
   });
 });
 
 describe("loadTrack", () => {
   it("GETs /tracks/:id and returns the stored Track", async () => {
-    const stored = { id: "m1-playground", name: "M1 playground", track: SAMPLE };
+    const stored = { id: "base-race", name: "Base Race", track: SAMPLE };
     const fetchMock = vi.fn(async () => new Response(JSON.stringify(stored), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await loadTrack("http://x", "m1-playground");
+    const result = await loadTrack("http://x", "base-race");
 
     expect(result).toEqual(stored);
-    expect(fetchMock).toHaveBeenCalledWith("http://x/tracks/m1-playground");
+    expect(fetchMock).toHaveBeenCalledWith("http://x/tracks/base-race");
   });
 
   it("throws on 404", async () => {
@@ -74,7 +74,7 @@ describe("publishPlaytestTrack (Track Builder Playtest — 'true simulation' gri
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: PLAYTEST_TRACK_ID }), { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await publishPlaytestTrack("http://x", SAMPLE, DEFAULTS);
+    const result = await publishPlaytestTrack("http://x", SAMPLE, DEFAULTS, "night");
 
     expect(result).toEqual({ id: PLAYTEST_TRACK_ID });
     expect(fetchMock).toHaveBeenCalledWith(
@@ -87,6 +87,7 @@ describe("publishPlaytestTrack (Track Builder Playtest — 'true simulation' gri
           track: SAMPLE,
           timeLimitMs: 45_000,
           survivorTarget: 3,
+          environment: "night",
         }),
       }),
     );
@@ -97,7 +98,7 @@ describe("publishPlaytestTrack (Track Builder Playtest — 'true simulation' gri
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ error: "bad" }), { status: 400 })),
     );
-    await expect(publishPlaytestTrack("http://x", SAMPLE, DEFAULTS)).rejects.toThrow(/400/);
+    await expect(publishPlaytestTrack("http://x", SAMPLE, DEFAULTS, "night")).rejects.toThrow(/400/);
   });
 });
 

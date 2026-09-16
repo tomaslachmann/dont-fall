@@ -279,3 +279,58 @@ describe("Email/password auth + linking (M9 ticket 11 follow-up, ADR 0053)", () 
     expect((await login({ email: SIGNUP.email, password: SIGNUP.password })).statusCode).toBe(200);
   });
 });
+
+describe("PUT /auth/me/cosmetics (M9 ticket 15)", () => {
+  const signup = () => app.inject({ method: "POST", url: "/auth/signup", payload: SIGNUP });
+  const save = (token: string | undefined, body: unknown) =>
+    app.inject({
+      method: "PUT",
+      url: "/auth/me/cosmetics",
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+      payload: body as Record<string, unknown>,
+    });
+
+  it("equips a free skin and returns the updated Account in the one round trip", async () => {
+    const { token } = (await signup()).json() as { token: string };
+
+    const res = await save(token, { bodySkin: 2 });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ bodySkin: 2, displayName: "Wobbleton" });
+    const me = await app.inject({ method: "GET", url: "/auth/me", headers: { authorization: `Bearer ${token}` } });
+    expect(me.json()).toMatchObject({ bodySkin: 2 });
+  });
+
+  it("equips the factory base like any skin — id 7 is a choice, not an error", async () => {
+    const { token } = (await signup()).json() as { token: string };
+
+    const res = await save(token, { bodySkin: 7 });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ bodySkin: 7 });
+  });
+
+  it("refuses an out-of-range skin with a reason naming the fix", async () => {
+    const { token } = (await signup()).json() as { token: string };
+
+    const res = await save(token, { bodySkin: 8 });
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.stringify(res.json())).toMatch(/bodySkin must be an integer/);
+    const me = await app.inject({ method: "GET", url: "/auth/me", headers: { authorization: `Bearer ${token}` } });
+    expect(me.json()).toMatchObject({ bodySkin: 0 });
+  });
+
+  it("refuses nonsense bodies the same way — missing, fractional, wrong type", async () => {
+    const { token } = (await signup()).json() as { token: string };
+
+    for (const body of [{}, { bodySkin: 1.5 }, { bodySkin: "1" }, { bodySkin: -1 }]) {
+      expect((await save(token, body)).statusCode).toBe(400);
+    }
+  });
+
+  it("401s without a session — cosmetics need a logged-in Account", async () => {
+    expect((await save(undefined, { bodySkin: 1 })).statusCode).toBe(401);
+    expect((await save("dead-token", { bodySkin: 1 })).statusCode).toBe(401);
+  });
+});

@@ -1,0 +1,157 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-3);
+  min-height: 0;
+  padding: 0 var(--tb-s-6) var(--tb-s-5);
+}
+
+.hint {
+  margin: 0;
+  color: var(--df-color-ink-45);
+  font: var(--df-weight-kicker) var(--tb-t-2xs) / 1.4 var(--df-font-ui);
+}
+
+/* ---- the "make it" button: white plastic, the mark it would get on its left ---- */
+.make {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-4);
+  padding: var(--tb-s-3) var(--tb-s-4);
+  border-radius: var(--tb-r-md);
+  background: var(--df-color-surface-0);
+  box-shadow: var(--tb-bevel-1), inset 0 0 0 2px var(--df-color-ink-08);
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  text-align: left;
+}
+.make:hover:not(:disabled) { translate: 0 var(--df-lift); }
+.make:active:not(:disabled) { translate: 0 var(--df-squash); box-shadow: none; }
+.make:disabled { opacity: .45; cursor: not-allowed; }
+
+.makeMark {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--tb-r-pill);
+  font-size: 9px;
+}
+
+/* ---- a role card: the mark, the word, what it does ---- */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-4);
+  padding: var(--tb-s-4);
+  border-radius: var(--tb-r-lg);
+}
+.startCard, .finishCard { flex-direction: row; align-items: center; }
+.startCard { background: var(--tb-color-note-go); box-shadow: inset 0 0 0 2px rgba(47, 217, 160, .45); }
+.finishCard { background: var(--df-color-surface-1); box-shadow: inset 0 0 0 2px var(--df-color-ink-14); }
+.checkpointCard { background: var(--df-color-surface-1); box-shadow: inset 0 0 0 2px rgba(123, 63, 228, .35); }
+.strandedCard { background: var(--tb-color-note-danger); box-shadow: inset 0 0 0 2px rgba(255, 93, 162, .5); }
+
+.cardRow { display: flex; align-items: center; gap: var(--tb-s-4); }
+.cardText { display: flex; flex-direction: column; gap: var(--tb-s-1); flex: 1; min-width: 0; }
+.cardTitle { font: var(--df-weight-label) var(--tb-t-xs) / 1 var(--df-font-ui); letter-spacing: var(--df-tracking-kicker); }
+.cardSub { font: var(--df-weight-kicker) var(--tb-t-2xs) / 1.3 var(--df-font-ui); color: var(--df-color-ink-55); }
+
+.mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--tb-r-pill);
+  box-shadow: 0 3px 0 var(--df-color-ink-14), inset 0 0 0 2.5px rgba(255, 255, 255, .9);
+}
+
+.startMark { background: var(--df-color-go); color: var(--df-color-go-ink); font-size: 12px; }
+.checkpointMark {
+  background: var(--df-color-brand);
+  color: var(--df-color-on-brand);
+  font: var(--df-weight-display) var(--tb-t-lg) / 1 var(--df-font-display);
+}
+.makeMark.checkpointMark { font-size: var(--tb-t-sm); }
+.strandedMark { background: var(--df-color-danger); }
+.finishMark {
+  background:
+    conic-gradient(#fff 25%, transparent 0 50%, #fff 0 75%, transparent 0) 0 0 / 10px 10px,
+    var(--df-color-ink);
+}
+
+.remove {
+  flex: none;
+  align-self: flex-start;
+  padding: var(--tb-s-3);
+  border-radius: var(--tb-r-md);
+  color: var(--df-color-ink-45);
+}
+.remove:hover { background: rgba(43, 27, 77, .06); color: var(--df-color-ink); }
+
+/* ---- order stepper ---- */
+.orderRow { display: flex; align-items: center; justify-content: space-between; gap: var(--tb-s-3); }
+.order {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-2);
+  padding: var(--tb-s-1);
+  border-radius: var(--tb-r-pill);
+  background: var(--df-color-surface-0);
+  box-shadow: var(--tb-inset-field);
+}
+.orderBtn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--tb-r-pill);
+  background: var(--df-color-surface-0);
+  box-shadow: var(--tb-bevel-1);
+  font: var(--df-weight-label) var(--tb-t-md) / 1 var(--df-font-ui);
+}
+.orderBtn:hover:not(:disabled) { translate: 0 var(--df-lift); }
+.orderBtn:active:not(:disabled) { translate: 0 var(--df-squash); box-shadow: none; }
+.orderBtn:disabled { opacity: .35; box-shadow: none; cursor: default; }
+.orderValue {
+  min-width: 44px;
+  text-align: center;
+  font: var(--df-weight-display) var(--tb-t-md) / 1 var(--df-font-display);
+  color: var(--df-color-brand);
+}
+.orderOf { color: var(--df-color-ink-45); font-size: var(--tb-t-xs); }
+
+/* ---- respawn ---- */
+.respawnBlock { display: flex; flex-direction: column; gap: var(--tb-s-3); }
+
+.problem {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-3);
+  margin: 0;
+  font: var(--df-weight-kicker) var(--tb-t-2xs) / 1.35 var(--df-font-ui);
+  color: var(--df-color-danger-shade);
+}
+.problemGlyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--tb-r-pill);
+  background: var(--df-color-danger);
+  color: var(--df-color-on-brand);
+  font: var(--df-weight-label) var(--tb-t-3xs) / 1 var(--df-font-ui);
+}
+
+.locked {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-3);
+  margin: 0;
+  font: var(--df-weight-kicker) var(--tb-t-3xs) / 1.35 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-ink-45);
+}
+.lockGlyph { font-size: 9px; }

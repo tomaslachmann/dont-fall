@@ -37,6 +37,12 @@ export const tracks = sqliteTable(
      * consumer parses.
      */
     survivorTarget: integer("survivor_target").notNull(),
+    /**
+     * The Environment preset id this Revision is drawn inside (ADR 0074). A
+     * row attribute like `time_limit_ms`, out of `data` for the same reason,
+     * and never read by the Match server: it is presentation only.
+     */
+    environment: text("environment").notNull(),
   },
   (table) => [primaryKey({ columns: [table.trackId, table.revision] })],
 );
@@ -71,6 +77,12 @@ export const accounts = sqliteTable("accounts", {
   /** Lifetime match earnings — the rewards claim credits, betting debits/pays (`accounts.dao.ts` owns both writers). */
   xp: integer("xp").notNull().default(0),
   coins: integer("coins").notNull().default(0),
+  /**
+   * The body's equipped skin id (M9 ticket 15) — a small int into shared's
+   * `BODY_SKIN_HUES`, validated on write. Default bean for everyone until
+   * they pick (and for every pre-skins Account via the backfill).
+   */
+  bodySkin: integer("body_skin").notNull().default(0),
 });
 
 /**

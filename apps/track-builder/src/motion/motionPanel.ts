@@ -46,16 +46,16 @@ import {
   type CycleSample,
 } from "./motionPreview.js";
 import { slideSummary, spinSummary, swingSummary } from "./motionSummary.js";
-import { IMPACT } from "./lib/impact.js";
-import type { ImpactKind } from "./types/builder.js";
-import cardCss from "./components/MotionCard/MotionCard.module.css";
-import chipCss from "./components/Chip/Chip.module.css";
-import fieldCss from "./components/Field/Field.module.css";
-import noteCss from "./components/ImpactNote/ImpactNote.module.css";
-import padCss from "./components/PivotPad/PivotPad.module.css";
-import panelCss from "./components/MotionPanel/MotionPanel.module.css";
-import pickCss from "./components/PickButton/PickButton.module.css";
-import stripCss from "./components/TimingStrip/TimingStrip.module.css";
+import { IMPACT } from "../lib/impact.js";
+import type { ImpactKind } from "../types/builder.js";
+import cardCss from "../components/MotionCard/MotionCard.module.css";
+import chipCss from "../components/Chip/Chip.module.css";
+import fieldCss from "../components/Field/Field.module.css";
+import noteCss from "../components/ImpactNote/ImpactNote.module.css";
+import padCss from "../components/PivotPad/PivotPad.module.css";
+import panelCss from "../components/MotionPanel/MotionPanel.module.css";
+import pickCss from "../components/PickButton/PickButton.module.css";
+import stripCss from "../components/TimingStrip/TimingStrip.module.css";
 
 export interface MotionPanel {
   /**
@@ -131,8 +131,10 @@ export const createMotionPanel = (
   let current: SegmentMotion = {};
   const f: Field[] = [];
 
+  // No title of its own: the inspector section header above already says MOTION.
+  // What stays is the one thing the section header has no room for — the order
+  // the three kinds compose in.
   const head = el("header", panelCss.head);
-  head.appendChild(el("h3", panelCss.title, "Motion"));
   const order = el("span", panelCss.order, "SPIN → SWING → SLIDE");
   head.appendChild(order);
   container.appendChild(head);
@@ -382,7 +384,7 @@ export const createMotionPanel = (
     const root = el("div", padCss.root);
     root.appendChild(el("span", padCss.label, label));
     const grid = el("div", padCss.grid);
-    grid.style.setProperty("--cell", "14px");
+    grid.style.setProperty("--cell", "16px");
     const cells = new Map<string, HTMLButtonElement>();
     for (const r of GRID_STEPS) {
       for (const c of GRID_STEPS) {

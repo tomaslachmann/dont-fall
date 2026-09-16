@@ -9,6 +9,7 @@ export function Transport({ engine }: { engine: BuilderEngine }) {
   useEngineVersion(engine);
   const playing = engine.playing;
   const impactOn = engine.tintVisible;
+  const previewOn = engine.environmentPreview;
   const progress = ((seconds % 60) / 60) * 100;
 
   return (
@@ -36,6 +37,17 @@ export function Transport({ engine }: { engine: BuilderEngine }) {
           onClick={() => engine.setTintVisible(!impactOn)}>
           <span className={css.impactBox}>{impactOn ? "✓" : ""}</span>
           <span className={css.impactLabel}>IMPACT</span>
+        </button>
+        {/* Its own look, and a label that never folds away: it swaps the whole
+            view, so it has to be found without hunting for it. */}
+        <button type="button" className={[css.preview, previewOn ? css.previewOn : ""].join(" ")}
+          aria-pressed={previewOn}
+          title={previewOn
+            ? "back to the authoring canvas"
+            : `see the Track under its Environment (${engine.environment}) — sky, clouds, fog and light, as a Round draws them`}
+          onClick={() => engine.setEnvironmentPreview(!previewOn)}>
+          <span className={css.previewGlyph} aria-hidden>☀</span>
+          <span>ENVIRONMENT {previewOn ? "ON" : "OFF"}</span>
         </button>
       </div>
       <span className={css.caption}>ONE CLOCK · EVERY MOTION ON THIS TRACK PLAYS AGAINST IT</span>

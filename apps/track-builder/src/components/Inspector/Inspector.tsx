@@ -1,10 +1,21 @@
 import css from "./Inspector.module.css";
 import { TransformPanel } from "../TransformPanel/TransformPanel";
 import { MotionPanelView } from "../MotionPanel/MotionPanelView";
+import { SurfacePanel } from "../SurfacePanel/SurfacePanel";
+import { LaunchPanel } from "../LaunchPanel/LaunchPanel";
+import { CoursePanel } from "../CoursePanel/CoursePanel";
 import type { BuilderEngine } from "../../engine.js";
 import { useEngineVersion } from "../../hooks/useEngine.js";
 
-/** Regions C + D in one floating card, its own scroll, full viewport height. */
+/**
+ * Regions C + D in one floating card: a fixed header over a scrolling stack of
+ * foldable sections, one per panel.
+ *
+ * Every panel renders its own `InspectorSection`, summary included — the card
+ * only decides their order. That is what keeps the inspector finite: the next
+ * property to land costs one folded header here, not another always-open block
+ * pushing Motion off the bottom of a card that used to clip what overflowed.
+ */
 export function Inspector({ engine }: { engine: BuilderEngine }) {
   useEngineVersion(engine);
   const count = engine.selection.length;
@@ -28,8 +39,13 @@ export function Inspector({ engine }: { engine: BuilderEngine }) {
         <span className={css.count}>{count} SEG{count > 1 ? "S" : ""}</span>
       </header>
 
-      <TransformPanel engine={engine} />
-      <MotionPanelView engine={engine} />
+      <div className={css.sections}>
+        <TransformPanel engine={engine} />
+        <CoursePanel engine={engine} />
+        <MotionPanelView engine={engine} />
+        <LaunchPanel engine={engine} />
+        <SurfacePanel engine={engine} />
+      </div>
     </section>
   );
 }

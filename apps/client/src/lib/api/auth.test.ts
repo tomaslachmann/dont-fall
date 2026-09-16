@@ -5,6 +5,7 @@ import {
   login,
   logout,
   parseAuthCallbackFragment,
+  saveBodySkin,
   signup,
   type Account,
 } from "./auth.js";
@@ -44,7 +45,7 @@ describe("parseAuthCallbackFragment", () => {
   });
 });
 
-const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, xp: 0, coins: 0 };
+const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, xp: 0, coins: 0, bodySkin: 0 };
 
 describe("signup / login", () => {
   it("signup posts the form and returns {account, token}", async () => {
@@ -137,5 +138,28 @@ describe("logout", () => {
 describe("discordAuthorizeUrl", () => {
   it("points at the API's authorize route", () => {
     expect(discordAuthorizeUrl()).toBe(`${API}/auth/discord/authorize`);
+  });
+});
+
+describe("saveBodySkin (M9 ticket 15)", () => {
+  it("PUTs the skin and returns the updated Account", async () => {
+    setStoredToken("tok-1");
+    const updated = { ...ACCOUNT, bodySkin: 3 };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(updated), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(saveBodySkin(3)).resolves.toEqual(updated);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API}/auth/me/cosmetics`,
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ bodySkin: 3 }) }),
+    );
+  });
+
+  it("a locked skin surfaces the server's reason as an ApiError", async () => {
+    setStoredToken("tok-1");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "bodySkin must be an integer 0–7" }), { status: 400 })));
+
+    await expect(saveBodySkin(9)).rejects.toThrow(ApiError);
+    await expect(saveBodySkin(9)).rejects.toThrow("bodySkin must be an integer 0–7");
   });
 });

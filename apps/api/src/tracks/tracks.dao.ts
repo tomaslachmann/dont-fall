@@ -1,9 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import {
+  DEFAULT_ENVIRONMENT_ID,
   DEFAULT_SURVIVOR_TARGET,
   DEFAULT_TIME_LIMIT_MS,
+  resolveEnvironmentId,
   trackHasFinishZone,
+  type EnvironmentId,
   type Module,
   type StoredTrack,
   type Track,
@@ -31,6 +34,9 @@ const toStored = (row: typeof tracks.$inferSelect): StoredTrack => ({
   contentHash: row.contentHash,
   timeLimitMs: row.timeLimitMs,
   survivorTarget: row.survivorTarget,
+  // Validated on publish, so this only ever falls back for a row this build
+  // could not have written (a newer API's preset, after a rollback).
+  environment: resolveEnvironmentId(row.environment).id,
 });
 
 /**
@@ -62,7 +68,14 @@ const hashTrack = (track: Track): string => createHash("sha256").update(canonica
  */
 export const saveTrack = (
   db: ApiDb,
-  input: { id?: string; name?: string; track: Track; timeLimitMs?: number; survivorTarget?: number },
+  input: {
+    id?: string;
+    name?: string;
+    track: Track;
+    timeLimitMs?: number;
+    survivorTarget?: number;
+    environment?: EnvironmentId;
+  },
 ): { id: string } => {
   // An empty string is treated the same as absent (code review, ticket 10) —
   // otherwise it becomes a real, permanently unfetchable trackId (the
@@ -93,6 +106,9 @@ export const saveTrack = (
       // Out of the content hash for the same reason the clock is (ADR 0038):
       // two Revisions differing only in this are the same Segments.
       survivorTarget: input.survivorTarget ?? DEFAULT_SURVIVOR_TARGET,
+      // Out of the content hash too (ADR 0074): the same Segments under
+      // another sky are the same Track content.
+      environment: input.environment ?? DEFAULT_ENVIRONMENT_ID,
     })
     .run();
   return { id: trackId };
@@ -201,22 +217,28 @@ export const recordTrackPlay = (db: ApiDb, trackId: string): boolean => {
   return true;
 };
 
-/** Seeds `track` under `id` only if no Track has ever been published (idempotent startup seeding). */
-export const seedIfEmpty = (db: ApiDb, id: string, name: string, track: Track): void => {
-  const existing = db.select({ trackId: tracks.trackId }).from(tracks).limit(1).get();
-  if (existing) return;
-  saveTrack(db, { id, name, track });
-};
+/** A code-owned seed Track (ADR 0073/0078): its id, name, Segments and clock. */
+export interface SeedTrack {
+  id: string;
+  name: string;
+  track: Track;
+  /** Absent means the default clock, exactly like a publish that omits it. */
+  timeLimitMs?: number;
+}
 
 /**
- * Seeds `track` under `id` unless that id is already stored (M8 ticket 04) —
- * per-id, unlike `seedIfEmpty`'s whole-DB gate, so a new seed joins existing
- * databases on their next boot instead of only ever appearing on empty ones.
- * Same idempotence: restarting never duplicates the row or bumps the stored
- * Revision.
+ * Keeps a code-owned seed Track on the code's content (ADR 0073) — missing
+ * id → seeded; stored latest differs (its Segments or its clock) → a new
+ * Revision with the code's content; already current → untouched. Revisions
+ * stay immutable: drift heals forward, never by rewriting. Idempotent: a
+ * synced boot writes nothing. (Replaces `seedIfEmpty`'s whole-DB gate and
+ * `seedTrackIfMissing`'s write-once row — both left a drifted seed serving
+ * code it no longer matches, which is exactly how a deleted Module bricked
+ * the old M1 seed.)
  */
-export const seedTrackIfMissing = (db: ApiDb, id: string, name: string, track: Track): void => {
-  const existing = db.select({ trackId: tracks.trackId }).from(tracks).where(eq(tracks.trackId, id)).limit(1).get();
-  if (existing) return;
-  saveTrack(db, { id, name, track });
+export const syncSeedTrack = (db: ApiDb, seed: SeedTrack): void => {
+  const timeLimitMs = seed.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS;
+  const latest = getTrackById(db, seed.id);
+  if (latest && latest.contentHash === hashTrack(seed.track) && latest.timeLimitMs === timeLimitMs) return;
+  saveTrack(db, { id: seed.id, name: seed.name, track: seed.track, timeLimitMs });
 };

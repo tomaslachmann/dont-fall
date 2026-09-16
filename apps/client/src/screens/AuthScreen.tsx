@@ -6,7 +6,8 @@ import { ApiError, setStoredToken } from '../lib/api/base.js';
 import s from './AuthScreen.module.css';
 import Stage from '../ui/Stage.js';
 import Logo from '../ui/Logo.js';
-import RenderSlot from '../ui/RenderSlot.js';
+import { BASE_BODY_SKIN_ID } from '@dont-fall/shared';
+import { CharacterPreview } from './CharacterPreview.js';
 import Panel from '../ui/Panel.js';
 import JellyButton from '../ui/JellyButton.js';
 
@@ -91,7 +92,7 @@ export function AuthScreen() {
   const onForgot = () => {
     // No password-reset flow yet (ADR 0053) — deferred, needs a transactional-email
     // provider decision first. Honest about that rather than a dead link.
-    window.alert("Password reset isn't available yet.");
+    setError("Password reset isn't available yet.");
   };
 
   return (
@@ -104,7 +105,16 @@ export function AuthScreen() {
       <Logo size={2.65} chrome />
 
       <div className={s.body}>
-        <RenderSlot grounded wobble label="3D CHARACTER RENDER" sub="WAVING AT THE PLAYER" className={s.greeter} />
+        <CharacterPreview
+          skin={BASE_BODY_SKIN_ID}
+          animation={[{ clip: "Idle", seconds: 4 }, { clip: "Wobble", seconds: 3.2 }]}
+          autoRotate={false}
+          label="3D CHARACTER RENDER"
+          sub="SAYING HELLO"
+          canvasLabel="3D bean greeting you"
+          className={s.greeter}
+        />
+        {/* No wave clip is authored yet — the greeter wiggles hello until one lands. */}
 
         <Panel className={[s.card, isSignup && s.signup].filter(Boolean).join(' ')}>
           <div className={s.tabs} role="tablist">

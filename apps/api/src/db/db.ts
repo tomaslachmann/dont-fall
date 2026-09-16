@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { sql } from "drizzle-orm";
-import { DEFAULT_SURVIVOR_TARGET, DEFAULT_TIME_LIMIT_MS } from "@dont-fall/shared";
+import { DEFAULT_ENVIRONMENT_ID, DEFAULT_SURVIVOR_TARGET, DEFAULT_TIME_LIMIT_MS } from "@dont-fall/shared";
 import * as schema from "./schema.js";
 
 /**
@@ -50,6 +50,7 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
       created_at INTEGER NOT NULL,
       time_limit_ms INTEGER NOT NULL DEFAULT ${sql.raw(String(DEFAULT_TIME_LIMIT_MS))},
       survivor_target INTEGER NOT NULL DEFAULT ${sql.raw(String(DEFAULT_SURVIVOR_TARGET))},
+      environment TEXT NOT NULL DEFAULT '${sql.raw(DEFAULT_ENVIRONMENT_ID)}',
       PRIMARY KEY (track_id, revision)
     )
   `);
@@ -80,6 +81,14 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
     sqlite.exec(`ALTER TABLE tracks ADD COLUMN survivor_target INTEGER NOT NULL DEFAULT ${DEFAULT_SURVIVOR_TARGET}`);
   }
 
+  // M12 ticket 09 / ADR 0074, the same additive migration: a Revision
+  // published before Environments existed backfills to the default one and
+  // is drawn under it. Presentation only, so nothing about play changes.
+  if (!columns.some((c) => c.name === "environment")) {
+    console.log(`api: backfilling environment = '${DEFAULT_ENVIRONMENT_ID}' onto pre-M12 Revisions`);
+    sqlite.exec(`ALTER TABLE tracks ADD COLUMN environment TEXT NOT NULL DEFAULT '${DEFAULT_ENVIRONMENT_ID}'`);
+  }
+
   // M9 ticket 11: `accounts` first shipped Discord-only (`discord_id TEXT
   // NOT NULL UNIQUE`, no `email`/`password_hash`) at commit 87b1426, before
   // ADR 0053 corrected the decision to "both login methods." That old shape
@@ -106,7 +115,8 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
       friend_code TEXT UNIQUE,
       created_at INTEGER NOT NULL,
       xp INTEGER NOT NULL DEFAULT 0,
-      coins INTEGER NOT NULL DEFAULT 0
+      coins INTEGER NOT NULL DEFAULT 0,
+      body_skin INTEGER NOT NULL DEFAULT 0
     )
   `);
   // Match earnings (economy slice): additive backfill in the same style as
@@ -118,6 +128,12 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
       console.log(`api: backfilling ${column} = 0 onto pre-economy Accounts`);
       sqlite.exec(`ALTER TABLE accounts ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     }
+  }
+  // M9 ticket 15: the equipped body skin — same additive backfill, default
+  // bean (skin 0) for every pre-skins Account.
+  if (!accountColumns.some((c) => c.name === "body_skin")) {
+    console.log("api: backfilling body_skin = 0 onto pre-skins Accounts");
+    sqlite.exec("ALTER TABLE accounts ADD COLUMN body_skin INTEGER NOT NULL DEFAULT 0");
   }
   // M9 ticket 12: the friend code ADD BY CODE resolves. Nullable with no
   // backfill — codes generate lazily on first read, so there is nothing to

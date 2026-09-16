@@ -4,9 +4,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
-import { DEFAULT_SURVIVOR_TARGET, DEFAULT_TIME_LIMIT_MS, MODULE_LIBRARY, type Track } from "@dont-fall/shared";
+import {
+  DEFAULT_ENVIRONMENT_ID,
+  DEFAULT_SURVIVOR_TARGET,
+  DEFAULT_TIME_LIMIT_MS,
+  MODULE_LIBRARY,
+  type Track,
+} from "@dont-fall/shared";
 import { openDb, type ApiDb } from "../db/db.js";
-import { getTrackById, getTrackPlays, listTracks, recordTrackPlay, saveTrack, seedTrackIfMissing } from "./tracks.dao.js";
+import { getTrackById, getTrackPlays, listTracks, recordTrackPlay, saveTrack, syncSeedTrack } from "./tracks.dao.js";
 import { tracks } from "../db/schema.js";
 
 let dir: string;
@@ -23,32 +29,59 @@ afterEach(() => {
 
 const SAMPLE_TRACK: Track = [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
 
-describe("seedTrackIfMissing (M8 ticket 04)", () => {
-  it("seeds the id when absent — retrievable with its name and Segments", () => {
-    seedTrackIfMissing(db, "asset-demo", "Asset demo", SAMPLE_TRACK);
+describe("syncSeedTrack (ADR 0073)", () => {
+  const OTHER_TRACK: Track = [
+    { moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+    { moduleId: "finish", position: { x: 0, y: -0.5, z: -6 }, rotation: 0 },
+  ];
 
-    const stored = getTrackById(db, "asset-demo")!;
+  it("seeds the id when absent — retrievable with its name and Segments", () => {
+    syncSeedTrack(db, { id: "seed", name: "Seed", track: SAMPLE_TRACK });
+
+    const stored = getTrackById(db, "seed")!;
     expect(stored.track).toEqual(SAMPLE_TRACK);
     expect(stored.revision).toBe(1);
-    expect(listTracks(db, MODULE_LIBRARY).map((t) => t.id)).toContain("asset-demo");
+    expect(listTracks(db, MODULE_LIBRARY).map((t) => t.id)).toContain("seed");
   });
 
-  it("leaves an already-stored id alone — restarting never duplicates the row", () => {
-    seedTrackIfMissing(db, "asset-demo", "Asset demo", SAMPLE_TRACK);
-    seedTrackIfMissing(db, "asset-demo", "Asset demo", SAMPLE_TRACK);
+  it("leaves current content alone — a synced boot writes nothing", () => {
+    syncSeedTrack(db, { id: "seed", name: "Seed", track: SAMPLE_TRACK });
+    syncSeedTrack(db, { id: "seed", name: "Seed", track: SAMPLE_TRACK });
 
-    const rows = db.select().from(tracks).where(eq(tracks.trackId, "asset-demo")).all();
+    const rows = db.select().from(tracks).where(eq(tracks.trackId, "seed")).all();
     expect(rows).toHaveLength(1);
-    expect(getTrackById(db, "asset-demo")!.revision).toBe(1);
+    expect(getTrackById(db, "seed")!.revision).toBe(1);
+  });
+
+  it("heals drift forward — a new Revision with the code's content, the old one intact", () => {
+    saveTrack(db, { id: "seed", name: "Seed", track: SAMPLE_TRACK });
+
+    syncSeedTrack(db, { id: "seed", name: "Seed", track: OTHER_TRACK });
+
+    expect(getTrackById(db, "seed")!.revision).toBe(2);
+    expect(getTrackById(db, "seed")!.track).toEqual(OTHER_TRACK);
+    // Immutable history: revision 1 still serves exactly what it always did.
+    expect(getTrackById(db, "seed", 1)!.track).toEqual(SAMPLE_TRACK);
+  });
+
+  it("heals a drifted clock the same way — the seed's Time Limit is code-owned too", () => {
+    syncSeedTrack(db, { id: "seed", name: "Seed", track: SAMPLE_TRACK });
+    expect(getTrackById(db, "seed")!.timeLimitMs).toBe(DEFAULT_TIME_LIMIT_MS);
+
+    syncSeedTrack(db, { id: "seed", name: "Seed", track: SAMPLE_TRACK, timeLimitMs: 300_000 });
+    syncSeedTrack(db, { id: "seed", name: "Seed", track: SAMPLE_TRACK, timeLimitMs: 300_000 });
+
+    expect(getTrackById(db, "seed")!.revision).toBe(2);
+    expect(getTrackById(db, "seed")!.timeLimitMs).toBe(300_000);
   });
 
   it("seeds alongside unrelated Tracks without touching them", () => {
     const { id } = saveTrack(db, { track: SAMPLE_TRACK });
 
-    seedTrackIfMissing(db, "asset-demo", "Asset demo", SAMPLE_TRACK);
+    syncSeedTrack(db, { id: "seed", name: "Seed", track: SAMPLE_TRACK });
 
     expect(getTrackById(db, id)!.track).toEqual(SAMPLE_TRACK);
-    expect(getTrackById(db, "asset-demo")!.track).toEqual(SAMPLE_TRACK);
+    expect(getTrackById(db, "seed")!.track).toEqual(SAMPLE_TRACK);
   });
 });
 
@@ -70,7 +103,7 @@ describe("saveTrack — content hash (code review, ticket 10)", () => {
 
   it("hashes different content differently", () => {
     const a = saveTrack(db, { track: SAMPLE_TRACK });
-    const b = saveTrack(db, { track: [{ moduleId: "bridge", position: { x: 0, y: 0, z: 0 }, rotation: 0 }] });
+    const b = saveTrack(db, { track: [{ moduleId: "finish", position: { x: 0, y: 0, z: 0 }, rotation: 0 }] });
     expect(getTrackById(db, a.id)!.contentHash).not.toBe(getTrackById(db, b.id)!.contentHash);
   });
 });
@@ -281,6 +314,62 @@ describe("the Survivor Target a Revision carries (M5 ticket 07, ADR 0041)", () =
     const stored = getTrackById(migrated, "old-track")!;
     expect(stored.survivorTarget).toBe(DEFAULT_SURVIVOR_TARGET);
     expect(stored.timeLimitMs).toBe(90_000); // and what it did author is untouched
+    expect(stored.track).toEqual(SAMPLE_TRACK);
+  });
+});
+
+describe("the Environment a Revision is drawn inside (M12 ticket 09, ADR 0074)", () => {
+  it("stores and returns the authored preset", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK, environment: "night" });
+
+    expect(getTrackById(db, id)!.environment).toBe("night");
+  });
+
+  it("defaults a publish that omits it, so every existing caller keeps working", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK });
+
+    expect(getTrackById(db, id)!.environment).toBe(DEFAULT_ENVIRONMENT_ID);
+  });
+
+  it("is not part of the content hash — the same Segments under another sky are the same Track", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK, environment: "day" });
+    saveTrack(db, { id, track: SAMPLE_TRACK, environment: "sunset" });
+
+    const rows = db.select().from(tracks).where(eq(tracks.trackId, id)).all();
+    expect(rows[0]!.contentHash).toBe(rows[1]!.contentHash);
+    expect(getTrackById(db, id)!.environment).toBe("sunset");
+  });
+
+  it("reads back a preset this build does not know as the default, never as a bad id", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK });
+    db.update(tracks).set({ environment: "aurora" }).where(eq(tracks.trackId, id)).run();
+
+    expect(getTrackById(db, id)!.environment).toBe(DEFAULT_ENVIRONMENT_ID);
+  });
+
+  it("backfills the default onto a Revision published before the column existed", () => {
+    // The pre-M12 table: everything M5 had, and no environment.
+    const legacyPath = join(dir, "pre-m12.sqlite");
+    const legacy = new Database(legacyPath);
+    legacy.exec(`
+      CREATE TABLE tracks (
+        track_id TEXT NOT NULL, revision INTEGER NOT NULL, name TEXT,
+        author_id TEXT NOT NULL, content_hash TEXT NOT NULL, data TEXT NOT NULL,
+        created_at INTEGER NOT NULL, time_limit_ms INTEGER NOT NULL, survivor_target INTEGER NOT NULL,
+        PRIMARY KEY (track_id, revision)
+      )
+    `);
+    legacy
+      .prepare("INSERT INTO tracks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("old-track", 1, "pre-M12", "local-author", "hash", JSON.stringify(SAMPLE_TRACK), Date.now(), 90_000, 3);
+    legacy.close();
+
+    const migrated = openDb(legacyPath);
+
+    const stored = getTrackById(migrated, "old-track")!;
+    expect(stored.environment).toBe(DEFAULT_ENVIRONMENT_ID);
+    expect(stored.timeLimitMs).toBe(90_000); // and what it did author is untouched
+    expect(stored.survivorTarget).toBe(3);
     expect(stored.track).toEqual(SAMPLE_TRACK);
   });
 });

@@ -1,7 +1,8 @@
 import Stage from '../ui/Stage';
 import JellyButton from '../ui/JellyButton';
 import Logo from '../ui/Logo';
-import RenderSlot from '../ui/RenderSlot';
+import { BASE_BODY_SKIN_ID } from '@dont-fall/shared';
+import { CharacterPreview, SHRUG_SEQUENCE } from './CharacterPreview.js';
 import Pill from '../ui/Pill';
 import type { Feel } from '../tokens';
 import s from './NotFound.module.css';
@@ -43,7 +44,15 @@ export default function NotFound({
           </div>
         </div>
 
-        <RenderSlot grounded wobble sub="BEAN LOOKING OVER THE EDGE" className={s.art} />
+        <CharacterPreview
+          skin={BASE_BODY_SKIN_ID}
+          animation={SHRUG_SEQUENCE}
+          autoRotate={false}
+          sub="SHRUG POSE"
+          canvasLabel="3D bean shrugging at a missing page"
+          className={s.art}
+        />
+        {/* No look-over-the-edge clip exists — a shrug fits a missing page better anyway. */}
       </div>
     </Stage>
   );

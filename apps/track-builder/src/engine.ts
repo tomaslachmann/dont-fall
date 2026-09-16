@@ -1,14 +1,24 @@
 import {
+  DEFAULT_ENVIRONMENT_ID,
+  ENVIRONMENT_PRESETS,
+  hasMotion,
+  resolveEnvironmentId,
+  moduleHasIceSurface,
+  moduleHasBounceSurface,
+  moduleHasMudSurface,
   segmentScale,
   TICK_RATE_HZ,
   type AssetCategory,
   type Box,
+  type EnvironmentId,
   type Module,
+  type SegmentConveyor,
   type SegmentMotion,
   type Track,
   type TrackListing,
   type TrackRoundDefaults,
   type Vec3,
+  launchHeightOf,
 } from "@dont-fall/shared";
 import type * as THREE from "three";
 import {
@@ -24,6 +34,9 @@ import {
   loadAssetVisuals,
   loadAssetVisualsProgressive,
 } from "./assets/assets.js";
+import { loadIceTexture } from "./assets/iceTexture.js";
+import { loadMudTexture } from "./assets/mudTexture.js";
+import { loadBounceTexture } from "./assets/bounceTexture.js";
 import { createMotionPanel, type MotionPanel } from "./motion/motionPanel.js";
 import { PreviewScheduler, type PreviewSlot } from "./scene/previewScheduler.js";
 import { templateParts } from "./scene/render.js";
@@ -40,13 +53,27 @@ import {
   rotateSegment,
   SCALE_STEP,
   SCALE_STEP_FINE,
+  LAUNCH_HEIGHT_STEP,
+  LAUNCH_HEIGHT_STEP_FINE,
+  compactCheckpoints,
+  setCheckpointRespawn,
+  setSegmentCheckpoint,
+  setSegmentConveyor,
+  setSegmentIce,
+  setSegmentLaunch,
   setSegmentMotion,
+  setSegmentStart,
+  stepCheckpointOrder,
+  worldToSegmentLocal,
+  setSegmentMud,
+  setSegmentBounce,
   setSegmentScale,
   setSegmentTransforms,
   type RotateAxis,
   type SegmentTransform,
 } from "./track/trackEdit.js";
 import { TrackHistory } from "./track/trackHistory.js";
+import { courseOf, motionLockReason, type CourseSummary } from "./lib/course.js";
 import {
   createModulePreview,
   createTrackViewport,
@@ -101,6 +128,16 @@ export interface BuilderEngine {
   readonly picking: boolean;
   readonly playing: boolean;
   readonly tintVisible: boolean;
+  /**
+   * The Environment the Draft is drawn inside once played (ADR 0074) — written
+   * with every save and playtest, read back on load. A new Draft takes the default.
+   */
+  readonly environment: EnvironmentId;
+  /**
+   * Whether the viewport shows that Environment instead of the lavender
+   * authoring canvas (ADR 0063, which stays the default).
+   */
+  readonly environmentPreview: boolean;
   readonly clockSeconds: number;
   readonly apiUrl: string;
   readonly recentAssets: readonly string[];
@@ -126,6 +163,23 @@ export interface BuilderEngine {
   deleteSelected: () => void;
   duplicateSelected: () => void;
   removeLast: () => void;
+  /** Start, Checkpoints in run order and finishes (ADR 0068) — recomputed off the current Track. */
+  readonly course: CourseSummary;
+  /** Whether the next viewport click picks a Checkpoint's respawn spot. */
+  readonly pickingRespawn: boolean;
+  /** Where Checkpoint `index`'s Respawn stands as the viewport draws it — `floor` absent when it has none. */
+  respawnOf: (index: number) => { floor: Vec3 | undefined } | undefined;
+  /** Make the primary Segment the Start (moving it from wherever it was), or take it away. */
+  setSegmentStart: (start: boolean) => void;
+  /** Switch the primary hoop or arch on as the next Checkpoint, or off (the rest renumbered). */
+  setSegmentCheckpoint: (on: boolean) => void;
+  /** Move the primary Checkpoint one number earlier or later, swapping with the one there. */
+  stepCheckpointOrder: (direction: 1 | -1) => void;
+  /** The next viewport click on a platform sets the primary Checkpoint's respawn spot; Esc cancels. */
+  requestRespawnPick: () => void;
+  cancelRespawnPick: () => void;
+  /** The primary Checkpoint respawns on the floor under its gate again. */
+  resetCheckpointRespawn: () => void;
   undo: () => void;
   redo: () => void;
   rotateSelected90: (direction: 1 | -1) => void;
@@ -133,6 +187,28 @@ export interface BuilderEngine {
   rotateSelectedStep: (sign: 1 | -1, fine: boolean) => void;
   scaleSelected: (scale: number) => void;
   stepScale: (direction: 1 | -1, fine: boolean) => void;
+  /** Attach (`conveyor` set) or detach (`undefined`) a belt on the primary Segment (ADR 0064). */
+  setSegmentConveyor: (conveyor: SegmentConveyor | undefined) => void;
+  /** Attach (`true`) or detach (`undefined`) ice on the primary Segment (ADR 0066). */
+  setSegmentIce: (ice: boolean | undefined) => void;
+  /** Attach (`true`) or detach (`undefined`) mud on the primary Segment (ADR 0067). */
+  setSegmentMud: (mud: boolean | undefined) => void;
+  /**
+   * The primary Segment's deck Surface — one of them, or none. Ice and mud are
+   * mutually exclusive (ADR 0067: publish refuses the pair), so the swap is one
+   * undoable edit rather than a detach the author could stop halfway.
+   */
+  setSegmentSurface: (surface: "ice" | "mud" | "bounce" | undefined) => void;
+  /**
+   * Set (or clear, `undefined`) how high the primary Spring Segment throws
+   * (ADR 0069). Clearing returns it to its Asset's own default — a Spring is
+   * never switched off, only retuned.
+   */
+  setSegmentLaunch: (height: number | undefined) => void;
+  /** Step the primary Spring's height by one notch — no-op unless it is a Spring. */
+  stepLaunchHeight: (direction: 1 | -1, fine: boolean) => void;
+  /** Step the primary Segment's belt angle — no-op unless it runs a belt. */
+  stepConveyorAngle: (direction: 1 | -1, fine: boolean) => void;
   setGizmoMode: (mode: GizmoMode) => void;
   setRotateAxis: (axis: RotateAxis) => void;
 
@@ -145,6 +221,9 @@ export interface BuilderEngine {
   restartClock: () => void;
   setClockSeconds: (seconds: number) => void;
   setTintVisible: (visible: boolean) => void;
+  /** Picks the Draft's Environment; a live preview follows without a reload. */
+  setEnvironment: (environment: EnvironmentId) => void;
+  setEnvironmentPreview: (on: boolean) => void;
 
   setApiUrl: (url: string) => void;
   saveTrack: (name: string, defaults: TrackRoundDefaults) => Promise<void>;
@@ -206,10 +285,17 @@ export const createBuilderEngine = (opts?: {
   let browseTracks: TrackListing[] = [];
   let loadedTrack: LoadedTrackMeta | null = null;
   let pivotPick: ((pivot: Vec3) => void) | undefined;
+  let respawnPick = false;
   let pointerDownAt: { x: number; y: number } | undefined;
   let clockSeconds = 0;
   let playing = true;
   let tintVisible = true;
+  let environment: EnvironmentId = DEFAULT_ENVIRONMENT_ID;
+  let environmentPreview = false;
+  /** The viewport draws the picked Environment while previewing it, the authoring canvas otherwise. */
+  const syncEnvironmentView = (): void => {
+    viewport?.setEnvironment(environmentPreview ? ENVIRONMENT_PRESETS[environment] : null);
+  };
   let apiUrl = DEFAULT_API_URL;
   let recentAssets: string[] = [];
   let lastFrameAt: number | undefined;
@@ -245,8 +331,120 @@ export const createBuilderEngine = (opts?: {
   /** Full viewport rebuild or the transform-only fast path (a move/rotate never re-chains). */
   const syncTrackView = (transformOnly: boolean): void => {
     if (!viewport) return;
-    if (transformOnly) viewport.retransformSegments(history.track);
-    else viewport.setTrack(library, history.track, templates);
+    if (transformOnly) {
+      viewport.retransformSegments(history.track);
+      return;
+    }
+    ensureIceTexture();
+    ensureMudTexture();
+    ensureBounceTexture();
+    viewport.setTrack(library, history.track, templates, {
+      ice: iceTexture ?? undefined,
+      mud: mudTexture ?? undefined,
+      bounce: bounceTexture ?? undefined,
+    });
+  };
+
+  /**
+   * The shared ice texture (ADR 0066), loaded lazily on the first sync
+   * whose Track sheets a deck — an ice-free session never fetches it. One
+   * in flight at most; landing re-syncs so the sheets appear, while a
+   * failure warns and retries on the next full sync (edits are user-paced,
+   * so no backoff is needed for a cosmetic).
+   */
+  let iceTexture: THREE.Texture | null = null;
+  let iceLoading = false;
+  const ensureIceTexture = (): void => {
+    if (!viewport || iceTexture || iceLoading) return;
+    if (
+      !history.track.some((segment) => {
+        if (segment.ice === true) return true;
+        const module = library[segment.moduleId];
+        return module !== undefined && moduleHasIceSurface(module);
+      })
+    ) {
+      return;
+    }
+    iceLoading = true;
+    void loadIceTexture(fetchAssetBytes, `${apiUrl}/assets`).then(
+      (loaded) => {
+        iceLoading = false;
+        iceTexture = loaded;
+        syncTrackView(false);
+      },
+      (err: unknown) => {
+        iceLoading = false;
+        console.warn(`DON'T FALL: ice overlay unavailable: ${(err as Error).message}`);
+      },
+    );
+  };
+
+  /**
+   * The shared bounce texture (ADR 0070) — the same lazy contract again.
+   */
+  let bounceTexture: THREE.Texture | null = null;
+  let bounceLoading = false;
+  const ensureBounceTexture = (): void => {
+    if (!viewport || bounceTexture || bounceLoading) return;
+    if (
+      !history.track.some((segment) => {
+        if (segment.bounce === true) return true;
+        const module = library[segment.moduleId];
+        return module !== undefined && moduleHasBounceSurface(module);
+      })
+    ) {
+      return;
+    }
+    bounceLoading = true;
+    void loadBounceTexture(fetchAssetBytes, `${apiUrl}/assets`).then(
+      (loaded) => {
+        bounceLoading = false;
+        bounceTexture = loaded;
+        syncTrackView(false);
+      },
+      (err: unknown) => {
+        bounceLoading = false;
+        console.warn(`DON'T FALL: bounce sheet unavailable: ${(err as Error).message}`);
+      },
+    );
+  };
+
+  /**
+   * The shared mud texture (ADR 0067) — the same lazy contract as the ice
+   * texture above: fetched only for Tracks that sheet mud, re-syncing on
+   * arrival, warning and retrying on failure.
+   */
+  let mudTexture: THREE.Texture | null = null;
+  let mudLoading = false;
+  const ensureMudTexture = (): void => {
+    if (!viewport || mudTexture || mudLoading) return;
+    if (
+      !history.track.some((segment) => {
+        if (segment.mud === true) return true;
+        const module = library[segment.moduleId];
+        return module !== undefined && moduleHasMudSurface(module);
+      })
+    ) {
+      return;
+    }
+    mudLoading = true;
+    void loadMudTexture(fetchAssetBytes, `${apiUrl}/assets`).then(
+      (loaded) => {
+        mudLoading = false;
+        mudTexture = loaded;
+        syncTrackView(false);
+      },
+      (err: unknown) => {
+        mudLoading = false;
+        console.warn(`DON'T FALL: mud overlay unavailable: ${(err as Error).message}`);
+      },
+    );
+  };
+
+  const fetchAssetBytes = async (url: string): Promise<Uint8Array> => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`GET ${url} answered ${res.status}`);
+    return new Uint8Array(await res.arrayBuffer());
   };
 
   /** Pushes the selection to the viewport (gizmo + highlight + motion guide) and the panel. */
@@ -255,10 +453,14 @@ export const createBuilderEngine = (opts?: {
     viewport?.setSelected(list);
     const first = primary();
     viewport?.showMotionGuide(first);
+    viewport?.showLaunchArc(first);
     if (first === undefined) motionPanel?.show(undefined, undefined);
     else {
       const segment = history.track[first]!;
-      motionPanel?.show(library[segment.moduleId], segment.motion, partsOf(segment.moduleId), segmentScale(segment), list.length);
+      // A Start, a Checkpoint and a finish sign stay still (ADR 0068): no Motion
+      // editor for them — the Course panel says why.
+      if (motionLockReason(segment, library) && !hasMotion(segment.motion)) motionPanel?.show(undefined, undefined);
+      else motionPanel?.show(library[segment.moduleId], segment.motion, partsOf(segment.moduleId), segmentScale(segment), list.length);
     }
   };
 
@@ -327,13 +529,26 @@ export const createBuilderEngine = (opts?: {
       return loadedTrack;
     },
     get picking() {
-      return pivotPick !== undefined;
+      return pivotPick !== undefined || respawnPick;
     },
+    get pickingRespawn() {
+      return respawnPick;
+    },
+    get course() {
+      return courseOf(history.track, library);
+    },
+    respawnOf: (index) => viewport?.respawnOf(index),
     get playing() {
       return playing;
     },
     get tintVisible() {
       return tintVisible;
+    },
+    get environment() {
+      return environment;
+    },
+    get environmentPreview() {
+      return environmentPreview;
     },
     get clockSeconds() {
       return clockSeconds;
@@ -372,7 +587,15 @@ export const createBuilderEngine = (opts?: {
       viewport = createViewport(container, commitSegmentTransforms);
       viewport.setGizmoMode(gizmoMode);
       viewport.setImpactTintVisible(tintVisible);
-      viewport.setTrack(library, history.track, templates);
+      syncEnvironmentView();
+      ensureIceTexture();
+      ensureMudTexture();
+      ensureBounceTexture();
+      viewport.setTrack(library, history.track, templates, {
+        ice: iceTexture ?? undefined,
+        mud: mudTexture ?? undefined,
+        bounce: bounceTexture ?? undefined,
+      });
       syncSelectionView();
     },
     detachViewport: () => {
@@ -387,6 +610,13 @@ export const createBuilderEngine = (opts?: {
         (motion: SegmentMotion | undefined) => {
           const index = primary();
           if (index === undefined) return;
+          const locked = motion ? motionLockReason(history.track[index]!, library) : undefined;
+          if (locked) {
+            setStatus(locked, "error");
+            syncSelectionView();
+            notify();
+            return;
+          }
           // Transform-only: a Motion poses a Segment around where it rests, never re-chains it.
           applyEdit(setSegmentMotion(history.track, index, motion), index, true);
         },
@@ -443,7 +673,7 @@ export const createBuilderEngine = (opts?: {
       const at = primary();
       const insertAt = at !== undefined ? at + 1 : history.track.length;
       rememberAsset(moduleId);
-      applyEdit(insertSegment(history.track, library, insertAt, moduleId), insertAt);
+      applyEdit(insertSegment(history.track, library, insertAt, moduleId, categories), insertAt);
     },
     select: (index) => {
       selected = index !== undefined && index >= 0 && index < history.track.length ? new Set([index]) : new Set();
@@ -469,7 +699,54 @@ export const createBuilderEngine = (opts?: {
     },
     removeLast: () => {
       if (history.track.length === 0) return;
-      applyEdit(removeLast(history.track), undefined);
+      applyEdit(compactCheckpoints(removeLast(history.track)), undefined);
+    },
+    setSegmentStart: (start) => {
+      const index = primary();
+      if (index === undefined) return;
+      if (start && hasMotion(history.track[index]!.motion)) {
+        setStatus("a Start stays still — switch its Motion off first", "error");
+        notify();
+        return;
+      }
+      applyEdit(setSegmentStart(history.track, index, start), index);
+    },
+    setSegmentCheckpoint: (on) => {
+      const index = primary();
+      if (index === undefined) return;
+      const segment = history.track[index]!;
+      if (on && library[segment.moduleId]?.gate?.role !== "checkpoint") return;
+      if (on && hasMotion(segment.motion)) {
+        setStatus("a Checkpoint stays still — switch its Motion off first", "error");
+        notify();
+        return;
+      }
+      if (!on && respawnPick) respawnPick = false;
+      applyEdit(setSegmentCheckpoint(history.track, index, on), index);
+    },
+    stepCheckpointOrder: (direction) => {
+      const index = primary();
+      if (index === undefined) return;
+      applyEdit(stepCheckpointOrder(history.track, index, direction), index);
+    },
+    requestRespawnPick: () => {
+      const index = primary();
+      if (index === undefined || !history.track[index]!.checkpoint) return;
+      pivotPick = undefined;
+      respawnPick = true;
+      setStatus("click the platform the Checkpoint's Respawn should stand on · Esc cancels", "quiet");
+      notify();
+    },
+    cancelRespawnPick: () => {
+      if (!respawnPick) return;
+      respawnPick = false;
+      setStatus(`${history.track.length} Segment(s)`, "quiet");
+      notify();
+    },
+    resetCheckpointRespawn: () => {
+      const index = primary();
+      if (index === undefined) return;
+      applyEdit(setCheckpointRespawn(history.track, index, undefined), index);
     },
     undo: () => {
       history.undo();
@@ -513,6 +790,61 @@ export const createBuilderEngine = (opts?: {
       const step = fine ? SCALE_STEP_FINE : SCALE_STEP;
       engine.scaleSelected(segmentScale(history.track[index]!) + direction * step);
     },
+    setSegmentConveyor: (conveyor) => {
+      const index = primary();
+      if (index === undefined) return;
+      // Full rebuild (never the transform-only fast path): attaching a belt
+      // adds the strip visual, detaching removes it.
+      applyEdit(setSegmentConveyor(history.track, index, conveyor), index);
+    },
+    setSegmentIce: (ice) => {
+      const index = primary();
+      if (index === undefined) return;
+      // Full rebuild (never the transform-only fast path): attaching ice
+      // adds the sheet visual, detaching removes it.
+      applyEdit(setSegmentIce(history.track, index, ice), index);
+    },
+    setSegmentMud: (mud) => {
+      const index = primary();
+      if (index === undefined) return;
+      // Full rebuild (never the transform-only fast path): attaching mud
+      // adds the sheet visual, detaching removes it.
+      applyEdit(setSegmentMud(history.track, index, mud), index);
+    },
+    setSegmentSurface: (surface) => {
+      const index = primary();
+      if (index === undefined) return;
+      // All three annotations in one edit: picking ice off mud must not leave
+      // a Segment carrying both, not even for one undo step.
+      const iced = setSegmentIce(history.track, index, surface === "ice" ? true : undefined);
+      const mudded = setSegmentMud(iced, index, surface === "mud" ? true : undefined);
+      applyEdit(setSegmentBounce(mudded, index, surface === "bounce" ? true : undefined), index);
+    },
+    setSegmentLaunch: (height) => {
+      const index = primary();
+      if (index === undefined) return;
+      // Transform-only would be wrong: the arc overlay is rebuilt from the
+      // resolved launch pad, like a belt's strip.
+      applyEdit(setSegmentLaunch(history.track, index, height), index);
+    },
+    stepLaunchHeight: (direction, fine) => {
+      const index = primary();
+      if (index === undefined) return;
+      const module = library[history.track[index]!.moduleId];
+      if (!module?.launch) return;
+      const step = fine ? LAUNCH_HEIGHT_STEP_FINE : LAUNCH_HEIGHT_STEP;
+      engine.setSegmentLaunch(launchHeightOf(history.track[index]!.launch, module.launch) + direction * step);
+    },
+    stepConveyorAngle: (direction, fine) => {
+      const index = primary();
+      if (index === undefined) return;
+      const current = history.track[index]?.conveyor;
+      if (!current) return;
+      const step = fine ? ROTATE_STEP_FINE : ROTATE_STEP;
+      // Radians, unnormalised — the angle is periodic, and wrapping here
+      // would fight the stepper's own round-trips past ±180°.
+      engine.setSegmentConveyor({ preset: current.preset, angle: current.angle + direction * step });
+    },
     setGizmoMode: (mode) => {
       gizmoMode = mode;
       viewport?.setGizmoMode(mode);
@@ -538,6 +870,22 @@ export const createBuilderEngine = (opts?: {
       pointerDownAt = { x, y };
     },
     viewportClick: (x, y, shiftKey) => {
+      if (respawnPick) {
+        const index = primary();
+        const hit = viewport?.pickFloor(x, y);
+        if (index === undefined || !hit || hit.index === index) {
+          setStatus(
+            hit?.index === index ? "that's the gate itself — click the platform around it · Esc cancels" : "missed — click a platform · Esc cancels",
+            "error",
+          );
+          notify();
+          return;
+        }
+        respawnPick = false;
+        setStatus(`${history.track.length} Segment(s)`, "quiet");
+        applyEdit(setCheckpointRespawn(history.track, index, worldToSegmentLocal(history.track[index]!, hit.point)), index);
+        return;
+      }
       if (pivotPick) {
         const index = primary();
         const pivot = index !== undefined ? viewport?.pickPartPivot(x, y, index) : undefined;
@@ -580,6 +928,18 @@ export const createBuilderEngine = (opts?: {
       viewport?.setImpactTintVisible(visible);
       notify();
     },
+    setEnvironment: (next) => {
+      if (next === environment) return;
+      environment = next;
+      if (environmentPreview) syncEnvironmentView();
+      notify();
+    },
+    setEnvironmentPreview: (on) => {
+      if (on === environmentPreview) return;
+      environmentPreview = on;
+      syncEnvironmentView();
+      notify();
+    },
 
     setApiUrl: (url) => {
       apiUrl = url;
@@ -589,7 +949,7 @@ export const createBuilderEngine = (opts?: {
       setStatus("saving…", "quiet");
       notify();
       try {
-        const { id } = await saveTrack(apiUrl, name.trim(), history.track, defaults);
+        const { id } = await saveTrack(apiUrl, name.trim(), history.track, defaults, environment);
         loadedTrack = { id, name: name.trim(), timeLimitMs: defaults.timeLimitMs, survivorTarget: defaults.survivorTarget };
         setStatus(`saved as "${id}"`, "ok");
       } catch (err) {
@@ -600,7 +960,18 @@ export const createBuilderEngine = (opts?: {
     loadTrackById: async (id) => {
       try {
         const stored = await loadTrack(apiUrl, id);
+        // Warn, never block: a Module the builder doesn't know (a procedural
+        // one, ADR 0078) is skipped by the viewport, so the status names it.
+        // No resolve for warnings — the builder's Modules carry no geometry,
+        // so every gate would read as floorless.
+        const unknown = [...new Set(stored.track.map((segment) => segment.moduleId))].filter((moduleId) => !Object.hasOwn(library, moduleId));
         history.reset(stored.track);
+        // A preset this build lacks (a newer API's) draws the default rather than failing the load.
+        const loadedEnvironment = resolveEnvironmentId(stored.environment);
+        if (loadedEnvironment.id !== environment) {
+          environment = loadedEnvironment.id;
+          if (environmentPreview) syncEnvironmentView();
+        }
         loadedTrack = {
           id: stored.id,
           name: stored.name ?? "",
@@ -615,7 +986,10 @@ export const createBuilderEngine = (opts?: {
         viewport?.frameTrack();
         selected = new Set();
         syncSelectionView();
-        setStatus(`loaded "${stored.id}" (${history.track.length} Segment(s))`, "ok");
+        const loaded = `loaded "${stored.id}" (${history.track.length} Segment(s))`;
+        if (unknown.length > 0) setStatus(`${loaded} — ${unknown.length} unknown Module(s), not drawn: ${unknown.join(", ")}`, "error");
+        else if (loadedEnvironment.warning) setStatus(`${loaded} — ${loadedEnvironment.warning}`, "error");
+        else setStatus(loaded, "ok");
       } catch (err) {
         setStatus(`load failed: ${(err as Error).message}`, "error");
       }
@@ -642,7 +1016,7 @@ export const createBuilderEngine = (opts?: {
       setStatus("publishing for playtest…", "quiet");
       notify();
       try {
-        const { id } = await publishPlaytestTrack(apiUrl, history.track, defaults);
+        const { id } = await publishPlaytestTrack(apiUrl, history.track, defaults, environment);
         // 5173 is apps/client's own fixed dev port — a local-dev-only detail.
         // `/play?track=&freeroam=1`: straight into a free-roam session, no Lobby.
         const host = globalThis.location?.hostname ?? "localhost";
@@ -749,6 +1123,10 @@ export const createBuilderEngine = (opts?: {
     handleKeyDown: (event) => {
       if (event.code === "Escape" && pivotPick) {
         engine.cancelPivotPick();
+        return true;
+      }
+      if (event.code === "Escape" && respawnPick) {
+        engine.cancelRespawnPick();
         return true;
       }
       const index = primary();

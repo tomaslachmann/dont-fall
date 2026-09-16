@@ -1,9 +1,10 @@
 import { useState } from 'react';
+import { levelForXp } from '@dont-fall/shared';
 import Stage from '../ui/Stage';
 import JellyButton from '../ui/JellyButton';
 import Logo from '../ui/Logo';
 import Avatar from '../ui/Avatar';
-import RenderSlot from '../ui/RenderSlot';
+import { CharacterPreview } from './CharacterPreview.js';
 import { Badge } from '../ui/Toast';
 import { StatTile } from '../ui/Pill';
 import type { Feel } from '../tokens';
@@ -19,7 +20,7 @@ import SettingsIcon from '../ui/SettingsIcon';
 import FriendAlerts from './FriendAlerts';
 
 export type MenuDestination =
-  | 'settings' | 'survival' | 'build' | 'discover' | 'leaderboards' | 'friends';
+  | 'settings' | 'survival' | 'build' | 'discover' | 'leaderboards' | 'friends' | 'character';
 
 export interface MainMenuProps {
   level?: number;
@@ -28,16 +29,20 @@ export interface MainMenuProps {
 }
 
 const NAV: Array<[string, MenuDestination]> = [
+  ['CHARACTER', 'character'],
   ['FRIENDS', 'friends'],
   ['DISCOVER', 'discover'],
   ['LEADERBOARDS', 'leaderboards'],
 ];
 
 export default function MainMenu({
-  level = 42, online, feel,
+  level, online, feel,
 }: MainMenuProps) {
   const navigate = useNavigate();
   const { account } = useAccount();
+  // The explicit prop (tests, previews) wins; otherwise the Account's own
+  // level off the shared curve — never a mock number.
+  const shownLevel = level ?? levelForXp(account?.xp ?? 0);
   // Live beans-online off /game-settings; the explicit prop (tests, previews)
   // wins, and before the fetch lands there is simply no count to show.
   const settings = useGameSettings();
@@ -67,14 +72,14 @@ export default function MainMenu({
         </div>
 
         <div className={s.identity}>
-          <div className={s.account}>
+          <button type="button" className={s.account} onClick={() => navigate("/profile")} aria-label="Profile">
             <Avatar skin="pink" />
             <span className={s.accountText}>
               <span className={s.name}>{account?.displayName}</span>
-              <span className={s.level}>LEVEL {level}</span>
+              <span className={s.level}>LEVEL {shownLevel}</span>
             </span>
             {friends.requests.length > 0 && <Badge pulse>{friends.requests.length}</Badge>}
-          </div>
+          </button>
           <button type="button" className={s.iconBtn} aria-label="Settings" onClick={() => navigate('/settings')}>
             <SettingsIcon style={{ width: "100%" }} />
           </button>
@@ -103,7 +108,8 @@ export default function MainMenu({
             {NAV.map(([label, dest]) => {
               // Leaderboards has no screen yet — it logs until its own exists
               // rather than navigating nowhere.
-              const target = dest === 'discover' ? '/discover' : dest === 'friends' ? '/friends' : null;
+              const target =
+                dest === 'character' ? '/character' : dest === 'discover' ? '/discover' : dest === 'friends' ? '/friends' : null;
               const button = (
                 <JellyButton
                   key={dest}
@@ -130,7 +136,14 @@ export default function MainMenu({
           {notice !== null && <p className={s.notice}>{notice}</p>}
         </div>
 
-        <RenderSlot grounded wobble sub="IDLE + WIN POSE LOOP" className={s.hero} />
+        <CharacterPreview
+          skin={account?.bodySkin ?? null}
+          animation={[{ clip: "Idle", seconds: 4 }, { clip: "Win_Loop", seconds: 3.2 }]}
+          sub="IDLE + WIN POSE LOOP"
+          canvasLabel="3D preview of your bean"
+          className={s.hero}
+          autoRotate={false}
+        />
       </div>
 
       <div className={s.stats}>

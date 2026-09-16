@@ -11,7 +11,7 @@ import { parseLobbyParams, parsePlayParams } from "./lib/utils/routeParams.js";
 const { startGame } = vi.hoisted(() => ({ startGame: vi.fn() }));
 vi.mock("./game/index.js", () => ({ startGame }));
 
-const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, xp: 0, coins: 0 };
+const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, xp: 0, coins: 0, bodySkin: 0 };
 
 // Every existing test below exercises the gated (post-login) routes — a
 // stored token that resolves is the default here, same as any real Player
@@ -242,6 +242,52 @@ describe("Discover route (M9 ticket 16)", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /BROWSE DISCOVER/ }));
     expect(await screen.findByRole("button", { name: /wobble ramp/i })).toBeInTheDocument();
+  });
+});
+
+describe("Character route (M9 ticket 15 — the stub)", () => {
+  it("/character renders the stub screen", async () => {
+    render(
+      <MemoryRouter initialEntries={["/character"]}>
+        <WithQuery><App /></WithQuery>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("YOUR BEAN")).toBeInTheDocument();
+  });
+
+  it("the Main Menu's CHARACTER pill routes to the stub", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <WithQuery><App /></WithQuery>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "CHARACTER" }));
+    expect(await screen.findByText("YOUR BEAN")).toBeInTheDocument();
+  });
+});
+
+describe("Profile route", () => {
+  it("/profile renders the career card", async () => {
+    render(
+      <MemoryRouter initialEntries={["/profile"]}>
+        <WithQuery><App /></WithQuery>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("PROFILE")).toBeInTheDocument();
+  });
+
+  it("the Main Menu's account block routes to the profile", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <WithQuery><App /></WithQuery>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Profile" }));
+    expect(await screen.findByText("PROFILE")).toBeInTheDocument();
   });
 });
 

@@ -1,4 +1,5 @@
 import type { OrientedBox } from "../math/box.js";
+import type { PlacedGate } from "../track/Gate.js";
 
 /**
  * A Finish Zone: the area at the end of a Race that grants Qualification on
@@ -17,10 +18,17 @@ import type { OrientedBox } from "../math/box.js";
  *
  * A single-field interface rather than a bare `OrientedBox` on purpose: it
  * matches the `{ trigger }` shape every other one-shot trigger entity here
- * has (`SpeedPadConfig`, `LaunchPadConfig`, `Checkpoint`), which is what lets
+ * has (`LaunchPadConfig`, `Checkpoint`), which is what lets
  * `RapierSimulation.findTriggerIndex` scan it unchanged.
  */
-export interface FinishZone {
-  /** The region a Character's capsule centre must enter to Qualify. */
-  trigger: OrientedBox;
-}
+export type FinishZone =
+  | {
+      /** The region a Character's capsule centre must enter to Qualify. */
+      trigger: OrientedBox;
+      gate?: undefined;
+    }
+  | {
+      /** A finish sign's opening (ADR 0068): passing through it Qualifies. */
+      gate: PlacedGate;
+      trigger?: undefined;
+    };

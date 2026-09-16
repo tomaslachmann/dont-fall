@@ -1,12 +1,19 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
-import { ASSET_DEMO_TRACK, ASSET_DEMO_TRACK_ID, DEFAULT_API_PORT, M1_TRACK, MAX_PLAYERS } from "@dont-fall/shared";
+import {
+  BASE_RACE_NAME,
+  BASE_RACE_TIME_LIMIT_MS,
+  BASE_RACE_TRACK,
+  BASE_RACE_TRACK_ID,
+  DEFAULT_API_PORT,
+  MAX_PLAYERS,
+} from "@dont-fall/shared";
 import { defaultAssetsDir } from "./assets/assets.service.js";
 import { registerAssetRoutes } from "./assets/assets.controller.js";
 import { registerAuthRoutes } from "./auth/auth.controller.js";
 import type { DiscordOAuthConfig, FetchLike } from "./auth/auth.service.js";
 import { openDb, type ApiDb } from "./db/db.js";
-import { seedIfEmpty, seedTrackIfMissing } from "./tracks/tracks.dao.js";
+import { syncSeedTrack } from "./tracks/tracks.dao.js";
 import { registerTrackRoutes } from "./tracks/tracks.controller.js";
 import { LobbiesService, type LobbiesDeps } from "./lobbies/lobbies.service.js";
 import { registerLobbyRoutes } from "./lobbies/lobbies.controller.js";
@@ -16,8 +23,6 @@ import { registerRewardsRoutes } from "./rewards/rewards.controller.js";
 import { registerBetsRoutes } from "./bets/bets.controller.js";
 import { registerFriendsRoutes } from "./friends/friends.controller.js";
 import { ServiceError } from "./http/errors.js";
-
-export const M1_SEED_TRACK_ID = "m1-playground";
 
 export interface BuildAppOptions {
   db?: ApiDb;
@@ -54,7 +59,9 @@ export const buildApp = async (options: BuildAppOptions = {}): Promise<FastifyIn
     // to steal. Without this a browser's cross-origin POST fails at the
     // preflight and every screen can only report the API as unreachable.
     origin: "*",
-    methods: ["GET", "POST", "OPTIONS"],
+    // Every method the routes use — a missing one dies at the browser's
+    // preflight as a CORS error (PUT cosmetics did exactly that).
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   });
 
@@ -90,11 +97,10 @@ export const buildApp = async (options: BuildAppOptions = {}): Promise<FastifyIn
   app.setNotFoundHandler((_req, reply) => reply.code(404).send({ error: "not found" }));
 
   const db = options.db ?? openDb(options.dbPath ?? "./data/track-service.sqlite");
-  seedIfEmpty(db, M1_SEED_TRACK_ID, "M1 playground", M1_TRACK);
-  // The M8 milestone playtest Track — per-id, not whole-DB, so it joins
-  // databases that already hold user Tracks on their next boot. Seeded from
-  // the shared chained composition, served to Matches like every Track.
-  seedTrackIfMissing(db, ASSET_DEMO_TRACK_ID, "Asset demo", ASSET_DEMO_TRACK);
+  // The one code-owned seed, the base race (ADR 0078), synced — missing →
+  // seeded, drifted → a new Revision with the code's content (ADR 0073). A
+  // synced boot writes nothing. Every other Track is authored in the builder.
+  syncSeedTrack(db, { id: BASE_RACE_TRACK_ID, name: BASE_RACE_NAME, track: BASE_RACE_TRACK, timeLimitMs: BASE_RACE_TIME_LIMIT_MS });
 
   const maxPlayers = options.maxPlayers ?? MAX_PLAYERS;
   const lobbies = new LobbiesService({

@@ -36,10 +36,13 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
     // down API) leaves the seat anonymous instead of closing it. Latest
     // send wins.
     const token = message.token;
-    void rt.accounts.resolveAccount(token).then((accountId) => {
-      if (accountId === null) return;
+    void rt.accounts.resolveAccount(token).then((resolved) => {
+      if (resolved === null) return;
       const player = rt.lobbyPlayers.get(id);
-      if (player) player.accountId = accountId;
+      if (player) {
+        player.accountId = resolved.accountId;
+        player.bodySkin = resolved.bodySkin;
+      }
     });
     return true;
   }

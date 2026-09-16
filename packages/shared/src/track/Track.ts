@@ -1,14 +1,37 @@
 import { orientBox, type Box, type OrientedBox } from "../math/box.js";
-import { conjugateQuat, eulerQuat, mulQuat, quatToEuler, yawQuat, type Quat } from "../math/quat.js";
-import { addVec3, rotateVec3ByQuat, subVec3, type Vec3 } from "../math/vec3.js";
+import { conjugateQuat, eulerQuat, IDENTITY_QUAT, mulQuat, quatToEuler, yawQuat, type Quat } from "../math/quat.js";
+import { addVec3, rotateVec3ByQuat, scaleVec3, subVec3, type Vec3 } from "../math/vec3.js";
 import type { Checkpoint } from "../simulation/Checkpoint.js";
 import type { FinishZone } from "../simulation/FinishZone.js";
 import type { LaunchPadConfig } from "../simulation/LaunchPad.js";
 import type { PropConfig } from "../simulation/Prop.js";
-import type { SpeedPadConfig } from "../simulation/SpeedPad.js";
+import type { MovingSegmentConfig } from "../simulation/MovingSegment.js";
 import type { SpinnerConfig } from "../simulation/Spinner.js";
 import type { VolumeConfig } from "../simulation/Volume.js";
-import { findSocket, type Module, type Socket } from "./Module.js";
+import type { EnvironmentId } from "./Environment.js";
+import { findSocket, type Hazard, type Module, type Socket } from "./Module.js";
+import {
+  conveyorWorldVelocity,
+  DEPRECATED_MODULE_IDS,
+  type ConveyorBelt,
+  type DeckFrame,
+  type SegmentConveyor,
+} from "./Conveyor.js";
+import { ICE_SURFACE_ID, moduleHasIceSurface, type IceDeck } from "./IceOverlay.js";
+import { moduleHasMudSurface, MUD_SURFACE_ID, type MudDeck } from "./MudOverlay.js";
+import { BOUNCE_SURFACE_ID, moduleHasBounceSurface, type BounceDeck } from "./BounceOverlay.js";
+import { launchHeightOf, launchVelocityFor, type SegmentLaunch } from "./Launch.js";
+import { hasMotion, type SegmentMotion } from "./Motion.js";
+import {
+  floorBelow,
+  isCheckpointGate,
+  RESPAWN_ABOVE_FLOOR,
+  respawnProbeOrigins,
+  startSegmentIndex,
+  type SegmentCheckpoint,
+} from "./Course.js";
+import { placeGate, type PlacedGate } from "./Gate.js";
+import type { SolidShape } from "./asset.js";
 import { DEFAULT_SURFACE, type SurfaceId } from "./Surface.js";
 
 /**
@@ -38,7 +61,152 @@ export interface Segment {
   pitch?: number;
   roll?: number;
   manuallyPlaced?: boolean;
+  /**
+   * How this Segment moves, if it does (ADR 0061) — additive and optional
+   * like `pitch`/`roll`, so every Track stored before it reads unchanged.
+   * Applied in the Segment's local frame, before its placement.
+   */
+  motion?: SegmentMotion;
+  /**
+   * Uniform size (ADR 0062) — additive and optional, 1 when absent. The
+   * innermost part of the placement, wrapping the Motion: a rest-local point
+   * `p` is at `position + orientation·(scale · motion(p))`, so geometry,
+   * Footprint, Sockets, triggers and the Motion's pivots and offsets all grow
+   * together.
+   */
+  scale?: number;
+  /**
+   * The belt attached to this Segment, if any (CONTEXT.md: Conveyor, ADR
+   * 0064) — the whole asset carries whoever stands on it. Additive and
+   * optional like `motion`/`scale`, so every Track stored before it reads
+   * unchanged.
+   */
+  conveyor?: SegmentConveyor;
+  /**
+   * Ice attached to this Segment (ADR 0066) — the whole deck skates, like a
+   * belt's whole-deck carry but for grip instead of flow. Exactly `true`
+   * when present (detaching removes the key); additive and optional like
+   * `conveyor`, so every Track stored before it reads unchanged. Supersedes
+   * the retired `ice` Module, which old Tracks keep resolving.
+   */
+  ice?: boolean;
+  /**
+   * Mud attached to this Segment (ADR 0067) — the whole deck drags, the
+   * grip mirror of attached ice. Exactly `true` when present (detaching
+   * removes the key); additive and optional like `ice`. Mutually exclusive
+   * with `ice` (publish refuses the pair — one deck, one Surface);
+   * supersedes the retired `mud` Module, which old Tracks keep resolving.
+   */
+  mud?: boolean;
+  /**
+   * An inflatable bounce sheet attached to this Segment (ADR 0070) — exactly
+   * `true` when present, the third member of ice and mud's one-deck-one-
+   * Surface choice. Additive and optional like they are.
+   */
+  bounce?: boolean;
+  /**
+   * How high this Spring throws (CONTEXT.md: Spring, ADR 0069) — an override
+   * of the Asset's own default, in metres. Additive and optional like
+   * `conveyor`/`mud`; ignored on a Module that is not a Spring, and a Spring
+   * without one still launches.
+   */
+  launch?: SegmentLaunch;
+  /**
+   * This Segment is the Track's Start (CONTEXT.md: Start, ADR 0068) — exactly
+   * `true` when present, on one Segment at most. A Track without one starts
+   * on its first Segment.
+   */
+  start?: boolean;
+  /**
+   * A hoop or an arch switched on as a Checkpoint (ADR 0068) — its number and,
+   * when chosen, its respawn spot. Ignored on any other Module.
+   */
+  checkpoint?: SegmentCheckpoint;
 }
+
+/** A solid part's shape at `scale` (ADR 0062/0063). */
+export const scaleSolidShape = (shape: SolidShape, scale: number): SolidShape => {
+  if (scale === 1) return shape;
+  switch (shape.type) {
+    case "ball":
+      return { type: "ball", radius: shape.radius * scale };
+    case "capsule":
+    case "cylinder":
+      return { type: shape.type, halfHeight: shape.halfHeight * scale, radius: shape.radius * scale };
+    case "box":
+      return { type: "box", halfExtents: scaleVec3(shape.halfExtents, scale) };
+    case "hull":
+      return { type: "hull", points: shape.points.map((p) => scaleVec3(p, scale)) };
+  }
+};
+
+/** A Segment's uniform scale (ADR 0062), 1 when it has none. */
+export const segmentScale = (segment: Pick<Segment, "scale">): number => segment.scale ?? 1;
+
+/** `box` at `scale` about its Module's origin — centre and half-extents together. */
+export const scaleBox = <B extends Box>(box: B, scale: number): B =>
+  scale === 1 ? box : { ...box, center: scaleVec3(box.center, scale), halfExtents: scaleVec3(box.halfExtents, scale) };
+
+/**
+ * The per-Segment warning for a retired Module id: pads lost their behaviour
+ * to the Segment Conveyor (ADR 0064), while ice/mud keep their Surface and
+ * only their authoring moved to the Segment (ADR 0066/0067) — an old Track
+ * must grip exactly where it always did. Each names the fix.
+ */
+const retiredModuleWarning = (segmentIndex: number, moduleId: string): string => {
+  const courseFix: Record<string, string> = {
+    start: "mark any Segment as the Start instead",
+    finish: "place a finish sign instead",
+    sandbox: "place a finish sign instead",
+    "checkpoint-spinner": "switch a hoop or an arch on as a Checkpoint instead",
+    "checkpoint-end-props": "switch a hoop or an arch on as a Checkpoint instead",
+  };
+  if (courseFix[moduleId]) {
+    return `Segment ${segmentIndex} references retired block "${moduleId}": ${courseFix[moduleId]} (ADR 0068) — it still works for now`;
+  }
+  if (moduleId === "ice" || moduleId === "mud") {
+    return (
+      `Segment ${segmentIndex} references retired Module "${moduleId}": ` +
+      `attach ${moduleId} to the Segment instead — this Segment keeps its ${moduleId} for now`
+    );
+  }
+  if (moduleId === "updraft") {
+    return (
+      `Segment ${segmentIndex} references retired Module "updraft": ` +
+      "place a fan instead — this Segment keeps its deck, but the air is gone"
+    );
+  }
+  return (
+    `Segment ${segmentIndex} references retired Module "${moduleId}": ` +
+    "its pad no longer fires — attach a Conveyor to the Segment instead"
+  );
+};
+
+/**
+ * The deck a Segment's overlays sit on (ADR 0064/0066/0067): its footprint
+ * frame on the top of its own collision, measured in the Module's frame and
+ * then placed with the whole Segment — so a pitched or rolled deck's overlay
+ * lies in the deck's plane, where a belt visibly runs and an ice/mud sheet
+ * lies. (The highest *world* point of a ramp is its top edge, and a flat
+ * sheet there floats over the rest of it.) Moving Segments resolve at the
+ * rest pose like everything else of theirs; the game client re-parents the
+ * overlay under the Segment's own group so it follows the Motion.
+ */
+const deckFrame = (segment: Segment, module: Module, scale: number, orientation: Quat): DeckFrame => {
+  let top = 0;
+  for (const box of module.statics) top = Math.max(top, box.center.y + box.halfExtents.y);
+  for (const mesh of module.asset?.meshes ?? []) {
+    for (const p of mesh.positions) top = Math.max(top, p.y);
+  }
+  const { center, halfExtents } = module.footprint.bounds;
+  return {
+    center: addVec3(rotateVec3ByQuat(scaleVec3({ x: center.x, y: top, z: center.z }, scale), orientation), segment.position),
+    yaw: segment.rotation,
+    orientation,
+    halfX: halfExtents.x * scale,
+    halfZ: halfExtents.z * scale,
+  };
+};
 
 /** A Track: an ordered sequence of Segments (CONTEXT.md). */
 export type Track = Segment[];
@@ -51,7 +219,7 @@ export type Track = Segment[];
  * and throws at boot, this is a label, not a load.
  */
 export const countCheckpoints = (track: Track, modules: Record<string, Module>): number =>
-  track.filter((segment) => modules[segment.moduleId]?.checkpoint !== undefined).length;
+  track.filter((segment) => modules[segment.moduleId]?.checkpoint !== undefined || isCheckpointGate(segment, modules)).length;
 
 /**
  * Whether `track` carries a Finish Zone anywhere (M9 ticket 16) — true when
@@ -65,7 +233,10 @@ export const countCheckpoints = (track: Track, modules: Record<string, Module>):
  * Module, and such a Track can't load (and so can't be raced) anyway.
  */
 export const trackHasFinishZone = (track: Track, modules: Record<string, Module>): boolean =>
-  track.some((segment) => modules[segment.moduleId]?.finishZone !== undefined);
+  track.some((segment) => {
+    const module = modules[segment.moduleId];
+    return module?.finishZone !== undefined || (module?.gate?.role === "finish" && !hasMotion(segment.motion));
+  });
 
 /**
  * One row of the API's `GET /tracks` listing (ticket 09/ADR 0032) — a
@@ -112,6 +283,13 @@ export interface StoredTrack extends TrackRoundDefaults {
   revision: number;
   authorId: string;
   contentHash: string;
+  /**
+   * The Environment this Revision is drawn inside (ADR 0074). A sibling of
+   * the Round defaults, never one of them: it is not a Round default, and the
+   * Match server never reads it. A client reads it through
+   * `resolveEnvironmentId`, since a newer API may name a preset it lacks.
+   */
+  environment: EnvironmentId;
 }
 
 /**
@@ -155,6 +333,10 @@ export interface StaticTrimesh {
   vertices: Vec3[];
   indices: number[];
   surface: SurfaceId;
+  /** The owning Module's hazard, if any (ADR 0061). */
+  hazard?: Hazard;
+  /** World-space belt flow, when the owning Segment carries a Conveyor (ADR 0064). */
+  conveyor?: Vec3;
 }
 
 /** A Socket's full local orientation as one quaternion (ADR 0034) — composes its yaw/pitch/roll fields. */
@@ -191,6 +373,8 @@ export const placeAfter = (
   nextModule: Module,
   exitSocketId = "exit",
   entrySocketId = "entry",
+  /** The placed Segment's own scale (ADR 0062) — its entry Socket sits that much farther from its origin. */
+  nextScale = 1,
 ): Segment => {
   const exit = findSocket(prevModule, exitSocketId);
   const entry = findSocket(nextModule, entrySocketId);
@@ -198,11 +382,11 @@ export const placeAfter = (
   const prevOrientation = segmentOrientation(prev);
   const exitLocalOrientation = socketOrientation(exit);
   const exitWorldOrientation = mulQuat(prevOrientation, exitLocalOrientation);
-  const exitWorldPos = addVec3(prev.position, rotateVec3ByQuat(exit.position, prevOrientation));
+  const exitWorldPos = addVec3(prev.position, rotateVec3ByQuat(scaleVec3(exit.position, segmentScale(prev)), prevOrientation));
 
   const entryLocalOrientation = socketOrientation(entry);
   const nextOrientation = mulQuat(mulQuat(exitWorldOrientation, yawQuat(Math.PI)), conjugateQuat(entryLocalOrientation));
-  const nextPos = subVec3(exitWorldPos, rotateVec3ByQuat(entry.position, nextOrientation));
+  const nextPos = subVec3(exitWorldPos, rotateVec3ByQuat(scaleVec3(entry.position, nextScale), nextOrientation));
 
   const { yaw, pitch, roll } = quatToEuler(nextOrientation);
   return {
@@ -211,6 +395,7 @@ export const placeAfter = (
     rotation: yaw,
     ...(Math.abs(pitch) > PITCH_ROLL_EPSILON ? { pitch } : {}),
     ...(Math.abs(roll) > PITCH_ROLL_EPSILON ? { roll } : {}),
+    ...(nextScale !== 1 ? { scale: nextScale } : {}),
   };
 };
 
@@ -259,14 +444,92 @@ export const chainTrack = (
  * the x = −3.2 wall, y 1.2 above the deck, z 0.5 back across the platform.
  * For M1 itself this returns exactly `playgroundSpawn(index)`.
  */
-export const trackSpawn = (track: Track, index: number): Vec3 => {
+export const trackSpawn = (track: Track, index: number, modules?: Record<string, Module>): Vec3 => {
   const slot = ((index % 12) + 12) % 12;
   const col = slot % 4; // 4 across
   const row = Math.floor(slot / 4); // up to 3 back
+  const startIndex = startSegmentIndex(track);
+  const start = startIndex === undefined ? undefined : track[startIndex]!;
+  const startModule = start && modules?.[start.moduleId];
+  if (start && startModule) {
+    // The Start (ADR 0068): the same grid, centred on its deck and squeezed to
+    // fit a small piece down to a Player's width, facing its forward (−Z).
+    const deck = deckFrame(start, startModule, segmentScale(start), segmentOrientation(start));
+    const across = Math.min(SPAWN_SPACING_ACROSS, Math.max(SPAWN_SPACING_MIN, (2 * deck.halfX) / 4));
+    const back = Math.min(SPAWN_SPACING_BACK, Math.max(SPAWN_SPACING_MIN, (2 * deck.halfZ) / 3));
+    const offset = rotateVec3ByQuat({ x: (col - 1.5) * across, y: 0, z: (row - 1) * back }, yawQuat(start.rotation));
+    return { x: deck.center.x + offset.x, y: deck.center.y + SPAWN_ABOVE_DECK, z: deck.center.z + offset.z };
+  }
   const local: Vec3 = { x: -1.8 + col * 1.2, y: 1.2, z: 0.5 - row * 1.5 };
-  const first = track[0];
+  const first = start ?? track[0];
   if (!first) return { ...local, z: local.z + 10 };
-  return addVec3(first.position, rotateVec3ByQuat(local, segmentOrientation(first)));
+  // Only the height follows a scaled first piece (ADR 0062): its deck moves up
+  // or down with it, but Players stay a Player's width apart at any size.
+  const scaled = { ...local, y: local.y * segmentScale(first) };
+  return addVec3(first.position, rotateVec3ByQuat(scaled, segmentOrientation(first)));
+};
+
+/** The spawn grid's spacing on a Start (ADR 0068): M1's own, squeezed no tighter than a Player's width. */
+const SPAWN_SPACING_ACROSS = 1.2;
+const SPAWN_SPACING_BACK = 1.5;
+const SPAWN_SPACING_MIN = 0.8;
+/** A spawned capsule centre above the deck — M1's 1.2. */
+const SPAWN_ABOVE_DECK = 1.2;
+
+/**
+ * The camera yaw Players start with (ADR 0068): looking along the Start's
+ * forward — `undefined` without a Start. A Segment's yaw θ turns its forward
+ * (−Z) to `(−sin θ, 0, −cos θ)`, the camera's yaw φ looks along
+ * `(sin φ, 0, −cos φ)` (`movementDirection`), so φ = −θ.
+ */
+export const trackSpawnYaw = (track: Track): number | undefined => {
+  const index = startSegmentIndex(track);
+  return index === undefined ? undefined : -track[index]!.rotation;
+};
+
+/**
+ * Every gate Checkpoint a Track counts, in run order, placed — with the spots
+ * its default Respawn floor is probed from (ADR 0068,
+ * {@link respawnProbeOrigins}): in front of the gate as seen from the stop
+ * before it (the previous Checkpoint, else the spawn), then behind it. Shared
+ * by `resolveTrack` and the builder's preview so both look in the same places.
+ * Switched-on gates off a hoop or an arch, or moving, aren't here.
+ */
+export const gateCheckpointPlans = (
+  track: Track,
+  modules: Record<string, Module>,
+): { segmentIndex: number; order: number; gate: PlacedGate; probes: Vec3[]; respawn?: Vec3 }[] => {
+  const entries = track
+    .flatMap((segment, segmentIndex) => {
+      const module = modules[segment.moduleId];
+      if (!segment.checkpoint || module?.gate?.role !== "checkpoint" || hasMotion(segment.motion)) return [];
+      const orientation = segmentOrientation(segment);
+      const scale = segmentScale(segment);
+      const place = (p: Vec3): Vec3 => addVec3(rotateVec3ByQuat(scaleVec3(p, scale), orientation), segment.position);
+      return [
+        {
+          segmentIndex,
+          order: segment.checkpoint.order,
+          gate: placeGate(module.gate.opening, segment.position, orientation, scale),
+          footprint: orientBox(scaleBox(module.footprint.bounds, scale), segment.position, orientation),
+          ...(segment.checkpoint.respawn === undefined ? {} : { respawn: place(segment.checkpoint.respawn) }),
+        },
+      ];
+    })
+    .sort((a, b) => a.order - b.order || a.segmentIndex - b.segmentIndex);
+  // The stop a runner arrives from: a retired block's Checkpoint comes first in run order, else the spawn.
+  const lastBlock = [...track.entries()].reverse().find(([, segment]) => modules[segment.moduleId]?.checkpoint);
+  let arrivingFrom: Vec3 = lastBlock
+    ? addVec3(
+        rotateVec3ByQuat(scaleVec3(modules[lastBlock[1].moduleId]!.checkpoint!.respawn, segmentScale(lastBlock[1])), segmentOrientation(lastBlock[1])),
+        lastBlock[1].position,
+      )
+    : trackSpawn(track, 0, modules);
+  return entries.map(({ footprint, ...entry }) => {
+    const probes = respawnProbeOrigins(entry.gate, footprint, arrivingFrom);
+    arrivingFrom = entry.gate.center;
+    return { ...entry, probes };
+  });
 };
 
 /**
@@ -274,7 +537,10 @@ export const trackSpawn = (track: Track, index: number): Vec3 => {
  * scene consume. `staticSurfaces` is index-aligned with `statics` — entry
  * `i` is the Surface `statics[i]`'s owning FloorBox collapses to
  * (`FloorBox.surface ?? Module.surface ?? "default"`, ADR 0036), resolved
- * here once rather than in the tick loop.
+ * here once rather than in the tick loop. `staticConveyors` is the same
+ * idea for belts (ADR 0064): entry `i` is the world-space flow
+ * `statics[i]`'s owning Segment runs, or `undefined` for the ordinary
+ * still floor almost every box is.
  */
 export const resolveTrack = (
   modules: Record<string, Module>,
@@ -282,6 +548,7 @@ export const resolveTrack = (
 ): {
   statics: OrientedBox[];
   staticSurfaces: SurfaceId[];
+  staticConveyors: (Vec3 | undefined)[];
   /** World-space asset collision, index-aligned with nothing — each entry carries its own Surface (M8 ticket 02). */
   staticTrimeshes: StaticTrimesh[];
   props: PropConfig[];
@@ -295,45 +562,165 @@ export const resolveTrack = (
    * that has no Finish Zone at all, which is simply not raceable yet.
    */
   finishZones: FinishZone[];
-  speedPads: SpeedPadConfig[];
   launchPads: LaunchPadConfig[];
+  /**
+   * Which Segment each entry of `launchPads` came from, index-aligned with it
+   * (ADR 0069) — the same bookkeeping `staticOwners`/`trimeshOwners` do for
+   * the gate floor probe. Renderers only: it is what lets a client squash the
+   * Spring that actually fired. Nothing that simulates reads it.
+   */
+  launchPadOwners: number[];
   volumes: VolumeConfig[];
+  /**
+   * Every Segment with a Motion (ADR 0061), its collision kept in local space
+   * for one kinematic body — and therefore absent from `statics` and
+   * `staticTrimeshes`. What it authors besides collision (Checkpoint, pads,
+   * Finish Zone, Volumes, Props, Spinners) still resolves at the rest pose.
+   */
+  movingSegments: MovingSegmentConfig[];
+  /** Every attached belt, for the renderers — physics reads belts off ground colliders, never this (ADR 0064). */
+  conveyors: ConveyorBelt[];
+  /** Every ice-surfaced deck, for the renderers — physics reads the Surface off ground colliders, never this (ADR 0066). */
+  iceDecks: IceDeck[];
+  /** Every mud-surfaced deck, for the renderers — same contract as `iceDecks` (ADR 0067). */
+  mudDecks: MudDeck[];
+  /** Every bouncy deck, for the renderers — same contract again (ADR 0070). */
+  bounceDecks: BounceDeck[];
+  /**
+   * One human-readable line per Segment that references a retired Module
+   * (ADR 0064) — the Track still loads (the geometry was always an ordinary
+   * platform), but the author should re-attach the pad as a Conveyor. Empty
+   * for every Track authored after the retirement.
+   */
+  warnings: string[];
 } => {
   const statics: OrientedBox[] = [];
   const staticSurfaces: SurfaceId[] = [];
+  const staticConveyors: (Vec3 | undefined)[] = [];
   const staticTrimeshes: StaticTrimesh[] = [];
   const props: PropConfig[] = [];
   const spinners: SpinnerConfig[] = [];
   const checkpoints: Checkpoint[] = [];
   const finishZones: FinishZone[] = [];
-  const speedPads: SpeedPadConfig[] = [];
   const launchPads: LaunchPadConfig[] = [];
+  const launchPadOwners: number[] = [];
   const volumes: VolumeConfig[] = [];
+  const movingSegments: MovingSegmentConfig[] = [];
+  const conveyors: ConveyorBelt[] = [];
+  const iceDecks: IceDeck[] = [];
+  const mudDecks: MudDeck[] = [];
+  const bounceDecks: BounceDeck[] = [];
+  const warnings: string[] = [];
+  // Which Segment each still collider came from — a gate's floor probe skips its own.
+  const staticOwners: number[] = [];
+  const trimeshOwners: number[] = [];
 
-  for (const segment of track) {
+  for (const [segmentIndex, segment] of track.entries()) {
     const module = modules[segment.moduleId];
     if (!module) throw new Error(`Track references unknown Module "${segment.moduleId}"`);
-
-    const orientation = segmentOrientation(segment);
-    const placeBox = (box: Box): OrientedBox => orientBox(box, segment.position, orientation);
-    const placePoint = (point: Vec3): Vec3 => addVec3(rotateVec3ByQuat(point, orientation), segment.position);
-
-    for (const box of module.statics) {
-      statics.push(placeBox(box));
-      staticSurfaces.push(box.surface ?? module.surface ?? DEFAULT_SURFACE);
+    if (DEPRECATED_MODULE_IDS.has(segment.moduleId)) {
+      warnings.push(retiredModuleWarning(segmentIndex, segment.moduleId));
     }
 
-    if (module.asset) {
-      if (module.statics.length > 0) {
-        throw new Error(`Module "${module.id}" carries both statics and asset geometry — exactly one may describe its collision`);
-      }
+    const orientation = segmentOrientation(segment);
+    const scale = segmentScale(segment);
+    const placeBox = (box: Box): OrientedBox => orientBox(scaleBox(box, scale), segment.position, orientation);
+    const placePoint = (point: Vec3): Vec3 => addVec3(rotateVec3ByQuat(scaleVec3(point, scale), orientation), segment.position);
+    const belt = segment.conveyor ? conveyorWorldVelocity(segment.conveyor, segment.rotation) : undefined;
+    // An attached Surface (ADR 0066/0067) wins over every authored Surface
+    // on its Segment — the attachment says "this whole deck skates/drags",
+    // like a belt's whole-deck carry, so per-box overrides don't survive
+    // it. Publish refuses an ice+mud pair (one deck, one Surface); if one
+    // arrives anyway on an unvalidated Track, mud wins — its opaque raised
+    // sheet is the visible top layer, so physics matches what the eye sees.
+    const segmentIce = segment.ice === true;
+    const segmentMud = segment.mud === true;
+    const segmentBounce = segment.bounce === true;
+    // Bounce first in the tie-break for the same reason mud beats ice: its
+    // sheet is the visible top layer, and a deck that looks inflatable had
+    // better throw you.
+    const attachedSurface = segmentBounce
+      ? BOUNCE_SURFACE_ID
+      : segmentMud
+        ? MUD_SURFACE_ID
+        : segmentIce
+          ? ICE_SURFACE_ID
+          : undefined;
+
+    if (module.asset && module.statics.length > 0) {
+      throw new Error(`Module "${module.id}" carries both statics and asset geometry — exactly one may describe its collision`);
+    }
+
+    if (hasMotion(segment.motion)) {
+      movingSegments.push({
+        segmentIndex,
+        moduleId: segment.moduleId,
+        position: segment.position,
+        orientation,
+        scale,
+        motion: segment.motion,
+        boxes: module.statics.map((box) => ({
+          box: scaleBox(box, scale),
+          surface: attachedSurface ?? (box.surface ?? module.surface ?? DEFAULT_SURFACE),
+          ...(belt === undefined ? {} : { conveyor: belt }),
+        })),
+        solids: (module.asset?.solid ?? []).map((part) => ({
+          shape: scaleSolidShape(part.shape, scale),
+          position: scaleVec3(part.position, scale),
+          rotation: part.rotation,
+          surface: attachedSurface ?? part.surface,
+          ...(module.hazard === undefined ? {} : { hazard: module.hazard }),
+          ...(belt === undefined ? {} : { conveyor: belt }),
+        })),
+        // A hollow trimesh only when the Asset has no solid parts (a file from before ADR 0065).
+        trimeshes: (module.asset?.solid?.length ? [] : (module.asset?.meshes ?? [])).map((mesh) => ({
+          vertices: scale === 1 ? mesh.positions : mesh.positions.map((p) => scaleVec3(p, scale)),
+          indices: mesh.indices,
+          surface: attachedSurface ?? (mesh.surface ?? module.surface ?? DEFAULT_SURFACE),
+          ...(module.hazard === undefined ? {} : { hazard: module.hazard }),
+          ...(belt === undefined ? {} : { conveyor: belt }),
+        })),
+      });
+    }
+
+    for (const box of hasMotion(segment.motion) ? [] : module.statics) {
+      statics.push(placeBox(box));
+      staticOwners.push(segmentIndex);
+      staticSurfaces.push(attachedSurface ?? (box.surface ?? module.surface ?? DEFAULT_SURFACE));
+      staticConveyors.push(belt);
+    }
+
+    if (module.asset && !hasMotion(segment.motion)) {
       for (const mesh of module.asset.meshes) {
+        trimeshOwners.push(segmentIndex);
         staticTrimeshes.push({
           vertices: mesh.positions.map((p) => placePoint(p)),
           indices: [...mesh.indices],
-          surface: mesh.surface ?? module.surface ?? DEFAULT_SURFACE,
+          surface: attachedSurface ?? (mesh.surface ?? module.surface ?? DEFAULT_SURFACE),
+          ...(module.hazard === undefined ? {} : { hazard: module.hazard }),
+          ...(belt === undefined ? {} : { conveyor: belt }),
         });
       }
+    }
+
+    if (belt !== undefined) {
+      conveyors.push({
+        segmentIndex,
+        velocity: belt,
+        deck: deckFrame(segment, module, scale, orientation),
+      });
+    }
+
+    if (segmentIce || moduleHasIceSurface(module)) {
+      iceDecks.push({ segmentIndex, deck: deckFrame(segment, module, scale, orientation) });
+    }
+
+    if (segmentMud || moduleHasMudSurface(module)) {
+      mudDecks.push({ segmentIndex, deck: deckFrame(segment, module, scale, orientation) });
+    }
+
+    if (segmentBounce || moduleHasBounceSurface(module)) {
+      bounceDecks.push({ segmentIndex, deck: deckFrame(segment, module, scale, orientation) });
     }
 
     // Props don't yet carry an initial rotation of their own (`PropConfig`
@@ -351,7 +738,11 @@ export const resolveTrack = (
     // shape), so nothing currently observable regresses; flagging so a future
     // oblong Prop author doesn't quietly inherit a mismatched collider.
     for (const prop of module.props ?? []) {
-      props.push({ ...prop, center: placePoint(prop.center) });
+      const shape: PropConfig["shape"] =
+        prop.shape.kind === "box"
+          ? { kind: "box", halfExtents: scaleVec3(prop.shape.halfExtents, scale) }
+          : { kind: "ball", radius: prop.shape.radius * scale };
+      props.push({ ...prop, shape, center: placePoint(prop.center) });
     }
 
     for (const spinner of module.spinners ?? []) {
@@ -359,7 +750,14 @@ export const resolveTrack = (
       // only its position and its yaw-driven `initialAngle` (which way it
       // starts facing) follow the Segment's orientation; pitch/roll don't
       // tilt its spin axis. A known limitation, not attempted here.
-      spinners.push({ ...spinner, center: placePoint(spinner.center), initialAngle: (spinner.initialAngle ?? 0) + segment.rotation });
+      spinners.push({
+        ...spinner,
+        center: placePoint(spinner.center),
+        armLength: spinner.armLength * scale,
+        halfHeight: spinner.halfHeight * scale,
+        armRadius: spinner.armRadius * scale,
+        initialAngle: (spinner.initialAngle ?? 0) + segment.rotation,
+      });
     }
 
     if (module.checkpoint) {
@@ -381,8 +779,18 @@ export const resolveTrack = (
       finishZones.push({ trigger: placeBox(module.finishZone.trigger) });
     }
 
-    for (const pad of module.speedPads ?? []) {
-      speedPads.push({ capMultiplier: pad.capMultiplier, trigger: placeBox(pad.trigger) });
+    // Gates (ADR 0068): a finish sign always Qualifies; a hoop or an arch is a
+    // Checkpoint only when switched on. Openings stay still — publish refuses
+    // Motion on either, and a Track that arrives with it anyway gets no gate.
+    if (module.gate?.role === "finish" && !hasMotion(segment.motion)) {
+      finishZones.push({ gate: placeGate(module.gate.opening, segment.position, orientation, scale) });
+    }
+    if (segment.checkpoint !== undefined) {
+      if (module.gate?.role !== "checkpoint") {
+        warnings.push(`Segment ${segmentIndex} is marked Checkpoint ${segment.checkpoint.order}, but "${segment.moduleId}" is not a hoop or an arch — ignored`);
+      } else if (hasMotion(segment.motion)) {
+        warnings.push(`Segment ${segmentIndex} (Checkpoint ${segment.checkpoint.order}) moves — a Checkpoint gate must stay still, ignored`);
+      }
     }
 
     for (const pad of module.launchPads ?? []) {
@@ -390,6 +798,25 @@ export const resolveTrack = (
       // Segment's own orientation (like a Spinner's `initialAngle`) but
       // never translated (unlike `trigger`/`respawn`, which are positions).
       launchPads.push({ trigger: placeBox(pad.trigger), velocity: rotateVec3ByQuat(pad.velocity, orientation) });
+      launchPadOwners.push(segmentIndex);
+    }
+
+    if (module.launch) {
+      // A Spring (ADR 0069): the trigger scales with the Segment (a bigger
+      // Spring is a bigger target), the throw does not — the height is the
+      // number the author typed, and `launchVelocityFor` points it up the
+      // Module's own +Y, so tilting the Segment aims it.
+      const height = launchHeightOf(segment.launch, module.launch);
+      launchPads.push({
+        trigger: placeBox(module.launch.trigger),
+        velocity: rotateVec3ByQuat(launchVelocityFor(height), orientation),
+      });
+      launchPadOwners.push(segmentIndex);
+      if (hasMotion(segment.motion)) {
+        warnings.push(
+          `segment ${segmentIndex} (${segment.moduleId}): a Spring on a Moving Segment launches from where it rests — its trigger stays at the rest pose`,
+        );
+      }
     }
 
     for (const volume of module.volumes ?? []) {
@@ -399,5 +826,37 @@ export const resolveTrack = (
     }
   }
 
-  return { statics, staticSurfaces, staticTrimeshes, props, spinners, checkpoints, finishZones, speedPads, launchPads, volumes };
+  // Gate Checkpoints after any retired block's, by number (ADR 0068). The
+  // respawn floor is found now that every still collider is placed.
+  for (const entry of gateCheckpointPlans(track, modules)) {
+    const ownBoxes = statics.filter((_, i) => staticOwners[i] !== entry.segmentIndex);
+    const ownMeshes = staticTrimeshes.filter((_, i) => trimeshOwners[i] !== entry.segmentIndex);
+    let floor = entry.respawn;
+    for (const probe of entry.probes) floor ??= floorBelow(probe, ownBoxes, ownMeshes);
+    if (!floor) {
+      warnings.push(`Segment ${entry.segmentIndex} (Checkpoint ${entry.order}) has no floor in front of or behind it — pick a respawn spot; not a Checkpoint until then`);
+      continue;
+    }
+    checkpoints.push({ respawn: { x: floor.x, y: floor.y + RESPAWN_ABOVE_FLOOR, z: floor.z }, gate: entry.gate });
+  }
+
+  return {
+    statics,
+    staticSurfaces,
+    staticConveyors,
+    staticTrimeshes,
+    props,
+    spinners,
+    checkpoints,
+    finishZones,
+    launchPads,
+    launchPadOwners,
+    volumes,
+    movingSegments,
+    conveyors,
+    iceDecks,
+    mudDecks,
+    bounceDecks,
+    warnings,
+  };
 };

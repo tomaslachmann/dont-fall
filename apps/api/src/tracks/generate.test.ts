@@ -43,13 +43,13 @@ describe("generateRandomTrack", () => {
   });
 });
 
-describe("Modules that cannot be chained (M5 ticket 06 — the Survival arena)", () => {
+describe("Modules that cannot be chained (socketless assets)", () => {
   it("never picks a Module without Sockets, however many Tracks it generates", () => {
-    // The arena carries `sockets: []` on purpose — it is dropped on its own by
-    // free placement (ADR 0034). `chainTrack` cannot chain it, so before this
-    // the generator threw whenever it happened to pick one: roughly a quarter
-    // of calls against the real library, i.e. a flaky 500 on POST
-    // /tracks/generate that would only show up in production every fourth try.
+    // A socketless piece (every converted asset) is dropped on its own by
+    // free placement (ADR 0034). `chainTrack` cannot chain it, so before
+    // this the generator threw whenever it happened to pick one: a flaky
+    // 500 on POST /tracks/generate that would only show up in production
+    // every few tries.
     for (let i = 0; i < 100; i += 1) {
       expect(() => generateRandomTrack(MODULE_LIBRARY)).not.toThrow();
     }
@@ -66,7 +66,10 @@ describe("Modules that cannot be chained (M5 ticket 06 — the Survival arena)",
   });
 
   it("says so plainly when nothing in the library can be chained", () => {
-    const unchainableOnly = { arena: MODULE_LIBRARY.arena! };
+    // A socketless piece (every converted asset is one; no procedural
+    // Module still is since ADR 0073) — the file's own straight fixture
+    // with its Sockets dropped.
+    const unchainableOnly = { pad: { ...straightModule("pad"), sockets: [] } };
 
     expect(() => generateRandomTrack(unchainableOnly)).toThrow(/Socket/i);
   });

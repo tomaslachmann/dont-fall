@@ -17,6 +17,7 @@ import {
   linkDiscordToAccount,
   linkPasswordToAccount,
   SESSION_TTL_MS,
+  setBodySkin,
   upsertAccountFromDiscord,
   verifyEmailPassword,
   type DiscordIdentity,
@@ -248,5 +249,29 @@ describe("getAccountById / getAccountsByIds", () => {
     expect(found.get(b.id)?.avatarUrl).toBeNull();
     expect(found.has("ghost")).toBe(false);
     expect(getAccountsByIds(db, []).size).toBe(0);
+  });
+});
+
+describe("setBodySkin (M9 ticket 15)", () => {
+  const signup = () =>
+    createAccountWithPassword(db, { email: "bean@example.com", password: "correct horse battery staple", displayName: "Bean" });
+
+  it("defaults to the default bean — signup equips nothing", () => {
+    const account = signup();
+    expect(account.bodySkin).toBe(0);
+    expect(getAccountById(db, account.id)!.bodySkin).toBe(0);
+  });
+
+  it("equips and returns the updated Account", () => {
+    const account = signup();
+
+    const updated = setBodySkin(db, account.id, 2)!;
+
+    expect(updated.bodySkin).toBe(2);
+    expect(getAccountById(db, account.id)!.bodySkin).toBe(2);
+  });
+
+  it("returns undefined for an unknown Account — nothing written", () => {
+    expect(setBodySkin(db, "nope", 2)).toBeUndefined();
   });
 });

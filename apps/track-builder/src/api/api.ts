@@ -1,4 +1,4 @@
-import type { StoredTrack, Track, TrackListing, TrackRoundDefaults } from "@dont-fall/shared";
+import type { EnvironmentId, StoredTrack, Track, TrackListing, TrackRoundDefaults } from "@dont-fall/shared";
 
 export type { StoredTrack, TrackListing, TrackRoundDefaults };
 
@@ -11,17 +11,21 @@ export type { StoredTrack, TrackListing, TrackRoundDefaults };
  * Passed as one object rather than as positional numbers so a fourth
  * authored default can't be added at a call site by accident, and so
  * `defaults.survivorTarget` reads as itself at every call.
+ *
+ * `environment` (ADR 0074) is written with it, as its own argument: it is not
+ * a Round default.
  */
 export const saveTrack = async (
   baseUrl: string,
   name: string,
   track: Track,
   defaults: TrackRoundDefaults,
+  environment: EnvironmentId,
 ): Promise<{ id: string }> => {
   const res = await fetch(`${baseUrl}/tracks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(name ? { name, track, ...defaults } : { track, ...defaults }),
+    body: JSON.stringify(name ? { name, track, ...defaults, environment } : { track, ...defaults, environment }),
   });
   if (!res.ok) throw new Error(`save failed: HTTP ${res.status}`);
   return (await res.json()) as { id: string };
@@ -47,11 +51,13 @@ export const publishPlaytestTrack = async (
   baseUrl: string,
   track: Track,
   defaults: TrackRoundDefaults,
+  environment: EnvironmentId,
 ): Promise<{ id: string }> => {
   const res = await fetch(`${baseUrl}/tracks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: PLAYTEST_TRACK_ID, name: "Track Builder Playtest", track, ...defaults }),
+    // The playtest boots the real client, which draws this Environment with its real fog.
+    body: JSON.stringify({ id: PLAYTEST_TRACK_ID, name: "Track Builder Playtest", track, ...defaults, environment }),
   });
   if (!res.ok) throw new Error(`publish failed: HTTP ${res.status}`);
   return (await res.json()) as { id: string };

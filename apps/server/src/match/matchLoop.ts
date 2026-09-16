@@ -47,6 +47,7 @@ export interface SaveRuntime {
   roundResults: MatchRuntime["roundResults"];
   matchNicknames: Map<string, string>;
   matchAccountIds: Map<string, string>;
+  matchBodySkins: Map<string, number>;
   totalFalls: Record<string, number>;
   matchResults: MatchRuntime["matchResults"];
 }
@@ -68,6 +69,7 @@ export const saveMatchResultIfDue = (rt: SaveRuntime, thisTick: number): void =>
     results: [...rt.roundResults],
     nicknames: Object.fromEntries(rt.matchNicknames),
     accountIds: Object.fromEntries(rt.matchAccountIds),
+    bodySkins: Object.fromEntries(rt.matchBodySkins),
     totalFalls: { ...rt.totalFalls },
     endedAtMs: Date.now(),
   };
@@ -241,6 +243,9 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
           // row is already gone), never off the display projection above.
           const accountId = rt.lobbyPlayers.get(row.id)?.accountId ?? rt.dnf.find((d) => d.id === row.id)?.accountId;
           if (accountId) rt.matchAccountIds.set(row.id, accountId);
+          // The equipped skin, from the same two places — the podium wears these.
+          const bodySkin = rt.lobbyPlayers.get(row.id)?.bodySkin ?? rt.dnf.find((d) => d.id === row.id)?.bodySkin;
+          if (typeof bodySkin === "number") rt.matchBodySkins.set(row.id, bodySkin);
           rt.totalFalls[row.id] = (rt.totalFalls[row.id] ?? 0) + row.fallCount;
         }
         if (rt.canContinueMatch()) {

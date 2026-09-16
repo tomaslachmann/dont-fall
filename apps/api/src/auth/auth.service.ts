@@ -1,4 +1,4 @@
-import { randomBearerToken } from "@dont-fall/shared";
+import { invalidBodySkinReason, randomBearerToken } from "@dont-fall/shared";
 import type { ApiDb } from "../db/db.js";
 import { parseCookie } from "../http/cookies.js";
 import { ServiceError } from "../http/errors.js";
@@ -13,6 +13,7 @@ import {
   isUniqueConstraintError,
   linkDiscordToAccount,
   linkPasswordToAccount,
+  setBodySkin,
   upsertAccountFromDiscord,
   verifyEmailPassword,
   type Account,
@@ -173,6 +174,26 @@ export const whoAmI = (db: ApiDb, token: string | undefined): Account => {
   const account = token ? getAccountBySessionToken(db, token) : undefined;
   if (!account) throw new ServiceError(401, "not logged in");
   return account;
+};
+
+/**
+ * Equips cosmetics (M9 ticket 15) — today just the body skin, the shape
+ * already a sub-resource so ticket 13's hats and colors join this same
+ * endpoint rather than growing a new one per slot. Returns the updated
+ * Account, so the screen refreshes in the one round trip.
+ */
+export const updateCosmetics = (
+  db: ApiDb,
+  token: string | undefined,
+  input: { bodySkin?: unknown },
+): Account => {
+  const account = token ? getAccountBySessionToken(db, token) : undefined;
+  if (!account) throw new ServiceError(401, "not logged in");
+  const reason = invalidBodySkinReason(input.bodySkin);
+  if (reason) throw new ServiceError(400, reason);
+  const updated = setBodySkin(db, account.id, input.bodySkin as number);
+  if (!updated) throw new ServiceError(401, "not logged in");
+  return updated;
 };
 
 /** Ends a session (logout). Deleting an already-gone/unknown token is a no-op, not an error. */

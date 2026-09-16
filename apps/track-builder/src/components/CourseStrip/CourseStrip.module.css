@@ -1,0 +1,103 @@
+.root {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-5);
+  max-width: 100%;
+  padding: var(--tb-s-3) var(--tb-s-5) var(--tb-s-3) var(--tb-s-6);
+  border-radius: var(--tb-r-pill);
+  background: var(--df-color-surface-0);
+  box-shadow: var(--tb-bevel-float);
+}
+
+.kicker {
+  flex: none;
+  font: var(--df-weight-label) var(--tb-t-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-45);
+}
+
+.stops {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow-x: auto;
+  padding: var(--tb-s-1) var(--tb-s-1) var(--tb-s-2);
+  scrollbar-width: none;
+}
+
+/* the dashed run line between stops — the viewport's own route line, in 2D */
+.link {
+  flex: none;
+  width: 14px;
+  height: 0;
+  border-top: 2px dashed var(--df-color-brand);
+  opacity: .5;
+}
+
+.pill, .badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  white-space: nowrap;
+  transition: translate .08s;
+}
+button.pill:hover, button.badge:hover { translate: 0 var(--df-lift); }
+button.pill:active, button.badge:active { translate: 0 var(--df-squash); box-shadow: none; }
+
+.pill {
+  gap: var(--tb-s-3);
+  height: 24px;
+  padding: 0 var(--tb-s-5) 0 var(--tb-s-3);
+  border-radius: var(--tb-r-pill);
+  box-shadow: var(--tb-bevel-1);
+}
+
+.glyph {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--tb-r-pill);
+  background: rgba(255, 255, 255, .55);
+  font-size: 8px;
+}
+
+.start { background: var(--df-color-go); color: var(--df-color-go-ink); }
+
+.finish { background: var(--df-color-ink); color: var(--df-color-on-brand); }
+.checker {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background:
+    conic-gradient(#fff 25%, transparent 0 50%, #fff 0 75%, transparent 0) 0 0 / 7px 7px,
+    var(--df-color-ink);
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .7);
+}
+
+.badge {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--tb-r-pill);
+  background: var(--df-color-brand);
+  color: var(--df-color-on-brand);
+  box-shadow: var(--tb-bevel-1), inset 0 0 0 2px rgba(255, 255, 255, .85);
+  font: var(--df-weight-display) var(--tb-t-sm) / 1 var(--df-font-display);
+  letter-spacing: 0;
+}
+.stranded { background: var(--df-color-danger); }
+
+/* a stop that isn't there yet: dashed, never filled */
+.missing, .missingFinish {
+  box-shadow: none;
+  background: transparent;
+  color: var(--df-color-ink-45);
+  border: 2px dashed var(--df-color-ink-14);
+}
+.missing .glyph, .missingFinish .glyph { background: var(--df-color-surface-2); }
+.missingFinish { color: var(--df-color-danger-shade); border-color: rgba(255, 93, 162, .45); }
+
+.on { outline: 2.5px solid var(--df-color-accent); outline-offset: 2px; }

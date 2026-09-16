@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router";
 import { levelForXp, xpBarFractions, xpForRoundScore } from "@dont-fall/shared";
 import { claimRewards, type RewardsClaim } from "../lib/api/rewards.js";
+import { useAccount } from "../lib/hooks/useAccount.js";
 import { useAsyncError } from "../lib/hooks/useAsyncError.js";
 import { ordinal } from "../lib/matchView.js";
 import { LoadingScreen } from "./LoadingScreen.js";
@@ -35,6 +36,7 @@ export function RewardsRoute() {
 
   const matchId = state.matchId;
   const rounds = state.rounds ?? [];
+  const { account } = useAccount();
   useEffect(() => {
     if (matchId === undefined || rounds.length === 0 || claimedRef.current) return;
     claimedRef.current = true;
@@ -47,6 +49,7 @@ export function RewardsRoute() {
   const fractions = xpBarFractions(claim.xpBefore, claim.gainedXp);
   return (
     <Rewards
+      skin={account?.bodySkin ?? null}
       level={levelForXp(claim.xpAfter)}
       xpGain={claim.gainedXp}
       xpBefore={fractions.before}

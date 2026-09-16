@@ -1,5 +1,5 @@
 import type { Box } from "../math/box.js";
-import type { Vec3 } from "../math/vec3.js";
+import type { Quat, Vec3 } from "../math/vec3.js";
 import { ASSET_FOOTPRINT_EPSILON, ASSET_VISUAL_WARN } from "../tuning.js";
 import { SURFACES, type SurfaceId } from "./Surface.js";
 
@@ -32,9 +32,32 @@ export interface AssetMeshData {
   surface?: string;
 }
 
+/**
+ * A solid collision shape (ADR 0065): what a Moving Segment collides as,
+ * instead of its hollow collision trimesh. Primitives are centred on their
+ * part's position and turned by its rotation — a capsule or cylinder runs
+ * along its local Y; a hull's points are already in the Asset's frame.
+ */
+export type SolidShape =
+  | { type: "ball"; radius: number }
+  | { type: "capsule"; halfHeight: number; radius: number }
+  | { type: "cylinder"; halfHeight: number; radius: number }
+  | { type: "box"; halfExtents: Vec3 }
+  | { type: "hull"; points: Vec3[] };
+
+export interface SolidPart {
+  shape: SolidShape;
+  position: Vec3;
+  rotation: Quat;
+  /** Raw `surface` extra, unresolved — like {@link AssetMeshData.surface}. */
+  surface?: string;
+}
+
 export interface AssetModel {
   collision: AssetMeshData[];
   visual: AssetMeshData[];
+  /** Mesh-less `role: "solid"` nodes (ADR 0065) — empty for an Asset converted before them. */
+  solid: SolidPart[];
 }
 
 type GltfJson = {
@@ -44,7 +67,14 @@ type GltfJson = {
   meshes?: GltfMesh[];
   accessors?: GltfAccessor[];
   bufferViews?: GltfBufferView[];
+  images?: { uri?: string; mimeType?: string; bufferView?: number }[];
 };
+
+/** The JSON-chunk fields the twin tests probe without parsing triangles. */
+export interface GlbJsonProbe {
+  images?: { uri?: string; mimeType?: string; bufferView?: number }[];
+  nodes?: { mesh?: number; extras?: { role?: unknown } }[];
+}
 
 type GltfNode = {
   name?: string;
@@ -54,7 +84,7 @@ type GltfNode = {
   rotation?: [number, number, number, number];
   scale?: [number, number, number];
   matrix?: number[];
-  extras?: { role?: unknown; surface?: unknown };
+  extras?: { role?: unknown; surface?: unknown; shape?: unknown };
 };
 
 type GltfMesh = {
@@ -180,7 +210,7 @@ const readIndex = (view: DataView, offset: number, componentType: number): numbe
  * somewhere. The stray `collision` extra some exporters set is ignored;
  * only `role` decides.
  */
-export const readAssetModel = (bytes: Uint8Array): AssetModel => {
+const splitGlb = (bytes: Uint8Array): { json: GltfJson; bin: Uint8Array | null } => {
   if (bytes.length < 12) fail("not a GLB file (too short for a header)");
   const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
   if (header.getUint32(0, true) !== GLB_MAGIC) fail("not a GLB file (bad magic — separate .gltf + .bin is not supported)");
@@ -211,6 +241,20 @@ export const readAssetModel = (bytes: Uint8Array): AssetModel => {
     if (cursor + binLength > bytes.length) fail("truncated GLB BIN chunk");
     bin = bytes.subarray(cursor, cursor + binLength);
   }
+  return { json, bin };
+};
+
+/**
+ * The GLB's raw JSON chunk, for checks the triangle reader doesn't cover:
+ * the twin role-filter tests split textured from untextured files on
+ * `images`, because `GLTFLoader` decodes images through browser-only
+ * globals and can never parse those in Node. Same chunk walk as the
+ * reader — one implementation, two callers.
+ */
+export const readGlbJson = (bytes: Uint8Array): GlbJsonProbe => splitGlb(bytes).json;
+
+export const readAssetModel = (bytes: Uint8Array): AssetModel => {
+  const { json, bin } = splitGlb(bytes);
 
   const scenes = json.scenes;
   if (!scenes || scenes.length === 0) fail("no scenes to read nodes from");
@@ -279,14 +323,24 @@ export const readAssetModel = (bytes: Uint8Array): AssetModel => {
     return indices;
   };
 
-  const model: AssetModel = { collision: [], visual: [] };
+  const model: AssetModel = { collision: [], visual: [], solid: [] };
   const visit = (nodeIndex: number, parentMatrix: number[]): void => {
     const node = nodes[nodeIndex];
     if (!node) fail(`node ${nodeIndex} does not exist`);
     const name = node.name ?? `node${nodeIndex}`;
     const local = node.matrix ?? trsMatrix(node.translation ?? [0, 0, 0], node.rotation ?? [0, 0, 0, 1], node.scale ?? [1, 1, 1]);
     const world = mulMat4(parentMatrix, local);
-    if (node.mesh !== undefined) {
+    if (node.extras?.role === "solid") {
+      if (node.mesh !== undefined) fail(`node "${name}" is role "solid" but carries a mesh — a solid part is its shape extra alone`);
+      const surfaceRaw = node.extras.surface;
+      if (surfaceRaw !== undefined && typeof surfaceRaw !== "string") fail(`node "${name}" surface extra must be a string`);
+      model.solid.push({
+        shape: parseSolidShape(node.extras.shape, name),
+        position: { x: world[12]!, y: world[13]!, z: world[14]! },
+        rotation: rotationOf(world),
+        ...(surfaceRaw !== undefined ? { surface: surfaceRaw } : {}),
+      });
+    } else if (node.mesh !== undefined) {
       const role = nodeRole(node.extras?.role, name);
       const target = role === "collision" ? model.collision : role === "visual" ? model.visual : null;
       if (!target) {
@@ -318,6 +372,65 @@ export const readAssetModel = (bytes: Uint8Array): AssetModel => {
   return model;
 };
 
+const finiteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+/** A `role: "solid"` node's `shape` extra, checked field by field — a bad one fails the load on every side alike. */
+const parseSolidShape = (raw: unknown, name: string): SolidShape => {
+  if (typeof raw !== "object" || raw === null) fail(`solid node "${name}" has no shape extra`);
+  const shape = raw as Record<string, unknown>;
+  const positive = (key: string): number => {
+    const value = shape[key];
+    if (!finiteNumber(value) || value <= 0) fail(`solid node "${name}" ${String(shape.type)} needs a positive ${key}`);
+    return value;
+  };
+  switch (shape.type) {
+    case "ball":
+      return { type: "ball", radius: positive("radius") };
+    case "capsule":
+      return { type: "capsule", halfHeight: positive("halfHeight"), radius: positive("radius") };
+    case "cylinder":
+      return { type: "cylinder", halfHeight: positive("halfHeight"), radius: positive("radius") };
+    case "box": {
+      const h = shape.halfExtents;
+      if (!Array.isArray(h) || h.length !== 3 || !h.every((v) => finiteNumber(v) && v > 0)) {
+        fail(`solid node "${name}" box needs three positive halfExtents`);
+      }
+      return { type: "box", halfExtents: { x: h[0] as number, y: h[1] as number, z: h[2] as number } };
+    }
+    case "hull": {
+      const flat = shape.points;
+      if (!Array.isArray(flat) || flat.length < 12 || flat.length % 3 !== 0 || !flat.every(finiteNumber)) {
+        fail(`solid node "${name}" hull needs at least four finite x,y,z points`);
+      }
+      const points: Vec3[] = [];
+      for (let i = 0; i < flat.length; i += 3) points.push({ x: flat[i] as number, y: flat[i + 1] as number, z: flat[i + 2] as number });
+      return { type: "hull", points };
+    }
+    default:
+      fail(`solid node "${name}" has unknown shape type ${JSON.stringify(shape.type)}`);
+  }
+};
+
+/** The rotation of a rigid (unscaled) column-major transform, as a quaternion. */
+const rotationOf = (m: number[]): Quat => {
+  const [m00, m10, m20, , m01, m11, m21, , m02, m12, m22] = m as [number, number, number, number, number, number, number, number, number, number, number];
+  const trace = m00 + m11 + m22;
+  if (trace > 0) {
+    const s = 0.5 / Math.sqrt(trace + 1);
+    return { w: 0.25 / s, x: (m21 - m12) * s, y: (m02 - m20) * s, z: (m10 - m01) * s };
+  }
+  if (m00 > m11 && m00 > m22) {
+    const s = 2 * Math.sqrt(1 + m00 - m11 - m22);
+    return { w: (m21 - m12) / s, x: 0.25 * s, y: (m10 + m01) / s, z: (m02 + m20) / s };
+  }
+  if (m11 > m22) {
+    const s = 2 * Math.sqrt(1 - m00 + m11 - m22);
+    return { w: (m02 - m20) / s, x: (m10 + m01) / s, y: 0.25 * s, z: (m21 + m12) / s };
+  }
+  const s = 2 * Math.sqrt(1 - m00 - m11 + m22);
+  return { w: (m10 - m01) / s, x: (m02 + m20) / s, y: (m21 + m12) / s, z: 0.25 * s };
+};
+
 export interface ValidateAssetOptions {
   /** The Module's footprint, in the same local frame the Asset is authored in (origin = Module origin). */
   footprint: Box;
@@ -331,8 +444,14 @@ export interface ValidatedAssetMesh {
   surface: SurfaceId;
 }
 
+export interface ValidatedSolidPart extends Omit<SolidPart, "surface"> {
+  surface: SurfaceId;
+}
+
 export interface ValidatedAsset {
   collision: ValidatedAssetMesh[];
+  /** Solid parts (ADR 0065) with resolved Surfaces — what a Moving Segment collides as; empty for an older file. */
+  solid: ValidatedSolidPart[];
   visual: { positions: Vec3[]; indices: number[] }[];
   /** Dev warnings (visual escaping collision) — returned, never thrown or logged: the caller decides where they surface. */
   warnings: string[];
@@ -408,7 +527,13 @@ export const validateAssetModule = (model: AssetModel, { footprint, surface: mod
     }
   }
 
-  return { collision, visual: model.visual, warnings };
+  const solid: ValidatedSolidPart[] = model.solid.map((part, i) => {
+    const surface = part.surface ?? moduleSurface ?? "default";
+    if (!(surface in SURFACES)) fail(`solid part ${i} names unknown surface "${surface}"`);
+    return { shape: part.shape, position: part.position, rotation: part.rotation, surface };
+  });
+
+  return { collision, solid, visual: model.visual, warnings };
 };
 
 /** Parse and validate in one call — the entry everything reads assets through. */

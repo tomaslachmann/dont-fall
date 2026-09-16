@@ -101,6 +101,29 @@
   color: var(--df-color-on-brand);
 }
 
+/* the Environment preview: brand when on, raised plastic when off */
+.preview {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-3);
+  padding: var(--tb-s-3) var(--tb-s-5);
+  border-radius: var(--tb-r-pill);
+  background: var(--df-color-surface-0);
+  box-shadow: var(--tb-bevel-2);
+  color: var(--df-color-ink);
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1 var(--df-font-ui);
+  letter-spacing: .1em;
+  white-space: nowrap;
+}
+.preview:hover { translate: 0 var(--df-lift); }
+.preview:active { translate: 0 var(--df-squash); box-shadow: none; }
+.previewOn {
+  background: var(--df-color-brand);
+  box-shadow: 0 3px 0 var(--df-color-brand-shade);
+  color: var(--df-color-on-brand);
+}
+.previewGlyph { font-size: var(--tb-t-sm); line-height: 1; }
+
 .caption {
   font: var(--df-weight-kicker) var(--tb-t-2xs) / 1 var(--df-font-ui);
   letter-spacing: .1em;

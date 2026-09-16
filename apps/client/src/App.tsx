@@ -4,6 +4,7 @@ import { AuthScreen } from "./screens/AuthScreen";
 import { AuthGate } from "./components/AuthGate";
 import { GameCanvas } from "./components/GameCanvas";
 import { parsePlayParams } from "./lib/utils/routeParams.js";
+import { CharacterSelectRoute } from "./screens/CharacterSelectRoute.js";
 import { DiscoverRoute } from "./screens/DiscoverRoute.js";
 import { FriendsRoute } from "./screens/FriendsRoute.js";
 import MainMenu from "./screens/MainMenu";
@@ -13,6 +14,7 @@ import { RewardsRoute } from "./screens/RewardsRoute";
 import { ScoreboardRoute } from "./screens/ScoreboardRoute";
 import { LobbyRoute } from "./screens/LobbyRoute.js";
 import PlaySelect from "./screens/PlaySelect";
+import { ProfileRoute } from "./screens/ProfileRoute.js";
 import Settings from "./screens/Settings";
 
 /**
@@ -68,6 +70,7 @@ export function App() {
       <Route path="*" element={<NotFoundRoute />} />
       <Route element={<AuthGate />}>
         <Route path="/" element={<MainMenu />} />
+        <Route path="/character" element={<CharacterSelectRoute />} />
         <Route path="/discover" element={<DiscoverRoute />} />
         <Route path="/friends" element={<FriendsRoute />} />
         <Route path="/play" element={<PlayRoute />} />
@@ -75,6 +78,7 @@ export function App() {
         <Route path="/match/:matchId" element={<MatchResultsRoute />} />
         <Route path="/scoreboard" element={<ScoreboardRoute />} />
         <Route path="/rewards" element={<RewardsRoute />} />
+        <Route path="/profile" element={<ProfileRoute />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
     </Routes>

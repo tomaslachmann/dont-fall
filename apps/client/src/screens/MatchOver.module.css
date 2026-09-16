@@ -61,11 +61,6 @@
   width: 100%;
   min-height: 0;
   flex: 1;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding: var(--df-space-4);
-  border: var(--df-bevel-1) dashed var(--df-color-ink-35);
   border-radius: var(--df-radius-row);
   background: repeating-linear-gradient(115deg, var(--df-color-ink-08) 0 calc(var(--df-u) * .78), transparent calc(var(--df-u) * .78) calc(var(--df-u) * 1.56));
 }
@@ -73,11 +68,6 @@
   border-radius: var(--df-radius-panel);
   background: repeating-linear-gradient(115deg, rgba(255,255,255,.5) 0 calc(var(--df-u) * .78), transparent calc(var(--df-u) * .78) calc(var(--df-u) * 1.56));
   animation: df-wobble 4s ease-in-out infinite;
-}
-.renderCaption {
-  font: var(--df-weight-display) var(--df-text-3xs) / 1.7 var(--df-font-mono);
-  letter-spacing: var(--df-tracking-kicker);
-  color: var(--df-color-ink-55);
 }
 
 .rank {

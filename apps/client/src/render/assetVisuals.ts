@@ -1,6 +1,8 @@
 import {
   assetFileName,
+  hasMotion,
   segmentOrientation,
+  segmentScale,
   type Module,
   type Quat,
   type Track,
@@ -102,10 +104,14 @@ export const loadAssetVisuals = async (
 
 export interface AssetVisualPlacement {
   moduleId: string;
+  /** Which Segment this instance draws — what lets a per-Segment effect (a Spring's squash, ADR 0069) find it. */
+  segmentIndex: number;
   /** The Segment's own origin — the same vector `resolveTrack` translates collision by. */
   position: Vec3;
   /** The Segment's full orientation — the same `segmentOrientation` `resolveTrack` rotates collision by. */
   orientation: Quat;
+  /** The Segment's uniform scale (ADR 0062) — the same `segmentScale` `resolveTrack` scales collision by; 1 when absent. */
+  scale?: number;
 }
 
 /**
@@ -119,12 +125,17 @@ export interface AssetVisualPlacement {
  */
 export const assetPlacements = (track: Track, library: Record<string, Module>): AssetVisualPlacement[] => {
   const placements: AssetVisualPlacement[] = [];
-  for (const segment of track) {
+  for (const [segmentIndex, segment] of track.entries()) {
     if (library[segment.moduleId]?.asset === undefined) continue;
+    // A Moving Segment's visual moves with it (ADR 0061) — the stage builds
+    // and poses that one itself, so it is no still placement.
+    if (hasMotion(segment.motion)) continue;
     placements.push({
       moduleId: segment.moduleId,
+      segmentIndex,
       position: segment.position,
       orientation: segmentOrientation(segment),
+      ...(segmentScale(segment) !== 1 ? { scale: segmentScale(segment) } : {}),
     });
   }
   return placements;
@@ -155,6 +166,7 @@ export const buildAssetVisuals = (
       placement.orientation.z,
       placement.orientation.w,
     );
+    instance.scale.setScalar(placement.scale ?? 1);
     group.add(instance);
   }
   return group;

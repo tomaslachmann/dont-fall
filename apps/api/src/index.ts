@@ -4,7 +4,7 @@ import { buildApp, startApi } from "./app.js";
 
 // Programmatic surface (ADR 0058): the match-server suites boot the API over
 // real HTTP; route tests use `buildApp` + `inject` and never touch the network.
-export { buildApp, startApi, M1_SEED_TRACK_ID, type ApiService } from "./app.js";
+export { buildApp, startApi, type ApiService } from "./app.js";
 export { resolveConfig, type ApiConfig } from "./config.js";
 
 const isMain = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];

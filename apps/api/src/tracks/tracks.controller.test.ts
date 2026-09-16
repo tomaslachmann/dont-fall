@@ -4,7 +4,12 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  ASSET_DEMO_TRACK_ID,
+  ASSET_PLACEMENT_MODULES,
+  BASE_RACE_TIME_LIMIT_MS,
+  BASE_RACE_TRACK,
+  BASE_RACE_TRACK_ID,
+  DEFAULT_ENVIRONMENT_ID,
+  ENVIRONMENT_IDS,
   DEFAULT_SURVIVOR_TARGET,
   DEFAULT_TIME_LIMIT_MS,
   M1_TRACK,
@@ -14,7 +19,7 @@ import {
   MIN_TIME_LIMIT_MS,
   type Track,
 } from "@dont-fall/shared";
-import { buildApp, M1_SEED_TRACK_ID } from "../app.js";
+import { buildApp } from "../app.js";
 
 let dir: string;
 let dbPath: string;
@@ -35,43 +40,34 @@ afterEach(async () => {
 
 const SAMPLE_TRACK: Track = [
   { moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
-  { moduleId: "bridge", position: { x: 0, y: -0.5, z: -6 }, rotation: 0 },
+  // Zoneless on purpose (the Discover test below publishes this as its
+  // plain row) — the `bridge` ADR 0073 deleted stood here before.
+  { moduleId: "start", position: { x: 0, y: -0.5, z: -6 }, rotation: 0 },
 ];
 
 const publish = (body: unknown) => app.inject({ method: "POST", url: "/tracks", payload: body as Record<string, unknown> });
 
 describe("tracks", () => {
-  it("seeds the M1 Track at startup — fetchable by its known id", async () => {
-    const res = await app.inject({ method: "GET", url: `/tracks/${M1_SEED_TRACK_ID}` });
-    expect(res.statusCode).toBe(200);
-    const body = res.json() as { id: string; track: Track };
-    expect(body.id).toBe(M1_SEED_TRACK_ID);
-    expect(body.track.length).toBeGreaterThan(0);
-  });
-
-  it("seeds the asset demo Track at startup — all four asset Modules plus a finish", async () => {
-    const res = await app.inject({ method: "GET", url: `/tracks/${ASSET_DEMO_TRACK_ID}` });
+  it("seeds the base race at startup — the one seed, Assets only, on its own clock (ADR 0078)", async () => {
+    const res = await app.inject({ method: "GET", url: `/tracks/${BASE_RACE_TRACK_ID}` });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { id: string; track: Track; timeLimitMs: number };
-    expect(body.id).toBe(ASSET_DEMO_TRACK_ID);
-    expect(body.track.map((segment) => segment.moduleId)).toEqual([
-      "platform_straight",
-      "ramp_45",
-      "stairs_4step",
-      "corner_lshape",
-      "finish",
-    ]);
-    // A seeded Track carries the default clock, like the M1 seed — raceable.
-    expect(body.timeLimitMs).toBe(DEFAULT_TIME_LIMIT_MS);
+    expect(body.id).toBe(BASE_RACE_TRACK_ID);
+    expect(body.track).toEqual(BASE_RACE_TRACK);
+    for (const segment of body.track) expect(ASSET_PLACEMENT_MODULES[segment.moduleId]).toBeDefined();
+    expect(body.timeLimitMs).toBe(BASE_RACE_TIME_LIMIT_MS);
+
+    const list = (await app.inject({ method: "GET", url: "/tracks" })).json() as { id: string }[];
+    expect(list.map((t) => t.id)).toEqual([BASE_RACE_TRACK_ID]);
   });
 
-  it("does not duplicate the asset demo seed on restart", async () => {
+  it("does not duplicate the seed on restart", async () => {
     await app.close();
     app = await buildApp({ dbPath });
 
-    const first = await app.inject({ method: "GET", url: `/tracks/${ASSET_DEMO_TRACK_ID}?revision=1` });
+    const first = await app.inject({ method: "GET", url: `/tracks/${BASE_RACE_TRACK_ID}?revision=1` });
     expect(first.statusCode).toBe(200);
-    const second = await app.inject({ method: "GET", url: `/tracks/${ASSET_DEMO_TRACK_ID}?revision=2` });
+    const second = await app.inject({ method: "GET", url: `/tracks/${BASE_RACE_TRACK_ID}?revision=2` });
     expect(second.statusCode).toBe(404);
   });
 
@@ -79,7 +75,7 @@ describe("tracks", () => {
     const saveRes = await publish({ name: "hand-built test track", track: SAMPLE_TRACK });
     expect(saveRes.statusCode).toBe(201);
     const { id } = saveRes.json() as { id: string };
-    expect(id).not.toBe(M1_SEED_TRACK_ID);
+    expect(id).not.toBe(BASE_RACE_TRACK_ID);
 
     const getRes = await app.inject({ method: "GET", url: `/tracks/${id}` });
     expect(getRes.statusCode).toBe(200);
@@ -160,7 +156,7 @@ describe("tracks", () => {
     expect(genRes.statusCode).toBe(201);
     const generated = genRes.json() as { id: string; track: Track };
     expect(generated.track).toHaveLength(4);
-    expect(generated.id).not.toBe(M1_SEED_TRACK_ID);
+    expect(generated.id).not.toBe(BASE_RACE_TRACK_ID);
 
     // Fetched back exactly like any other Track — no "is this random?" flag.
     const body = (await app.inject({ method: "GET", url: `/tracks/${generated.id}` })).json() as {
@@ -210,10 +206,10 @@ describe("tracks", () => {
     const res = await app.inject({ method: "GET", url: "/tracks" });
     expect(res.statusCode).toBe(200);
     const list = res.json() as { id: string; name: string | null; createdAt: number }[];
-    // The M1 seed plus the one just saved.
+    // The seed plus the one just saved.
     expect(list.length).toBeGreaterThanOrEqual(2);
     expect(list.some((t) => t.name === "my track")).toBe(true);
-    expect(list.some((t) => t.id === M1_SEED_TRACK_ID)).toBe(true);
+    expect(list.some((t) => t.id === BASE_RACE_TRACK_ID)).toBe(true);
     // Full Segment data should NOT be in the list payload.
     expect(list[0]).not.toHaveProperty("track");
   });
@@ -228,12 +224,12 @@ describe("tracks", () => {
     expect((getRes.json() as { track: Track }).track).toEqual(SAMPLE_TRACK);
   });
 
-  it("does not re-seed the M1 Track on a restart with existing data (idempotent seeding)", async () => {
+  it("does not re-seed on a restart with existing data (idempotent seeding)", async () => {
     await app.close();
     app = await buildApp({ dbPath });
 
     expect((await app.inject({ method: "GET", url: "/tracks/any" })).statusCode).toBe(200);
-    expect((await app.inject({ method: "GET", url: `/tracks/${M1_SEED_TRACK_ID}` })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: `/tracks/${BASE_RACE_TRACK_ID}` })).statusCode).toBe(200);
   });
 });
 
@@ -254,11 +250,11 @@ describe("Time Limit on publish (M4 ticket 03, ADR 0038)", () => {
     expect(stored.timeLimitMs).toBe(DEFAULT_TIME_LIMIT_MS);
   });
 
-  it("gives the M1 seed the default clock, so the seeded Track stays raceable", async () => {
-    const stored = (await app.inject({ method: "GET", url: `/tracks/${M1_SEED_TRACK_ID}` })).json() as {
+  it("gives the seed its own clock — long enough for the whole race", async () => {
+    const stored = (await app.inject({ method: "GET", url: `/tracks/${BASE_RACE_TRACK_ID}` })).json() as {
       timeLimitMs: number;
     };
-    expect(stored.timeLimitMs).toBe(DEFAULT_TIME_LIMIT_MS);
+    expect(stored.timeLimitMs).toBe(BASE_RACE_TIME_LIMIT_MS);
   });
 
   it("rejects a Time Limit below the floor rather than storing an unraceable Revision", async () => {
@@ -279,6 +275,38 @@ describe("Time Limit on publish (M4 ticket 03, ADR 0038)", () => {
   it("accepts exactly the floor and the ceiling", async () => {
     expect((await publish({ track: SAMPLE_TRACK, timeLimitMs: MIN_TIME_LIMIT_MS })).statusCode).toBe(201);
     expect((await publish({ track: SAMPLE_TRACK, timeLimitMs: MAX_TIME_LIMIT_MS })).statusCode).toBe(201);
+  });
+});
+
+describe("the Environment on publish (M12 ticket 09, ADR 0074)", () => {
+  it("returns the authored Environment alongside the Track", async () => {
+    const { id } = (await publish({ track: SAMPLE_TRACK, environment: "sunset" })).json() as { id: string };
+    const stored = (await app.inject({ method: "GET", url: `/tracks/${id}` })).json() as { environment: string };
+    expect(stored.environment).toBe("sunset");
+  });
+
+  it("defaults a publish that omits it, and the seeded Tracks, to the default preset", async () => {
+    const { id } = (await publish({ track: SAMPLE_TRACK })).json() as { id: string };
+    for (const trackId of [id, BASE_RACE_TRACK_ID]) {
+      const stored = (await app.inject({ method: "GET", url: `/tracks/${trackId}` })).json() as { environment: string };
+      expect(stored.environment).toBe(DEFAULT_ENVIRONMENT_ID);
+    }
+  });
+
+  it.each(ENVIRONMENT_IDS)("accepts %s", async (environment) => {
+    expect((await publish({ track: SAMPLE_TRACK, environment })).statusCode).toBe(201);
+  });
+
+  it("refuses a typo with a reason that names the presets there are", async () => {
+    const res = await publish({ track: SAMPLE_TRACK, environment: "sunet" });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { error: string }).error).toBe(`environment must be one of ${ENVIRONMENT_IDS.join(", ")}`);
+  });
+
+  it("refuses anything that is not a preset id at all", async () => {
+    for (const environment of [null, 3, "", { id: "day" }]) {
+      expect((await publish({ track: SAMPLE_TRACK, environment })).statusCode).toBe(400);
+    }
   });
 });
 
@@ -316,6 +344,89 @@ describe("publish validation — a Segment must actually be a Segment", () => {
     expect((await publishTrack(at({ pitch: "up" }))).statusCode).toBe(400);
     expect((await publishTrack(at({}))).statusCode).toBe(201); // absent is valid (ADR 0034)
     expect((await publishTrack(at({ pitch: 0.5, roll: -0.5 }))).statusCode).toBe(201);
+  });
+
+  it("stores a Segment Motion and refuses one that would not move sanely (ADR 0061)", async () => {
+    const at = (extra: Record<string, unknown>) => [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0, ...extra }];
+    const slide = { offset: { x: 0, y: 2, z: 0 }, period: 3, easing: "easeInOut", pause: 0.5 };
+    expect((await publishTrack(at({ motion: { slide } }))).statusCode).toBe(201);
+    const refused = await publishTrack(at({ motion: { slide: { ...slide, period: 1 } } }));
+    expect(refused.statusCode).toBe(400);
+    expect(refused.body).toMatch(/track\[0\]\.motion\.slide\.period/);
+  });
+
+  it("stores a Segment Conveyor and refuses one with an unknown preset or a non-finite angle (ADR 0064)", async () => {
+    const at = (extra: Record<string, unknown>) => [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0, ...extra }];
+    expect((await publishTrack(at({ conveyor: { preset: "medium", angle: 1.2 } }))).statusCode).toBe(201);
+    const badPreset = await publishTrack(at({ conveyor: { preset: "turbo", angle: 0 } }));
+    expect(badPreset.statusCode).toBe(400);
+    expect(badPreset.body).toMatch(/track\[0\]\.conveyor\.preset/);
+    const badAngle = await publishTrack(at({ conveyor: { preset: "fast", angle: "north" } }));
+    expect(badAngle.statusCode).toBe(400);
+    expect(badAngle.body).toMatch(/track\[0\]\.conveyor\.angle/);
+  });
+
+  it("stores Segment ice and refuses anything but exactly true (ADR 0066)", async () => {
+    const at = (extra: Record<string, unknown>) => [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0, ...extra }];
+    expect((await publishTrack(at({ ice: true }))).statusCode).toBe(201);
+    const bad = await publishTrack(at({ ice: "yes" }));
+    expect(bad.statusCode).toBe(400);
+    expect(bad.body).toMatch(/track\[0\]\.ice must be true/);
+  });
+
+  it("stores Segment mud, refuses anything but exactly true, and refuses an ice+mud pair (ADR 0067)", async () => {
+    const at = (extra: Record<string, unknown>) => [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0, ...extra }];
+    expect((await publishTrack(at({ mud: true }))).statusCode).toBe(201);
+    const bad = await publishTrack(at({ mud: "yes" }));
+    expect(bad.statusCode).toBe(400);
+    expect(bad.body).toMatch(/track\[0\]\.mud must be true/);
+    const conflict = await publishTrack(at({ ice: true, mud: true }));
+    expect(conflict.statusCode).toBe(400);
+    expect(conflict.body).toMatch(/track\[0\]\.ice and mud are mutually exclusive/);
+  });
+
+  it("stores Segment bounce, refuses anything but exactly true, and refuses it paired with ice or mud (ADR 0070)", async () => {
+    const at = (extra: Record<string, unknown>) => [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0, ...extra }];
+    expect((await publishTrack(at({ bounce: true }))).statusCode).toBe(201);
+    const bad = await publishTrack(at({ bounce: "yes" }));
+    expect(bad.statusCode).toBe(400);
+    expect(bad.body).toMatch(/track\[0\]\.bounce must be true/);
+
+    // One deck, one Surface — the rule now covers every pair, not just the
+    // original ice+mud one.
+    for (const pair of [{ ice: true, bounce: true }, { mud: true, bounce: true }, { ice: true, mud: true, bounce: true }]) {
+      const conflict = await publishTrack(at(pair));
+      expect(conflict.statusCode, JSON.stringify(pair)).toBe(400);
+      expect(conflict.body).toMatch(/mutually exclusive/);
+    }
+  });
+
+  it("stores a Start and numbered Checkpoint gates, refusing what breaks the course rules (ADR 0068)", async () => {
+    const floor = (extra: Record<string, unknown> = {}) => ({ moduleId: "kaykit_floor_wood_2x2", position: { x: 0, y: 0, z: 0 }, rotation: 0, ...extra });
+    const arch = (z: number, extra: Record<string, unknown> = {}) => ({ moduleId: "kaykit_arch_blue", position: { x: 0, y: 0, z }, rotation: 0, ...extra });
+    expect((await publishTrack([floor({ start: true }), arch(-3, { checkpoint: { order: 1 } }), arch(-6, { checkpoint: { order: 2, respawn: { x: 0, y: 0, z: 1 } } })])).statusCode).toBe(201);
+
+    const cases: [unknown[], RegExp][] = [
+      [[floor({ start: "yes" })], /track\[0\]\.start must be true/],
+      [[arch(0, { checkpoint: { order: 0 } })], /track\[0\]\.checkpoint\.order must be a whole number/],
+      [[floor({ start: true }), arch(0, { start: true })], /2 Starts/],
+      [[floor({ checkpoint: { order: 1 } })], /track\[0\]\.checkpoint is on .+kaykit_floor_wood_2x2.+which is not a hoop or an arch/],
+      [[arch(0, { checkpoint: { order: 1 } }), arch(-3, { checkpoint: { order: 1 } })], /both Checkpoint 1/],
+      [[floor({ start: true, motion: { slide: { offset: { x: 1, y: 0, z: 0 }, period: 2, easing: "linear" } } })], /Start and moves/],
+    ];
+    for (const [track, message] of cases) {
+      const res = await publishTrack(track);
+      expect(res.statusCode, String(message)).toBe(400);
+      expect(res.body).toMatch(message);
+    }
+  });
+
+  it("stores a Segment scale inside its bounds and refuses one outside them (ADR 0062)", async () => {
+    const at = (scale: unknown) => [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0, scale }];
+    expect((await publishTrack(at(2))).statusCode).toBe(201);
+    expect((await publishTrack(at(0.1))).statusCode).toBe(400);
+    expect((await publishTrack(at(50))).statusCode).toBe(400);
+    expect((await publishTrack(at("2"))).statusCode).toBe(400);
   });
 
   it("still accepts every Track shape published before this check existed", async () => {

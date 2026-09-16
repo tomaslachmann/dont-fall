@@ -40,7 +40,7 @@ const lobby = (phase: LobbySnapshot["phase"]): LobbySnapshot =>
     phase,
     matchOver: null,
     hostId: "me",
-    players: [{ id: "me", nickname: "Player", ready: false, joinOrder: 0, accountId: null }],
+    players: [{ id: "me", nickname: "Player", ready: false, joinOrder: 0, accountId: null, bodySkin: null }],
     trackId: "t1",
     trackRevision: 1,
     timeLimitMs: 180_000,
@@ -114,7 +114,7 @@ describe("LobbyRoute", () => {
 
   it("wires the Screen's controls to the connection's actions", async () => {
     const ready = lobby("LOBBY");
-    ready.players = [{ id: "me", nickname: "Player", ready: true, joinOrder: 0, accountId: null }];
+    ready.players = [{ id: "me", nickname: "Player", ready: true, joinOrder: 0, accountId: null, bodySkin: null }];
     useLobbyConnection.mockReturnValue({ connection, lobby: ready, actions, error: null, closed: false });
 
     renderAtLobby();

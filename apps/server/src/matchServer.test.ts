@@ -253,6 +253,7 @@ describe("startServer", () => {
     sendInputs(socket, Array.from({ length: 5 }, (_, i) => ({ tick: base + 6 + i, input: NORTH })));
 
     let acked = 0;
+    // Furthest north, not last seen — see the note on the walking test above.
     let z = startZ;
     for (let i = 0; i < 30 && acked < base + 10; i += 1) {
       const m = await nextMessage(socket);
@@ -347,19 +348,25 @@ describe("startServer", () => {
     // Chase the server's own tick each iteration (ADR 0027) — a small lead so
     // a packet isn't already stale by the time it's simulated.
     let tick = first.state.tick;
-    let lastZ = startZ;
+    // The FURTHEST north it reached, not wherever it happens to be at the end:
+    // thirty ticks of walking runs off the end of this Track, and what follows
+    // a Fall is a Respawn back behind the start. Asserting on the last
+    // snapshot made this test depend on where a respawned Character drifted
+    // to — it passed on the ragdoll's own flop and broke the moment a Respawn
+    // stood the Character up instead (ADR 0072).
+    let northmostZ = startZ;
     let lastSnapshot: ServerMessage | undefined;
     for (let i = 0; i < 30; i += 1) {
       sendInput(socket, tick + 2, NORTH);
       const message = await nextMessage(socket);
       if (message.type === "snapshot") {
         tick = message.state.tick;
-        lastZ = message.state.characters[id]!.position.z;
+        northmostZ = Math.min(northmostZ, message.state.characters[id]!.position.z);
         lastSnapshot = message;
       }
     }
 
-    expect(lastZ).toBeLessThan(startZ - 1); // NORTH walks toward -z
+    expect(northmostZ).toBeLessThan(startZ - 1); // NORTH walks toward -z
     // The server echoes the last input tick it applied, for reconciliation (ticket 05).
     if (lastSnapshot?.type !== "snapshot") throw new Error("unreachable");
     expect(lastSnapshot.state.characters[id]!.lastInputTick).toBeGreaterThan(0);
@@ -398,7 +405,8 @@ describe("startServer", () => {
       const startZ = first.state.characters[id]!.position.z;
 
       let tick = first.state.tick;
-      let lastZ = startZ;
+      // Furthest north, not last seen — see the note on the walking test above.
+      let northmostZ = startZ;
       let prevAcked = -1;
       const ackGaps: number[] = [];
       for (let i = 0; i < 40; i += 1) {
@@ -407,7 +415,7 @@ describe("startServer", () => {
         const message = await nextMessage(socket);
         if (message.type === "snapshot") {
           tick = message.state.tick;
-          lastZ = message.state.characters[id]!.position.z;
+          northmostZ = Math.min(northmostZ, message.state.characters[id]!.position.z);
           const acked = message.state.characters[id]!.lastInputTick;
           if (prevAcked >= 0) ackGaps.push(acked - prevAcked);
           prevAcked = acked;
@@ -415,7 +423,7 @@ describe("startServer", () => {
       }
 
       expect(failuresInjected).toBe(1); // the forced failure actually fired
-      expect(lastZ).toBeLessThan(startZ - 1); // still walked normally through and after it
+      expect(northmostZ).toBeLessThan(startZ - 1); // still walked normally through and after it
       // Every gap between consecutive acks is exactly 1 — `state.tick` and
       // the server's own input-matching tick never drift apart, even across
       // the injected failure. A permanent desync (the bug this test guards
@@ -518,6 +526,7 @@ describe("startServer — disconnects (ticket 07)", () => {
     if (baseline.type !== "snapshot") throw new Error("unreachable");
     const startZ = baseline.state.characters[survivorId]!.position.z;
     let tick = baseline.state.tick;
+    // Furthest north, not last seen — see the note on the walking test above.
     let z = startZ;
     for (let i = 0; i < 20; i += 1) {
       sendInput(survivor, tick + 2, NORTH);
@@ -549,13 +558,14 @@ describe("startServer — disconnects (ticket 07)", () => {
     const startZ = first.state.characters[bWelcome.playerId]!.position.z;
     // Chase the server's own tick each iteration (ADR 0027).
     let tick = first.state.tick;
+    // Furthest north, not last seen — see the note on the walking test above.
     let z = startZ;
     for (let i = 0; i < 30; i += 1) {
       sendInput(b, tick + 2, NORTH);
       const m = await nextMessage(b);
       if (m.type === "snapshot") {
         tick = m.state.tick;
-        z = m.state.characters[bWelcome.playerId]!.position.z;
+        z = Math.min(z, m.state.characters[bWelcome.playerId]!.position.z);
       }
     }
     expect(z).toBeLessThan(startZ - 1);
@@ -832,17 +842,18 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
     expect(postReloadFirst.state.tick).toBeGreaterThan(tick);
 
     let postTick = postReloadFirst.state.tick;
-    let lastZ = startZ;
+    // Furthest north, not last seen — see the note on the walking test above.
+    let northmostZ = startZ;
     for (let i = 0; i < 30; i += 1) {
       sendInput(second, postTick + 2, NORTH);
       const message = await nextMessage(second);
       if (message.type === "snapshot") {
         postTick = message.state.tick;
-        lastZ = message.state.characters[id]!.position.z;
+        northmostZ = Math.min(northmostZ, message.state.characters[id]!.position.z);
       }
     }
 
-    expect(lastZ).toBeLessThan(startZ - 1); // NORTH must still walk the Character, post-reload
+    expect(northmostZ).toBeLessThan(startZ - 1); // NORTH must still walk the Character, post-reload
     second.close();
   });
 });
@@ -2484,8 +2495,8 @@ describe("startServer — the Lobby picks a Round type (M5 ticket 07, ADR 0041/0
     }
   };
 
-  /** A Track with no Finish Zone at all — the Survival arena on its own (ticket 06). */
-  const ARENA_ONLY: Track = [{ moduleId: "arena", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+  /** A Track with no Finish Zone at all — the lone `start` deck (the `arena` ADR 0073 deleted served here before). */
+  const ZONELESS_ONLY: Track = [{ moduleId: "start", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
 
   it("starts every Lobby on a Race, so a host who never touches the picker gets what M4 always did", async () => {
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
@@ -2578,7 +2589,7 @@ describe("startServer — the Lobby picks a Round type (M5 ticket 07, ADR 0041/0
   });
 
   it("explains why a Race can't start on a Track with no Finish Zone, instead of failing silently", async () => {
-    const trackId = await publishTrack(ARENA_ONLY);
+    const trackId = await publishTrack(ZONELESS_ONLY);
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port, `?track=${trackId}`);
 
@@ -2589,7 +2600,7 @@ describe("startServer — the Lobby picks a Round type (M5 ticket 07, ADR 0041/0
   });
 
   it("refuses the start itself, not just the button — the Lobby stays put", async () => {
-    const trackId = await publishTrack(ARENA_ONLY);
+    const trackId = await publishTrack(ZONELESS_ONLY);
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port, `?track=${trackId}`);
     await nextMessage(socket);
@@ -2603,7 +2614,7 @@ describe("startServer — the Lobby picks a Round type (M5 ticket 07, ADR 0041/0
   });
 
   it("lets that same Track run the moment the host picks Survival — nothing tags the Track itself", async () => {
-    const trackId = await publishTrack(ARENA_ONLY);
+    const trackId = await publishTrack(ZONELESS_ONLY);
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port, `?track=${trackId}`);
     await nextMessage(socket);
@@ -2728,6 +2739,7 @@ describe("startServer — a Track pick must not freeze the Players already in th
     // that a Track pick leaves a Player able to walk at all.
     let tick = running.state.tick;
     const startZ = running.state.characters[id]!.position.z;
+    // Furthest north, not last seen — see the note on the walking test above.
     let z = startZ;
     for (let i = 0; i < 40; i += 1) {
       sendInput(socket, tick + 2, NORTH);
@@ -2753,7 +2765,8 @@ describe("startServer — Hit's hold-to-charge over a real network round trip (M
       socket.on("message", onMessage);
     });
 
-  const ARENA_ONLY: Track = [{ moduleId: "arena", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+  /** Open ground with no walls for the two Characters to close on — the `sandbox` deck (the `arena` ADR 0073 deleted served here before; Survival is picked explicitly, so its Finish Zone never matters). */
+  const SANDBOX_ONLY: Track = [{ moduleId: "sandbox", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
 
   /**
    * Reproduces a live bug report end to end: a real WebSocket round trip
@@ -2769,14 +2782,14 @@ describe("startServer — Hit's hold-to-charge over a real network round trip (M
     // Up to ~200 real ticks closing distance plus ~24 charging/settling, each
     // waiting on an actual ~33ms server tick — comfortably over the default
     // 5s budget.
-    const trackId = await publishTrack(ARENA_ONLY);
+    const trackId = await publishTrack(SANDBOX_ONLY);
     server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0 });
     const striker = connect(server.port, `?track=${trackId}`);
     const welcomeStriker = (await nextMessage(striker)) as Extract<ServerMessage, { type: "welcome" }>;
     const target = connect(server.port);
     const welcomeTarget = (await nextMessage(target)) as Extract<ServerMessage, { type: "welcome" }>;
 
-    pickRoundType(striker, "survival"); // the arena has no Finish Zone — a Race would be refused
+    pickRoundType(striker, "survival"); // Survival needs no Finish Zone, and the sandbox's own never matters here
     await startMatch(striker, target);
     let snapshot = await new Promise<Extract<ServerMessage, { type: "snapshot" }>>((resolve) => {
       const onMessage = (raw: Buffer): void => {

@@ -1,11 +1,25 @@
 import type { OrientedBox } from "../math/box.js";
 import type { Vec3 } from "../math/vec3.js";
+import type { PlacedGate } from "../track/Gate.js";
 
 /**
- * A Checkpoint: a trigger the Character walks through to set its respawn
- * point, plus where the Respawn puts it (CONTEXT.md).
+ * A Checkpoint: where the Respawn puts a Character, and how it is reached
+ * (CONTEXT.md) — passing through a Gate's opening (ADR 0068), or, on a
+ * retired checkpoint block, entering its trigger region.
  */
-export interface Checkpoint {
+export type Checkpoint = TriggerCheckpoint | GateCheckpoint;
+
+/** A Checkpoint reached through a Gate switched on as one (ADR 0068). */
+export interface GateCheckpoint {
+  /** Where the Character reappears after a Fall (capsule centre). */
+  respawn: Vec3;
+  gate: PlacedGate;
+  trigger?: undefined;
+}
+
+/** A retired checkpoint block's Checkpoint: entered, not passed through. */
+export interface TriggerCheckpoint {
+  gate?: undefined;
   /** Where the Character reappears after a Fall (capsule centre). */
   respawn: Vec3;
   /**

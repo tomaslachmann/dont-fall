@@ -1,12 +1,14 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { pointInOrientedBox, type OrientedBox } from "../math/box.js";
-import { IDENTITY_QUAT } from "../math/quat.js";
-import { addVec3, dotVec3, lengthVec3, normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
+import { conjugateQuat, IDENTITY_QUAT } from "../math/quat.js";
+import { addVec3, dotVec3, lengthVec3, normalizeVec3, rotateVec3ByQuat, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
 import { phaseLocksInput, phaseNeedsPhysicsStep, type MatchPhase } from "../match/MatchPhase.js";
 import { DEFAULT_ROUND_RULES, type RoundRules } from "../match/RoundRules.js";
 import { characterSnapshot, type CharacterSnapshot, type ReconcileBase, type SimState } from "../state/SimState.js";
 import {
   BUMP_IMPULSE_SCALE,
+  CAPSULE_BOTTOM_OFFSET,
+  GROUND_SNAP_DISTANCE,
   BUMP_LIFT_RATIO,
   DEFAULT_KILL_PLANE_Y,
   GRAB_FACING_COS_MIN,
@@ -16,14 +18,20 @@ import {
   GRAB_STRUGGLE_DOT_MIN,
   GRAB_STRUGGLE_FREE_TICKS,
   GRAVITY_Y,
+  MOVING_SEGMENT_LIFT_RATIO,
+  SPIKED_IMPACT_MAGNITUDE,
+  SPIKED_LIFT_RATIO,
+  SURFACE_GROUND_NORMAL_MIN_Y,
+  TICK_DT,
   HIT_FACING_COS_MIN,
   HIT_LIFT_RATIO,
   HIT_RANGE,
   WALK_SPEED,
 } from "../tuning.js";
 import { DEFAULT_SURFACE, surfaceConfig, type SurfaceId } from "../track/Surface.js";
+import { passesThroughGate } from "../track/Gate.js";
 import type { StaticTrimesh } from "../track/Track.js";
-import { CharacterController, type CollisionListener } from "./CharacterController.js";
+import { CharacterController, type CollisionListener, type Ride } from "./CharacterController.js";
 import { hitImpactMagnitude } from "./HitController.js";
 import { isDownMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
 import type { Checkpoint } from "./Checkpoint.js";
@@ -31,11 +39,16 @@ import type { FinishZone } from "./FinishZone.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
 import type { LaunchPadConfig } from "./LaunchPad.js";
 import { MirrorCharacter } from "./MirrorCharacter.js";
+import {
+  MovingSegment,
+  movingSegmentImpactMagnitude,
+  movingSegmentPose,
+  type MovingSegmentConfig,
+} from "./MovingSegment.js";
 import { Prop, type PropConfig, type PropSnapshot } from "./Prop.js";
 import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
-import type { SpeedPadConfig } from "./SpeedPad.js";
 import { Spinner, type SpinnerConfig } from "./Spinner.js";
-import type { VolumeConfig } from "./Volume.js";
+import { byVolumePriority, volumeAt, type VolumeConfig } from "./Volume.js";
 
 /**
  * ID of the Character `SimulationConfig.spawn` auto-creates — the only
@@ -55,16 +68,14 @@ interface CharacterProgress {
   /** The `motionState` seen in the previous snapshot, for transition detection. */
   lastMotionState: CharacterMotionState;
   /**
-   * Index into `speedPads` this Character was touching as of the last check,
-   * or `undefined` (M3.7 ticket 01) — the rising-edge memory `updateSpeedPad`
+   * Index into `launchPads` this Character was touching as of the last check,
+   * or `undefined` (M3.7 ticket 02) — the rising-edge memory `updateLaunchPad`
    * compares against, so a wide pad touched across several ticks fires once
    * and leaving-then-re-entering (even the same pad) re-arms it. Re-derived
    * (never blanked) on every `reconcileCharacter` from the restored
    * position — see that method's own comment for why a naive blank reset
    * fails under frequent reconciliation. Local bookkeeping, never replicated.
    */
-  touchedSpeedPadIndex: number | undefined;
-  /** Same idea as {@link touchedSpeedPadIndex}, for launch pads (M3.7 ticket 02) — see `updateLaunchPad`. */
   touchedLaunchPadIndex: number | undefined;
   /**
    * The Tick this Character entered a Finish Zone and Qualified, or `null`
@@ -129,6 +140,12 @@ export interface SimulationConfig {
    */
   staticSurfaces?: SurfaceId[];
   /**
+   * Each `statics` entry's belt flow, index-aligned with it (ADR 0064) —
+   * `resolveTrack`'s `staticConveyors`, produced together like
+   * `staticSurfaces`. Missing/short/`undefined` entries are still floor.
+   */
+  staticConveyors?: (Vec3 | undefined)[];
+  /**
    * Static asset collision (M8 ticket 02, ADR 0050) — `resolveTrack`'s
    * `staticTrimeshes`, one entry per authored mesh. Each becomes a fixed
    * trimesh collider exactly as authored (verbatim — hull-shrinking would
@@ -140,8 +157,6 @@ export interface SimulationConfig {
   staticTrimeshes?: StaticTrimesh[];
   /** Checkpoints the Character can walk through to move its respawn point. */
   checkpoints?: Checkpoint[];
-  /** Speed/slow pads the Character can cross to fire a one-shot boost (M3.7 ticket 01). */
-  speedPads?: SpeedPadConfig[];
   /** Launch pads the Character can cross to fire a one-shot full-velocity SET (M3.7 ticket 02). */
   launchPads?: LaunchPadConfig[];
   /** Volumes that apply a continuous force to any Character inside them (M3.7 ticket 04, ADR 0036). */
@@ -157,6 +172,8 @@ export interface SimulationConfig {
   killPlaneY?: number;
   /** Rotating-bar Obstacles (ticket 06). */
   spinners?: SpinnerConfig[];
+  /** Segments with a Motion (ADR 0061), each one kinematic body posed from the Tick. */
+  movingSegments?: MovingSegmentConfig[];
   /** Dynamic props (boxes/balls) the Character can bump and knock around (ticket 06). */
   props?: PropConfig[];
   /**
@@ -203,6 +220,35 @@ const DEFAULT_GROUND: OrientedBox = {
 
 let initPromise: Promise<void> | null = null;
 
+/**
+ * Which way a Moving Segment pressing into a Character shoves it (ADR 0061,
+ * `docs/research/moving-obstacle-collision-shapes.md`). Normally the contact
+ * normal, out of the Segment. But a body pressing a *grounded* Character from
+ * above has a normal pointing into the floor: that push is absorbed by the
+ * ground, and closing speed along it is ~0 while the body sweeps sideways — the
+ * Character was held underneath, neither moved nor hit. So from above, the
+ * into-ground part is dropped: what is left of the normal sideways, or — right
+ * under the body, where nothing is left — the way the body itself is sweeping.
+ * `undefined` when there is no sideways way out at all (a straight crush).
+ */
+export const pushDirection = (normal: Vec3, segmentVelocity: Vec3, grounded: boolean): Vec3 | undefined => {
+  if (!grounded || normal.y >= 0) return normal;
+  const sideways = vec3(normal.x, 0, normal.z);
+  if (lengthVec3(sideways) >= PRESSED_SIDEWAYS_MIN) return normalizeVec3(sideways);
+  const sweep = vec3(segmentVelocity.x, 0, segmentVelocity.z);
+  return lengthVec3(sweep) > 1e-3 ? normalizeVec3(sweep) : undefined;
+};
+
+/** Below this much sideways normal (a unit normal's length on the floor plane), a press from above counts as straight overhead. */
+const PRESSED_SIDEWAYS_MIN = 0.3;
+
+/**
+ * The Impact of touching a Spiked Asset (ADR 0061), along the contact normal
+ * (pointing from the spikes toward the Character) with a lift that clears them.
+ */
+export const spikedKnockback = (normal: Vec3): Vec3 =>
+  scaleVec3(normalizeVec3(vec3(normal.x, Math.max(normal.y, 0) + SPIKED_LIFT_RATIO, normal.z)), SPIKED_IMPACT_MAGNITUDE);
+
 /** Load the Rapier WASM module. Idempotent; await once before constructing a simulation. */
 export const initPhysics = (): Promise<void> => {
   initPromise ??= RAPIER.init();
@@ -225,10 +271,15 @@ export class RapierSimulation {
   private readonly world: RAPIER.World;
   private readonly characters = new Map<string, CharacterController>();
   private readonly progress = new Map<string, CharacterProgress>();
+  /**
+   * Where each Character's capsule centre was when this tick began, and
+   * whether a Respawn was queued then — what a Gate pass is measured from
+   * (ADR 0068). A Respawn's teleport is never a pass.
+   */
+  private readonly tickStart = new Map<string, { position: Vec3; respawning: boolean }>();
   private readonly statics: OrientedBox[];
   private readonly checkpoints: Checkpoint[];
   private readonly finishZones: FinishZone[];
-  private readonly speedPads: SpeedPadConfig[];
   private readonly launchPads: LaunchPadConfig[];
   /**
    * Volumes, sorted highest-`priority`-first once here at construction
@@ -245,6 +296,10 @@ export class RapierSimulation {
   private readonly spinners: Spinner[];
   private readonly props: Prop[];
   private readonly spinnerByHandle = new Map<number, Spinner>();
+  private readonly movingSegments: MovingSegment[];
+  private readonly movingSegmentByHandle = new Map<number, MovingSegment>();
+  /** Every collider of a Spiked Asset, still or moving (ADR 0061). */
+  private readonly spikedHandles = new Set<number>();
   private readonly propByHandle = new Map<number, Prop>();
   private readonly propIndexByHandle = new Map<number, number>();
   /** Capsule collider handle → Character ID, so a Character-to-Character contact can find the Character it hit (ticket 04 — Bump). */
@@ -269,6 +324,15 @@ export class RapierSimulation {
    * insertion order and break client/server determinism quietly.
    */
   private readonly staticSurfaceByHandle = new Map<number, SurfaceId>();
+  /**
+   * Static collider handle → belt flow (ADR 0064) — the Conveyor half of
+   * {@link staticSurfaceByHandle}'s own idea, one map rather than a
+   * belt-shaped hole in the Surface registry: a belt is a vector, not an id,
+   * and it composes with whatever Surface the same collider already has
+   * (mud slows the belt's own target, ice slows how fast you're carried).
+   * No entry (the common case) is still floor.
+   */
+  private readonly staticConveyorByHandle = new Map<number, Vec3>();
   /**
    * Other players mirrored into this world as positioned obstacles (ADR 0012,
    * ticket 04) — a client's local prediction world only. The server has real
@@ -315,9 +379,8 @@ export class RapierSimulation {
     this.statics = config.statics ?? [DEFAULT_GROUND];
     this.checkpoints = config.checkpoints ?? [];
     this.finishZones = config.finishZones ?? [];
-    this.speedPads = config.speedPads ?? [];
     this.launchPads = config.launchPads ?? [];
-    this.volumes = [...(config.volumes ?? [])].sort((a, b) => b.priority - a.priority);
+    this.volumes = byVolumePriority(config.volumes ?? []);
     this.killPlaneY = config.killPlaneY ?? DEFAULT_KILL_PLANE_Y;
     this.authoritative = config.authoritative ?? true;
     this.roundRules = config.roundRules ?? DEFAULT_ROUND_RULES;
@@ -338,6 +401,8 @@ export class RapierSimulation {
         ),
       );
       this.staticSurfaceByHandle.set(collider.handle, config.staticSurfaces?.[i] ?? DEFAULT_SURFACE);
+      const belt = config.staticConveyors?.[i];
+      if (belt !== undefined) this.staticConveyorByHandle.set(collider.handle, belt);
     });
 
     for (const mesh of config.staticTrimeshes ?? []) {
@@ -354,6 +419,19 @@ export class RapierSimulation {
         this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed()),
       );
       this.staticSurfaceByHandle.set(collider.handle, mesh.surface);
+      if (mesh.hazard === "spiked") this.spikedHandles.add(collider.handle);
+      if (mesh.conveyor !== undefined) this.staticConveyorByHandle.set(collider.handle, mesh.conveyor);
+    }
+
+    this.movingSegments = (config.movingSegments ?? []).map((c) => new MovingSegment(this.world, c, this.tickCount));
+    for (const segment of this.movingSegments) {
+      for (const { collider, surface, hazard, conveyor } of segment.colliders) {
+        this.movingSegmentByHandle.set(collider.handle, segment);
+        if (hazard === "spiked") this.spikedHandles.add(collider.handle);
+        // A Surface rides its Moving Segment like any other floor (ADR 0036).
+        this.staticSurfaceByHandle.set(collider.handle, surface);
+        if (conveyor !== undefined) this.staticConveyorByHandle.set(collider.handle, conveyor);
+      }
     }
 
     this.spinners = (config.spinners ?? []).map((c) => new Spinner(this.world, c));
@@ -381,6 +459,11 @@ export class RapierSimulation {
     this.removeCharacter(id);
 
     const onCollision: CollisionListener = (colliderHandle, hitPoint, velocity, normal) => {
+      if (this.spikedHandles.has(colliderHandle)) {
+        // Standing on or running into spikes (ADR 0061): a knockdown, whatever the speed.
+        this.characters.get(id)?.applyImpact(spikedKnockback(normal), "Obstacle");
+        return;
+      }
       const spinner = this.spinnerByHandle.get(colliderHandle);
       if (spinner) {
         this.characters.get(id)?.applyImpact(spinner.knockbackAt(hitPoint), "Spinner");
@@ -413,12 +496,114 @@ export class RapierSimulation {
       fallCount: 0,
       phaseStartTick: 0,
       lastMotionState: "Controlled",
-      touchedSpeedPadIndex: undefined,
       touchedLaunchPadIndex: undefined,
       finishTick: null,
       eliminated: false,
       eliminatedTick: null,
     });
+  }
+
+  /**
+   * This tick's Ride for `character` (ADR 0061), or `undefined`: grounded on a
+   * Moving Segment, it is carried by that Segment's rigid movement from this
+   * Tick's pose to the next — read off the pure {@link movingSegmentPose},
+   * never off the body, so it is right even on the first tick after a
+   * reconcile moved the Tick. A reconcile also forgets which collider the
+   * Character stood on (`reconcileTo`); a grounded Character with no known
+   * ground looks straight down for a Moving Segment instead, or a player
+   * riding through a correction would miss one carry and mispredict again.
+   */
+  private rideFor(character: CharacterController): Ride | undefined {
+    if (this.movingSegments.length === 0 || !character.isGrounded) return undefined;
+    const handle = character.groundColliderHandle;
+    const segment = handle !== undefined ? this.movingSegmentByHandle.get(handle) : this.movingSegmentBelow(character.position);
+    if (!segment) return undefined;
+    const now = movingSegmentPose(segment.config, this.tickCount);
+    const next = movingSegmentPose(segment.config, this.tickCount + 1);
+    const at = character.position;
+    const local = rotateVec3ByQuat(subVec3(at, now.position), conjugateQuat(now.rotation));
+    const carriedTo = addVec3(rotateVec3ByQuat(local, next.rotation), next.position);
+    return { displacement: subVec3(carriedTo, at), ignoreColliders: segment.colliderHandles };
+  }
+
+  /**
+   * Moving Segments that moved into `character` this step (ADR 0061): each one
+   * pushes the capsule out along its contact normal (taken by the next sweep),
+   * and the closing speed there — the Segment's velocity at the contact point
+   * along that normal, net of the Character's own — is an Impact through the
+   * same Stagger/Ragdoll thresholds as a Bump. A contact from below is the
+   * floor it stands on: a Ride, never a hit. Only the strongest Impact of the
+   * tick is delivered, like two walls hit at once.
+   */
+  private resolveMovingSegmentContacts(character: CharacterController): void {
+    if (this.movingSegments.length === 0 || isDownMotionState(character.motionState)) return;
+    const capsule = this.world.getCollider(character.colliderHandle);
+    if (!capsule || !capsule.isEnabled()) return;
+    let push: Vec3 | undefined;
+    let strongest: { impulse: Vec3; magnitude: number } | undefined;
+    this.world.intersectionsWithShape(
+      capsule.translation(),
+      capsule.rotation(),
+      capsule.shape,
+      (collider) => {
+        const segment = this.movingSegmentByHandle.get(collider.handle)!;
+        const contact = collider.contactCollider(capsule, 0);
+        if (!contact) return true;
+        const normal = vec3(contact.normal1.x, contact.normal1.y, contact.normal1.z);
+        if (this.spikedHandles.has(collider.handle)) {
+          // Spiked: from any side, the floor included — no Ride exemption.
+          if (!strongest || SPIKED_IMPACT_MAGNITUDE > strongest.magnitude) {
+            strongest = { impulse: spikedKnockback(normal), magnitude: SPIKED_IMPACT_MAGNITUDE };
+          }
+        }
+        if (normal.y > SURFACE_GROUND_NORMAL_MIN_Y) return true;
+        const point = vec3(contact.point1.x, contact.point1.y, contact.point1.z);
+        const segmentVelocity = this.movingSegmentVelocityAt(segment, point);
+        const direction = pushDirection(normal, segmentVelocity, character.isGrounded);
+        if (!direction) return true;
+        const depth = -contact.distance;
+        if (depth > 0 && (!push || depth > lengthVec3(push))) push = scaleVec3(direction, depth);
+        const closing = dotVec3(subVec3(segmentVelocity, character.currentVelocity), direction);
+        const magnitude = movingSegmentImpactMagnitude(closing);
+        if (magnitude > 0 && (!strongest || magnitude > strongest.magnitude)) {
+          const away = normalizeVec3(vec3(direction.x, direction.y + MOVING_SEGMENT_LIFT_RATIO, direction.z));
+          strongest = { impulse: scaleVec3(away, magnitude), magnitude };
+        }
+        return true;
+      },
+      undefined,
+      undefined,
+      capsule,
+      undefined,
+      (collider) => this.movingSegmentByHandle.has(collider.handle),
+    );
+    if (push) character.queuePush(push);
+    if (strongest) character.applyImpact(strongest.impulse, "Obstacle");
+  }
+
+  /** Velocity of the world point `point` on `segment` over the step just taken (Tick − 1 → Tick). */
+  private movingSegmentVelocityAt(segment: MovingSegment, point: Vec3): Vec3 {
+    const now = movingSegmentPose(segment.config, this.tickCount);
+    const before = movingSegmentPose(segment.config, this.tickCount - 1);
+    const local = rotateVec3ByQuat(subVec3(point, now.position), conjugateQuat(now.rotation));
+    const then = addVec3(rotateVec3ByQuat(local, before.rotation), before.position);
+    return scaleVec3(subVec3(point, then), 1 / TICK_DT);
+  }
+
+  /** The Moving Segment directly under a capsule centred at `center`, if its feet are on one. */
+  private movingSegmentBelow(center: Vec3): MovingSegment | undefined {
+    const reach = 0.1;
+    const hit = this.world.castRay(
+      new RAPIER.Ray({ x: center.x, y: center.y - CAPSULE_BOTTOM_OFFSET + reach, z: center.z }, { x: 0, y: -1, z: 0 }),
+      reach + GROUND_SNAP_DISTANCE,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (collider) => this.movingSegmentByHandle.has(collider.handle),
+    );
+    return hit ? this.movingSegmentByHandle.get(hit.collider.handle) : undefined;
   }
 
   /**
@@ -739,6 +924,7 @@ export class RapierSimulation {
     character?.dispose();
     this.characters.delete(id);
     this.progress.delete(id);
+    this.tickStart.delete(id);
     // M6 ticket 04: a disconnect mid-hold ends it immediately rather than
     // waiting for the next `updateGrabs` pass to notice the dangling id —
     // `updateGrabs` would self-heal it regardless, but there is no reason to
@@ -795,8 +981,8 @@ export class RapierSimulation {
    * by a client — which Character survives depends on every other
    * Character, exactly the kind of decision ADR 0003/0042 keep off the
    * shared step. A Character that already has a `finishTick` some other
-   * way (impossible for Survival today — no Finish Zone on an arena — but
-   * not assumed here) keeps its own earlier one.
+   * way (impossible on a zoneless Survival Track today — but not assumed
+   * here) keeps its own earlier one.
    */
   qualifySurvivors(tick: number): void {
     for (const progress of this.progress.values()) {
@@ -858,18 +1044,13 @@ export class RapierSimulation {
     // edge into a pad the Character has been inside the whole time, firing
     // the one-shot write over and over — precisely the double-fire the
     // ticket's own prediction test (RapierSimulation.test.ts) exists to
-    // catch. Never re-fires here itself (that would double-apply the
-    // one-shot write this correction already carries via `speedPadMsLeft`/
-    // `speedPadCapMultiplier` above) — it only seeds the baseline the very
-    // next replayed tick's own rising-edge check compares against.
+    // catch. Never re-fires here itself — it only seeds the baseline the
+    // very next replayed tick's own rising-edge check compares against.
     const progress = this.progress.get(id);
     if (progress) {
-      progress.touchedSpeedPadIndex = this.findTriggerIndex(this.speedPads, base.position);
-      // Launch pads (M3.7 ticket 02) need the identical re-derivation, for
-      // the identical reason — no decay curve to restore alongside it (a
-      // launch pad's whole effect already lives in `base.velocity`), but the
-      // touch index still needs to be right before the next replayed tick's
-      // own rising-edge check runs.
+      // A launch pad's whole effect already lives in `base.velocity`, but
+      // the touch index still needs to be right before the next replayed
+      // tick's own rising-edge check runs.
       progress.touchedLaunchPadIndex = this.findTriggerIndex(this.launchPads, base.position);
       // Qualification is synced from the authority outright, never merged
       // (M4 ticket 02) — the same reasoning as ADR 0015's unconditional
@@ -898,6 +1079,11 @@ export class RapierSimulation {
    */
   syncTick(serverTick: number): void {
     this.tickCount = serverTick;
+    if (this.movingSegments.length === 0) return;
+    // A Moving Segment is posed from the Tick (ADR 0061): after a jump in it,
+    // put every one where the new Tick says before anything sweeps against it.
+    for (const segment of this.movingSegments) segment.place(serverTick);
+    this.world.propagateModifiedBodyPositionsToColliders();
   }
 
   /**
@@ -978,6 +1164,9 @@ export class RapierSimulation {
     // Mirrored other-players (client only) are re-placed from their latest
     // snapshot pose every tick — they never move under their own physics.
     for (const mirror of this.mirrors.values()) mirror.step();
+    for (const [id, character] of this.characters) {
+      this.tickStart.set(id, { position: { ...character.position }, respawning: character.hasPendingRespawn });
+    }
 
     // "May this Character be driven this tick?" (M5 ticket 01) is now decided
     // in exactly one place: the whole Match is locked outside RUNNING (ADR
@@ -1009,14 +1198,17 @@ export class RapierSimulation {
       if (this.progress.get(id)!.eliminated) continue;
       character.setGrabSpeedMultiplier(1);
       character.setGrabTetherWish(undefined);
+      character.setRide(this.rideFor(character));
     }
     this.applyGrabTether(inputs, matchLocked);
+    for (const segment of this.movingSegments) segment.holdForSweeps();
 
     for (const [id, character] of this.characters) {
       const progress = this.progress.get(id)!;
       if (progress.eliminated) continue;
       character.beginTick(this.effectiveInput(id, inputs, matchLocked));
     }
+    for (const segment of this.movingSegments) segment.tick(this.tickCount + 1);
     // Resolved here — after every Character's `beginTick` has run this tick,
     // but before `world.step()` — the same pre-step timing Bump's own
     // `resolveBump` gets "for free" from firing inside `beginTick`'s own
@@ -1050,9 +1242,9 @@ export class RapierSimulation {
       const progress = this.progress.get(id)!;
       if (progress.eliminated) continue;
       character.endTick();
+      this.resolveMovingSegmentContacts(character);
       this.updateCheckpoint(id);
       this.updateFinishZone(id);
-      this.updateSpeedPad(id);
       this.updateLaunchPad(id);
       this.detectFall(id, !matchLocked);
       // Stamp the tick a `motionState` phase begins, in sim-tick space, exactly
@@ -1072,12 +1264,17 @@ export class RapierSimulation {
       character.setSurfaceTopSpeedMultiplier(surface.topSpeedMultiplier);
       character.setSurfaceGrip(surface.grip);
       character.setSurfaceBounce(surface.bounce);
+      // ADR 0064: the same ground contact's belt, same one-tick lag — still
+      // floor (or mid-air) reads as no belt at all.
+      character.setConveyorVelocity(
+        groundHandle !== undefined ? this.staticConveyorByHandle.get(groundHandle) : undefined,
+      );
       // M3.7 ticket 04, ADR 0036: same one-tick lag as Surface above — this
       // tick's now-updated position decides the Volume that pushes *next*
       // tick. `this.volumes` is pre-sorted highest-priority-first, so the
       // first containing entry found is the one that wins outright (never
       // summed).
-      const volume = this.volumes.find((v) => pointInOrientedBox(character.position, v.bounds));
+      const volume = volumeAt(this.volumes, character.position);
       character.setActiveVolume(volume ? { force: volume.force, maxInducedSpeed: volume.maxInducedSpeed } : undefined);
       // M6.1: who (if anyone) this Character is currently grabbing, for the
       // renderer's own arm-reach pose — same "not engaged until proven
@@ -1188,11 +1385,20 @@ export class RapierSimulation {
     const reached = progress.checkpointIndex ?? -1;
     const p = character.position;
     for (let i = reached + 1; i < this.checkpoints.length; i += 1) {
-      if (pointInOrientedBox(p, this.checkpoints[i]!.trigger)) {
+      const checkpoint = this.checkpoints[i]!;
+      const got = checkpoint.gate ? this.passedThisTick(id, checkpoint.gate) : pointInOrientedBox(p, checkpoint.trigger);
+      if (got) {
         progress.checkpointIndex = i;
-        progress.respawnPoint = { ...this.checkpoints[i]!.respawn };
+        progress.respawnPoint = { ...checkpoint.respawn };
       }
     }
+  }
+
+  /** Whether this Character passed through `gate` during the tick just stepped (ADR 0068). */
+  private passedThisTick(id: string, gate: NonNullable<Checkpoint["gate"]>): boolean {
+    const start = this.tickStart.get(id);
+    if (!start || start.respawning) return false;
+    return passesThroughGate(start.position, this.character(id).position, gate);
   }
 
   /**
@@ -1205,16 +1411,16 @@ export class RapierSimulation {
    * Round and never re-arms, so there is no `touched…Index` to track and
    * leaving the zone changes nothing.
    *
-   * Deliberately *not* skipped while down, unlike {@link updateSpeedPad} —
+   * Deliberately *not* skipped while down, unlike the launch pad check —
    * a Character shoved into the zone mid-ragdoll has still entered it, and
    * "entry counts" is the whole M4 rule (ADR 0039). That a launch pad or a
    * Bump can put you there is the design, not a hole in it.
    *
    * Skipped outright for an eliminating Round type (M5 ticket 05, ADR
    * 0041/0043, found by code review): what grants Qualification is the
-   * Round type's own rule, same as what a Fall does — a Survival Round's
-   * arena (ticket 06) authors no Finish Zone of its own, but nothing before
-   * ticket 07 lets the Lobby run Survival on anything *but* an ordinary,
+   * Round type's own rule, same as what a Fall does — a Survival-only Track
+   * authors no Finish Zone of its own, but nothing before ticket 07 lets
+   * the Lobby run Survival on anything *but* an ordinary,
    * possibly-Finish-Zone-carrying Track (the test-only `fallBehaviorOverride`
    * this ticket's own tests use is exactly that case). Without this, two
    * Characters could Qualify by simply crossing a leftover Finish Zone,
@@ -1224,45 +1430,22 @@ export class RapierSimulation {
     if (this.roundRules.fallBehavior === "eliminate") return;
     const progress = this.progress.get(id)!;
     if (progress.finishTick !== null) return;
-    if (this.findTriggerIndex(this.finishZones, this.character(id).position) === undefined) return;
+    const p = this.character(id).position;
+    if (!this.finishZones.some((zone) => (zone.gate ? this.passedThisTick(id, zone.gate) : pointInOrientedBox(p, zone.trigger)))) return;
     progress.finishTick = this.tickCount;
   }
 
   /**
-   * Rising-edge pad detection (M3.7 ticket 01, ADR 0035) — fires
-   * {@link CharacterController.triggerSpeedPad} exactly once per crossing:
-   * the tick this Character's (just-updated) position enters a pad's
-   * `trigger` it wasn't already inside. Leaving (or switching to a different
-   * pad) re-arms it. One tick behind the movement it's based on, same as
-   * every other Surface-style effect resolved from `endTick`'s fresh sweep.
-   *
-   * Skipped entirely while down (code review) — a Ragdolling/GettingUp
-   * Character's `position` tracks the ragdoll root, which can still drag
-   * across a pad's trigger, and `CharacterController`'s own boost math would
-   * silently discard the effect anyway (`machine.inputScale` is 0 for both
-   * states) — without this guard, `speedPadEpoch` would rise for an effect
-   * the Character never actually felt. `touchedSpeedPadIndex` is left
-   * untouched (not blanked) while down, so standing back up still inside the
-   * same trigger correctly reads as "already touching it," not a fresh edge.
-   */
-  private updateSpeedPad(id: string): void {
-    const character = this.character(id);
-    if (isDownMotionState(character.motionState)) return;
-    const progress = this.progress.get(id)!;
-    const touched = this.findTriggerIndex(this.speedPads, character.position);
-    if (touched !== undefined && touched !== progress.touchedSpeedPadIndex) {
-      character.triggerSpeedPad(this.speedPads[touched]!.capMultiplier);
-    }
-    progress.touchedSpeedPadIndex = touched;
-  }
-
-  /**
-   * Rising-edge launch pad detection (M3.7 ticket 02) — identical shape to
-   * {@link updateSpeedPad}, reusing the same {@link findTriggerIndex} lookup
-   * and the same down-state guard (a Ragdolling/GettingUp Character never
-   * gets launched — the whole point of a launch pad is a deliberate,
-   * player-caused jump, not something that fires while they have no control
-   * at all).
+   * Rising-edge launch pad detection (M3.7 ticket 02) — fires exactly once
+   * per crossing: the tick this Character's (just-updated) position enters a
+   * pad's `trigger` it wasn't already inside, via {@link findTriggerIndex}.
+   * Leaving (or switching to a different pad) re-arms it. Skipped entirely
+   * while down (a Ragdolling/GettingUp Character never gets launched — the
+   * whole point of a launch pad is a deliberate, player-caused jump, not
+   * something that fires while they have no control at all), and the touch
+   * index is left untouched (not blanked) while down, so standing back up
+   * still inside the same trigger correctly reads as "already touching it,"
+   * not a fresh edge.
    */
   private updateLaunchPad(id: string): void {
     const character = this.character(id);
@@ -1362,6 +1545,7 @@ export class RapierSimulation {
     this.mirrors.clear();
     this.progress.clear();
     this.spinnerByHandle.clear();
+    this.movingSegmentByHandle.clear();
     this.propByHandle.clear();
     this.propIndexByHandle.clear();
     this.characterIdByHandle.clear();

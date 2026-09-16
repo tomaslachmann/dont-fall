@@ -32,8 +32,8 @@ const baseLobby = (overrides: Partial<LobbySnapshot> = {}): LobbySnapshot => ({
   matchOver: null,
   hostId: "host-id",
   players: [
-    { id: "host-id", nickname: "Host Player", ready: false, joinOrder: 0, accountId: null },
-    { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null },
+    { id: "host-id", nickname: "Host Player", ready: false, joinOrder: 0, accountId: null, bodySkin: null },
+    { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, bodySkin: null },
   ],
   trackId: "track-a",
   trackRevision: 1,
@@ -108,7 +108,7 @@ describe("Lobby", () => {
   it("sends nothing when the roster already shows the Account's name", async () => {
     const onSetNickname = vi.fn();
     renderLobby({
-      lobby: baseLobby({ players: [{ id: "host-id", nickname: "Wobbleton", ready: false, joinOrder: 0, accountId: null }] }),
+      lobby: baseLobby({ players: [{ id: "host-id", nickname: "Wobbleton", ready: false, joinOrder: 0, accountId: null, bodySkin: null }] }),
       onSetNickname,
     });
 
@@ -127,8 +127,8 @@ describe("Lobby", () => {
         <WithQuery><Lobby
           lobby={baseLobby({
             players: [
-              { id: "host-id", nickname: "Host Player", ready: true, joinOrder: 0, accountId: null },
-              { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null },
+              { id: "host-id", nickname: "Host Player", ready: true, joinOrder: 0, accountId: null, bodySkin: null },
+              { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, bodySkin: null },
             ],
           })}
           onSetNickname={noop}
@@ -243,8 +243,8 @@ describe("Lobby", () => {
 
     it("shows the server's reason a Round can't start, and disables Start with it", () => {
       const readyPlayers = [
-        { id: "host-id", nickname: "Host Player", ready: true, joinOrder: 0, accountId: null },
-        { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null },
+        { id: "host-id", nickname: "Host Player", ready: true, joinOrder: 0, accountId: null, bodySkin: null },
+        { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, bodySkin: null },
       ];
       renderLobby({ lobby: baseLobby({ players: readyPlayers, startBlockedReason: "This Track has no Finish Zone." }) });
 

@@ -1,0 +1,8 @@
+ice_surface.jpg — the deck overlay for ice Surfaces (ADR 0066).
+
+Source: ambientCG "Ice 003" (https://ambientcg.com/a/Ice003),
+Creative Commons CC0 1.0 Universal (public domain, no attribution required).
+Taken 2026-09-15: the Color map only, converted from the pack's 1K PNG to
+quality-85 JPEG (1.3 MB → 0.3 MB — a translucent deck decal, never inspected
+up close). Seamless/tileable; the renderers repeat it every ICE_TILE_WORLD
+units across the deck.

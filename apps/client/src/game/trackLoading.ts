@@ -2,12 +2,17 @@ import {
   ASSET_MODULE_DEFS,
   MODULE_LIBRARY,
   loadAssetLibrary,
+  resolveEnvironmentId,
+  type EnvironmentId,
   type Module,
   type Track,
 } from "@dont-fall/shared";
 import type * as THREE from "three";
 import { resolveEndpoints } from "../lib/socket/connection.js";
 import { loadAssetVisuals } from "../render/assetVisuals.js";
+import { loadIceTexture } from "../render/iceOverlays.js";
+import { loadMudTexture } from "../render/mudOverlays.js";
+import { loadBounceTexture } from "../render/bounceSheets.js";
 
 /**
  * Everything either game boot needs from the API (m8.1 ticket 01):
@@ -19,19 +24,45 @@ import { loadAssetVisuals } from "../render/assetVisuals.js";
  * Fetching only: this never opens a socket, so the practice path that uses
  * it stays server-free by construction (`practice.test.ts` pins that).
  */
+/** What a game boot takes from one fetched Revision. */
+export interface FetchedRevision {
+  track: Track;
+  name: string | null;
+  /**
+   * The Environment it is drawn inside (ADR 0074). Always one this build has:
+   * an id it does not know, from a newer API, falls back to the default with
+   * a dev warning, never an error — a cosmetic must never brick boot.
+   */
+  environment: EnvironmentId;
+}
+
 export interface TrackLoading {
   /** `GET {apiUrl}/tracks/:id` — revision omitted means latest. */
-  fetchTrack: (trackId: string, trackRevision?: number) => Promise<{ track: Track; name: string | null }>;
+  fetchTrack: (trackId: string, trackRevision?: number) => Promise<FetchedRevision>;
   /** Collision library, session-cached (M8 ticket 02, ADR 0050 as amended). */
   loadLibrary: () => Promise<Record<string, Module>>;
   /** Visual templates, session-cached alongside the library (M8 ticket 03). */
   loadVisualTemplates: () => Promise<Record<string, THREE.Group>>;
+  /**
+   * The shared ice texture (ADR 0066), session-cached like the templates —
+   * or null when it cannot be loaded (an older API, a failed fetch/decode).
+   * A cosmetic must never brick boot, so the failure degrades to untextured
+   * ice (a dev warning, never an error) instead of rejecting.
+   */
+  loadIceTexture: () => Promise<THREE.Texture | null>;
+  /**
+   * The shared mud texture (ADR 0067) — the same session-cached,
+   * degrade-to-null contract as the ice texture above.
+   */
+  loadMudTexture: () => Promise<THREE.Texture | null>;
+  /** The shared bounce sheet texture, cached per session; `null` when it could not be loaded (ADR 0070). */
+  loadBounceTexture: () => Promise<THREE.Texture | null>;
 }
 
 export const createTrackLoading = (host: string | undefined): TrackLoading => {
   const endpoints = resolveEndpoints(host ?? location.hostname);
 
-  const fetchTrack = async (trackId: string, trackRevision?: number): Promise<{ track: Track; name: string | null }> => {
+  const fetchTrack = async (trackId: string, trackRevision?: number): Promise<FetchedRevision> => {
     const url =
       trackRevision === undefined
         ? `${endpoints.apiUrl}/tracks/${trackId}`
@@ -40,8 +71,10 @@ export const createTrackLoading = (host: string | undefined): TrackLoading => {
     if (!res.ok) {
       throw new Error(`could not fetch Track ${trackId}${trackRevision === undefined ? "" : `@${trackRevision}`} from the API: HTTP ${res.status}`);
     }
-    const { track, name } = (await res.json()) as { track: Track; name: string | null };
-    return { track, name };
+    const body = (await res.json()) as { track: Track; name: string | null; environment?: unknown };
+    const environment = resolveEnvironmentId(body.environment);
+    if (environment.warning) console.warn(`DON'T FALL: Track ${trackId}: ${environment.warning}`);
+    return { track: body.track, name: body.name, environment: environment.id };
   };
 
   // One `fetchBytes` serves both loaders (M8 ticket 03): the collision half
@@ -91,5 +124,51 @@ export const createTrackLoading = (host: string | undefined): TrackLoading => {
     return assetTemplates;
   };
 
-  return { fetchTrack, loadLibrary, loadVisualTemplates };
+  let iceTexture: THREE.Texture | null | undefined;
+  const loadIceTextureCached = async (): Promise<THREE.Texture | null> => {
+    if (iceTexture === undefined) {
+      try {
+        iceTexture = await loadIceTexture(fetchBytes, assetsBaseUrl);
+      } catch (err) {
+        console.warn(`DON'T FALL: ice overlay unavailable: ${(err as Error).message}`);
+        iceTexture = null;
+      }
+    }
+    return iceTexture;
+  };
+
+  let mudTexture: THREE.Texture | null | undefined;
+  const loadMudTextureCached = async (): Promise<THREE.Texture | null> => {
+    if (mudTexture === undefined) {
+      try {
+        mudTexture = await loadMudTexture(fetchBytes, assetsBaseUrl);
+      } catch (err) {
+        console.warn(`DON'T FALL: mud overlay unavailable: ${(err as Error).message}`);
+        mudTexture = null;
+      }
+    }
+    return mudTexture;
+  };
+
+  let bounceTexture: THREE.Texture | null | undefined;
+  const loadBounceTextureCached = async (): Promise<THREE.Texture | null> => {
+    if (bounceTexture === undefined) {
+      try {
+        bounceTexture = await loadBounceTexture(fetchBytes, assetsBaseUrl);
+      } catch (err) {
+        console.warn(`DON'T FALL: bounce sheet unavailable: ${(err as Error).message}`);
+        bounceTexture = null;
+      }
+    }
+    return bounceTexture;
+  };
+
+  return {
+    fetchTrack,
+    loadLibrary,
+    loadVisualTemplates,
+    loadIceTexture: loadIceTextureCached,
+    loadMudTexture: loadMudTextureCached,
+    loadBounceTexture: loadBounceTextureCached,
+  };
 };

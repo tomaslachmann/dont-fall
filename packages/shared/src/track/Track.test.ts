@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { dotQuat, eulerQuat, IDENTITY_QUAT } from "../math/quat.js";
 import type { Module } from "./Module.js";
-import { chainTrack, countCheckpoints, placeAfter, resolveTrack, segmentOrientation, trackHasFinishZone } from "./Track.js";
+import { chainTrack, countCheckpoints, placeAfter, resolveTrack, segmentOrientation, trackHasFinishZone, trackSpawn } from "./Track.js";
 import type { Track } from "./Track.js";
 import { M1_MODULES, M1_TRACK } from "./modules.js";
+import { GRAVITY_Y } from "../tuning.js";
 
 const STRAIGHT_SOCKETS: Module["sockets"] = [
   { id: "entry", type: "floor", position: { x: 0, y: 0, z: 3 }, yaw: Math.PI },
@@ -39,7 +40,6 @@ const SPINNER_MODULE: Module = {
     respawn: { x: 0, y: 1, z: 0 },
     trigger: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
   },
-  speedPads: [{ trigger: { center: { x: 0, y: 0.5, z: 2 }, halfExtents: { x: 1, y: 1, z: 1 } }, capMultiplier: 2 }],
   launchPads: [{ trigger: { center: { x: 0, y: 0.5, z: -2 }, halfExtents: { x: 1, y: 1, z: 1 } }, velocity: { x: 0, y: 16, z: -6 } }],
   volumes: [{ bounds: { center: { x: 2, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } }, force: { x: 0, y: 30, z: -5 }, maxInducedSpeed: 10, priority: 1 }],
   finishZone: { trigger: { center: { x: -2, y: 1, z: 0 }, halfExtents: { x: 1, y: 2, z: 1 } } },
@@ -118,17 +118,15 @@ describe("resolveTrack", () => {
     expect(resolved.spinners[0]!.initialAngle).toBe(0); // no rotation added at 0 rad
     expect(resolved.props[0]!.center).toEqual({ x: 6, y: -1, z: 20 });
     expect(resolved.checkpoints[0]!.respawn).toEqual({ x: 5, y: 0, z: 20 });
-    expect(resolved.checkpoints[0]!.trigger.halfExtents).toEqual({ x: 2, y: 2, z: 2 });
-    expect(resolved.speedPads[0]!.capMultiplier).toBe(2);
-    expect(resolved.speedPads[0]!.trigger.center).toEqual({ x: 5, y: -0.5, z: 22 });
+    expect(resolved.checkpoints[0]!.trigger!.halfExtents).toEqual({ x: 2, y: 2, z: 2 });
     expect(resolved.launchPads[0]!.trigger.center).toEqual({ x: 5, y: -0.5, z: 18 });
     expect(resolved.launchPads[0]!.velocity).toEqual({ x: 0, y: 16, z: -6 }); // untouched at 0 rad
     expect(resolved.volumes[0]!.bounds.center).toEqual({ x: 7, y: -0.5, z: 20 });
     expect(resolved.volumes[0]!.force).toEqual({ x: 0, y: 30, z: -5 }); // untouched at 0 rad
     expect(resolved.volumes[0]!.maxInducedSpeed).toBe(10);
     expect(resolved.volumes[0]!.priority).toBe(1);
-    expect(resolved.finishZones[0]!.trigger.center).toEqual({ x: 3, y: 0, z: 20 });
-    expect(resolved.finishZones[0]!.trigger.halfExtents).toEqual({ x: 1, y: 2, z: 1 });
+    expect(resolved.finishZones[0]!.trigger!.center).toEqual({ x: 3, y: 0, z: 20 });
+    expect(resolved.finishZones[0]!.trigger!.halfExtents).toEqual({ x: 1, y: 2, z: 1 });
   });
 
   it("places a Finish Zone through the same rotation-safe pipeline as a Checkpoint's trigger (ADR 0039)", () => {
@@ -139,10 +137,10 @@ describe("resolveTrack", () => {
     // and the box carries the Segment's rotation rather than being flattened
     // to an axis-aligned approximation, exactly like the Checkpoint above it.
     const zone = resolved.finishZones[0]!;
-    expect(zone.trigger.center.x).toBeCloseTo(0, 6);
-    expect(zone.trigger.center.y).toBeCloseTo(1, 6);
-    expect(zone.trigger.center.z).toBeCloseTo(2, 6);
-    expect(zone.trigger.rotation).toEqual(resolved.checkpoints[0]!.trigger.rotation);
+    expect(zone.trigger!.center.x).toBeCloseTo(0, 6);
+    expect(zone.trigger!.center.y).toBeCloseTo(1, 6);
+    expect(zone.trigger!.center.z).toBeCloseTo(2, 6);
+    expect(zone.trigger!.rotation).toEqual(resolved.checkpoints[0]!.trigger!.rotation);
     // Detection-only: a Finish Zone never carries a respawn point (ADR 0039).
     expect(zone).not.toHaveProperty("respawn");
   });
@@ -161,7 +159,7 @@ describe("resolveTrack", () => {
     ]);
 
     expect(resolved.finishZones).toHaveLength(1);
-    expect(resolved.finishZones[0]!.trigger.center).toEqual({ x: -2, y: 1, z: 6 });
+    expect(resolved.finishZones[0]!.trigger!.center).toEqual({ x: -2, y: 1, z: 6 });
   });
 
   it("rotates a launch pad's velocity by the Segment's own orientation — a direction, not a point, so it's never translated", () => {
@@ -238,14 +236,21 @@ describe("resolveTrack", () => {
     expect(resolveTrack({}, [])).toEqual({
       statics: [],
       staticSurfaces: [],
+      staticConveyors: [],
       staticTrimeshes: [],
       props: [],
       spinners: [],
       checkpoints: [],
       finishZones: [],
-      speedPads: [],
       launchPads: [],
+      launchPadOwners: [],
       volumes: [],
+      movingSegments: [],
+      conveyors: [],
+      iceDecks: [],
+      mudDecks: [],
+      bounceDecks: [],
+      warnings: [],
     });
   });
 
@@ -257,7 +262,7 @@ describe("resolveTrack", () => {
     // `Segment[]` becomes raceable without being rewritten (ADR 0032).
     const last = M1_TRACK[M1_TRACK.length - 1]!;
     expect(last.moduleId).toBe("sandbox");
-    expect(resolved.finishZones[0]!.trigger.center.z).toBeCloseTo(last.position.z - 6, 6);
+    expect(resolved.finishZones[0]!.trigger!.center.z).toBeCloseTo(last.position.z - 6, 6);
   });
 
   it("throws if a Segment references an unknown Module", () => {
@@ -314,9 +319,12 @@ describe("M1_TRACK (ticket 01 — M1 playground ported to Modules; re-chained vi
     expect(() => resolveTrack(M1_MODULES, M1_TRACK)).not.toThrow();
   });
 
-  it("preserves the same beats as the original playground: 6 stops, 1 Spinner, 3 Props, 2 Checkpoints", () => {
+  it("preserves the same beats as the original playground: 4 stops, 1 Spinner, 3 Props, 2 Checkpoints", () => {
     const resolved = resolveTrack(M1_MODULES, M1_TRACK);
-    expect(M1_TRACK).toHaveLength(6);
+    // Four, not six, since ADR 0073 deleted the plain `bridge` connectors —
+    // the Spinner, the Props and both Checkpoints all survive the cut.
+    expect(M1_TRACK).toHaveLength(4);
+    expect(M1_TRACK.map((s) => s.moduleId)).toEqual(["start", "checkpoint-spinner", "checkpoint-end-props", "sandbox"]);
     expect(resolved.spinners).toHaveLength(1);
     expect(resolved.props).toHaveLength(3);
     expect(resolved.checkpoints).toHaveLength(2);
@@ -335,16 +343,15 @@ describe("M1_TRACK (ticket 01 — M1 playground ported to Modules; re-chained vi
     expect(Math.abs(10.5 - start.center.z)).toBeLessThanOrEqual(start.halfExtents.z);
   });
 
-  it("stays at the same Segment positions the pre-Socket MODULE_STEP chain produced", () => {
-    // Locks in that the Socket-based re-chain (round 2) is a pure refactor,
-    // not a silent layout change.
+  it("chains every surviving stop one Socket-step down the run", () => {
+    // Every stop shares STRAIGHT_SOCKETS, so each step is the same drop:
+    // -0.5 in Y, -6 in Z. The `bridge` slots ADR 0073 deleted simply close
+    // up — everything after them moves two steps up the run.
     expect(M1_TRACK.map((s) => s.position)).toEqual([
       { x: 0, y: 0, z: 10 },
       { x: 0, y: -0.5, z: 4 },
       { x: 0, y: -1, z: -2 },
       { x: 0, y: -1.5, z: -8 },
-      { x: 0, y: -2, z: -14 },
-      { x: 0, y: -2.5, z: -20 },
     ]);
   });
 });
@@ -385,5 +392,427 @@ describe("trackHasFinishZone", () => {
   it("ignores Segments referencing unknown Modules rather than throwing — a label, not a load", () => {
     expect(trackHasFinishZone([seg("straight"), seg("nope")], library)).toBe(false);
     expect(trackHasFinishZone([seg("nope"), seg("finish")], library)).toBe(true);
+  });
+});
+
+describe("a scaled Segment (ADR 0062)", () => {
+  it("places its geometry, triggers, Props and Spinners at its scale about its own origin", () => {
+    const resolved = resolveTrack({ "spinner-module": SPINNER_MODULE }, [
+      { moduleId: "spinner-module", position: { x: 10, y: 0, z: 0 }, rotation: 0, scale: 2 },
+    ]);
+
+    expect(resolved.statics[0]!.center).toEqual({ x: 10, y: -1, z: 0 });
+    expect(resolved.statics[0]!.halfExtents).toEqual({ x: 6, y: 1, z: 6 });
+    expect(resolved.checkpoints[0]!.trigger!.halfExtents).toEqual({ x: 4, y: 4, z: 4 });
+    expect(resolved.checkpoints[0]!.respawn).toEqual({ x: 10, y: 2, z: 0 });
+    expect(resolved.props[0]!.center).toEqual({ x: 12, y: 0, z: 0 });
+    expect(resolved.props[0]!.shape).toEqual({ kind: "box", halfExtents: { x: 0.8, y: 0.8, z: 0.8 } });
+    expect(resolved.spinners[0]!.armLength).toBe(4);
+    // Physics feel is not size: a launch pad launches exactly as hard.
+    expect(resolved.launchPads[0]!.velocity).toEqual({ x: 0, y: 16, z: -6 });
+  });
+
+  it("chains flush through scaled Sockets, and carries the placed Segment's scale", () => {
+    const big = { moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0, scale: 2 };
+    const next = placeAfter(big, STRAIGHT, "straight", STRAIGHT, "exit", "entry", 0.5);
+
+    // The big one's exit is at 2·(0, -0.5, -3); the small one's entry sits 0.5·(0, 0, 3) behind its origin.
+    expect(next.position).toEqual({ x: 0, y: -1, z: -7.5 });
+    expect(next.scale).toBe(0.5);
+    const { scale: _scale, ...unscaled } = big;
+    expect(placeAfter(unscaled, STRAIGHT, "straight", STRAIGHT).scale).toBeUndefined();
+  });
+
+  it("raises the spawn with a scaled first piece but keeps Players a Player's width apart", () => {
+    const at = (scale: number) => trackSpawn([{ moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0, scale }], 1);
+    expect(at(2).y).toBeCloseTo(at(1).y * 2);
+    expect(at(2).x).toBeCloseTo(at(1).x);
+  });
+});
+
+describe("a Segment Conveyor (ADR 0064)", () => {
+  const library = { straight: STRAIGHT };
+
+  it("bakes the belt flow index-aligned with statics — belted boxes carry it, still floor reads undefined", () => {
+    const resolved = resolveTrack(library, [
+      { moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { moduleId: "straight", position: { x: 0, y: 0, z: -6 }, rotation: 0, conveyor: { preset: "medium", angle: 0 } },
+    ]);
+
+    expect(resolved.staticConveyors).toHaveLength(resolved.statics.length);
+    expect(resolved.staticConveyors[0]).toBeUndefined();
+    expect(resolved.staticConveyors[1]).toEqual({ x: 0, y: 0, z: -4 });
+  });
+
+  it("rotates the local angle by the Segment's own yaw, never its pitch", () => {
+    const yawed = resolveTrack(library, [
+      { moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: Math.PI / 2, conveyor: { preset: "slow", angle: 0 } },
+    ]);
+    expect(yawed.staticConveyors[0]!.x).toBeCloseTo(-2, 10);
+    expect(yawed.staticConveyors[0]!.y).toBe(0);
+    expect(yawed.staticConveyors[0]!.z).toBeCloseTo(0, 10);
+
+    const tilted = resolveTrack(library, [
+      {
+        moduleId: "straight",
+        position: { x: 0, y: 0, z: 0 },
+        rotation: 0,
+        pitch: 0.5,
+        conveyor: { preset: "slow", angle: 0 },
+      },
+    ]);
+    expect(tilted.staticConveyors[0]).toEqual({ x: 0, y: 0, z: -2 });
+  });
+
+  it("a belt's speed is physics, not size — scale grows the deck frame, never the flow", () => {
+    const resolved = resolveTrack(library, [
+      { moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0, scale: 2, conveyor: { preset: "fast", angle: 0 } },
+    ]);
+
+    expect(resolved.staticConveyors[0]).toEqual({ x: 0, y: 0, z: -8 });
+    expect(resolved.conveyors[0]!.velocity).toEqual({ x: 0, y: 0, z: -8 });
+    expect(resolved.conveyors[0]!.deck.halfX).toBe(6);
+    expect(resolved.conveyors[0]!.deck.halfZ).toBe(6);
+  });
+
+  it("frames the chevron strip on the Segment's own deck top, not the footprint's floating top", () => {
+    const resolved = resolveTrack(library, [
+      { moduleId: "straight", position: { x: 10, y: 5, z: 0 }, rotation: 0, conveyor: { preset: "medium", angle: 0 } },
+    ]);
+
+    const [belt] = resolved.conveyors;
+    expect(resolved.conveyors).toHaveLength(1);
+    expect(belt!.segmentIndex).toBe(0);
+    // The straight Module's deck top: box centre y −0.5 + half-height 0.5 = 0, plus the Segment's y 5.
+    // (The shared test footprint's own top sits a full unit above that — the bug this pins.)
+    expect(belt!.deck.center).toEqual({ x: 10, y: 5, z: 0 });
+    expect(belt!.deck.yaw).toBe(0);
+  });
+
+  it("lays a pitched deck's frame in the deck's own plane — mid-slope and tilted with it, not flat at its high edge", () => {
+    const segment = { moduleId: "straight", position: { x: 10, y: 5, z: 0 }, rotation: 0.4, pitch: 0.3, conveyor: { preset: "medium", angle: 0 } } as const;
+    const [belt] = resolveTrack(library, [segment]).conveyors;
+
+    // The deck top's centre sits on the Segment's origin here (footprint XZ
+    // centre 0, top at local y 0) whatever the tilt — a world-highest point
+    // would sit well above it, at the ramp's raised end.
+    expect(belt!.deck.center.x).toBeCloseTo(10, 9);
+    expect(belt!.deck.center.y).toBeCloseTo(5, 9);
+    expect(belt!.deck.center.z).toBeCloseTo(0, 9);
+    expect(Math.abs(dotQuat(belt!.deck.orientation, segmentOrientation(segment)))).toBeCloseTo(1, 9);
+  });
+
+  it("bakes the belt onto a Moving Segment's own parts too — a belt rides its carrier", () => {
+    const resolved = resolveTrack(library, [
+      {
+        moduleId: "straight",
+        position: { x: 0, y: 0, z: 0 },
+        rotation: 0,
+        motion: { slide: { offset: { x: 4, y: 0, z: 0 }, period: 16, easing: "linear" } },
+        conveyor: { preset: "medium", angle: 0 },
+      },
+    ]);
+
+    expect(resolved.statics).toHaveLength(0); // moving collision lives on the kinematic body, not in statics
+    expect(resolved.movingSegments[0]!.boxes[0]!.conveyor).toEqual({ x: 0, y: 0, z: -4 });
+    expect(resolved.conveyors).toHaveLength(1); // the strip resolves at the rest pose like everything else
+  });
+
+  it("reports no belts and no warnings for an ordinary Track", () => {
+    const resolved = resolveTrack(library, [{ moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 }]);
+    expect(resolved.conveyors).toEqual([]);
+    expect(resolved.warnings).toEqual([]);
+  });
+});
+
+describe("Segment ice (ADR 0066)", () => {
+  const library = { straight: STRAIGHT };
+
+  it("ices a Segment's own colliders and sheets its deck top — the same frame a belt would run on", () => {
+    const resolved = resolveTrack(library, [
+      { moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { moduleId: "straight", position: { x: 10, y: 5, z: 0 }, rotation: 0, ice: true },
+    ]);
+
+    expect(resolved.staticSurfaces).toEqual(["default", "ice"]);
+    expect(resolved.iceDecks).toHaveLength(1);
+    const [sheet] = resolved.iceDecks;
+    expect(sheet!.segmentIndex).toBe(1);
+    // The straight Module's deck top: box centre y −0.5 + half-height 0.5 = 0, plus the Segment's y 5.
+    expect(sheet!.deck.center).toEqual({ x: 10, y: 5, z: 0 });
+    expect(sheet!.deck.yaw).toBe(0);
+    expect(sheet!.deck.halfX).toBe(3);
+    expect(sheet!.deck.halfZ).toBe(3);
+  });
+
+  it("attached ice wins over every authored Surface on its Segment — the whole deck skates", () => {
+    const muddy: Module = { ...STRAIGHT, id: "muddy", surface: "mud" };
+    const resolved = resolveTrack(
+      { muddy },
+      [{ moduleId: "muddy", position: { x: 0, y: 0, z: 0 }, rotation: 0, ice: true }],
+    );
+
+    expect(resolved.staticSurfaces).toEqual(["ice"]);
+    expect(resolved.iceDecks).toHaveLength(1);
+  });
+
+  it("ices a Moving Segment's own parts and sheets it at the rest pose", () => {
+    const resolved = resolveTrack(library, [
+      {
+        moduleId: "straight",
+        position: { x: 0, y: 0, z: 0 },
+        rotation: 0,
+        motion: { slide: { offset: { x: 4, y: 0, z: 0 }, period: 16, easing: "linear" } },
+        ice: true,
+      },
+    ]);
+
+    expect(resolved.movingSegments[0]!.boxes[0]!.surface).toBe("ice");
+    expect(resolved.iceDecks).toHaveLength(1);
+    expect(resolved.iceDecks[0]!.segmentIndex).toBe(0);
+  });
+
+  it("scales the sheet with the Segment — a doubled deck wears a doubled sheet", () => {
+    const resolved = resolveTrack(library, [
+      { moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0, scale: 2, ice: true },
+    ]);
+
+    expect(resolved.iceDecks).toHaveLength(1);
+    expect(resolved.iceDecks[0]!.deck.halfX).toBe(6);
+    expect(resolved.iceDecks[0]!.deck.halfZ).toBe(6);
+  });
+
+  it("reports no sheets for a Track with no ice", () => {
+    const resolved = resolveTrack(library, [{ moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 }]);
+    expect(resolved.iceDecks).toEqual([]);
+  });
+});
+
+describe("module-authored ice (ADR 0066 — the retired Module keeps working)", () => {
+  // Not the retired id itself: this pins the module rule, not the deprecation.
+  const FROST: Module = { ...STRAIGHT, id: "frost", surface: "ice" };
+
+  it("still sheets a Module whose own Surface is ice", () => {
+    const resolved = resolveTrack({ frost: FROST }, [
+      { moduleId: "frost", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+    ]);
+
+    expect(resolved.staticSurfaces).toEqual(["ice"]);
+    expect(resolved.iceDecks).toHaveLength(1);
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it("the retired ice Module loads with its ice and a warning to re-attach it", () => {
+    const retired: Module = { ...STRAIGHT, id: "ice", surface: "ice" };
+    const resolved = resolveTrack({ ice: retired }, [
+      { moduleId: "ice", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+    ]);
+
+    expect(resolved.staticSurfaces).toEqual(["ice"]);
+    expect(resolved.iceDecks).toHaveLength(1);
+    expect(resolved.warnings).toHaveLength(1);
+    expect(resolved.warnings[0]).toMatch(/Segment 0.*retired Module "ice".*attach ice/);
+  });
+});
+
+describe("Segment mud (ADR 0067)", () => {
+  const library = { straight: STRAIGHT };
+
+  it("muds a Segment's own colliders and sheets its deck top — the same frame a belt would run on", () => {
+    const resolved = resolveTrack(library, [
+      { moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { moduleId: "straight", position: { x: 10, y: 5, z: 0 }, rotation: 0, mud: true },
+    ]);
+
+    expect(resolved.staticSurfaces).toEqual(["default", "mud"]);
+    expect(resolved.mudDecks).toHaveLength(1);
+    const [sheet] = resolved.mudDecks;
+    expect(sheet!.segmentIndex).toBe(1);
+    // The straight Module's deck top: box centre y −0.5 + half-height 0.5 = 0, plus the Segment's y 5.
+    expect(sheet!.deck.center).toEqual({ x: 10, y: 5, z: 0 });
+    expect(sheet!.deck.yaw).toBe(0);
+    expect(sheet!.deck.halfX).toBe(3);
+    expect(sheet!.deck.halfZ).toBe(3);
+  });
+
+  it("attached mud wins over every authored Surface on its Segment — the whole deck drags", () => {
+    const icy: Module = { ...STRAIGHT, id: "icy", surface: "ice" };
+    const resolved = resolveTrack(
+      { icy },
+      [{ moduleId: "icy", position: { x: 0, y: 0, z: 0 }, rotation: 0, mud: true }],
+    );
+
+    expect(resolved.staticSurfaces).toEqual(["mud"]);
+    expect(resolved.mudDecks).toHaveLength(1);
+  });
+
+  it("muds a Moving Segment's own parts and sheets it at the rest pose", () => {
+    const resolved = resolveTrack(library, [
+      {
+        moduleId: "straight",
+        position: { x: 0, y: 0, z: 0 },
+        rotation: 0,
+        motion: { slide: { offset: { x: 4, y: 0, z: 0 }, period: 16, easing: "linear" } },
+        mud: true,
+      },
+    ]);
+
+    expect(resolved.movingSegments[0]!.boxes[0]!.surface).toBe("mud");
+    expect(resolved.mudDecks).toHaveLength(1);
+    expect(resolved.mudDecks[0]!.segmentIndex).toBe(0);
+  });
+
+  it("on an unvalidated Track carrying both attachments, mud wins — physics matches the visible top layer", () => {
+    const resolved = resolveTrack(library, [
+      { moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0, ice: true, mud: true },
+    ]);
+
+    expect(resolved.staticSurfaces).toEqual(["mud"]);
+  });
+
+  it("reports no sheets for a Track with no mud", () => {
+    const resolved = resolveTrack(library, [{ moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 }]);
+    expect(resolved.mudDecks).toEqual([]);
+  });
+});
+
+describe("module-authored mud (ADR 0067 — the retired Module keeps working)", () => {
+  // Not the retired id itself: this pins the module rule, not the deprecation.
+  const SLOP: Module = { ...STRAIGHT, id: "slop", surface: "mud" };
+
+  it("still sheets a Module whose own Surface is mud", () => {
+    const resolved = resolveTrack({ slop: SLOP }, [
+      { moduleId: "slop", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+    ]);
+
+    expect(resolved.staticSurfaces).toEqual(["mud"]);
+    expect(resolved.mudDecks).toHaveLength(1);
+    expect(resolved.warnings).toEqual([]);
+  });
+
+  it("the retired mud Module loads with its mud and a warning to re-attach it", () => {
+    const retired: Module = { ...STRAIGHT, id: "mud", surface: "mud" };
+    const resolved = resolveTrack({ mud: retired }, [
+      { moduleId: "mud", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+    ]);
+
+    expect(resolved.staticSurfaces).toEqual(["mud"]);
+    expect(resolved.mudDecks).toHaveLength(1);
+    expect(resolved.warnings).toHaveLength(1);
+    expect(resolved.warnings[0]).toMatch(/Segment 0.*retired Module "mud".*attach mud/);
+  });
+});
+
+describe("Segment bounce (ADR 0070)", () => {
+  const library = { straight: STRAIGHT };
+  const bouncy = (extra: Record<string, unknown> = {}) => [
+    { moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0, bounce: true, ...extra },
+  ];
+
+  it("turns the whole deck bouncy and hands the renderers a sheet", () => {
+    const resolved = resolveTrack(library, bouncy());
+    expect(resolved.staticSurfaces.every((surface) => surface === "bounce")).toBe(true);
+    expect(resolved.bounceDecks).toHaveLength(1);
+    expect(resolved.bounceDecks[0]!.segmentIndex).toBe(0);
+  });
+
+  it("sheets nothing on a plain Segment", () => {
+    const resolved = resolveTrack(library, [{ moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 }]);
+    expect(resolved.bounceDecks).toHaveLength(0);
+    expect(resolved.staticSurfaces.every((surface) => surface === "bounce")).toBe(false);
+  });
+
+  it("wins over ice and mud if an unvalidated Track arrives carrying a pair — the visible top layer is the one you feel", () => {
+    // Publish refuses the pair outright (one deck, one Surface); this is only
+    // the tie-break for a Track that reached the simulation another way.
+    const resolved = resolveTrack(library, bouncy({ ice: true, mud: true }));
+    expect(resolved.staticSurfaces.every((surface) => surface === "bounce")).toBe(true);
+  });
+});
+
+describe("a Spring (ADR 0069)", () => {
+  const SPRING: Module = {
+    id: "spring",
+    statics: [{ center: { x: 0, y: 0.25, z: 0 }, halfExtents: { x: 0.5, y: 0.25, z: 0.5 } }],
+    launch: { trigger: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } }, height: 6 },
+    sockets: STRAIGHT_SOCKETS,
+    footprint: FOOTPRINT,
+  };
+  const library = { spring: SPRING, straight: STRAIGHT };
+  const apexOf = (speed: number): number => (speed * speed) / (2 * Math.abs(GRAVITY_Y));
+
+  it("launches at its Asset's default height with nothing authored on the Segment", () => {
+    const resolved = resolveTrack(library, [{ moduleId: "spring", position: { x: 0, y: 0, z: 0 }, rotation: 0 }]);
+    expect(resolved.launchPads).toHaveLength(1);
+    expect(apexOf(resolved.launchPads[0]!.velocity.y)).toBeCloseTo(6, 6);
+    expect(resolved.launchPads[0]!.velocity.x).toBeCloseTo(0, 10);
+    expect(resolved.launchPads[0]!.velocity.z).toBeCloseTo(0, 10);
+  });
+
+  it("launches at the Segment's own height when it overrides", () => {
+    const resolved = resolveTrack(library, [
+      { moduleId: "spring", position: { x: 0, y: 0, z: 0 }, rotation: 0, launch: { height: 12 } },
+    ]);
+    expect(apexOf(resolved.launchPads[0]!.velocity.y)).toBeCloseTo(12, 6);
+  });
+
+  it("is aimed by tilting the Segment — a pitched Spring throws sideways, the visual can't lie", () => {
+    const upright = resolveTrack(library, [{ moduleId: "spring", position: { x: 0, y: 0, z: 0 }, rotation: 0 }]);
+    const tilted = resolveTrack(library, [
+      { moduleId: "spring", position: { x: 0, y: 0, z: 0 }, rotation: 0, pitch: Math.PI / 6 },
+    ]);
+    const straightUp = upright.launchPads[0]!.velocity.y;
+    expect(tilted.launchPads[0]!.velocity.y).toBeCloseTo(straightUp * Math.cos(Math.PI / 6), 6);
+    expect(Math.hypot(tilted.launchPads[0]!.velocity.x, tilted.launchPads[0]!.velocity.z)).toBeCloseTo(
+      straightUp * Math.sin(Math.PI / 6),
+      6,
+    );
+  });
+
+  it("scales its trigger with the Segment but never its throw — a bigger Spring is a bigger target, not a stronger one", () => {
+    const [plain] = [resolveTrack(library, [{ moduleId: "spring", position: { x: 0, y: 0, z: 0 }, rotation: 0 }])];
+    const big = resolveTrack(library, [{ moduleId: "spring", position: { x: 0, y: 0, z: 0 }, rotation: 0, scale: 2 }]);
+    expect(big.launchPads[0]!.trigger.halfExtents.y).toBeCloseTo(plain!.launchPads[0]!.trigger.halfExtents.y * 2, 10);
+    expect(big.launchPads[0]!.velocity.y).toBeCloseTo(plain!.launchPads[0]!.velocity.y, 10);
+  });
+
+  it("reports which Segment every launch pad came from, Module-authored pads included", () => {
+    const resolved = resolveTrack({ ...library, spinner: SPINNER_MODULE }, [
+      { moduleId: "straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { moduleId: "spring", position: { x: 0, y: 0, z: -6 }, rotation: 0 },
+      { moduleId: "spinner", position: { x: 0, y: 0, z: -12 }, rotation: 0 },
+      { moduleId: "spring", position: { x: 0, y: 0, z: -18 }, rotation: 0 },
+    ]);
+    expect(resolved.launchPadOwners).toHaveLength(resolved.launchPads.length);
+    expect(resolved.launchPadOwners).toEqual([1, 2, 3]);
+  });
+
+  it("warns that a moving Spring launches from where it rests, and still resolves", () => {
+    const resolved = resolveTrack(library, [
+      {
+        moduleId: "spring",
+        position: { x: 0, y: 0, z: 0 },
+        rotation: 0,
+        motion: { slide: { offset: { x: 0, y: 0, z: 6 }, period: 4, easing: "linear" } },
+      },
+    ]);
+    expect(resolved.launchPads).toHaveLength(1);
+    expect(resolved.warnings.some((w) => /Spring on a Moving Segment/.test(w))).toBe(true);
+  });
+});
+
+describe("retired pad Modules (ADR 0064)", () => {
+  it("loads a speed-pad/slow-pad Segment as plain geometry, with one warning naming each", () => {
+    const track: Track = [
+      { moduleId: "speed-pad", position: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { moduleId: "slow-pad", position: { x: 0, y: 0, z: -6 }, rotation: 0 },
+    ];
+    const resolved = resolveTrack(M1_MODULES, track);
+
+    expect(resolved.statics).toHaveLength(2);
+    expect(resolved.conveyors).toEqual([]);
+    expect(resolved.warnings).toHaveLength(2);
+    expect(resolved.warnings[0]).toMatch(/Segment 0.*speed-pad/);
+    expect(resolved.warnings[1]).toMatch(/Segment 1.*slow-pad/);
   });
 });

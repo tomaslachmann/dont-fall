@@ -1,6 +1,6 @@
 import type { Module, Track } from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
-import { ASSET_DEMO_TRACK, MAX_SURVIVOR_TARGET, MIN_SURVIVOR_TARGET } from "@dont-fall/shared";
+import { BASE_RACE_TRACK, MAX_SURVIVOR_TARGET, MIN_SURVIVOR_TARGET } from "@dont-fall/shared";
 import { PUBLISH_MODULES } from "./tracks.service.js";
 import { invalidSurvivorTargetReason, unknownModuleIds } from "./tracks.validation.js";
 
@@ -53,7 +53,7 @@ describe("unknownModuleIds", () => {
 
 describe("PUBLISH_MODULES (M8 ticket 05)", () => {
   it("accepts every asset Module id — publishes from the Assets tab validate", () => {
-    expect(unknownModuleIds(ASSET_DEMO_TRACK, PUBLISH_MODULES)).toEqual([]);
+    expect(unknownModuleIds(BASE_RACE_TRACK, PUBLISH_MODULES)).toEqual([]);
   });
 
   it("still rejects a genuinely unknown id", () => {

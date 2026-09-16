@@ -1,29 +1,53 @@
 import {
+  byVolumePriority,
   CAPSULE_BOTTOM_OFFSET,
   DASH_SPEED,
+  holdsAloft,
   IDENTITY_QUAT,
   isDownMotionState,
+  movingSegmentPose,
   spinnerAngleAt,
+  TICK_DT,
   yawQuat,
   type CharacterMotionState,
   type Checkpoint,
+  type ConveyorBelt,
   type FinishZone,
+  type IceDeck,
+  type MudDeck,
+  type BounceDeck,
+  type EnvironmentPreset,
+  type MovingSegmentConfig,
   type OrientedBox,
   type PropConfig,
   type PropSnapshot,
   type RenderCharacter,
   type SpinnerConfig,
   type Vec3,
+  type VolumeConfig,
+  volumeAt,
 } from "@dont-fall/shared";
+import {
+  createEnvironment,
+  findSpinningParts,
+  localBounds,
+  lowestDrawnY,
+  lowestMovingY,
+  spinParts,
+} from "@dont-fall/render";
 import * as THREE from "three";
-import { ARM_REACH_TARGET_HEIGHT, createArmReachPlayer } from "./armReach.js";
+import { blendFloatStruggle, FloatLimbs } from "./floatPose.js";
+import { GrabAnimations, grabRoleOf } from "./grabAnimation.js";
+import { JUMP_CROSSFADE_SECONDS, JumpSequences, jumpPoseAt, jumpTimeline } from "./jumpSequence.js";
 import { nextModelYaw } from "./modelFacing.js";
 import {
   actionFor,
+  CHARACTER_VISUAL_HEIGHT,
   crossfadeLocomotion,
   loadCharacterActions,
   LOCOMOTION_CROSSFADE_SECONDS,
-  RAGDOLL_PELVIS_TO_FEET,
+  MODEL_YAW_OFFSET,
+  pinClipPose,
   type CharacterModel,
 } from "./characterModel.js";
 import {
@@ -35,18 +59,29 @@ import {
 } from "../input/camera/springArm.js";
 import { listen } from "../lib/socket/listeners.js";
 import { buildAssetVisuals, type AssetVisualPlacement } from "./assetVisuals.js";
+import { SpringSquashes, type SpringTrigger } from "./springSquash.js";
+import { BouncePresses, buildBounceSheets } from "./bounceSheets.js";
+import { buildAirColumns } from "./airColumns.js";
+import { buildConveyorStrips } from "./conveyorBelts.js";
 import { disposeSceneGraph } from "./disposeSceneGraph.js";
+import { buildIceOverlays } from "./iceOverlays.js";
+import { buildMudOverlays } from "./mudOverlays.js";
 import { HitReactionPlayer } from "./hitReactionPlayer.js";
 import { selectLocomotion } from "./locomotionAnimation.js";
-import { createRagdollPose } from "./ragdollPose.js";
+import {
+  KNOCKDOWN_CROSSFADE_SECONDS,
+  KNOCKDOWN_FLOOR_PROBE,
+  KNOCKDOWN_FLOOR_REACH,
+  KnockdownOrigin,
+  Knockdowns,
+  knockdownFeetY,
+  type FloorQuery,
+} from "./knockdownAnimation.js";
 import { createRemoteCharacterPool } from "./remoteCharacterPool.js";
+import { tintHueForSkin, tintModel } from "./playerTint.js";
+import { setShadowRole } from "./shadowRoles.js";
 import { createSpeedLines } from "./speedLines.js";
 import { initialWobbleState, stepWobble } from "./wobble.js";
-
-const BACKGROUND_COLOR = 0x0b0e14;
-
-/** Standing height (units) the loaded model is rescaled to, a touch taller than the capsule. */
-const CHARACTER_VISUAL_HEIGHT = 2 * CAPSULE_BOTTOM_OFFSET + 0.35;
 
 /**
  * Procedural Wobble lean (ticket 07), temporarily OFF. It derives acceleration
@@ -71,6 +106,11 @@ export interface StageConfig {
   /** Finish Zones to draw (M4 ticket 02) — the Race has to be visible to be run at. */
   finishZones: FinishZone[];
   killPlaneY: number;
+  /**
+   * The sky, fog and light this Round is drawn inside (ADR 0074). Render-only:
+   * the simulation never sees it.
+   */
+  environment: EnvironmentPreset;
   spinners: SpinnerConfig[];
   props: PropConfig[];
   characterModel: CharacterModel;
@@ -83,6 +123,53 @@ export interface StageConfig {
    */
   assetTemplates?: Record<string, THREE.Group>;
   assetPlacements?: AssetVisualPlacement[];
+  /**
+   * Every Spring on the Track (ADR 0069), with the Segment each fires for —
+   * `resolveTrack`'s `launchPads`/`launchPadOwners`, which the game pairs up.
+   * Renderer-only: the squash is cosmetic and the collision never moves.
+   */
+  springs?: SpringTrigger[];
+  /**
+   * Segments with a Motion (ADR 0061) — drawn as one group each, in their
+   * own local frame, and posed by {@link Stage.updateMotion} from the same
+   * pure function the simulation poses their body with.
+   */
+  movingSegments?: MovingSegmentConfig[];
+  /**
+   * Attached belts to draw (ADR 0064) — one marching chevron strip per belt
+   * (`conveyorBelts.ts`), parented under the Moving Segment's own group when
+   * the belt rides one. Empty on Tracks without Conveyors.
+   */
+  conveyors?: ConveyorBelt[];
+  /**
+   * Ice-surfaced decks to sheet (ADR 0066) — one translucent textured sheet
+   * per deck (`iceOverlays.ts`), parented under the Moving Segment's own
+   * group when the sheet rides one. Drawn only when `iceTexture` is set: a
+   * missing texture (an older API, a failed fetch) sheets nothing rather
+   * than bricking boot over a cosmetic. Empty on Tracks without ice.
+   */
+  iceDecks?: IceDeck[];
+  /** The shared ice texture, or null when it could not be loaded (see `iceDecks`). */
+  iceTexture?: THREE.Texture | null;
+  /**
+   * Mud-surfaced decks to sheet (ADR 0067) — one raised opaque textured
+   * sheet per deck (`mudOverlays.ts`), same parenting and same missing-
+   * texture contract as the ice sheets above. Empty on Tracks without mud.
+   */
+  mudDecks?: MudDeck[];
+  /** The shared mud texture, or null when it could not be loaded (see `mudDecks`). */
+  mudTexture?: THREE.Texture | null;
+  /** Bouncy decks (ADR 0070) — each wears an inflatable sheet that dents under whoever is on it. */
+  bounceDecks?: BounceDeck[];
+  /** The shared bounce texture, or null when it could not be loaded (see `bounceDecks`). */
+  bounceTexture?: THREE.Texture | null;
+  /**
+   * Volumes to draw (ADR 0075). Each is cartoon air along its force,
+   * swooshes plus puffs in the sky's cloud style (`airColumns.ts`), so an
+   * updraft reads as moving air instead of empty space. Empty on Tracks
+   * without Volumes.
+   */
+  volumes?: VolumeConfig[];
 }
 
 /**
@@ -119,14 +206,49 @@ export interface Stage {
     localId: string,
     localPosition: Vec3,
   ) => void;
+  /**
+   * Refresh equipped skins by session id (M9 ticket 15) — the game calls this
+   * off every snapshot's lobby roster, before `applyRemoteCharacters`, so a
+   * rig built this frame already wears its skin. See
+   * `RemoteCharacterPool.setSkins` for the re-tint rules.
+   */
+  setPlayerSkins: (skins: ReadonlyMap<string, number | null>) => void;
+  /**
+   * Tint the local Character's own model to an equipped skin (M9 ticket 15).
+   * `null` (skin unknown — the own row's `auth` hasn't resolved yet, or the
+   * API was unreachable at practice boot) leaves the model natural, exactly
+   * as before skins existed. Re-tints only on change — a re-tint clones
+   * every material, so calling this every snapshot stays free.
+   */
+  setLocalSkin: (skin: number | null) => void;
+  /**
+   * Squash whichever Spring just fired (ADR 0069), from the Characters'
+   * `launchPadEpoch`. Cosmetic and render-rate driven like every other
+   * one-shot overlay; the local Character's own squash runs at prediction
+   * time, a round trip before the server confirms the launch.
+   */
+  applySpringSquash: (characters: Record<string, RenderCharacter>, nowMs: number) => void;
+  /**
+   * Reshape every bounce sheet (ADR 0070) from the Characters on it — the
+   * dent under each one, and the ring left by a landing. Derived entirely
+   * from replicated position/velocity/grounded, so it costs the protocol
+   * nothing and a remote Character dents a sheet exactly like the local one.
+   */
+  applyBounceSheets: (characters: Record<string, RenderCharacter>, nowMs: number) => void;
+  /**
+   * Advance every air column's swooshes and puffs to `nowMs` (ADR 0075),
+   * render-rate driven like every other overlay. The swooshes face the
+   * Stage's camera as it stood at its last update.
+   */
+  updateAirColumns: (nowMs: number) => void;
   /** Position the camera on a collision-resolved spring arm around `target`. */
   updateCamera: (target: Vec3, yaw: number, pitch: number) => void;
   /**
-   * Rotate every Spinner to its pose at continuous simulation tick `t`
+   * Pose every Spinner and Moving Segment (ADR 0061) at continuous simulation tick `t`
    * (fractional for smooth render-rate rotation). A Spinner's rotation is a
    * pure function of the tick, so it is never carried in `RenderState`.
    */
-  updateSpinners: (t: number) => void;
+  updateMotion: (t: number) => void;
   /**
    * Advance the Character model's animation and turn it to face
    * `moveDirection` (world-space, zero when idle). Purely cosmetic and
@@ -137,11 +259,14 @@ export interface Stage {
    * position, so it is immune to reconciliation noise/pops. `hitEpoch`/
    * `hitReactEpoch` (M6 ticket 03) drive the Punch/HitReact one-shot
    * overlays, which take priority over ordinary locomotion while playing.
+   * `grabEpoch` (ADR 0071) rises on every grab attempt, caught or not, and
+   * draws the reach even when there was nobody to catch.
    * `grabTargetPosition` (M6.1), given whenever this Character is currently
-   * grabbing someone, is that Character's own world position — the rig has
-   * no Grab clip, so the arms procedurally reach toward it instead
-   * (`armReach.ts`); `undefined` leaves the arms at whatever the ordinary
-   * locomotion clip already has them doing. `facingLocked` (M6.1) freezes the
+   * grabbing someone, is that Character's own world position. Since ADR 0071
+   * the rig has its own Grab clips and nothing aims at that position any
+   * more — it is read only as "this Character is the one doing the holding",
+   * which together with `facingLocked` (true in *either* role) tells the two
+   * ends of a hold apart. `facingLocked` (M6.1) also freezes the
    * model's cosmetic yaw outright for as long as this Character is in a Grab
    * hold, in either role — see `nextModelYaw`'s own doc comment for why a
    * held Character must strafe rather than turn.
@@ -152,8 +277,11 @@ export interface Stage {
     grounded: boolean,
     dashing: boolean,
     dashSpeed: number,
+    /** This Character's own vertical speed (units/s) — paces the jump sequence (ADR 0071). */
+    verticalVelocity: number,
     hitEpoch: number,
     hitReactEpoch: number,
+    grabEpoch: number,
     grabTargetPosition: Vec3 | undefined,
     facingLocked: boolean,
   ) => void;
@@ -190,20 +318,35 @@ export const createStage = ({
   checkpoints,
   finishZones,
   killPlaneY,
+  environment: environmentPreset,
   spinners,
   props,
   characterModel,
   assetTemplates = {},
   assetPlacements = [],
+  springs = [],
+  movingSegments = [],
+  conveyors = [],
+  iceDecks = [],
+  iceTexture = null,
+  mudDecks = [],
+  mudTexture = null,
+  bounceDecks = [],
+  bounceTexture = null,
+  volumes = [],
 }: StageConfig): Stage => {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
+  // Khronos PBR Neutral (ADR 0074): authored base colours pass through, only
+  // values above ~0.8 roll off instead of clipping. The frame renders through
+  // the speed-lines composer, whose `OutputPass` applies this operator to the
+  // whole composed frame. The Track builder sets the same one, so its preview
+  // matches.
+  renderer.toneMapping = THREE.NeutralToneMapping;
   mount.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(BACKGROUND_COLOR);
-  scene.fog = new THREE.Fog(BACKGROUND_COLOR, 30, 110);
 
   const camera = new THREE.PerspectiveCamera(
     55,
@@ -214,17 +357,31 @@ export const createStage = ({
 
   const speedLines = createSpeedLines(renderer, scene, camera);
 
-  scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x1b2430, 1.1));
-  const sun = new THREE.DirectionalLight(0xffffff, 1.7);
-  sun.position.set(10, 18, 6);
-  scene.add(sun);
-
   const platformMaterial = new THREE.MeshStandardMaterial({ color: 0x1c2740, roughness: 0.95 });
   const collidables: THREE.Object3D[] = [];
+  // The floor under a knocked-down Character (ADR 0076): a short ray down
+  // against the same meshes the camera arm avoids, started just above the
+  // Character so a pelvis sunk into the deck still finds it.
+  const floorRay = new THREE.Raycaster();
+  const floorOrigin = new THREE.Vector3();
+  const floorDown = new THREE.Vector3(0, -1, 0);
+  const floorBelow: FloorQuery = (x, y, z) => {
+    floorRay.set(floorOrigin.set(x, y + KNOCKDOWN_FLOOR_PROBE, z), floorDown);
+    floorRay.far = KNOCKDOWN_FLOOR_PROBE + KNOCKDOWN_FLOOR_REACH;
+    const hit = floorRay.intersectObjects(collidables, false)[0];
+    return hit ? hit.point.y : null;
+  };
+  // Everything still the Track draws, for where the cloud floor has to stay under.
+  const stillTrack: THREE.Object3D[] = [];
+  // Shadows (ADR 0074): every Track piece casts onto the pieces below it and
+  // receives; a Character only casts; deck sheets and strips only receive, so
+  // a shadow shows on a mud or ice deck rather than under its sheet; markers
+  // and the Environment's own meshes do neither.
   for (const box of statics) {
-    const mesh = boxMesh(box, platformMaterial);
+    const mesh = setShadowRole(boxMesh(box, platformMaterial), "both");
     scene.add(mesh);
     collidables.push(mesh);
+    stillTrack.push(mesh);
   }
 
   // Asset visuals (M8 ticket 03): one clone per placed asset Segment, standing
@@ -234,13 +391,117 @@ export const createStage = ({
   // they replace (only leaf meshes are pushed, so the non-recursive raycast
   // below needs no change for the nested clones). Freed with the scene-graph
   // sweep in `dispose`, like everything else added to the scene here.
+  // Which drawn instance belongs to which Segment — `buildAssetVisuals` clones
+  // one child per placement, in order, so the two line up by index. Only
+  // Springs need looking up, so only Springs are kept.
+  const springVisuals = new Map<number, THREE.Object3D>();
   if (assetPlacements.length > 0) {
-    const assetVisuals = buildAssetVisuals(assetTemplates, assetPlacements);
+    const assetVisuals = setShadowRole(buildAssetVisuals(assetTemplates, assetPlacements), "both");
     scene.add(assetVisuals);
+    stillTrack.push(assetVisuals);
     assetVisuals.traverse((object) => {
       if ((object as THREE.Mesh).isMesh) collidables.push(object);
     });
+    const squashable = new Set(springs.map((spring) => spring.segmentIndex));
+    assetPlacements.forEach((placement, i) => {
+      const instance = assetVisuals.children[i];
+      if (instance && squashable.has(placement.segmentIndex)) springVisuals.set(placement.segmentIndex, instance);
+    });
   }
+  const springSquashes = new SpringSquashes();
+  // Each Spring's own authored size (ADR 0062), captured before any squash
+  // multiplies it — so repeated fires can never compound into drift.
+  const springBaseScale = new Map<THREE.Object3D, number>();
+  const base = (instance: THREE.Object3D): number => {
+    const remembered = springBaseScale.get(instance);
+    if (remembered !== undefined) return remembered;
+    springBaseScale.set(instance, instance.scale.x);
+    return instance.scale.x;
+  };
+
+  // Moving Segments (ADR 0061): the Segment's whole visual in its local frame
+  // under one group — an asset's template clone, or its Module boxes — so
+  // posing the group poses everything it draws, exactly as the body does.
+  const movingGroups = movingSegments.map((config) => {
+    const group = new THREE.Group();
+    const template = assetTemplates[config.moduleId];
+    if (template) {
+      // Collision boxes/trimeshes arrive already scaled (ADR 0062); the visual is scaled here.
+      const visual = template.clone(true);
+      visual.scale.setScalar(config.scale);
+      group.add(visual);
+    } else if (config.trimeshes.length > 0) {
+      throw new Error(`asset "${config.moduleId}": no loaded visual template (fetch it before placing)`);
+    }
+    for (const { box } of config.boxes) group.add(boxMesh(box, platformMaterial));
+    setShadowRole(group, "both");
+    scene.add(group);
+    group.traverse((object) => {
+      if ((object as THREE.Mesh).isMesh) collidables.push(object);
+    });
+    return group;
+  });
+  const poseMovingSegments = (t: number): void => {
+    for (let i = 0; i < movingGroups.length; i += 1) {
+      const pose = movingSegmentPose(movingSegments[i]!, t);
+      const group = movingGroups[i]!;
+      group.position.set(pose.position.x, pose.position.y, pose.position.z);
+      group.quaternion.set(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w);
+      group.updateMatrixWorld(true);
+    }
+  };
+  poseMovingSegments(0);
+
+  // Conveyor chevron strips (ADR 0064) — still belts parent to the scene, a
+  // belt riding a Moving Segment parents under its group (already in that
+  // frame) so it follows the carrier. Never `collidables`: flat decals on
+  // the deck neither block the camera nor catch its raycast.
+  const conveyorStrips = buildConveyorStrips(conveyors, movingSegments);
+  for (const strip of conveyorStrips) {
+    const parent = strip.movingIndex === null ? scene : movingGroups[strip.movingIndex]!;
+    parent.add(setShadowRole(strip.object, "receiver"));
+  }
+
+  // Ice sheets (ADR 0066) — same parenting as the strips above, never
+  // `collidables` for the same reason. Anisotropic-filtered at the
+  // renderer's own cap: decks are viewed at grazing angles, where a
+  // nearest-mipped sheet would shimmer.
+  const iceSheets = iceTexture ? buildIceOverlays(iceDecks, movingSegments, iceTexture, renderer.capabilities.getMaxAnisotropy()) : [];
+  for (const sheet of iceSheets) {
+    const parent = sheet.movingIndex === null ? scene : movingGroups[sheet.movingIndex]!;
+    parent.add(setShadowRole(sheet.object, "receiver"));
+  }
+
+  // Mud sheets (ADR 0067) — the same treatment: never `collidables`,
+  // anisotropic-filtered, riding carriers by re-parenting.
+  const mudSheets = mudTexture ? buildMudOverlays(mudDecks, movingSegments, mudTexture, renderer.capabilities.getMaxAnisotropy()) : [];
+  for (const sheet of mudSheets) {
+    const parent = sheet.movingIndex === null ? scene : movingGroups[sheet.movingIndex]!;
+    parent.add(setShadowRole(sheet.object, "receiver"));
+  }
+
+  // Bounce sheets (ADR 0070) — skin, never `collidables`: the deck's own flat
+  // collider is what a Character stands on, and the sheet only draws what that
+  // deck does to them.
+  const bounceSheets = buildBounceSheets(bounceDecks, bounceTexture, movingSegments);
+  for (const sheet of bounceSheets) {
+    const parent = sheet.movingIndex === null ? scene : movingGroups[sheet.movingIndex]!;
+    parent.add(setShadowRole(sheet.object, "receiver"));
+  }
+  const bouncePresses = new BouncePresses();
+
+  // Air columns (ADR 0075) are drawn, never `collidables`: like a
+  // Checkpoint's marker, the region is walked into, not collided with.
+  // `buildAirColumns` allocates nothing without a column to draw, and a
+  // zero-force Volume draws nothing. The disposal sweep frees what the
+  // columns share, since every shared piece hangs off one of them.
+  const airColumns = buildAirColumns(volumes, environmentPreset);
+  for (const column of airColumns.columns) scene.add(column);
+
+  // Every Asset part that turns on its own, a fan's rotor (ADR 0075), still
+  // or riding a Moving Segment. Found once: the Track's pieces never change
+  // under a Stage.
+  const spinningParts = findSpinningParts(scene);
 
   const checkpointMaterial = new THREE.MeshBasicMaterial({
     color: 0x4fd1c5,
@@ -248,8 +509,9 @@ export const createStage = ({
     opacity: 0.12,
     depthWrite: false,
   });
+  // Only a retired block's region gets a marker — a Gate is its own art (ADR 0068).
   for (const cp of checkpoints) {
-    scene.add(boxMesh(cp.trigger, checkpointMaterial));
+    if (cp.trigger) scene.add(boxMesh(cp.trigger, checkpointMaterial));
   }
 
   // Brighter and far more opaque than a Checkpoint's marker: a Checkpoint is
@@ -260,7 +522,7 @@ export const createStage = ({
   // Built only when there is something to draw with it: `disposeSceneGraph`
   // reaches materials through the meshes that use them, so a material
   // allocated for an empty list would never be released.
-  if (finishZones.length > 0) {
+  if (finishZones.some((zone) => zone.trigger)) {
     const finishZoneMaterial = new THREE.MeshBasicMaterial({
       color: 0xffd166,
       transparent: true,
@@ -268,44 +530,56 @@ export const createStage = ({
       depthWrite: false,
     });
     for (const zone of finishZones) {
-      scene.add(boxMesh(zone.trigger, finishZoneMaterial));
+      if (zone.trigger) scene.add(boxMesh(zone.trigger, finishZoneMaterial));
     }
   }
 
   const spinnerMaterial = new THREE.MeshStandardMaterial({ color: 0xf25c54, roughness: 0.5 });
   const spinnerMeshes = spinners.map((config) => {
-    const mesh = boxMesh(
-      { center: config.center, halfExtents: { x: config.armLength, y: config.halfHeight, z: config.armRadius } },
-      spinnerMaterial,
+    const mesh = setShadowRole(
+      boxMesh(
+        { center: config.center, halfExtents: { x: config.armLength, y: config.halfHeight, z: config.armRadius } },
+        spinnerMaterial,
+      ),
+      "both",
     );
     scene.add(mesh);
     collidables.push(mesh);
+    // A Spinner turns about the vertical, which never takes it lower.
+    stillTrack.push(mesh);
     return mesh;
   });
 
   const propMaterial = new THREE.MeshStandardMaterial({ color: 0xf2c14e, roughness: 0.6 });
   const propMeshes = props.map((config) => {
     if (config.shape.kind === "box") {
-      const mesh = boxMesh({ center: config.center, halfExtents: config.shape.halfExtents }, propMaterial);
+      const mesh = setShadowRole(boxMesh({ center: config.center, halfExtents: config.shape.halfExtents }, propMaterial), "both");
       scene.add(mesh);
       collidables.push(mesh);
       return mesh;
     }
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(config.shape.radius, 16, 12), propMaterial);
+    const mesh = setShadowRole(new THREE.Mesh(new THREE.SphereGeometry(config.shape.radius, 16, 12), propMaterial), "both");
     mesh.position.set(config.center.x, config.center.y, config.center.z);
     scene.add(mesh);
     collidables.push(mesh);
     return mesh;
   });
 
-  // A faint plane at the kill height so the void reads as a floor, not infinity.
-  const killPlane = new THREE.Mesh(
-    new THREE.PlaneGeometry(200, 200),
-    new THREE.MeshBasicMaterial({ color: 0x05070b, transparent: true, opacity: 0.6 }),
-  );
-  killPlane.rotation.x = -Math.PI / 2;
-  killPlane.position.y = killPlaneY;
-  scene.add(killPlane);
+  // Sky, cloud floor, fog, light and the environment map baked from the sky
+  // (ADR 0074), built after the Track so the cloud floor can stay under all of
+  // it: every still piece, and every Moving Segment wherever its Motion can
+  // carry it. Props are left out, since they fall. None of the Environment
+  // joins `collidables`, so the spring-arm camera never catches on the sky.
+  const environment = createEnvironment(scene, renderer, environmentPreset, {
+    killPlaneY,
+    lowestSegmentY: Math.min(
+      lowestDrawnY(stillTrack),
+      ...movingGroups.map((group, i) => lowestMovingY(localBounds(group), movingSegments[i]!)),
+    ),
+    fog: true,
+    detail: "full",
+    shadows: true,
+  });
 
   // `character` is the runtime placement handle: its position is the capsule's
   // ground-contact point (feet), its rotation.y is the cosmetic facing.
@@ -321,6 +595,13 @@ export const createStage = ({
   const modelScale = naturalHeight > 0 ? CHARACTER_VISUAL_HEIGHT / naturalHeight : 1;
   characterModel.scene.scale.setScalar(modelScale);
   characterModel.scene.position.y = -naturalFeetY * modelScale;
+  // …and which way it faces (ADR 0071). BLIP is authored looking down +Z while
+  // a Track runs toward −Z. Corrected here with the scale and the feet, on the
+  // child, so every remote clone inherits it and nothing downstream — the
+  // cosmetic facing on `character`, the ragdoll's bone mapping — has to know.
+  characterModel.scene.rotation.y = MODEL_YAW_OFFSET;
+  // Marked before any remote rig is cloned from it, so every clone casts too.
+  setShadowRole(characterModel.scene, "caster");
   wobblePivot.add(characterModel.scene);
   character.add(wobblePivot);
   character.position.y = CAPSULE_BOTTOM_OFFSET; // arbitrary until the first applyRenderState
@@ -332,17 +613,20 @@ export const createStage = ({
   // Built only after the local model setup above has already scaled/
   // repositioned `characterModel.scene` in place, so every clone inherits
   // that same transform (see `remoteCharacterPool.ts`'s own `buildRig`).
-  const remotePool = createRemoteCharacterPool(scene, characterModel);
-  const ragdollPose = createRagdollPose(character);
+  // Floating (ADR 0077): the same Volume the sim would pick for a point,
+  // asked of any Character the Stage draws.
+  const orderedVolumes = byVolumePriority(volumes);
+  const inUpdraft = (point: Vec3): boolean => {
+    const volume = volumeAt(orderedVolumes, point);
+    return volume !== undefined && holdsAloft(volume);
+  };
+  const remotePool = createRemoteCharacterPool(scene, characterModel, { floorBelow, inUpdraft });
 
   const mixer = new THREE.AnimationMixer(characterModel.scene);
-  // A knockdown is drawn from the physics ragdoll's own bones (M6.1 ticket
-  // 02, ADR 0048), retiring the "Death" clip's double duty — it used to play
-  // forward for Ragdoll and in reverse for GettingUp, purely because this rig
-  // has no get-up clip. The ragdoll was always simulating underneath for real;
-  // now it is what you see, so a Character falls the way it was actually hit.
+  // A knockdown plays the rig's own KO and GetUp clips (ADR 0076); the
+  // physics ragdoll underneath still decides where the body is.
   const actions = loadCharacterActions(mixer, characterModel.animations);
-  const { idle: idleAction, walk: walkAction } = actions;
+  const { idle: idleAction } = actions;
   let activeAction: THREE.AnimationAction | null = idleAction;
   activeAction?.play();
 
@@ -350,14 +634,40 @@ export const createStage = ({
   let visualState: CharacterMotionState = "Controlled";
   /** Drives the Punch/HitReact one-shot overlays (M6 ticket 03). */
   const hitReactionPlayer = new HitReactionPlayer();
-  /** Looked up once — the rig's own arm bones, for Grab's arm-reach pose (M6.1). */
-  const armReachPlayer = createArmReachPlayer(character);
+  /** The hold, the struggle, and a reach at nobody (ADR 0071). */
+  const grabAnimations = new GrabAnimations();
+  const jumpSequences = new JumpSequences();
+  const localJumpTimeline = jumpTimeline(actions);
+  /** The fall, the get-up, and the get-up's tail (ADR 0076). */
+  const knockdowns = new Knockdowns();
+  /** A Floating Character's arms, legs and crest (ADR 0077). */
+  const localFloatLimbs = new FloatLimbs(characterModel.scene);
+  /** Where the knocked-down rig stands, vertically (ADR 0076). */
+  const localOrigin = new KnockdownOrigin();
+  /** The replicated velocity, stashed by `applyRenderState`: the push a fall reads its direction from. */
+  let localVelocity: Vec3 = { x: 0, y: 0, z: 0 };
+  const modelQuaternion = new THREE.Quaternion();
 
   let wobbleState = initialWobbleState;
   // Seeded lazily on the first updateCharacterAnimation call (null here would
   // otherwise predate applyRenderState placing the Character at its real spawn
   // position, producing a one-frame phantom velocity spike at game start).
   let previousWobblePosition: Vec3 | null = null;
+
+  // Capsule centres the mud sheets ripple under (living mud, ADR 0067) —
+  // stashed by the two applies below (each frame re-stashes, so a stale
+  // frame never ripples) and read by `updateMotion`, which always runs
+  // after both in the game loop. Solo practice never calls
+  // `applyRemoteCharacters`, so the remotes simply stay empty there.
+  let localCentre: Vec3 | null = null;
+  let remoteCentres: Vec3[] = [];
+
+  // The local model's own tint (M9 ticket 15) — `setLocalSkin` re-tints only
+  // on change, since a re-tint clones every material.
+  let localSkin: number | null = null;
+
+  /** Where the shadow box centres (ADR 0074): the point the camera follows, set by `updateCamera`. */
+  let shadowFocus: Vec3 | undefined;
 
   const raycaster = new THREE.Raycaster();
   const castArm = (from: Vec3, to: Vec3): number | null => {
@@ -380,9 +690,17 @@ export const createStage = ({
 
   return {
     domElement: renderer.domElement,
-    render: () => speedLines.render(),
+    render: () => {
+      // The camera is already placed for this frame (`updateCamera` runs first).
+      const now = performance.now();
+      spinParts(spinningParts, now);
+      environment.update(camera, now, shadowFocus);
+      speedLines.render();
+    },
     applyRenderState: (state) => {
-      const { position, motionState } = state.character;
+      const { position, motionState, velocity } = state.character;
+      localCentre = position;
+      localVelocity = velocity;
       const fallingRagdoll = motionState === "Ragdoll";
       const gettingUp = motionState === "GettingUp";
       const enteringRagdoll = fallingRagdoll && visualState !== "Ragdoll";
@@ -390,39 +708,26 @@ export const createStage = ({
       // Covers both the normal GettingUp → Controlled completion AND a
       // reconciliation snapping straight from Ragdoll to Controlled (the
       // server rejected a knockdown the client mispredicted, skipping the
-      // GettingUp frame entirely) — either way the model needs the same
-      // hand-back to locomotion, or the Death clip is left stuck mid-pose
-      // with no `activeAction` to fade it out from (ticket 08 follow-up).
+      // GettingUp frame entirely): either way the next knockdown must stand
+      // up from wherever it happens, not from this one's floor.
       const wasDown = isDownMotionState(visualState);
       const leavingDown = !fallingRagdoll && !gettingUp && wasDown;
       visualState = motionState;
 
       if (fallingRagdoll || gettingUp) {
-        // The knockdown is the ragdoll's own, drawn from its eleven bones
-        // (M6.1 ticket 02, ADR 0048) — the same bones the simulation already
-        // replicates and interpolates, and the same ones GettingUp's own
-        // blend fills, so both phases are one path with no clip to wind
-        // forward or unwind. `position` is the ragdoll's pelvis while down;
-        // seating the rig near it first keeps `apply`'s own correction small.
-        if (enteringRagdoll || enteringGettingUp) {
-          activeAction?.stop();
-          activeAction = null;
-          hitReactionPlayer.stop(actions);
-        }
-        character.position.set(position.x, position.y - RAGDOLL_PELVIS_TO_FEET, position.z);
-        ragdollPose.apply(state.character.bones);
+        // The rig stands where the Character is (ADR 0076): `position` is the
+        // physics pelvis while down, so the origin is the floor under it, or
+        // where standing feet would be when the body is in the air. The pose
+        // is the knockdown's own clips, set in `updateCharacterAnimation`.
+        if (enteringRagdoll || enteringGettingUp) hitReactionPlayer.stop(actions);
+        const floorY = floorBelow(position.x, position.y, position.z);
+        const originY = localOrigin.place(floorY, knockdownFeetY(motionState, position.y), performance.now());
+        character.position.set(position.x, originY, position.z);
       } else if (leavingDown) {
-        // Back on its feet: drop the anchor so the next knockdown takes a
-        // fresh one, put the rig at the real capsule position, and start idle
-        // so the next `updateCharacterAnimation` has a live `activeAction` to
-        // cross-fade from instead of the null left behind on the way down.
-        ragdollPose.release();
+        // Back on its feet, at the real capsule position. The get-up's own
+        // clip is still the active action, so locomotion fades in from it.
+        localOrigin.reset();
         character.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
-        const resume = idleAction ?? walkAction;
-        if (resume) {
-          resume.reset().fadeIn(LOCOMOTION_CROSSFADE_SECONDS).play();
-          activeAction = resume;
-        }
       } else {
         // `position` is the capsule centre; the model rig is placed at the feet.
         character.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
@@ -439,15 +744,55 @@ export const createStage = ({
         mesh.updateMatrixWorld();
       }
     },
-    applyRemoteCharacters: (characters, deltaSeconds, localId, localPosition) =>
-      remotePool.apply(characters, deltaSeconds, localId, localPosition),
+    applyRemoteCharacters: (characters, deltaSeconds, localId, localPosition) => {
+      remoteCentres = Object.values(characters).map((rc) => rc.position);
+      remotePool.apply(characters, deltaSeconds, localId, localPosition);
+    },
+    setPlayerSkins: (skins) => {
+      remotePool.setSkins(skins);
+    },
+    setLocalSkin: (skin) => {
+      if (skin === localSkin) return;
+      localSkin = skin;
+      // Unknown (or a newer server's unlock this client has no hue for):
+      // the default skin, like every other Character without one. Base is
+      // `null`, not unknown — the restore below recolors nothing.
+      tintModel(character, tintHueForSkin(skin));
+    },
+    applyBounceSheets: (characters, nowMs) => {
+      if (bounceSheets.length === 0) return;
+      const presses = bouncePresses.update(characters, nowMs);
+      for (const sheet of bounceSheets) sheet.update(presses);
+    },
+    updateAirColumns: (nowMs) => {
+      if (airColumns.columns.length === 0) return;
+      airColumns.update(nowMs, camera.position);
+    },
+    applySpringSquash: (characters, nowMs) => {
+      if (springs.length === 0) return;
+      for (const [segmentIndex, scale] of springSquashes.update(characters, springs, nowMs)) {
+        const instance = springVisuals.get(segmentIndex);
+        // Multiplied into the Segment's own scale (ADR 0062), never replacing
+        // it: a 2x Spring squashes as a 2x Spring.
+        if (instance) instance.scale.set(base(instance) * scale.xz, base(instance) * scale.y, base(instance) * scale.xz);
+      }
+    },
     updateCamera: (target, yaw, pitch) => {
       const desired = springArmPosition(target, yaw, pitch, CAMERA_DISTANCE);
       const resolved = resolveArm(target, desired, castArm, CAMERA_MIN_DISTANCE, CAMERA_SKIN);
       camera.position.set(resolved.x, resolved.y, resolved.z);
       camera.lookAt(target.x, target.y, target.z);
+      shadowFocus = target;
     },
-    updateSpinners: (t) => {
+    updateMotion: (t) => {
+      poseMovingSegments(t);
+      // Marched in sim time (not wall clock), so belts pause with the sim —
+      // at true belt speed, so what you see is what carries you.
+      for (const strip of conveyorStrips) strip.update(t * TICK_DT);
+      // The mud breathes and ripples on the same clock — under every
+      // Character the applies stashed this frame, local one included.
+      const centres = localCentre ? [localCentre, ...remoteCentres] : remoteCentres;
+      for (const sheet of mudSheets) sheet.update(t * TICK_DT, centres);
       // Recomputed immediately, same reason as the Prop meshes above.
       for (let i = 0; i < spinnerMeshes.length; i += 1) {
         const config = spinners[i]!;
@@ -463,8 +808,10 @@ export const createStage = ({
       grounded,
       dashing,
       dashSpeed,
+      verticalVelocity,
       hitEpoch,
       hitReactEpoch,
+      grabEpoch,
       grabTargetPosition,
       facingLocked,
     ) => {
@@ -488,36 +835,121 @@ export const createStage = ({
         speedLines.setIntensity(0);
       }
 
-      // While down the bones own the pose outright (M6.1 ticket 02) — and the
-      // mixer must not run afterward. `applyRenderState` poses the rig earlier
-      // in the same frame than this method is called, so a mixer update here
-      // would write over it: three.js restores a bound property to its bind
-      // value the moment nothing weighted is driving it, which is exactly the
-      // state every action is in once the knockdown faded them out.
+      const moving = moveDirection.x !== 0 || moveDirection.z !== 0;
+      // The knockdown (ADR 0076), advanced every frame: this call is also what
+      // ends it. The get-up's last frames play on in Controlled only while
+      // the Player does nothing. A held Grab counts as doing something, in
+      // either role.
+      characterModel.scene.getWorldQuaternion(modelQuaternion);
+      const knockdownPose = knockdowns.advance(
+        "local",
+        {
+          motionState: visualState,
+          velocity: localVelocity,
+          modelQuaternion,
+          busy: moving || dashing || !grounded || facingLocked,
+          deltaSeconds,
+        },
+        actions,
+      );
+
+      // While down, the knockdown owns the whole body, and the model keeps
+      // the yaw it went down with.
       if (isDownMotionState(visualState)) {
         // Code review, M6.1: keeps the reaction baseline current even though
-        // the down-state pose (drawn by `applyRenderState`) owns the model
-        // and the mixer isn't advanced — see `observeBaseline`'s own doc.
+        // no reaction may play while down — see `observeBaseline`'s own doc.
         hitReactionPlayer.observeBaseline(hitEpoch, hitReactEpoch);
+        // Getting up is not the end of whatever jump it went down in.
+        jumpSequences.forget("local");
+        blendFloatStruggle(actions, 0, activeAction);
+        if (knockdownPose) {
+          activeAction = crossfadeLocomotion(knockdownPose.action, activeAction, KNOCKDOWN_CROSSFADE_SECONDS);
+          pinClipPose(knockdownPose);
+          mixer.update(deltaSeconds);
+        }
         return;
       }
+
+      const nowMs = performance.now();
+      // The jump, all five pieces end to end, paced to the real arc so every
+      // frame of it is seen (ADR 0071). Advanced before the reaction below may
+      // take the frame, so a Punch thrown in the air doesn't freeze the jump's
+      // clock underneath it.
+      const jumpPlayhead = localJumpTimeline
+        ? jumpSequences.advance(
+            "local",
+            {
+              grounded,
+              verticalVelocity,
+              height: character.position.y,
+              moving,
+              deltaSeconds,
+              nowMs,
+              inUpdraft: localCentre !== null && inUpdraft(localCentre),
+            },
+            localJumpTimeline,
+          )
+        : null;
+      // A Grab owns the whole body while it plays (ADR 0071): the authored
+      // hold in either role, and the reach of an attempt that caught nobody.
+      // The two roles come off the arguments this method already takes.
+      // `grabTargetPosition` is given exactly when this Character is holding
+      // someone (it no longer aims anything: the pair's facing is frozen for
+      // the hold), and `facingLocked` is true in either role, so locked
+      // without a target is the other end of the hold. Also asked before the
+      // reaction below, so an attempt made during one isn't lost.
+      const grabRole = grabRoleOf(
+        grabTargetPosition ? "them" : null,
+        facingLocked && !grabTargetPosition ? "them" : null,
+      );
+      const grabPose = grabAnimations.pose("local", grabRole, grabEpoch, grounded, nowMs, actions);
 
       // M6 ticket 03: Punch/HitReact take priority over ordinary locomotion
       // while playing — the caller (this method) never picks a locomotion
       // clip on a frame where a reaction is still in progress.
       const reacting = hitReactionPlayer.update(hitEpoch, hitReactEpoch, actions, LOCOMOTION_CROSSFADE_SECONDS, activeAction);
       if (reacting) {
+        knockdowns.forget("local");
         activeAction = reacting;
         mixer.update(deltaSeconds);
         return;
       }
 
-      const moving = moveDirection.x !== 0 || moveDirection.z !== 0;
+      // A grounded playhead is the landing, drawn over locomotion. It is
+      // suppressed while Stagger owns the body: a Respawn drops the Character
+      // at its Checkpoint, and the wobble is the whole point of that landing
+      // (ADR 0072).
+      const jumpPose =
+        jumpPlayhead === null || (grounded && visualState !== "Controlled") ? null : jumpPoseAt(jumpPlayhead, actions);
+      // The get-up's tail only survives a frame with nothing else to draw.
+      const posed = grabPose ?? jumpPose ?? knockdownPose;
       // A Dash with no direction held plays from lastMoveDir (see DashController),
       // so it must still select a locomotion clip even though moveDirection is zero.
-      const next = actionFor(selectLocomotion(moving, grounded, dashing), actions);
-      activeAction = crossfadeLocomotion(next, activeAction, LOCOMOTION_CROSSFADE_SECONDS);
+      // `visualState` is the replicated motion state this rig is drawing —
+      // `Stagger` is the Wobble (ADR 0072), whether it came from a light hit
+      // or from coming back off a Respawn.
+      const next =
+        posed?.action ?? actionFor(selectLocomotion(moving, grounded, dashing, visualState === "Stagger"), actions);
+      // Gaits blend into each other over a long fade. The jump's pieces get a
+      // short one: at gait length, a quarter-second piece never reaches full
+      // weight.
+      activeAction = crossfadeLocomotion(
+        next,
+        activeAction,
+        posed === null
+          ? LOCOMOTION_CROSSFADE_SECONDS
+          : posed === jumpPose
+            ? JUMP_CROSSFADE_SECONDS
+            : posed === knockdownPose
+              ? KNOCKDOWN_CROSSFADE_SECONDS
+              : LOCOMOTION_CROSSFADE_SECONDS,
+      );
+      if (posed) pinClipPose(posed);
+      // A Float's overlay (ADR 0077), only ever under the jump's own pose.
+      const floatWeight = posed !== null && posed === jumpPose ? jumpSequences.floatWeight("local") : 0;
+      blendFloatStruggle(actions, floatWeight, activeAction);
       mixer.update(deltaSeconds);
+      localFloatLimbs.apply(floatWeight, verticalVelocity, nowMs);
 
       character.rotation.y = nextModelYaw({
         currentYaw: character.rotation.y,
@@ -526,17 +958,6 @@ export const createStage = ({
         facingLocked,
       });
 
-      // M6.1: no Grab clip exists on the rig, so a hold's own "reaching" read
-      // comes from procedurally aiming the upper arms instead — after the
-      // turn above, so it reaches toward where the Character is actually
-      // facing this frame, not last frame's. Called every frame regardless
-      // of grab state — `armReachPlayer` eases the pose in and out itself.
-      armReachPlayer.update(
-        grabTargetPosition
-          ? new THREE.Vector3(grabTargetPosition.x, grabTargetPosition.y + ARM_REACH_TARGET_HEIGHT, grabTargetPosition.z)
-          : undefined,
-        deltaSeconds,
-      );
 
       if (visualState === "Controlled") {
         if (WOBBLE_ENABLED) {
@@ -572,6 +993,11 @@ export const createStage = ({
       // itself from `scene` as it's disposed, so the sweep never double-frees
       // a clone's already-released geometry/material.
       remotePool.dispose();
+      // Before the sweep too: the Environment frees its own resources and takes
+      // its root out of the scene, so nothing of it is freed twice. Its baked
+      // environment map hangs off `scene.environment`, where the sweep never
+      // looks, so only this frees it.
+      environment.dispose();
       disposeSceneGraph(scene);
       scene.clear();
       collidables.length = 0;

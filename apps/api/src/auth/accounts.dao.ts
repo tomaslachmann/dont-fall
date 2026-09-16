@@ -14,6 +14,8 @@ export interface Account {
   /** Lifetime match earnings — the economy's persisted half. */
   xp: number;
   coins: number;
+  /** The body's equipped skin id (M9 ticket 15) — a small int, default bean until picked. */
+  bodySkin: number;
 }
 
 /** The Discord identity a successful OAuth exchange resolves to (`discordAuth.ts`). */
@@ -40,7 +42,19 @@ const toAccount = (row: typeof accounts.$inferSelect): Account => ({
   avatarUrl: row.avatarUrl,
   xp: row.xp,
   coins: row.coins,
+  bodySkin: row.bodySkin,
 });
+
+/**
+ * Equips a body skin (M9 ticket 15) — the only writer of `bodySkin`, called
+ * with an already-validated id (the service owns the rule, shared owns its
+ * shape). Returns the updated Account, or `undefined` for an unknown id.
+ */
+export const setBodySkin = (db: ApiDb, accountId: string, bodySkin: number): Account | undefined => {
+  const updated = db.update(accounts).set({ bodySkin }).where(eq(accounts.id, accountId)).run();
+  if (updated.changes === 0) return undefined;
+  return getAccountById(db, accountId);
+};
 
 /** Lifetime match earnings for one Account — `undefined` for an unknown id. */
 export const getAccountEarnings = (db: ApiDb, accountId: string): { xp: number; coins: number } | undefined => {

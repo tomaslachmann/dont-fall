@@ -17,15 +17,19 @@ interface Props<T extends string> {
   /** brand = purple active chip, ink = dark active chip, plastic = white raised chip */
   tone?: 'brand' | 'ink' | 'plastic';
   size?: 'sm' | 'md';
-  /** stack the count under the label — for counted tabs in narrow columns */
-  layout?: 'row' | 'stack';
+  /**
+   * row    — equal columns, labels clip when they don't fit
+   * stack  — the count drops under the label, for counted tabs in narrow columns
+   * scroll — every label at full width, the row scrolls sideways instead of clipping
+   */
+  layout?: 'row' | 'stack' | 'scroll';
 }
 
 export function SegmentedControl<T extends string>({
   items, value, onChange, shape = 'plate', tone = 'brand', size = 'md', layout = 'row',
 }: Props<T>) {
   return (
-    <div className={[css.root, css[shape], size === 'sm' ? css.sm : undefined, layout === 'stack' ? css.stack : undefined].filter(Boolean).join(' ')} role="tablist">
+    <div className={[css.root, css[shape], size === 'sm' ? css.sm : undefined, layout === 'row' ? undefined : css[layout]].filter(Boolean).join(' ')} role="tablist">
       {items.map((it) => {
         const active = it.value === value;
         return (

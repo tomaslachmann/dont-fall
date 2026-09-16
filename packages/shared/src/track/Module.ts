@@ -1,13 +1,13 @@
 import type { Box } from "../math/box.js";
 import type { Vec3 } from "../math/vec3.js";
-import type { Checkpoint } from "../simulation/Checkpoint.js";
-import type { FinishZone } from "../simulation/FinishZone.js";
+import type { TriggerCheckpoint } from "../simulation/Checkpoint.js";
 import type { LaunchPadConfig } from "../simulation/LaunchPad.js";
 import type { PropConfig } from "../simulation/Prop.js";
-import type { SpeedPadConfig } from "../simulation/SpeedPad.js";
 import type { SpinnerConfig } from "../simulation/Spinner.js";
 import type { VolumeConfig } from "../simulation/Volume.js";
-import type { ValidatedAssetMesh } from "./asset.js";
+import type { ValidatedAssetMesh, ValidatedSolidPart } from "./asset.js";
+import type { GateDef } from "./Gate.js";
+import type { LaunchDef } from "./Launch.js";
 import type { SurfaceId } from "./Surface.js";
 
 /**
@@ -85,10 +85,10 @@ export interface Module {
    * `attachAssetGeometry` (never shipped inside `M1_MODULES`), so the static
    * registry never holds bytes.
    */
-  asset?: { meshes: ValidatedAssetMesh[] };
+  asset?: { meshes: ValidatedAssetMesh[]; solid?: ValidatedSolidPart[] };
   props?: PropConfig[];
   spinners?: SpinnerConfig[];
-  checkpoint?: Checkpoint;
+  checkpoint?: TriggerCheckpoint;
   /**
    * An optional Finish Zone (M4 ticket 02, ADR 0039) — singular like
    * `checkpoint`, because a Module is one authored piece and "the finish" is
@@ -96,14 +96,12 @@ export interface Module {
    * Track, but nothing here requires it: "finish" is wherever the trigger is.
    * Every Module authored before M4 simply has none, and resolves unchanged.
    */
-  finishZone?: FinishZone;
-  /** Speed/slow pads this Module places (M3.7 ticket 01) — zero or more, unlike the singular `checkpoint`. */
-  speedPads?: SpeedPadConfig[];
-  /** Launch pads this Module places (M3.7 ticket 02) — zero or more, same shape as `speedPads`. */
+  finishZone?: { trigger: Box };
+  /** Launch pads this Module places (M3.7 ticket 02) — zero or more, same shape as `volumes`. */
   launchPads?: LaunchPadConfig[];
   /**
    * Volumes this Module places (M3.7 ticket 04, ADR 0036) — zero or more,
-   * same shape as `speedPads`/`launchPads`. A Volume is its own entity kind,
+   * same shape as `launchPads`. A Volume is its own entity kind,
    * never a collider wearing a special Surface (ADR 0036) — it carries no
    * `statics` geometry of its own, just the region and the force.
    */
@@ -117,16 +115,42 @@ export interface Module {
    * Additive and optional, exactly like ADR 0034's `pitch`/`roll`.
    */
   surface?: SurfaceId;
+  /**
+   * What touching this Module's collision does beyond the ordinary physics
+   * (CONTEXT.md: Spiked, ADR 0061). Authored on an Asset's def, never guessed
+   * from a name at runtime; a Module without one is harmless to touch.
+   */
+  hazard?: Hazard;
+  /**
+   * This Module is a Spring (CONTEXT.md: Spring, ADR 0069) — its trigger and
+   * its default throw, from its Asset's def. Unlike `launchPads`, whose vector
+   * is fixed where it was authored, a Spring's height is the placed Segment's
+   * to override (`Segment.launch`).
+   */
+  launch?: LaunchDef;
+  /**
+   * The opening a Character passes through and what passing does (CONTEXT.md:
+   * Gate, ADR 0068) — on Gate Assets only, from their def. A finish sign's
+   * always Qualifies; a hoop's or an arch's counts only on a Segment switched
+   * on as a Checkpoint.
+   */
+  gate?: GateDef;
 }
+
+/**
+ * `"spiked"`: any Character contact is a knockdown, whatever the speed —
+ * standing on it, running into it, or being moved into it (ADR 0061).
+ */
+export type Hazard = "spiked";
 
 /**
  * Whether `module` has a Socket named `socketId` — the question
  * {@link findSocket} answers by throwing.
  *
  * Not every Module has Sockets. One meant to be dropped on its own by free
- * placement (ADR 0034) — the Survival arena is the first — carries none at
- * all, and nothing in ADR 0031's model requires it to: a Socket is a
- * connection point, and a piece nothing connects to has no connection points.
+ * placement (ADR 0034) — every converted asset — carries none at all, and
+ * nothing in ADR 0031's model requires it to: a Socket is a connection
+ * point, and a piece nothing connects to has no connection points.
  * Anything that chains Modules has to be able to ask this before assuming it
  * can (`chainTrack`, and the builder's own re-chaining).
  */

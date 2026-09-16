@@ -55,6 +55,8 @@ export class CharacterStateMachine {
   private timer = 0; // ticks spent in the current state
   private pendingImpact = 0; // strongest Impact magnitude queued since the last tick
   private forcedRagdoll = false;
+  private pendingWobbleTicks = 0; // a Stagger queued by something other than an Impact
+  private staggerTicks = STAGGER_TICKS; // how long the Stagger currently running lasts
 
   get state(): CharacterMotionState {
     return this.motionState;
@@ -73,9 +75,22 @@ export class CharacterStateMachine {
     this.pendingImpact = Math.max(this.pendingImpact, magnitude);
   }
 
-  /** Force a Ragdoll on the next {@link tick}, whatever the current state (used by Fall). */
+  /** Force a Ragdoll on the next {@link tick}, whatever the current state. */
   forceRagdoll(): void {
     this.forcedRagdoll = true;
+  }
+
+  /**
+   * Queue a Stagger of `ticks` for the next {@link tick} — a Wobble that no
+   * Impact caused (ADR 0072: what a Character comes back from a Respawn with).
+   *
+   * Unlike {@link impact} this carries its own duration, because the reason
+   * sets the length: a light hit wobbles for {@link STAGGER_TICKS}, a Respawn
+   * for longer. A hard Impact queued for the same tick still wins — being
+   * knocked down outranks being unsteady.
+   */
+  wobble(ticks: number): void {
+    this.pendingWobbleTicks = Math.max(this.pendingWobbleTicks, ticks);
   }
 
   reset(): void {
@@ -83,6 +98,8 @@ export class CharacterStateMachine {
     this.timer = 0;
     this.pendingImpact = 0;
     this.forcedRagdoll = false;
+    this.pendingWobbleTicks = 0;
+    this.staggerTicks = STAGGER_TICKS;
   }
 
   /**
@@ -97,6 +114,13 @@ export class CharacterStateMachine {
     this.timer = timer;
     this.pendingImpact = 0;
     this.forcedRagdoll = false;
+    this.pendingWobbleTicks = 0;
+    // A correction says which state, never how long a Stagger it snapped into
+    // was meant to run (the wire carries `motionState`, not this machine's
+    // timer). The hit-length is the safe assumption: it is the shorter of the
+    // two, so the worst a mis-guess can do is end a respawn wobble early
+    // rather than strand a Character slowed for two seconds it never earned.
+    this.staggerTicks = STAGGER_TICKS;
   }
 
   /**
@@ -116,8 +140,10 @@ export class CharacterStateMachine {
   tick(ragdollSettled: boolean, tooSteepToWalk = false): CharacterMotionState {
     const impact = this.pendingImpact;
     const forced = this.forcedRagdoll;
+    const queuedWobble = this.pendingWobbleTicks;
     this.pendingImpact = 0;
     this.forcedRagdoll = false;
+    this.pendingWobbleTicks = 0;
 
     const hardHit = forced || impact >= IMPACT_RAGDOLL_MIN;
     // A fresh hard hit downs a Controlled, Staggering or Sliding Character.
@@ -133,13 +159,26 @@ export class CharacterStateMachine {
       return this.motionState;
     }
 
+    // A queued Wobble lands from anywhere a hard hit would have (ADR 0072) —
+    // a Character that respawns mid-Stagger or mid-Slide comes back wobbling
+    // like any other, and it restarts the clock rather than inheriting
+    // whatever was left of the old one.
+    if (queuedWobble > 0 && !isDownMotionState(this.motionState)) {
+      this.enter("Stagger");
+      this.staggerTicks = queuedWobble;
+      return this.motionState;
+    }
+
     switch (this.motionState) {
       case "Controlled":
         // Slope condition takes priority over a mere Stagger-tier impact —
         // if both apply the same tick, sliding away from underfoot is more
         // urgent than a wobble in place.
         if (tooSteepToWalk) this.enter("Sliding");
-        else if (impact >= IMPACT_STAGGER_MIN) this.enter("Stagger");
+        else if (impact >= IMPACT_STAGGER_MIN) {
+          this.enter("Stagger");
+          this.staggerTicks = STAGGER_TICKS;
+        }
         break;
       case "Sliding":
         // Condition-held (CONTEXT.md), not timed — leaves the instant the
@@ -149,7 +188,7 @@ export class CharacterStateMachine {
         break;
       case "Stagger":
         this.timer += 1;
-        if (this.timer >= STAGGER_TICKS) this.enter("Controlled");
+        if (this.timer >= this.staggerTicks) this.enter("Controlled");
         break;
       case "Ragdoll":
         this.timer += 1;

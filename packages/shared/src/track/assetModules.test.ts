@@ -3,17 +3,22 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Module } from "./Module.js";
-import { chainTrack, resolveTrack, segmentOrientation, trackSpawn, type Segment, type Track } from "./Track.js";
+import { chainTrack, resolveTrack, type Segment, type Track } from "./Track.js";
 import {
-  ASSET_DEMO_TRACK,
-  ASSET_DEMO_TRACK_ID,
   ASSET_MODULE_DEFS,
+  ASSET_PLACEMENT_MODULES,
   assetFileName,
   attachAssetGeometry,
   loadAssetLibrary,
+  type AssetModuleDef,
 } from "./assetModules.js";
-import { addVec3, rotateVec3ByQuat, type Vec3 } from "../math/vec3.js";
 import { loadAssetModule, readAssetModel } from "./asset.js";
+import { invalidLaunchReason, launchDefFor } from "./Launch.js";
+import { pointInBox } from "../math/box.js";
+import type { VolumeConfig } from "../simulation/Volume.js";
+import { KAYKIT_MODULE_DEFS } from "./kaykitAssetDefs.js";
+import { TRAP_MODULE_DEFS } from "./trapAssetDefs.js";
+import { FAN_MODULE_DEFS } from "./fanAssetDefs.js";
 import { M1_MODULES } from "./modules.js";
 import { CAPSULE_BOTTOM_OFFSET, TICK_RATE_HZ } from "../tuning.js";
 import { DEFAULT_CHARACTER_ID, RapierSimulation, initPhysics } from "../simulation/RapierSimulation.js";
@@ -69,6 +74,21 @@ describe("asset module definitions", () => {
     for (const def of ASSET_MODULE_DEFS) expect(assetFileName(def.id)).toBe(`${def.id}.glb`);
   });
 
+  it("seats every asset on the pivot convention: X/Z centred, resting on y = 0", () => {
+    // The file's origin is the Segment's position — the builder gizmo and
+    // every rotation sit there. A piece left where its pack's shared scene
+    // put it drew metres away from its own handle.
+    // Footprints are rounded to 1 mm, so centre and half-extent can each be
+    // off by half of that.
+    const MM = 0.0011;
+    for (const def of ASSET_MODULE_DEFS) {
+      const { center, halfExtents } = def.footprint.bounds;
+      expect(Math.abs(center.x), `${def.id} x`).toBeLessThanOrEqual(MM);
+      expect(Math.abs(center.z), `${def.id} z`).toBeLessThanOrEqual(MM);
+      expect(Math.abs(center.y - halfExtents.y), `${def.id} base`).toBeLessThanOrEqual(MM);
+    }
+  });
+
   it("measures every footprint and socket off its real file — nothing fits by accident", () => {
     for (const def of ASSET_MODULE_DEFS) {
       // Throws when the authored numbers drift from the file: the footprint
@@ -102,55 +122,129 @@ describe("asset module definitions", () => {
     }
   });
 
-  it("documents the authored numbers", () => {
+  it("marks exactly the spring Assets as Springs, with a trigger derived from each one's own footprint", () => {
+    const springs = ASSET_MODULE_DEFS.filter((def) => def.launch !== undefined).map((def) => def.id);
+    expect(springs.sort()).toEqual([
+      "kaykit_spring",
+      "kaykit_spring_pad_blue",
+      "kaykit_spring_pad_green",
+      "kaykit_spring_pad_red",
+      "kaykit_spring_pad_yellow",
+      "trap_platformspringblue",
+      "trap_platformspringgreen",
+      "trap_platformspringred",
+    ]);
+
+    for (const def of ASSET_MODULE_DEFS) {
+      if (!def.launch) continue;
+      // Derived, never hand-typed: a re-measured Asset moves its trigger with
+      // it, and a re-conversion emits exactly this.
+      expect(def.launch, def.id).toEqual(launchDefFor(def.footprint.bounds, def.launch.height));
+      expect(invalidLaunchReason({ height: def.launch.height }), def.id).toBeUndefined();
+
+      // The box has to hold a standing Character's capsule *centre* — what the
+      // trigger actually tests — not merely sit somewhere above the deck.
+      const deckTop = def.footprint.bounds.center.y + def.footprint.bounds.halfExtents.y;
+      const standingCentre = deckTop + CAPSULE_BOTTOM_OFFSET;
+      expect(pointInBox({ x: 0, y: standingCentre, z: 0 }, def.launch.trigger), def.id).toBe(true);
+      expect(def.launch.trigger.center.y - def.launch.trigger.halfExtents.y, def.id).toBeLessThan(standingCentre);
+
+      // …and it must NOT reach up into the air above the piece: a Character
+      // whose feet are a capsule's length clear of the deck is still falling
+      // toward it, and launching there reads as bouncing off nothing (found
+      // live, 2026-09-15).
+      const clearOfTheDeck = deckTop + CAPSULE_BOTTOM_OFFSET * 2;
+      expect(pointInBox({ x: 0, y: clearOfTheDeck, z: 0 }, def.launch.trigger), def.id).toBe(false);
+    }
+  });
+
+  it("lists every Spring in the Spring category, and nothing else in it", () => {
+    // Both directions: a Spring filed under Platform is lost in 400 platforms,
+    // and a Platform filed under Spring promises a launch it hasn't got.
+    for (const def of ASSET_MODULE_DEFS) {
+      expect(def.category === "spring", def.id).toBe(def.launch !== undefined);
+    }
+    expect(ASSET_MODULE_DEFS.filter((def) => def.category === "spring")).toHaveLength(8);
+  });
+
+  it("lists every Fan in the Fan category, and nothing else in it (ADR 0075)", () => {
+    // Both directions, like the Springs above: a Fan filed under Platform
+    // hides its field, and a Platform filed under Fan promises air it hasn't got.
+    for (const def of ASSET_MODULE_DEFS) {
+      expect(def.category === "fan", def.id).toBe(def.volumes !== undefined);
+    }
+    expect(ASSET_MODULE_DEFS.filter((def) => def.category === "fan")).toHaveLength(1);
+  });
+
+  it("documents the authored numbers of the one hand-promoted def", () => {
+    // The only hand-written def left: everything else is generated off the
+    // converted bytes (kaykitAssetDefs/trapAssetDefs headers say how). Top
+    // face at the measured y = 0.5 — KayKit pieces sit ON y = 0, so socket
+    // height reads the top, never the half-extent.
     const byId = Object.fromEntries(ASSET_MODULE_DEFS.map((def) => [def.id, def]));
-    expect(byId["platform_straight"]!.footprint.bounds).toEqual({
-      center: { x: 0, y: 0, z: 0 },
-      halfExtents: { x: 2, y: 0.5, z: 2 },
+    expect(byId["kaykit_floor_wood_2x2"]!.footprint.bounds).toEqual({
+      center: { x: 0, y: 0.25, z: 0 },
+      halfExtents: { x: 1, y: 0.25, z: 1 },
     });
-    expect(byId["platform_straight"]!.sockets).toEqual([
-      { id: "entry", type: "floor", position: { x: 0, y: 0.5, z: 2 }, yaw: Math.PI },
-      { id: "exit", type: "floor", position: { x: 0, y: 0.5, z: -2 }, yaw: 0 },
-    ]);
-    // Descends in the travel direction: the ridge (+2) is the entry, the toe
-    // (-2) the exit. A 45° climb is unclimbable (Sliding, ADR 0037), so the
-    // reverse seating would be a module nobody can go up.
-    expect(byId["ramp_45"]!.sockets).toEqual([
-      { id: "entry", type: "floor", position: { x: 0, y: 2, z: 2 }, yaw: Math.PI },
-      { id: "exit", type: "floor", position: { x: 0, y: -2, z: -2 }, yaw: 0 },
-    ]);
-    // Descends in the travel direction (user decision — 0.375 risers are
-    // unclimbable with autostep off): entry high, exit low, and the exit at
-    // the TRUE low tread (-0.25), not the side-wall tops.
-    expect(byId["stairs_4step"]!.sockets).toEqual([
-      { id: "entry", type: "floor", position: { x: 0, y: 0.875, z: -2 }, yaw: 0 },
-      { id: "exit", type: "floor", position: { x: 0, y: -0.25, z: 2 }, yaw: Math.PI },
-    ]);
-    // A true L since ticket 04's remodel (measured, not assumed): the exit
-    // turns 90° onto the north end (faces +Z) instead of continuing straight.
-    expect(byId["corner_lshape"]!.footprint.bounds).toEqual({
-      center: { x: 2, y: 0, z: 2 },
-      halfExtents: { x: 4, y: 0.5, z: 4 },
-    });
-    expect(byId["corner_lshape"]!.sockets).toEqual([
-      { id: "entry", type: "floor", position: { x: -2, y: 0.5, z: 0 }, yaw: Math.PI / 2 },
-      { id: "exit", type: "floor", position: { x: 4, y: 0.5, z: 6 }, yaw: Math.PI },
+    expect(byId["kaykit_floor_wood_2x2"]!.sockets).toEqual([
+      { id: "entry", type: "floor", position: { x: 0, y: 0.5, z: 1 }, yaw: Math.PI },
+      { id: "exit", type: "floor", position: { x: 0, y: 0.5, z: -1 }, yaw: 0 },
     ]);
   });
 });
 
 describe("attachAssetGeometry", () => {
   it("shapes a registry entry: id, empty statics, geometry, sockets, footprint", () => {
-    const def = ASSET_MODULE_DEFS.find((d) => d.id === "platform_straight")!;
+    const def = ASSET_MODULE_DEFS.find((d) => d.id === "kaykit_floor_wood_2x2")!;
     const module = attachAssetGeometry(def, loadAssetModule(realBytes(def.id), { footprint: def.footprint.bounds }));
 
-    expect(module.id).toBe("platform_straight");
+    expect(module.id).toBe("kaykit_floor_wood_2x2");
     expect(module.statics).toEqual([]);
     expect(module.asset!.meshes).toHaveLength(1);
     expect(module.asset!.meshes[0]!.positions.length).toBeGreaterThan(0);
     expect(module.asset!.meshes[0]!.surface).toBe("default");
     expect(module.sockets).toBe(def.sockets);
     expect(module.footprint).toBe(def.footprint);
+  });
+});
+
+describe("asset Volumes (ADR 0075)", () => {
+  // The procedural `updraft` Module's own numbers — the first fan carries
+  // exactly this field, only bolted to an asset instead of a grey deck.
+  const FAN_VOLUME: VolumeConfig = {
+    bounds: { center: { x: 0, y: 3, z: 0 }, halfExtents: { x: 1.5, y: 3, z: 2 } },
+    force: { x: 0, y: 40, z: 0 },
+    maxInducedSpeed: 10,
+    priority: 1,
+  };
+
+  it("attachAssetGeometry carries a def's volumes onto its Module, like launch", () => {
+    const base = ASSET_MODULE_DEFS.find((d) => d.id === "kaykit_floor_wood_2x2")!;
+    const def: AssetModuleDef = { ...base, volumes: [FAN_VOLUME] };
+    const module = attachAssetGeometry(def, loadAssetModule(realBytes(def.id), { footprint: def.footprint.bounds }));
+    expect(module.volumes).toEqual([FAN_VOLUME]);
+  });
+
+  it("a def without volumes carries none — absent, like launch, never an empty array", () => {
+    const def = ASSET_MODULE_DEFS.find((d) => d.id === "kaykit_floor_wood_2x2")!;
+    const module = attachAssetGeometry(def, loadAssetModule(realBytes(def.id), { footprint: def.footprint.bounds }));
+    expect(module.volumes).toBeUndefined();
+    expect(ASSET_PLACEMENT_MODULES[def.id]!.volumes).toBeUndefined();
+  });
+
+  it("an asset-carried volume resolves into world space like a procedural one's", () => {
+    const base = ASSET_MODULE_DEFS.find((d) => d.id === "kaykit_floor_wood_2x2")!;
+    const library: Record<string, Module> = {
+      [base.id]: attachAssetGeometry(
+        { ...base, volumes: [FAN_VOLUME] },
+        loadAssetModule(realBytes(base.id), { footprint: base.footprint.bounds }),
+      ),
+    };
+    const track: Track = [{ moduleId: base.id, position: { x: 10, y: 0, z: 0 }, rotation: 0 }];
+    const resolved = resolveTrack(library, track);
+    expect(resolved.volumes).toHaveLength(1);
+    expect(resolved.volumes[0]!.bounds.center).toEqual({ x: 10, y: 3, z: 0 });
+    expect(resolved.volumes[0]!.force).toEqual({ x: 0, y: 40, z: 0 });
   });
 });
 
@@ -168,20 +262,20 @@ describe("loadAssetLibrary", () => {
 describe("resolveTrack with asset Modules", () => {
   it("emits world-space trimeshes with resolved surfaces, and no box statics", async () => {
     const library = await assetLibrary();
-    const resolved = resolveTrack(library, [{ moduleId: "platform_straight", position: { x: 10, y: 0, z: 0 }, rotation: 0 }]);
+    const resolved = resolveTrack(library, [{ moduleId: "kaykit_floor_wood_2x2", position: { x: 10, y: 0, z: 0 }, rotation: 0 }]);
 
     expect(resolved.statics).toEqual([]);
     expect(resolved.staticTrimeshes).toHaveLength(1);
     expect(resolved.staticTrimeshes[0]!.surface).toBe("default");
     // Translated into the world, not left in Module space.
     const xs = resolved.staticTrimeshes[0]!.vertices.map((v) => v.x);
-    expect(Math.min(...xs)).toBeCloseTo(8, 5);
-    expect(Math.max(...xs)).toBeCloseTo(12, 5);
+    expect(Math.min(...xs)).toBeCloseTo(9, 5);
+    expect(Math.max(...xs)).toBeCloseTo(11, 5);
   });
 
   it("refuses a Module carrying both statics and asset geometry", async () => {
     const library = await assetLibrary();
-    const both = { ...library["platform_straight"]!, statics: [{ center: { x: 0, y: 0, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } }] };
+    const both = { ...library["kaykit_floor_wood_2x2"]!, statics: [{ center: { x: 0, y: 0, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } }] };
 
     expect(() => resolveTrack({ ...library, both: both as Module }, [{ moduleId: "both", position: { x: 0, y: 0, z: 0 }, rotation: 0 }])).toThrow(
       /both/,
@@ -190,8 +284,8 @@ describe("resolveTrack with asset Modules", () => {
 });
 
 describe("asset physics (ticket 02 Done-when)", () => {
-  it("a Character dropped onto platform_straight lands at the file's height", async () => {
-    const sim = clientWorld(await assetLibrary(), [{ moduleId: "platform_straight", position: { x: 0, y: 0, z: 0 }, rotation: 0 }], {
+  it("a Character dropped onto the promoted floor lands at the file's height", async () => {
+    const sim = clientWorld(await assetLibrary(), [{ moduleId: "kaykit_floor_wood_2x2", position: { x: 0, y: 0, z: 0 }, rotation: 0 }], {
       x: 0,
       y: 3,
       z: 0,
@@ -204,58 +298,9 @@ describe("asset physics (ticket 02 Done-when)", () => {
     sim.dispose();
   });
 
-  it("ramp_45 carries a walker down without skipping, onto a chained catcher", async () => {
-    const library = await assetLibrary();
-    // Walked on, not dropped on: the approach deck meets the ridge flush, so
-    // no entry impact pollutes the descent. The toe lands exactly on the
-    // catcher's deck the same way.
-    const track = chainTrack(["platform_straight", "ramp_45", "platform_straight"], library, { x: 0, y: 0, z: 0 });
-    const sim = clientWorld(library, track, { x: 0, y: 2, z: 1.5 });
-    let grounded = 0;
-    let total = 0;
-    for (let n = 0; n < Math.round(10 * TICK_RATE_HZ); n += 1) {
-      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
-      const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-      total += 1;
-      if (c.grounded) grounded += 1;
-      if (c.position.z < -7 && c.grounded) break;
-    }
-
-    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-    expect(c.fallCount).toBe(0);
-    expect(c.position.z).toBeLessThan(-7);
-    expect(c.position.y).toBeCloseTo(-3.5 + CAPSULE_BOTTOM_OFFSET, 1);
-    expect(grounded / total).toBeGreaterThan(0.7);
-    sim.dispose();
-  });
-
-  it("stairs_4step descends step by step with no jumping", async () => {
-    // Chained, so the entry meets the previous deck flush and the exit lands
-    // on a catcher: the whole descent is walked, nothing dropped onto.
-    const library = await assetLibrary();
-    const track = chainTrack(["platform_straight", "stairs_4step", "platform_straight"], library, { x: 0, y: 0, z: 0 });
-    const sim = clientWorld(library, track, { x: 0, y: 2, z: 1.5 });
-    let grounded = 0;
-    let total = 0;
-    for (let n = 0; n < Math.round(12 * TICK_RATE_HZ); n += 1) {
-      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
-      const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-      total += 1;
-      if (c.grounded) grounded += 1;
-      if (c.position.z < -7 && c.grounded) break;
-    }
-
-    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-    expect(c.fallCount).toBe(0);
-    expect(c.position.z).toBeLessThan(-7);
-    expect(c.position.y).toBeCloseTo(-0.625 + CAPSULE_BOTTOM_OFFSET, 1);
-    expect(grounded / total).toBeGreaterThan(0.7);
-    sim.dispose();
-  });
-
   it("a chained platform seam walks through with no snag", async () => {
     const library = await assetLibrary();
-    const track = chainTrack(["platform_straight", "platform_straight"], library, { x: 0, y: 0, z: 0 });
+    const track = chainTrack(["kaykit_floor_wood_2x2", "kaykit_floor_wood_2x2"], library, { x: 0, y: 0, z: 0 });
     const sim = clientWorld(library, track, { x: 0, y: 2, z: 1.5 });
     for (let n = 0; n < Math.round(10 * TICK_RATE_HZ); n += 1) {
       sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
@@ -271,162 +316,26 @@ describe("asset physics (ticket 02 Done-when)", () => {
     sim.dispose();
   });
 
-  it("corner_lshape turns a walker 90°: in the west arm, out the north arm", async () => {
-    // A true L since ticket 04's remodel — walking straight along the old
-    // slab axis would stride off the west-east arm's end (x = 6 is only deck
-    // for z in [-2, 2], and the exit sits at z = 6). Turn at the elbow like
-    // a player would.
-    const sim = clientWorld(await assetLibrary(), [{ moduleId: "corner_lshape", position: { x: 0, y: 0, z: 0 }, rotation: 0 }], {
-      x: -1,
-      y: 2,
-      z: 0,
-    });
-    const NORTH_OF_CORNER = { ...IDLE_INPUTS, moveDirection: { x: 0, y: 0, z: 1 } };
-    for (let n = 0; n < Math.round(20 * TICK_RATE_HZ); n += 1) {
-      const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-      sim.tick({ [DEFAULT_CHARACTER_ID]: c.position.x < 3.5 ? EAST : NORTH_OF_CORNER });
-      const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-      if (after.position.z > 5) break;
-    }
-
-    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-    expect(c.fallCount).toBe(0);
-    expect(c.position.z).toBeGreaterThan(5);
-    expect(c.position.y).toBeCloseTo(0.5 + CAPSULE_BOTTOM_OFFSET, 1);
-    expect(c.grounded).toBe(true);
-    sim.dispose();
-  });
-
-  it("the M9 deck set chains flush — three different lengths, one seamless walk", async () => {
-    const library = await assetLibrary();
-    const track = chainTrack(["straight_1x1", "straight_1x2", "straight_1x4"], library, { x: 0, y: 0, z: 0 });
-    const sim = clientWorld(library, track, { x: 0, y: 1.5, z: 0.5 });
-    for (let n = 0; n < Math.round(20 * TICK_RATE_HZ); n += 1) {
-      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
-      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z < -12) break;
-    }
-
-    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-    expect(c.fallCount).toBe(0);
-    // Past both seams and well into the 1x4: 2 + 4 + most of 8.
-    expect(c.position.z).toBeLessThan(-12);
-    expect(c.grounded).toBe(true);
-    // Still on the same deck it started on — the M9 set's top face, y = 0.25.
-    expect(c.position.y).toBeCloseTo(0.25 + CAPSULE_BOTTOM_OFFSET, 1);
-    sim.dispose();
-  });
-
-  it("ramp_up actually climbs in the travel direction — unlike M8's ramp_45", async () => {
-    // The whole reason "up" is in the name. M8's 45° wedge had to be seated
-    // descending (unclimbable, ADR 0037); this one rises 0.5 over 4 (~7°),
-    // so walking it gains height rather than sliding back.
-    const library = await assetLibrary();
-    const track = chainTrack(["straight_1x2", "ramp_up_1x2", "straight_1x2"], library, { x: 0, y: 0, z: 0 });
-    const sim = clientWorld(library, track, { x: 0, y: 1.5, z: 1.5 });
-    for (let n = 0; n < Math.round(20 * TICK_RATE_HZ); n += 1) {
-      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
-      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z < -9) break;
-    }
-
-    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-    expect(c.fallCount).toBe(0);
-    expect(c.position.z).toBeLessThan(-9);
-    expect(c.grounded).toBe(true);
-    // Half a unit higher than the deck it set off from — it climbed.
-    expect(c.position.y).toBeCloseTo(0.75 + CAPSULE_BOTTOM_OFFSET, 1);
-    sim.dispose();
-  });
-
-  it("ramp_down loses exactly what ramp_up gains — the pair cancels", async () => {
-    const library = await assetLibrary();
-    const track = chainTrack(["straight_1x2", "ramp_up_1x2", "ramp_down_1x2", "straight_1x2"], library, { x: 0, y: 0, z: 0 });
-    const sim = clientWorld(library, track, { x: 0, y: 1.5, z: 1.5 });
-    for (let n = 0; n < Math.round(25 * TICK_RATE_HZ); n += 1) {
-      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
-      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.z < -13) break;
-    }
-
-    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-    expect(c.fallCount).toBe(0);
-    expect(c.position.z).toBeLessThan(-13);
-    expect(c.position.y).toBeCloseTo(0.25 + CAPSULE_BOTTOM_OFFSET, 1);
-    sim.dispose();
-  });
-
-  it("corner_90_r1 seats the next Segment heading +X — a right-hand turn", async () => {
-    // The Socket maths, checked where it is cheapest to read: chaining a
-    // straight after the corner must put that straight off to the +X side,
-    // rotated a quarter turn, rather than continuing down -Z.
-    const library = await assetLibrary();
-    const track = chainTrack(["corner_90_r1", "straight_1x2"], library, { x: 0, y: 0, z: 0 });
-    const after = track[1]!;
-
-    expect(after.position.x).toBeGreaterThan(3);
-    expect(Math.abs(after.position.z)).toBeLessThan(1e-6);
-    // Quarter turn, in whichever direction the convention spells it.
-    expect(Math.abs(Math.sin(after.rotation))).toBeCloseTo(1, 5);
-  });
-
-  it("a walker crosses corner_90_r1 and leaves on its +X side", async () => {
-    const sim = clientWorld(await assetLibrary(), [{ moduleId: "corner_90_r1", position: { x: 0, y: 0, z: 0 }, rotation: 0 }], {
-      x: 0,
-      y: 1.5,
-      z: 1.5,
-    });
-    for (let n = 0; n < Math.round(20 * TICK_RATE_HZ); n += 1) {
-      const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-      // In on +Z, turn at the middle of the deck, out on +X — the path the
-      // Sockets describe.
-      sim.tick({ [DEFAULT_CHARACTER_ID]: c.position.z > 0 ? NORTH : EAST });
-      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x > 1.5) break;
-    }
-
-    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-    expect(c.fallCount).toBe(0);
-    expect(c.position.x).toBeGreaterThan(1.5);
-    expect(c.grounded).toBe(true);
-    expect(c.position.y).toBeCloseTo(0.25 + CAPSULE_BOTTOM_OFFSET, 1);
-    sim.dispose();
-  });
-
-  it("the bounce pad is a bouncing Surface, not just a deck named one", async () => {
-    const library = await assetLibrary();
-    const resolved = resolveTrack(library, [{ moduleId: "special_bounce_pad_1x1", position: { x: 0, y: 0, z: 0 }, rotation: 0 }]);
-
-    expect(resolved.staticTrimeshes[0]!.surface).toBe("bounce");
-  });
-
-  it("scenery carries no Sockets at all — nothing chains onto a bollard", () => {
-    const scenery = ["barrier_1x1", "bumper_1x1", "cone_post_1x1", "pillar_1x1", "side_rail_left_1x1", "side_rail_right_1x1"];
+  it("converted packs are socketless — free placement until a piece is promoted", () => {
+    // Every generated def ships without Sockets (see the convert headers),
+    // and so does the hand-authored fan (ADR 0075) — only PROMOTED_SOCKETED
+    // in assetModules.ts carries hand-written ones. Read off the def files,
+    // never hardcoded — a re-conversion must not silently desync this list.
+    const socketless = new Set([
+      ...KAYKIT_MODULE_DEFS.map((def) => def.id),
+      ...TRAP_MODULE_DEFS.map((def) => def.id),
+      ...FAN_MODULE_DEFS.map((def) => def.id),
+    ]);
     const byId = Object.fromEntries(ASSET_MODULE_DEFS.map((def) => [def.id, def]));
 
-    for (const id of scenery) expect(byId[id]!.sockets, id).toEqual([]);
-    // ...and every walkable piece does have both, so chaining can rely on it.
+    for (const id of socketless) expect(byId[id]!.sockets, id).toEqual([]);
+    // ...and every promoted piece does have both, so chaining can rely on it.
     for (const def of ASSET_MODULE_DEFS) {
-      if (scenery.includes(def.id)) continue;
+      if (socketless.has(def.id)) continue;
       expect(def.sockets.map((socket) => socket.id), def.id).toEqual(["entry", "exit"]);
     }
   });
 
-  it("the L's missing quadrant is void — walking it falls", async () => {
-    // The other side of the remodel proof: the x in [-2, 2], z in [2, 6]
-    // quadrant is genuinely empty, not an invisible deck. Marching into it
-    // must fall, which is also what makes the turn above a real turn.
-    const sim = clientWorld(await assetLibrary(), [{ moduleId: "corner_lshape", position: { x: 0, y: 0, z: 0 }, rotation: 0 }], {
-      x: 0,
-      y: 2,
-      z: 0,
-    });
-    const NORTH_OF_CORNER = { ...IDLE_INPUTS, moveDirection: { x: 0, y: 0, z: 1 } };
-    for (let n = 0; n < Math.round(10 * TICK_RATE_HZ); n += 1) {
-      sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH_OF_CORNER });
-      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.fallCount > 0) break;
-    }
-
-    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-    expect(c.fallCount).toBeGreaterThan(0);
-    sim.dispose();
-  });
 });
 
 describe("loadAssetLibrary warnings (M8 ticket 03)", () => {
@@ -489,9 +398,10 @@ describe("loadAssetLibrary warnings (M8 ticket 03)", () => {
   };
 
   const TRI = [0, 0, 0, 1, 0, 0, 0, 0, 1];
-  const defs = [
+  const defs: AssetModuleDef[] = [
     {
       id: "warn_me",
+      category: "scenery",
       footprint: {
         bounds: { center: { x: 0, y: 0, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
         clearance: 0.5,
@@ -533,105 +443,16 @@ describe("loadAssetLibrary warnings (M8 ticket 03)", () => {
   });
 });
 
-describe("asset demo track (ticket 04)", () => {
-  it("composes all four asset Modules plus a finish piece, chained end to end", () => {
-    expect(ASSET_DEMO_TRACK.map((segment) => segment.moduleId)).toEqual([
-      "platform_straight",
-      "ramp_45",
-      "stairs_4step",
-      "corner_lshape",
-      "finish",
-    ]);
-    // Every Segment after the first sits exactly on the previous one's exit
-    // Socket — chained, not hand-placed (re-chaining from the defs agrees).
-    const rechained = chainTrack(
-      ASSET_DEMO_TRACK.map((segment) => segment.moduleId),
-      {
-        ...Object.fromEntries(ASSET_MODULE_DEFS.map((def) => [def.id, attachAssetGeometry(def, loadAssetModule(realBytes(def.id), { footprint: def.footprint.bounds }))])),
-        ...M1_MODULES,
-      },
-      { x: 0, y: 0, z: 10 },
-    );
-    expect(ASSET_DEMO_TRACK).toEqual(rechained);
-  });
-
-  it("walks the whole demo Track and qualifies — the scripted playtest", async () => {
-    const library = await assetLibrary();
-    const resolved = resolveTrack(library, ASSET_DEMO_TRACK);
-    // Raceable by construction: the demo ends on M1's finish piece, since
-    // asset Modules carry no Finish Zone of their own.
-    expect(resolved.finishZones).toHaveLength(1);
-
-    // The corner's own center is void (the missing quadrant), so its three
-    // waypoints stay on deck: entry socket, elbow, north arm, exit socket.
-    const corner = ASSET_DEMO_TRACK[3]!;
-    const finish = ASSET_DEMO_TRACK[4]!;
-    const place = (segment: Segment, local: Vec3): Vec3 =>
-      addVec3(rotateVec3ByQuat(local, segmentOrientation(segment)), segment.position);
-    const waypoints: Vec3[] = [
-      ASSET_DEMO_TRACK[0]!.position,
-      ASSET_DEMO_TRACK[1]!.position,
-      ASSET_DEMO_TRACK[2]!.position,
-      place(corner, { x: -2, y: 0.5, z: 0 }),
-      place(corner, { x: 4, y: 0.5, z: 0 }),
-      place(corner, { x: 4, y: 0.5, z: 4 }),
-      place(finish, { x: 0, y: 0, z: 3 }),
-    ];
-
-    const sim = clientWorld(library, ASSET_DEMO_TRACK, trackSpawn(ASSET_DEMO_TRACK, 0));
-    let next = 0;
-    let sinceProgress = 0;
-    for (let n = 0; n < 150 * TICK_RATE_HZ; n += 1) {
-      const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-      const wp = waypoints[next]!;
-      const dx = wp.x - c.position.x;
-      const dz = wp.z - c.position.z;
-      if (Math.hypot(dx, dz) < 1.3) {
-        next += 1;
-        sinceProgress = 0;
-        if (next === waypoints.length) break;
-        continue;
-      }
-      const len = Math.hypot(dx, dz) || 1;
-      sim.tick({ [DEFAULT_CHARACTER_ID]: { ...IDLE_INPUTS, moveDirection: { x: dx / len, y: 0, z: dz / len } } });
-      sinceProgress += 1;
-      expect(sinceProgress, `stuck walking to waypoint ${next} (${wp.x.toFixed(1)}, ${wp.z.toFixed(1)})`).toBeLessThan(25 * TICK_RATE_HZ);
-    }
-    expect(next, "reached every deck waypoint").toBe(waypoints.length);
-
-    // From the finish entry, straight into the zone: this is where a Race
-    // Qualifies (input locks afterward, so this runs as its own phase).
-    const zone = resolved.finishZones[0]!.trigger.center;
-    let qualified = false;
-    for (let n = 0; n < 30 * TICK_RATE_HZ; n += 1) {
-      const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-      if (c.finishTick !== null) {
-        qualified = true;
-        break;
-      }
-      const dx = zone.x - c.position.x;
-      const dz = zone.z - c.position.z;
-      const len = Math.hypot(dx, dz) || 1;
-      sim.tick({ [DEFAULT_CHARACTER_ID]: { ...IDLE_INPUTS, moveDirection: { x: dx / len, y: 0, z: dz / len } } });
-    }
-
-    const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
-    expect(qualified, "qualified on the finish piece").toBe(true);
-    expect(c.fallCount).toBe(0);
-    sim.dispose();
-  });
-});
-
 describe("loadAssetLibrary failure", () => {
   it("fails the whole load on the first bad file, naming it", async () => {
     const bad: Record<string, Uint8Array> = {};
     await expect(
       loadAssetLibrary(async (url: string) => {
-        if (url.endsWith("ramp_45.glb")) return new TextEncoder().encode("not a glb");
+        if (url.endsWith("kaykit_ball.glb")) return new TextEncoder().encode("not a glb");
         const name = url.substring(url.lastIndexOf("/") + 1, url.lastIndexOf(".glb"));
         bad[name] = realBytes(name);
         return bad[name]!;
       }, "http://assets.test"),
-    ).rejects.toThrow(/ramp_45/);
+    ).rejects.toThrow(/kaykit_ball/);
   });
 });

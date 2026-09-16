@@ -17,7 +17,8 @@ penalty (03); jump + dash (04); ragdoll state machine (05); `CharacterController
 extracted from `RapierSimulation` (05b); Spinner Obstacle, dynamic Props, dash-into-a-
 wall Ragdoll (06); procedural Wobble + feel-tuning pass (07). Plus a pre-M2 polish pass
 on Dash (nitro-style build-up, speed-gated wall Ragdoll, speed-lines effect) and a
-MushroomKing character model swap. See ADRs 0006 / 0009 / 0010.
+MushroomKing character model swap — since superseded by BLIP, the final Character
+(ADR 0071). See ADRs 0006 / 0009 / 0010.
 
 **M2 done** — netcode (`docs/milestones/M2.md`, "Done when" met and live-verified with 2
 browsers). Authoritative Node server at a fixed 30 Hz (ADR 0002/0011); client-side
@@ -159,6 +160,34 @@ read `Status: planned` even though `practice.ts`, `PracticeHud`, and `PlayRoute`
 real, tested, and shipped; correcting those four ticket files is outstanding housekeeping, not open
 design work.
 
+**M11 in progress** — Moving Segments (`docs/milestones/M11.md`, ADR 0061): any placed piece can Spin /
+Swing / Slide, authored in the builder's inspector and played live with an Impact tint; a Character
+Rides moving Segments and is pushed/hit through the Bump-scale Impact rule; Spiked Assets always knock
+down. Tickets 01–07 in `.scratch/m11-moving-segments/issues/` are done on tests; 08 (folding the M1
+Spinner into Motion) is open, as are the live checks.
+
+**M12 done on tests, visual checks pending** — The Environment (`docs/milestones/M12.md`, ADR 0074,
+research in `docs/research/track-environment-sky-and-clouds.md`): every Round is drawn under an
+author-picked preset (`day`/`sunset`/`night`): gradient sky dome, a cloud floor replacing the drawn kill
+plane (with holes a lower band of puffs shows through), drifting instanced cloud puffs, horizon-coloured
+fog, palette lights, a PMREM environment map baked from the dome, real shadow maps from the preset's
+sun (a texel-snapped box following the local Character), Neutral tone mapping, night stars, and a
+multisampled composer target. Render-only by rule (a server test scans for it); the id lives on the
+Revision (`environment` column, validated on publish); the three.js code lives in `packages/render`.
+The Track builder picks it beside the Time Limit and previews it behind a viewport toggle (fog and
+shadows off there). Tickets 01–11 in `.scratch/m12-environment/issues/` are done on tests and
+typecheck. No shader has ever been compiled here (no WebGL), so every visual check is also a first
+compile, and all of them are the user's, along with: the `day`/`sunset`/`night` palettes (lighting
+balanced numerically, recorded per ticket), the still-open cloud style (`puffs.style`, both `soft` and
+`toon` built), and the shadow tuning constants.
+
+**Assets only, one seed (ADR 0078)** — the Track builder places Assets only (the procedural tab and
+its box drawing are gone; the shared procedural library remains as test fixtures). Stored Tracks were
+wiped, and the API seeds exactly one code-owned Track: the base race (`packages/shared/src/track/baseRace.ts`,
+id `base-race`, five-minute clock), a Fall Guys-style course of ten obstacle sections and seven
+Checkpoints, proven walkable end to end by `baseRace.test.ts`. Whether its moving obstacles' timing
+plays fair is the user's live check.
+
 **Next: M9** — Design screens reconciliation (`.scratch/m9-design-screens-reconciliation/issues/`).
 A new design-screens drop (`apps/client/src/test_components/`) turned out to assume six systems
 this game never had — recorded in `docs/research/test-components-design-screens-gap-analysis.md`.
@@ -187,6 +216,9 @@ not yet built.
 
 ```
 packages/shared/   Simulation step, domain types, tuning constants. Runs on BOTH client and server.
+packages/render/   three.js rendering shared by the game and the Track builder (the Environment, ADR
+                    0074). Imported only by apps/client and apps/track-builder, never by apps/server
+                    or apps/api (a test holds the line); `three` is a peer dependency.
 apps/client/       Three.js renderer, input, camera, prediction, interpolation.
 apps/server/       Authoritative match server (M2+). Imports the sim step from shared.
 apps/api/          The single always-on service (ADR 0058, Fastify): tracks, assets, auth, and
@@ -236,6 +268,9 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 | **M8** | Asset-backed Modules — four Track pieces load from authored GLBs, collide identically on both sides (ADR 0050). |
 | **M8.1** | Free-roam practice — `?freeroam=1` boots a local, server-free playtest session through the real pipeline. |
 | **M9** | Design screens reconciliation — architecture decisions + wiring for a new visual design; scopes the persisted-identity systems below (ADR 0052). |
+| **M10** | Visual Module authoring — compose rounded, colored Modules from boxes/cylinders in the builder (no code, no Blender) and export them to the registry. |
+| **M11** | Moving Segments — Spin / Swing / Slide on any placed piece, ridden and hit through the Impact rule, previewed in the builder (ADR 0061). |
+| **M12** | The Environment — a sky, cloud floor, clouds, fog, light and real shadows a Track's author picks (`day`/`sunset`/`night`), render-only, shared by game and builder via `packages/render` (ADR 0074). |
 | later | Accounts (mandatory Discord login) → XP/currency → Betting (dynamic pari-mutuel) → Friends (full presence) → Track discovery (browsing + filters) — scope decided in ADR 0052, one milestone each, build order TBD per milestone. Also: collapsing terrain, Power-ups, reconnection, level themes, the Skyfall final. |
 
 ## Working agreements
