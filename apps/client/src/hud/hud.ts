@@ -1,7 +1,8 @@
 /**
- * The in-match overlay (CONTEXT.md: HUD) — plain DOM, drawn by the game
- * itself, never by the Screen framework (ADR 0008). It updates every frame and
- * has no place in a component tree.
+ * The game's own plain-DOM overlay: the status line, the pointer-lock prompt
+ * and the match banner. The Round readout itself (CONTEXT.md: HUD) is a React
+ * overlay fed by `onRoundHud` since ADR 0088; what stays here is what the game
+ * must show before, around or after React has anything to draw.
  *
  * The game creates and removes these elements rather than reaching for markup
  * in `index.html`: from M4 the page belongs to React (ADR 0008), the game is
@@ -10,8 +11,11 @@
  * the same reason — nothing about the HUD leaks into the page's stylesheet.
  */
 export interface Hud {
-  /** Replace the overlay text. Called once per rendered frame. */
-  setText: (text: string) => void;
+  /**
+   * A one-line status while the game cannot show a Round — loading, or the
+   * connection lost (ADR 0011). `null` clears it.
+   */
+  setStatus: (text: string | null) => void;
   /** Show or hide the "click to look around" prompt, following pointer-lock state. */
   setLockPromptVisible: (visible: boolean) => void;
   /**
@@ -70,8 +74,8 @@ export const createHud = (mount: HTMLElement): Hud => {
   mount.append(text, lockPrompt, banner);
 
   return {
-    setText: (value) => {
-      text.textContent = value;
+    setStatus: (value) => {
+      text.textContent = value ?? "";
     },
     // Toggling `display` directly rather than the `hidden` attribute: the UA's
     // own `[hidden] { display: none }` loses to this element's own `display:

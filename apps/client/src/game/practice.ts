@@ -24,7 +24,7 @@ import { decodedBytes, loadSoundBank } from "../audio/soundBank.js";
 import { stageSoundSlots } from "../audio/stageSounds.js";
 import { resumeOnFirstGesture } from "../audio/unlock.js";
 import { applyAudioVolumes, readAudioVolumes, subscribeAudioVolumes } from "../lib/audioSettings.js";
-import { browserStorage } from "../lib/perfFlag.js";
+import { browserStorage } from "../lib/browserStorage.js";
 import { assetPlacements } from "../render/assetVisuals.js";
 import { springTriggers } from "../render/springSquash.js";
 import { FreeLookCamera, PlayerInput } from "../input/input.js";
@@ -33,7 +33,6 @@ import { createTeardown, type Teardown } from "../lib/utils/teardown.js";
 import { fetchAccount } from "../lib/api/auth.js";
 import { createStage } from "../render/scene.js";
 import { createTrackLoading } from "./trackLoading.js";
-import { createPerfSession } from "./perfSession.js";
 import { DEFAULT_GRAPHICS_QUALITY, GRAPHICS_QUALITY_SETTINGS, type GraphicsQuality } from "../lib/graphicsQuality.js";
 import type { GameHandle } from "./index.js";
 
@@ -58,8 +57,6 @@ export interface PracticeConfig {
   /** Track to roam. Required — with no server there is nothing to default to. */
   trackId: string;
   onPracticeState?: (snapshot: PracticeSnapshot) => void;
-  /** Show the performance overlay (M13 ticket 01) — the same one a Match shows. */
-  perf?: boolean;
   /** The graphics quality level to draw at (ADR 0079). Omitted, `high`. */
   graphicsQuality?: GraphicsQuality;
 }
@@ -141,19 +138,6 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
   teardown.add(subscribeAudioVolumes((volumes) => applyAudioVolumes(stage.sound, volumes), browserStorage()));
   // First-sight compiles and uploads happen now, not in the first metres (M13 ticket 06).
   stage.warmUp();
-  const perf = config.perf
-    ? createPerfSession({
-        mount: config.mount,
-        mode: "practice",
-        bootStartedAt,
-        stage: () => stage,
-        trackId: () => config.trackId,
-        fetchStats,
-        audio: () =>
-          stage.sound && audioContext ? { ...stage.sound.stats(), decodedBytes: decodedBytes(audioContext) } : null,
-      })
-    : null;
-  if (perf) teardown.add(() => perf.dispose());
   // The bean wears its skin and hat in practice too (M9 ticket 15, ADR 0083) — best effort, a
   // failed fetch leaves the model natural rather than blocking the boot. The
   // stored token authenticates against the page-host API (that's where login
@@ -301,9 +285,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
       finishAnnounced = false;
     }
 
-    const renderStartedAt = performance.now();
     stage.render();
-    perf?.frame(now, elapsedMs, simMs, steps, performance.now() - renderStartedAt, visualCharacter.position);
 
     frameHandle = requestAnimationFrame(frame);
   };

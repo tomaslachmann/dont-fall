@@ -73,6 +73,28 @@ describe("syncSeedTrack (ADR 0073)", () => {
     expect(getTrackById(db, "seed", 1)!.track).toEqual(SAMPLE_TRACK);
   });
 
+  it("publishes the seed's own screenshot with it (ADR 0085/0089)", () => {
+    const thumbnail = `${TRACK_THUMBNAIL_DATA_URL_PREFIX}aGVsbG8=`;
+    syncSeedTrack(db, { id: "seed", name: "Seed", track: SAMPLE_TRACK, thumbnail });
+
+    expect(getTrackById(db, "seed")!.hasThumbnail).toBe(true);
+    expect(getTrackThumbnail(db, "seed")).toBe(thumbnail);
+  });
+
+  it("heals a seed that gained a screenshot — a Revision with the picture, without waiting for other drift", () => {
+    syncSeedTrack(db, { id: "seed", name: "Seed", track: SAMPLE_TRACK });
+    expect(getTrackById(db, "seed")!.hasThumbnail).toBe(false);
+
+    const thumbnail = `${TRACK_THUMBNAIL_DATA_URL_PREFIX}aGVsbG8=`;
+    syncSeedTrack(db, { id: "seed", name: "Seed", track: SAMPLE_TRACK, thumbnail });
+    expect(getTrackById(db, "seed")!.revision).toBe(2);
+    expect(getTrackById(db, "seed")!.hasThumbnail).toBe(true);
+
+    // And then settles: a synced boot with the same picture writes nothing.
+    syncSeedTrack(db, { id: "seed", name: "Seed", track: SAMPLE_TRACK, thumbnail });
+    expect(getTrackById(db, "seed")!.revision).toBe(2);
+  });
+
   it("heals a drifted clock the same way — the seed's Time Limit is code-owned too", () => {
     syncSeedTrack(db, { id: "seed", name: "Seed", track: SAMPLE_TRACK });
     expect(getTrackById(db, "seed")!.timeLimitMs).toBe(DEFAULT_TIME_LIMIT_MS);

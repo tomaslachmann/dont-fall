@@ -8,19 +8,16 @@ import {
   IDLE_INPUTS,
   RapierSimulation,
   TICK_MS,
-  TICK_RATE_HZ,
   addVec3,
   buildResults,
   initPhysics,
   isDownMotionState,
   isEliminated,
   interpolateState,
-  lengthVec3,
   matchScore,
   matchWinner,
   movementDirection,
   phaseLocksInput,
-  qualificationPlacement,
   rankWithTies,
   resolveTrack,
   type ClientMessage,
@@ -44,7 +41,6 @@ import { assetPlacements, loadAssetVisuals } from "../render/assetVisuals.js";
 import { springTriggers } from "../render/springSquash.js";
 import { awaitWelcome, resolveEndpoints } from "../lib/socket/connection.js";
 import { createHud } from "../hud/hud.js";
-import { formatHudText } from "../hud/hudText.js";
 import { FreeLookCamera, PlayerInput } from "../input/input.js";
 import { loadBootBindings, resolveEffectiveBindings, writeStoredBindings } from "../lib/bindingsStore.js";
 import { fetchAccount } from "../lib/api/auth.js";
@@ -52,7 +48,6 @@ import { listen } from "../lib/socket/listeners.js";
 import { startPracticeGame } from "./practice.js";
 import type { PracticeSnapshot } from "./practice.js";
 import { createTrackLoading } from "./trackLoading.js";
-import { createPerfSession } from "./perfSession.js";
 import { DEFAULT_GRAPHICS_QUALITY, GRAPHICS_QUALITY_SETTINGS, type GraphicsQuality } from "../lib/graphicsQuality.js";
 import { createStage } from "../render/scene.js";
 import { gameAudioContext } from "../audio/gameAudio.js";
@@ -63,8 +58,7 @@ import { MatchCalls, type MatchResultsFrame } from "../audio/matchCalls.js";
 import { setMusicPhase } from "../audio/music.js";
 import { resumeOnFirstGesture } from "../audio/unlock.js";
 import { applyAudioVolumes, readAudioVolumes, subscribeAudioVolumes } from "../lib/audioSettings.js";
-import { browserStorage } from "../lib/perfFlag.js";
-import { NetMetrics } from "../net/netMetrics.js";
+import { browserStorage } from "../lib/browserStorage.js";
 import { PropPredictionController, graceTicksForRtt } from "../net/propPrediction.js";
 import { matchBanner } from "../hud/matchBanner.js";
 import {
@@ -76,8 +70,9 @@ import {
 } from "./spectator.js";
 import { detectHitTaken, type HitBaseline, type HitTakenEvent } from "./hitTaken.js";
 import { detectRunEnd, type RunEndEvent } from "./runEnd.js";
+import { buildRoundHud, type RoundHudSnapshot } from "./roundHud.js";
+import { bootTrackRef, needsTrackReload } from "./roundTrack.js";
 import { PredictionLoop } from "../net/predictionLoop.js";
-import { formatRoundClock } from "../lib/utils/roundTimer.js";
 import { SnapshotInterpolator } from "../net/snapshotInterpolation.js";
 import { createTeardown, type Teardown } from "../lib/utils/teardown.js";
 import { TimeSync } from "../net/timeSync.js";
@@ -177,12 +172,6 @@ export interface GameConfig {
    * `onLobbyState`/`onStandings` are never raised in practice.
    */
   onPracticeState?: (snapshot: PracticeSnapshot) => void;
-  /**
-   * Show the performance overlay (M13 ticket 01): frame-time percentiles,
-   * `renderer.info`, prediction steps and replays, and a recorded run on F8.
-   * Off, nothing is sampled.
-   */
-  perf?: boolean;
   /** The graphics quality level to draw at (ADR 0079). Omitted, `high`. */
   graphicsQuality?: GraphicsQuality;
   /**
@@ -244,6 +233,22 @@ export interface GameConfig {
    * deduped against the frame rate like `onLobbyState`.
    */
   onSpectate?: (snapshot: SpectateSnapshot | null) => void;
+  /**
+   * Raised whenever the Round HUD's facts change (ADR 0088) — the Race or
+   * Survival readout, off the authoritative snapshot, every value rounded to
+   * what is drawn — and with `null` once there is no Round HUD to show. Deduped
+   * against the snapshot rate like `onSpectate`, so React re-renders only
+   * when something visible moved.
+   */
+  onRoundHud?: (snapshot: RoundHudSnapshot | null) => void;
+  /**
+   * Raised with `false` while this client is building (or rebuilding) the
+   * world, and `true` the moment it stands ready (ADR 0089) — what the shell
+   * shows its loading Screen from. The server is told the same thing over the
+   * socket; this is only the local half, so the Screen never has to guess
+   * from a phase whether *this* client is the one still loading.
+   */
+  onWorldReady?: (ready: boolean) => void;
 }
 
 export interface GameHandle {
@@ -320,7 +325,6 @@ export const startGame = async (config: GameConfig): Promise<GameHandle> => {
       trackId: config.trackId,
       ...(config.host === undefined ? {} : { host: config.host }),
       ...(config.onPracticeState === undefined ? {} : { onPracticeState: config.onPracticeState }),
-      ...(config.perf ? { perf: true } : {}),
       ...(config.graphicsQuality === undefined ? {} : { graphicsQuality: config.graphicsQuality }),
     });
   }
@@ -340,7 +344,6 @@ const boot = async (
     trackId,
     serverPort,
     connection,
-    perf: perfRequested,
     graphicsQuality = DEFAULT_GRAPHICS_QUALITY,
     onExit,
     onLobbyState,
@@ -348,6 +351,8 @@ const boot = async (
     onRunEnd,
     onHitTaken,
     onSpectate,
+    onRoundHud,
+    onWorldReady,
   }: GameConfig,
   teardown: Teardown,
 ): Promise<GameHandle> => {
@@ -357,7 +362,7 @@ const boot = async (
   // Borrowed socket (ADR 0056) is already open — the wait is the world
   // loading, not the connection. Says so, so a handoff mid-Countdown reads
   // honestly instead of claiming to connect.
-  hud.setText(connection === undefined ? "DON'T FALL — M2 · connecting to server…" : "DON'T FALL — loading…");
+  hud.setStatus(connection === undefined ? "connecting to server…" : "loading…");
 
   // Sounds decode alongside the rest of the load, never on first play (ADR 0087).
   // What every Character makes starts now; the Track's own sounds join once it
@@ -395,7 +400,12 @@ const boot = async (
   const { fetchTrack, loadLibrary, loadVisualTemplates, loadIceTexture, loadMudTexture, loadBounceTexture, fetchStats } =
     createTrackLoading(host);
 
-  const { track, environment } = await fetchTrack(welcome.trackId, welcome.trackRevision);
+  // The Track the Match is on *now*, never the one this socket's `welcome`
+  // named when it opened (ADR 0056: the Lobby opened it, possibly before the
+  // host's pick). Booting on a stale ref draws a world the server is not
+  // simulating — see `roundTrack.ts`.
+  const boot = bootTrackRef(welcome, connection?.getLobby());
+  const { track, environment } = await fetchTrack(boot.trackId, boot.trackRevision);
   const library = await loadLibrary(track);
   const {
     statics,
@@ -415,6 +425,8 @@ const boot = async (
     mudDecks,
     bounceDecks,
   } = resolveTrack(library, track);
+  /** How many Checkpoints the loaded Track has — the Race HUD's pips (ADR 0088). Follows a live Track swap. */
+  let checkpointCount = checkpoints.length;
 
   const sounds = audioContext
     ? await loadSoundBank(audioContext, stageSoundSlots({ movingSegments, spinners, volumes, conveyors, launchPads, environment }))
@@ -464,23 +476,21 @@ const boot = async (
   // First-sight compiles and uploads happen now, behind the load, not in the
   // Round's first metres (M13 ticket 06).
   stage.warmUp();
-  // The performance overlay (M13 ticket 01), only when asked for. `stage` and
-  // `loadedTrackId` are read when used, so a live Track swap is followed.
-  const perf = perfRequested
-    ? createPerfSession({
-        mount,
-        mode: "match",
-        bootStartedAt,
-        stage: () => stage,
-        trackId: () => loadedTrackId,
-        fetchStats,
-        audio: () => {
-          const sound = stage.sound;
-          return sound && audioContext ? { ...sound.stats(), decodedBytes: decodedBytes(audioContext) } : null;
-        },
-      })
-    : null;
-  if (perf) teardown.add(() => perf.dispose());
+  /**
+   * Tell the server this client's world for `ref` is built (ADR 0089) — the
+   * last thing between a start and a Countdown — and the shell, so its
+   * loading Screen can step aside. Named per Track: a report for the Track a
+   * previous Round ran on is refused by the server rather than counted.
+   */
+  const sendLoaded = (ref: { trackId: string; trackRevision: number }): void => {
+    if (socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({ type: "loaded", trackId: ref.trackId, trackRevision: ref.trackRevision } satisfies ClientMessage));
+  };
+  const reportWorldReady = (ref: { trackId: string; trackRevision: number }): void => {
+    sendLoaded(ref);
+    onWorldReady?.(true);
+  };
+  reportWorldReady(boot);
   // Controls (M9): boot bindings immediately — no boot wait — then the
   // Account's own record when it resolves, applied live.
   let keyBindings = loadBootBindings();
@@ -612,6 +622,8 @@ const boot = async (
   let shellSpectateSteps = 0;
   let shellSpectateBacks = 0;
   let lastSpectateJson: string | null = null;
+  /** Last `RoundHudSnapshot` handed to `onRoundHud`, as JSON — same dedupe (ADR 0088). */
+  let lastRoundHudJson: string | null = null;
   let lastRoundIsSurvival = false;
   /** Latest Lobby roster, id → nickname — names the followed Player on the banner. */
   let playerNames: Record<string, string> = {};
@@ -630,7 +642,6 @@ const boot = async (
   let lastLobbyJson: string | null = null;
   /** Last `StandingsSnapshot` handed to `onStandings`, as JSON — same dedupe, same reason (M4 ticket 08). */
   let lastResultsJson: string | null = null;
-  const netMetrics = new NetMetrics();
   // NTP-style clock sync (ADR 0019) — feeds the interpolation buffer's clock
   // and the net-graph RTT.
   const timeSync = new TimeSync();
@@ -649,8 +660,8 @@ const boot = async (
   // Lobby host picking a different one live. Only ever changes in LOBBY
   // (the server rejects `selectTrack` everywhere else), so there is nothing
   // to reconcile input-wise: input is already locked for the whole phase.
-  let loadedTrackId = welcome.trackId;
-  let loadedTrackRevision = welcome.trackRevision;
+  let loadedTrackId = boot.trackId;
+  let loadedTrackRevision = boot.trackRevision;
   // Set for the async gap between noticing a Track change and finishing the
   // rebuild below — `reconcile` is skipped meanwhile (guarded at the call
   // site) since `localSim` still holds the *old* Track's geometry while the
@@ -684,6 +695,7 @@ const boot = async (
     const { track: nextTrack, environment: nextEnvironment } = await fetchTrack(trackId, trackRevision);
     const nextLibrary = await loadLibrary(nextTrack);
     const resolved = resolveTrack(nextLibrary, nextTrack);
+    checkpointCount = resolved.checkpoints.length;
     const nextSounds = audioContext
       ? await loadSoundBank(audioContext, stageSoundSlots({ ...resolved, environment: nextEnvironment }))
       : undefined;
@@ -755,7 +767,9 @@ const boot = async (
     // Before the frame loop draws the new Stage, like at boot (M13 ticket 06).
     // It blocks for a moment, which a Track pick (Lobby only) can afford.
     stage.warmUp();
-    perf?.trackLoaded(performance.now() - loadStartedAt);
+    // This Track, now built — the Round it belongs to waits for exactly this
+    // (ADR 0089).
+    reportWorldReady({ trackId, trackRevision });
   };
 
   // `awaitWelcome` above already consumed the one-time `welcome` — a Match
@@ -868,6 +882,40 @@ const boot = async (
         }
         for (const player of message.lobby.players) knownNicknames.set(player.id, player.nickname);
         for (const dropped of message.dnf) knownNicknames.set(dropped.id, dropped.nickname);
+        // ADR 0089: the server is holding this Round until every client has
+        // its world. Answered off the snapshot itself — level-triggered, not
+        // once at boot: every Round clears the list server-side, and a Round
+        // that replays the Track this client already has loads nothing and so
+        // would never report again. Self-limiting: the moment the server has
+        // this client in `loaded`, the condition stops holding.
+        if (
+          message.phase === "LOADING" &&
+          !trackReloadInFlight &&
+          !message.loaded.includes(myId) &&
+          message.trackId === loadedTrackId &&
+          message.trackRevision === loadedTrackRevision
+        ) {
+          sendLoaded({ trackId: message.trackId, trackRevision: message.trackRevision });
+        }
+        // The Round HUD (ADR 0088): built off every snapshot, raised only
+        // when a drawn value changed — never per frame.
+        if (onRoundHud) {
+          const roundHud = buildRoundHud({
+            myId,
+            phase: message.phase,
+            roundRules: message.roundRules,
+            timeLeftMs: message.timeLeftMs,
+            characters: message.state.characters,
+            liveRace: message.liveRace,
+            checkpoints: checkpointCount,
+            nicknameOf: (id) => knownNicknames.get(id) ?? id,
+          });
+          const roundHudJson = JSON.stringify(roundHud);
+          if (roundHudJson !== lastRoundHudJson) {
+            lastRoundHudJson = roundHudJson;
+            onRoundHud(roundHud);
+          }
+        }
         if (onLobbyState) {
           // One projection, shared with the shell's own connection (ADR
           // 0056) — the game never maintains a second mapping of the same
@@ -918,20 +966,28 @@ const boot = async (
             onStandings(snapshot);
           }
         }
-        netMetrics.commandQueueDepth = message.commandQueueDepth;
         smoothedQueueDepth += (message.commandQueueDepth - smoothedQueueDepth) * 0.2;
 
-        // The Lobby host picked a different Track (M4 ticket 07) — the server
-        // already re-seated every connected Character onto it (this
-        // snapshot's `state` reflects that), so `localSim` must follow before
-        // anything else here trusts it. Only relevant in LOBBY: the server
-        // never lets `trackId`/`trackRevision` change anywhere else.
+        // The server is on a different Track than this client has loaded —
+        // the Lobby host's pick (M4 ticket 07), or the Track this Match drew
+        // for its next Round (M7 ticket 04, inside COUNTDOWN). Either way the
+        // server has already re-seated every connected Character onto it
+        // (this snapshot's `state` reflects that), so `localSim` must follow
+        // before anything else here trusts it. Deliberately not gated on
+        // LOBBY: that left every later Round drawing the previous Round's
+        // Track, with Characters standing inside scenery that was not where
+        // the server had them.
         if (
-          message.phase === "LOBBY" &&
-          !trackReloadInFlight &&
-          (message.trackId !== loadedTrackId || message.trackRevision !== loadedTrackRevision)
+          needsTrackReload(
+            { trackId: loadedTrackId, trackRevision: loadedTrackRevision },
+            { trackId: message.trackId, trackRevision: message.trackRevision },
+            trackReloadInFlight,
+          )
         ) {
           trackReloadInFlight = true;
+          // Building again: the Screen goes back to loading, and this client
+          // is no longer ready for anything (ADR 0089).
+          onWorldReady?.(false);
           // The server already placed this Character at its spawn slot on
           // the new Track (`trackSpawn`, mirrored by `buildSimulationFor`)
           // — read straight off this very snapshot rather than recomputing
@@ -954,7 +1010,6 @@ const boot = async (
           // obstacle sits exactly where it's drawn and advances smoothly
           // between snapshots rather than jumping once per snapshot (which,
           // for a Prop you're pushing, read as a per-snapshot sawtooth / lag).
-          const reconcileStartedAt = performance.now();
           const result = predictionLoop.reconcile(
             character,
             message.state.tick,
@@ -962,8 +1017,6 @@ const boot = async (
             propPrediction,
             message.phase,
           );
-          perf?.reconcile(performance.now() - reconcileStartedAt, result);
-          if (result.positionError !== null) netMetrics.recordCorrection(result.positionError);
         }
       }
     }),
@@ -1006,14 +1059,12 @@ const boot = async (
   };
 
   let lastFrame = performance.now();
-  let fps = 0;
   let frameHandle = 0;
   teardown.add(() => cancelAnimationFrame(frameHandle));
 
   const frame = (now: number) => {
     const elapsedMs = now - lastFrame;
     lastFrame = now;
-    fps += (1000 / Math.max(elapsedMs, 1) - fps) * 0.1;
 
     timeSync.tick(elapsedMs);
     if (timeSync.ready) serverInterp.setServerClockOffsetMs(timeSync.serverClockOffsetMs);
@@ -1022,7 +1073,7 @@ const boot = async (
       // Freeze on the last frame — no reconnect in M2 (ADR 0011). Render once
       // more so the HUD updates, then let the loop stop. `onExit` has already
       // told the shell; stopping the game is its call, not ours.
-      hud.setText("DON'T FALL — connection lost\nreload the page to rejoin");
+      hud.setStatus("connection lost — reload the page to rejoin");
       stage.render();
       return;
     }
@@ -1401,19 +1452,11 @@ const boot = async (
     }
     stage.updateCamera(cameraTarget, look.yaw, look.pitch, Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000);
 
-    // The Qualification banner (M4 ticket 02). Shown the instant the local
-    // prediction says we're in the zone — that's the same Tick the input lock
-    // is felt, so the two never disagree on screen. The *placement* can only
-    // come from the server, which is the only side that knows when anyone
-    // else crossed, so it fills in a moment later; until then the banner
-    // stands without a number rather than guessing "#1".
-    const roundClock = timeLeftMs === null ? "--:--" : formatRoundClock(timeLeftMs);
     // Read off the authoritative snapshot, not the local prediction: this
     // client only predicts its own Character, so it is the only side that
     // knows how everyone else is doing (M4 ticket 05).
     const serverCharacters = latestServerSnapshot ? Object.values(latestServerSnapshot.characters) : [];
     const connectedPlayers = serverCharacters.length || 1;
-    const qualifiedCount = serverCharacters.filter((character) => character.finishTick !== null).length;
     // Elimination is derived, never replicated — "the Round ended and I have
     // no finishTick" is something both sides can already see. A mid-Match
     // spectator (M7 ticket 08) has no finishTick because they never played,
@@ -1430,7 +1473,6 @@ const boot = async (
       }),
     );
     const qualified = c.finishTick !== null;
-    const placement = latestServerSnapshot ? qualificationPlacement(latestServerSnapshot.characters, myId) : null;
     // The Match speaks (M14 ticket 10), on the ui bus, beside the banner it matches.
     for (const call of matchCalls.update({
       phase,
@@ -1444,51 +1486,15 @@ const boot = async (
     })) {
       stage.sound?.play(call);
     }
-    netMetrics.rttMs = timeSync.rttMs;
-    netMetrics.clockOffsetMs = timeSync.serverClockOffsetMs;
-    netMetrics.snapshotAgeMs = now - lastSnapshotArrivedAt;
-    netMetrics.ackAgeTicks =
-      predictionLoop.tick - (latestServerSnapshot?.characters[myId]?.lastInputTick ?? predictionLoop.tick);
-    netMetrics.predictedTick = predictionLoop.tick;
-    netMetrics.estServerTick = serverInterp.ready ? serverInterp.estimatedServerTick(now) : 0;
-    netMetrics.lead = smoothedQueueDepth; // effective lead = the server's buffered command count
-    netMetrics.inputBufferDepth = predictionLoop.inputBuffer.length;
-    netMetrics.interpBufferDepth = serverInterp.bufferDepth;
-    netMetrics.extrapolating = serverInterp.holdingLatest;
-    netMetrics.predictedPropCount = propPrediction.predictedCount;
-    netMetrics.capsuleOffsetM = lengthVec3(predictionLoop.capsuleErrorOffset);
 
-    hud.setText(
-      formatHudText({
-        roundClock,
-        phase,
-        tickRateHz: TICK_RATE_HZ,
-        fps,
-        predictionTick: predictionLoop.tick,
-        position: c.position,
-        motionState: c.motionState,
-        checkpointIndex: c.checkpointIndex,
-        fallCount: c.fallCount,
-        qualifiedCount,
-        connectedPlayers,
-        qualified,
-        placement,
-        dashCooldownMs: c.dashCooldownMs,
-        hitCooldownMs: c.hitCooldownMs,
-        hitChargeMs: c.hitChargeMs,
-        netMetricsText: netMetrics.format(),
-        bindings: keyBindings,
-      }),
-    );
-
-    const renderStartedAt = performance.now();
     stage.render();
-    perf?.frame(now, elapsedMs, simMs, simSteps, performance.now() - renderStartedAt, cameraTarget);
     hud.setLockPromptVisible(!look.locked);
 
     frameHandle = requestAnimationFrame(frame);
   };
 
+  // Loaded: the status line has nothing more to say until a connection is lost.
+  hud.setStatus(null);
   frameHandle = requestAnimationFrame(frame);
 
   const sendLobbyMessage = (message: ClientMessage): void => {

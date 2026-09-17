@@ -6,16 +6,19 @@ import {
   assetIdsOf,
   missingAssetIds,
   RapierSimulation,
+  raceTargets,
   resolveRoundRules,
   resolveTrack,
   roundStartBlockedReason,
   roundTypeOverrides,
   trackSpawn,
   type AssetLibraryLoader,
+  type CheckpointArrivals,
   type DnfEntry,
   type LobbyPlayer,
   type MatchState,
   type Module,
+  type RaceTargets,
   type RoundResult,
   type RoundRules,
   type RoundType,
@@ -27,6 +30,7 @@ import { httpAccountResolver, type AccountResolver } from "./accountResolution.j
 import { httpBettingNotifier, type BettingNotifier } from "./betting.js";
 import { httpMatchResultsNotifier, type MatchResultsNotifier } from "./matchResults.js";
 import { httpTrackPlayRecorder, type TrackPlayRecorder } from "./trackPlays.js";
+import { httpPersonalBestRecorder, type PersonalBestRecorder } from "./personalBests.js";
 import { drawRound, type RoundSlotPick } from "./roundDraw.js";
 import type { FetchedTrack } from "../track/trackSource.js";
 
@@ -155,6 +159,19 @@ export class MatchRuntime {
    * here; no Track is ever tagged with the Round types it allows (ADR 0041).
    */
   trackHasFinishZone: boolean;
+  /**
+   * Where a runner heads on the loaded Track — each Checkpoint's centre, then
+   * the Finish Zones (ADR 0088). Resolved with the simulation, like
+   * {@link trackHasFinishZone}; what live Race placement measures against.
+   */
+  raceTargets: RaceTargets;
+  /**
+   * The Tick each Character first reached each Checkpoint this Round (ADR
+   * 0088) — recorded every RUNNING Tick by the loop, cleared on RUNNING
+   * entry. Only the server has every Character's exact arrival, which is why
+   * splits are computed here and replicated rather than derived by a client.
+   */
+  checkpointArrivals: CheckpointArrivals = {};
 
   /**
    * The server's own monotonic tick — advances by exactly one every interval,
@@ -191,6 +208,15 @@ export class MatchRuntime {
    * the rest.
    */
   readonly standingsReady = new Set<string>();
+
+  /**
+   * Ids whose client has this Round's Track built and has said so (ADR
+   * 0089) — Round-scoped like {@link standingsReady}, cleared whenever a
+   * Round starts loading or the Track changes under it. {@link allLoaded}
+   * reads it against who is connected *now*, so someone leaving mid-load
+   * never holds the Round.
+   */
+  readonly loaded = new Set<string>();
 
   /**
    * How many Rounds this Match runs before it ends (M7 ticket 04/05, ADR
@@ -371,6 +397,13 @@ export class MatchRuntime {
    */
   readonly accounts: AccountResolver;
 
+  /**
+   * Personal Best reporting (ADR 0088) — every authed finisher's run time when
+   * a Race Round ends, injectable so tests pin the report without HTTP, the
+   * same seam `trackPlays` follows.
+   */
+  readonly personalBests: PersonalBestRecorder;
+
   constructor(
     readonly config: MatchConfig,
     fetched: FetchedTrack,
@@ -379,6 +412,7 @@ export class MatchRuntime {
     matchResults: MatchResultsNotifier = httpMatchResultsNotifier(config.trackServiceUrl),
     trackPlays: TrackPlayRecorder = httpTrackPlayRecorder(config.trackServiceUrl),
     accounts: AccountResolver = httpAccountResolver(config.trackServiceUrl),
+    personalBests: PersonalBestRecorder = httpPersonalBestRecorder(config.trackServiceUrl),
   ) {
     this.library = library;
     this.fetched = fetched;
@@ -386,6 +420,7 @@ export class MatchRuntime {
     this.matchResults = matchResults;
     this.trackPlays = trackPlays;
     this.accounts = accounts;
+    this.personalBests = personalBests;
     this.matchLength = config.matchLengthOverride ?? DEFAULT_MATCH_LENGTH;
     // The Match starts with no players; ticket 01's single-player default
     // Character is opted out here rather than added and immediately disposed.
@@ -393,6 +428,7 @@ export class MatchRuntime {
     this.simulation = built.simulation;
     this.roundRules = built.roundRules;
     this.trackHasFinishZone = built.trackHasFinishZone;
+    this.raceTargets = built.raceTargets;
   }
 
   /**
@@ -508,6 +544,18 @@ export class MatchRuntime {
    * as the Lobby's own `allReady` over an empty roster — never the deciding
    * factor, since `connectedPlayers === 0` already forces LOBBY first.
    */
+  /**
+   * Whether every connected client has this Round's world built (ADR 0089) —
+   * what ends the LOADING phase. An empty server is deliberately `false`:
+   * nobody having loaded is not everybody having loaded, the same reading
+   * `allQualified` takes.
+   */
+  allLoaded(): boolean {
+    if (this.sockets.size === 0) return false;
+    for (const id of this.sockets.keys()) if (!this.loaded.has(id)) return false;
+    return true;
+  }
+
   allStandingsConfirmed(): boolean {
     for (const id of this.sockets.keys()) {
       if (!this.standingsReady.has(id)) return false;
@@ -631,7 +679,12 @@ export class MatchRuntime {
    * the same "build before discarding the old one" discipline it already
    * follows for `simulation` itself.
    */
-  buildSimulationFor(track: Track): { simulation: RapierSimulation; roundRules: RoundRules; trackHasFinishZone: boolean } {
+  buildSimulationFor(track: Track): {
+    simulation: RapierSimulation;
+    roundRules: RoundRules;
+    trackHasFinishZone: boolean;
+    raceTargets: RaceTargets;
+  } {
     const missing = missingAssetIds(track, this.library);
     if (missing.length > 0) {
       throw new Error(`the Track places Assets this server has not loaded: ${missing.join(", ")}`);
@@ -661,7 +714,12 @@ export class MatchRuntime {
       if (this.spectators.has(playerId)) continue;
       simulation.addCharacter(playerId, trackSpawn(track, player.joinOrder, this.library));
     }
-    return { simulation, roundRules, trackHasFinishZone: resolved.finishZones.length > 0 };
+    return {
+      simulation,
+      roundRules,
+      trackHasFinishZone: resolved.finishZones.length > 0,
+      raceTargets: raceTargets(resolved.checkpoints, resolved.finishZones),
+    };
   }
 
   /**
@@ -712,6 +770,11 @@ export class MatchRuntime {
     this.simulation = built.simulation;
     this.roundRules = built.roundRules;
     this.trackHasFinishZone = built.trackHasFinishZone;
+    this.raceTargets = built.raceTargets;
+    this.checkpointArrivals = {};
+    // A new world is a new thing to load (ADR 0089): every client must build
+    // this Track before anyone's Round starts on it.
+    this.loaded.clear();
     this.roundStartTick = this.serverTick;
   }
 
@@ -786,6 +849,8 @@ export class MatchRuntime {
    */
   startNextRound(track: Track): void {
     this.rebuildSimulation(track);
-    this.match = { phase: "COUNTDOWN", phaseStartTick: this.serverTick };
+    // Into LOADING, not straight into the Countdown (ADR 0089): every client
+    // has a new Track to build before this Round can start.
+    this.match = { phase: "LOADING", phaseStartTick: this.serverTick };
   }
 }

@@ -17,6 +17,8 @@ import { LobbyRoute } from "./screens/LobbyRoute.js";
 import PlaySelect from "./screens/PlaySelect";
 import { ProfileRoute } from "./screens/ProfileRoute.js";
 import Settings from "./screens/Settings";
+// TEMP-VERDICT-PROBE — delete after verification (white-overlay diagnosis).
+import FinishedOrOut from "./screens/FinishedOrOut";
 
 /**
  * `/play` — two residents, split by query param: a `?track=` boots

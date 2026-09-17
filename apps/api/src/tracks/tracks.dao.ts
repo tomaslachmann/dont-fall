@@ -289,6 +289,13 @@ export interface SeedTrack {
   track: Track;
   /** Absent means the default clock, exactly like a publish that omits it. */
   timeLimitMs?: number;
+  /**
+   * The seed's own Thumbnail as a data URL (ADR 0085) — a screenshot shipped
+   * beside the code that owns the Track, so the Round loader has art for it
+   * without anyone republishing it from the builder. Absent for a seed with
+   * no picture.
+   */
+  thumbnail?: string;
 }
 
 /**
@@ -304,6 +311,19 @@ export interface SeedTrack {
 export const syncSeedTrack = (db: ApiDb, seed: SeedTrack): void => {
   const timeLimitMs = seed.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS;
   const latest = getTrackById(db, seed.id);
-  if (latest && latest.contentHash === hashTrack(seed.track) && latest.timeLimitMs === timeLimitMs) return;
-  saveTrack(db, { id: seed.id, name: seed.name, track: seed.track, timeLimitMs });
+  // A seed that gained a picture is drift like any other (ADR 0085): the
+  // stored Revision heals forward with it rather than staying art-less.
+  // Only presence is compared — Revisions are immutable, so a Revision that
+  // already has one has the one the code published with it.
+  const thumbnailMissing = seed.thumbnail !== undefined && latest?.hasThumbnail === false;
+  if (latest && !thumbnailMissing && latest.contentHash === hashTrack(seed.track) && latest.timeLimitMs === timeLimitMs) {
+    return;
+  }
+  saveTrack(db, {
+    id: seed.id,
+    name: seed.name,
+    track: seed.track,
+    timeLimitMs,
+    ...(seed.thumbnail === undefined ? {} : { thumbnail: seed.thumbnail }),
+  });
 };

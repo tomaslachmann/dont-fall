@@ -1,6 +1,8 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { TRACK_THUMBNAIL_DATA_URL_PREFIX } from "@dont-fall/shared";
 
 /**
  * Served Module art (M8 ticket 02, ADR 0050 as amended) — the one pipe every
@@ -53,4 +55,18 @@ export const readAssetFile = async (assetsDir: string, fileName: string): Promis
   const contentType = CONTENT_TYPE_BY_SUFFIX[suffix];
   if (!contentType) throw new Error(`asset file not served: ${fileName}`);
   return { bytes, contentType };
+};
+
+/**
+ * One served JPEG as a Thumbnail data URL (ADR 0085) — how a code-owned seed
+ * Track carries its own screenshot (`syncSeedTrack`). Synchronous, because
+ * the seed is synced before the app is built; `undefined` when the file is
+ * not there, since a missing picture must never stop the API booting.
+ */
+export const readThumbnailDataUrl = (assetsDir: string, fileName: string): string | undefined => {
+  try {
+    return `${TRACK_THUMBNAIL_DATA_URL_PREFIX}${readFileSync(join(assetsDir, fileName)).toString("base64")}`;
+  } catch {
+    return undefined;
+  }
 };

@@ -38,3 +38,28 @@ export const formatSurvived = (elapsedMs: number): string => {
   const totalSeconds = Math.floor(Math.max(0, elapsedMs) / 1000);
   return `${Math.floor(totalSeconds / 60)}:${(totalSeconds % 60).toString().padStart(2, "0")}`;
 };
+
+/**
+ * The Race HUD's running clock (ADR 0088), `mm:ss` plus a `.t` tenths tail
+ * the HUD draws smaller. Floored like the race time: it never shows a tenth
+ * not yet run.
+ */
+export const formatRaceClock = (elapsedMs: number): { time: string; tenths: string } => {
+  const clamped = Math.max(0, Math.floor(elapsedMs));
+  const minutes = Math.floor(clamped / 60_000);
+  const seconds = Math.floor((clamped % 60_000) / 1000);
+  return {
+    time: `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`,
+    tenths: `.${Math.floor((clamped % 1000) / 100)}`,
+  };
+};
+
+/**
+ * A Checkpoint split (ADR 0088), signed seconds to the millisecond: `+2.478`
+ * behind the first arrival, `−1.034` (a true minus sign) ahead of the next,
+ * `+0.000` level.
+ */
+export const formatSplit = (gapMs: number): string => {
+  const ms = Math.abs(Math.round(gapMs));
+  return `${gapMs < 0 ? "−" : "+"}${Math.floor(ms / 1000)}.${(ms % 1000).toString().padStart(3, "0")}`;
+};

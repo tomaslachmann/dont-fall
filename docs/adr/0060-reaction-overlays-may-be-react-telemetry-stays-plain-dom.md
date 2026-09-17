@@ -1,5 +1,9 @@
 # 0060 — Reaction overlays may be React; every-frame telemetry stays plain DOM
 
+> **Superseded in part by ADR 0088 (2026-09-17):** the Round HUD — `RaceHUD.tsx`
+> included — is now a React overlay too, fed deduplicated display values rather
+> than per-frame ones. The event-feedback contract below stands.
+
 ## Context
 
 ADR 0008 is explicit: "The HUD... stays plain DOM, drawn by the game itself. It

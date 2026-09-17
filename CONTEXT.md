@@ -127,6 +127,12 @@ Joining whatever open, joinable public Lobby is available, or a freshly created 
 none is — never a queue with an open-ended wait (ADR 0054).
 _Avoid_: matchmaking (implies skill-based pairing, which this isn't)
 
+**Loading**:
+The phase between a Round being started and its Countdown: every Player's client
+builds that Round's Track and says so, and the Round waits for all of them. Shown
+as the Track's own screenshot and name (ADR 0089).
+_Avoid_: preload, buffering, waiting room
+
 **Countdown**:
 The short delay between Start and the live Round. Characters are already spawned but
 their input is locked.
@@ -496,10 +502,20 @@ Module that may block a Character (ADR 0074).
 _Avoid_: skybox, background, map theme, biome, weather
 
 **HUD**:
-The overlay drawn on top of the game view *during* a Round — Round timer, Dash
-cooldown, Power-up held, Checkpoint splits. Rendered by the game itself as plain
-DOM, never by the Screen framework (ADR 0008).
+The readout drawn on top of the game view *during* a Round — in a Race your
+placement, the Round clock, Checkpoints reached, your Split and Personal Best;
+in Survival how many are still standing. A React overlay over the live game that
+never covers it (ADR 0088).
 _Avoid_: overlay, interface, UI
+
+**Split**:
+Your gap, at the last Checkpoint you reached, to whoever reached it first — or,
+when you were first, your lead over whoever reached it next.
+_Avoid_: delta, gap time, interval
+
+**Personal Best**:
+An Account's fastest finished Race run on a Track, across all its Revisions.
+_Avoid_: PB (except as the HUD's own label), record, best time
 
 **Screen**:
 A full-viewport view shown *outside* a running Round — main menu, lobby,

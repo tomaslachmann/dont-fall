@@ -2,9 +2,9 @@ import Stage from '../ui/Stage';
 import Avatar from '../ui/Avatar';
 import type { Skin } from '../ui/Avatar';
 import Chip from '../ui/Chip';
-import s from './SurvivalEndgame.module.css';
+import s from './SurvivalHud.module.css';
 
-export interface SurvivalEndgameProps {
+export interface SurvivalHudProps {
   remaining?: number;
   startedWith?: number;
   /** Who's still in. First entry is you. */
@@ -14,10 +14,10 @@ export interface SurvivalEndgameProps {
   yourPlace?: string;
 }
 
-export default function SurvivalEndgame({
+export default function SurvivalHud({
   remaining = 4, startedWith = 32, alive = ['pink', 'cyan', 'mint', 'gold'],
   survived = '04:32', lastOut = 'SPLATTO WAS ELIMINATED', yourPlace = 'YOU ARE 2ND',
-}: SurvivalEndgameProps) {
+}: SurvivalHudProps) {
   return (
     <Stage
       background="var(--df-stage-tension)"

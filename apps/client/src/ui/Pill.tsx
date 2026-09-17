@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import s from './Pill.module.css';
 
-export type PillTone = 'glass' | 'danger' | 'plate';
+export type PillTone = 'glass' | 'danger' | 'go' | 'plate';
 
 export interface PillProps {
   children?: ReactNode | undefined;

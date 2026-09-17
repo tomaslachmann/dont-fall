@@ -16,6 +16,7 @@ const lobby = (phase: LobbySnapshot["phase"] = "LOBBY"): LobbySnapshot =>
     hostId: "me",
     players: [{ id: "me", nickname: "Player", ready: false, joinOrder: 0, accountId: null, bodySkin: null, hat: null }],
     trackId: "t1",
+    loaded: [],
     trackRevision: 1,
     timeLimitMs: 180_000,
     roundType: "race",

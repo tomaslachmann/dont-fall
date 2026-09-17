@@ -29,7 +29,7 @@ import {
   writeGraphicsQuality,
   type GraphicsQuality,
 } from '../lib/graphicsQuality';
-import { browserStorage } from '../lib/perfFlag';
+import { browserStorage } from '../lib/browserStorage';
 import {
   DEFAULT_AUDIO_VOLUMES,
   readAudioVolumes,

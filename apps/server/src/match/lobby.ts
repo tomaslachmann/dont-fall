@@ -198,6 +198,22 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
     return true;
   }
 
+  if (message.type === "loaded") {
+    // ADR 0089: this client says its world for the Round's Track is built.
+    // Checked against the Track this server is actually on, so a report that
+    // crossed a Track change (the host's pick, or the next Round's own
+    // Track) counts for nothing — that client has the wrong world and is
+    // about to load the right one. `sockets.has` like `standingsReady`: the
+    // gate counts live connections, not roster rows.
+    if (!rt.sockets.has(id)) return true;
+    if (message.trackId !== rt.fetched.id || message.trackRevision !== rt.fetched.revision) return true;
+    rt.loaded.add(id);
+    // The gate is read by the tick loop, but a Lobby sitting idle only
+    // broadcasts on change (ADR 0057) — this is one.
+    rt.snapshotDirty = true;
+    return true;
+  }
+
   if (message.type === "standingsReady") {
     // RESULTS-only, unlike every other Lobby/Match-structure message here —
     // deliberately **not** host-gated (M7 ticket 10, ADR 0051): every

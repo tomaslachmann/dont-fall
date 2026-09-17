@@ -49,10 +49,11 @@ describe("advanceMatchPhase", () => {
     expect(step(at("LOBBY"), 100, 2).phase).toBe("LOBBY");
   });
 
-  it("starts the Countdown the Tick the host's start is handed in", () => {
+  it("starts loading the Round the Tick the host's start is handed in (ADR 0089)", () => {
     const next = step(at("LOBBY"), 100, 2, true);
 
-    expect(next.phase).toBe("COUNTDOWN");
+    // The Countdown comes after everyone's world is built, never before it.
+    expect(next.phase).toBe("LOADING");
     // Anchored to the Tick it began, so the countdown a client renders is
     // derived from the server's own Tick and not from any wall clock.
     expect(next.phaseStartTick).toBe(100);
@@ -107,7 +108,7 @@ describe("advanceMatchPhase", () => {
     // The threshold ("enough Players") is validated by the caller before it
     // ever sets startRequested (M4 ticket 07) — this function only asks
     // whether that already-validated signal fired.
-    expect(step(at("LOBBY"), 100, 1, true).phase).toBe("COUNTDOWN");
+    expect(step(at("LOBBY"), 100, 1, true).phase).toBe("LOADING");
   });
 
   it("honours a configured Countdown length, so a test needn't sit through three real seconds", () => {
@@ -227,10 +228,10 @@ describe("advanceMatchPhase — Standings gates on confirmation, not a bare time
     expect(advanceMatchPhase(results, { tick: 500, connectedPlayers: 2, ...ready }).phase).toBe("RESULTS");
   });
 
-  it("advances into COUNTDOWN the instant everyone confirms, once the next Track is also ready", () => {
+  it("advances into the next Round's loading the instant everyone confirms, once the next Track is also ready", () => {
     const next = advanceMatchPhase(results, { tick: 500, connectedPlayers: 2, ...ready, standingsConfirmed: true });
 
-    expect(next.phase).toBe("COUNTDOWN");
+    expect(next.phase).toBe("LOADING");
     expect(next.phaseStartTick).toBe(500);
   });
 
@@ -239,7 +240,7 @@ describe("advanceMatchPhase — Standings gates on confirmation, not a bare time
     expect(
       advanceMatchPhase(results, { tick: timeoutTick, connectedPlayers: 2, ...ready, standingsReadyTimeoutMs: 1_000 })
         .phase,
-    ).toBe("COUNTDOWN");
+    ).toBe("LOADING");
   });
 
   it("does not advance early — the timeout is a ceiling, not a floor", () => {
@@ -257,7 +258,34 @@ describe("advanceMatchPhase — Standings gates on confirmation, not a bare time
   it("honours a configured confirmation timeout, so a test needn't sit through the real one", () => {
     expect(
       advanceMatchPhase(results, { tick: 401, connectedPlayers: 2, ...ready, standingsReadyTimeoutMs: 0 }).phase,
-    ).toBe("COUNTDOWN");
+    ).toBe("LOADING");
+  });
+});
+
+describe("advanceMatchPhase — LOADING holds the Round until every client has its world (ADR 0089)", () => {
+  it("holds in LOADING while anyone is still building theirs", () => {
+    expect(advanceMatchPhase(at("LOADING", 100), { tick: 500, connectedPlayers: 2 }).phase).toBe("LOADING");
+    expect(
+      advanceMatchPhase(at("LOADING", 100), { tick: 500, connectedPlayers: 2, everyoneLoaded: false }).phase,
+    ).toBe("LOADING");
+  });
+
+  it("waits however long that takes — there is no timeout past it", () => {
+    const hours = 100 + msToTicks(60 * 60 * 1000);
+    expect(advanceMatchPhase(at("LOADING", 100), { tick: hours, connectedPlayers: 2 }).phase).toBe("LOADING");
+  });
+
+  it("starts the Countdown the Tick the last client reports in, anchored to that Tick", () => {
+    const next = advanceMatchPhase(at("LOADING", 100), { tick: 320, connectedPlayers: 2, everyoneLoaded: true });
+
+    expect(next.phase).toBe("COUNTDOWN");
+    expect(next.phaseStartTick).toBe(320);
+  });
+
+  it("still falls back to a fresh Lobby when the last Player leaves mid-load", () => {
+    expect(advanceMatchPhase(at("LOADING", 100), { tick: 320, connectedPlayers: 0, everyoneLoaded: true }).phase).toBe(
+      "LOBBY",
+    );
   });
 });
 

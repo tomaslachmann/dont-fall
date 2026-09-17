@@ -13,6 +13,7 @@ import {
   type ServerMessage,
   type SimInputs,
   type Vec3,
+  type MatchPhase,
 } from "@dont-fall/shared";
 import {
   PLAYGROUND_CHECKPOINTS,
@@ -251,6 +252,18 @@ class FaithfulClient {
     return (this.latestTickMs + elapsedSinceLatest) / TICK_MS;
   }
 
+  /** The Track this harness has told the server it has (ADR 0089) — `"<id>@<revision>"`, so a Track change is answered again. */
+  private loadedFor: string | null = null;
+
+  /**
+   * The phase the last snapshot carried, fed to this client's own prediction
+   * the way the real one feeds it (`phaseLocksInput`, ADR 0040): before the
+   * Round is RUNNING the server applies nobody's input, so a client that
+   * predicted through those Ticks anyway would diverge for the whole
+   * pre-Round wait and measure its own mistake as a reconciliation error.
+   */
+  private serverPhase: MatchPhase = "LOBBY";
+
   private handle(message: ServerMessage): void {
     if (message.type === "welcome") {
       this.myId = message.playerId;
@@ -274,6 +287,14 @@ class FaithfulClient {
         this.rttMs = rttMs;
       }
     } else if (message.type === "snapshot") {
+      // ADR 0089: a Round holds in LOADING until every client says its world
+      // is built. This harness has no world to build, but it still has to
+      // answer, exactly like the real client does.
+      if (message.phase === "LOADING" && this.loadedFor !== `${message.trackId}@${message.trackRevision}`) {
+        this.loadedFor = `${message.trackId}@${message.trackRevision}`;
+        this.send({ type: "loaded", trackId: message.trackId, trackRevision: message.trackRevision });
+      }
+      this.serverPhase = message.phase;
       this.latestTickMs = message.state.tick * TICK_MS;
       this.latestServerTimeMs = message.serverTimeMs;
       this.smoothedQueueDepth += (message.commandQueueDepth - this.smoothedQueueDepth) * 0.2;
@@ -378,7 +399,7 @@ class FaithfulClient {
       const input = Math.floor(this.predictionTick / OSCILLATE_TICKS) % 2 === 0 ? NORTH : SOUTH;
       this.inputBuffer.push({ tick: this.predictionTick, input });
       this.send({ type: "input", inputs: this.inputBuffer.slice(-3).map((e) => ({ ...e })) });
-      this.sim.tick({ [this.myId]: input });
+      this.sim.tick({ [this.myId]: input }, this.serverPhase);
       this.positionHistory.set(this.predictionTick, { ...this.sim.snapshot().characters[this.myId]!.position });
       this.predictionAccumulatorMs -= TICK_MS;
     }

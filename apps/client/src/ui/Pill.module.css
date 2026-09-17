@@ -17,6 +17,12 @@
   color: var(--df-color-on-brand);
   box-shadow: 0 var(--df-bevel-2) 0 var(--df-color-danger-shade);
 }
+/* A gain — a Race split you lead by (ADR 0088). */
+.go {
+  background: var(--df-color-go);
+  color: var(--df-color-go-ink);
+  box-shadow: 0 var(--df-bevel-2) 0 var(--df-color-go-shade);
+}
 .plate {
   background: var(--df-color-plate);
   color: var(--df-color-on-brand);

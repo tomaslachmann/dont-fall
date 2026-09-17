@@ -15,6 +15,8 @@ export * from "./match/Qualification.js";
 export * from "./match/ranking.js";
 export * from "./match/Results.js";
 export * from "./match/RoundRules.js";
+export * from "./match/LiveRace.js";
+export * from "./match/PersonalBest.js";
 export * from "./match/Score.js";
 export * from "./match/MatchResult.js";
 export * from "./match/Career.js";

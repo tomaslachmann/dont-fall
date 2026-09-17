@@ -109,6 +109,7 @@ const stubMatchApi = (seen: ApiSeen): void => {
         return Response.json({ betId: "bet-1", coins: 1140 });
       }
       if (method === "GET" && /\/bets\//.test(url)) return Response.json(seen.betting);
+      if (url.endsWith("/personal-best")) return Response.json({ bestMs: 79_904 });
       if (/\/tracks\/[^/]+$/.test(url)) return Response.json(trackDetailStub);
       if (url.endsWith("/tracks")) return Response.json(trackListStub);
       throw new Error(`unstubbed API call in test: ${url}`);
@@ -140,6 +141,7 @@ const lobbyIn = (phase: string, extra: Record<string, unknown> = {}): Record<str
   players: lobbyPlayers,
   trackId: "t1",
   trackRevision: 1,
+  loaded: ["me", "p2", "p3"],
   timeLimitMs: 180_000,
   matchLength: 3,
   roundType: "race",
@@ -172,6 +174,8 @@ interface MatchConfig {
   onRunEnd?: (event: unknown) => void;
   onHitTaken?: (event: unknown) => void;
   onSpectate?: (snapshot: unknown) => void;
+  onRoundHud?: (snapshot: unknown) => void;
+  onWorldReady?: (ready: boolean) => void;
 }
 
 const bootMatch = async (): Promise<{
@@ -180,6 +184,9 @@ const bootMatch = async (): Promise<{
   reportRunEnd: (event: unknown) => void;
   reportHitTaken: (event: unknown) => void;
   reportSpectate: (snapshot: unknown) => void;
+  reportRoundHud: (snapshot: unknown) => void;
+  /** ADR 0089: the game reporting its own world built (or being rebuilt) — the boot below fires it once, like a real client. */
+  reportWorldReady: (ready: boolean) => void;
   standingsReady: () => void;
   spectateFollow: ReturnType<typeof vi.fn>;
   spectatePrev: ReturnType<typeof vi.fn>;
@@ -192,6 +199,8 @@ const bootMatch = async (): Promise<{
   let reportRunEnd!: (event: unknown) => void;
   let reportHitTaken!: (event: unknown) => void;
   let reportSpectate!: (snapshot: unknown) => void;
+  let reportRoundHud!: (snapshot: unknown) => void;
+  let reportWorldReady!: (ready: boolean) => void;
   const standingsReady = vi.fn();
   const spectateFollow = vi.fn();
   const spectatePrev = vi.fn();
@@ -204,6 +213,8 @@ const bootMatch = async (): Promise<{
     reportRunEnd = config.onRunEnd!;
     reportHitTaken = config.onHitTaken!;
     reportSpectate = config.onSpectate!;
+    reportRoundHud = config.onRoundHud!;
+    reportWorldReady = config.onWorldReady!;
     return {
       stop: vi.fn(),
       setNickname: vi.fn(),
@@ -220,12 +231,19 @@ const bootMatch = async (): Promise<{
   });
   renderAtPlayRoute({ connection: { myId: "me" } as never });
   await waitFor(() => expect(startGame).toHaveBeenCalledTimes(1));
+  // A real client's world lands a moment after the boot resolves (ADR 0089);
+  // without it every test would sit behind the Round loader.
+  await act(async () => {
+    reportWorldReady(true);
+  });
   return {
     reportLobby,
     reportStandings,
     reportRunEnd,
     reportHitTaken,
     reportSpectate,
+    reportRoundHud,
+    reportWorldReady,
     standingsReady,
     spectateFollow,
     spectatePrev,
@@ -580,6 +598,122 @@ describe("GameCanvas", () => {
       () => expect(screen.queryByRole("status", { name: "GO!" })).not.toBeInTheDocument(),
       { timeout: 3000 },
     );
+  });
+
+  it("holds the Round behind the Track's own loading Screen until this client's world is built (ADR 0089)", async () => {
+    const seen = freshSeen();
+    stubMatchApi(seen);
+    const { reportLobby, reportWorldReady } = await bootMatch();
+
+    await act(async () => {
+      reportWorldReady(false);
+      reportLobby(lobbyIn("LOADING"));
+    });
+
+    expect(await screen.findByText("Loading Track…")).toBeInTheDocument();
+    expect(screen.getByText("WOBBLE RAMP")).toBeInTheDocument();
+
+    // Ready here, but the Round still waits for everyone else's world.
+    await act(async () => {
+      reportWorldReady(true);
+      reportLobby(lobbyIn("LOADING", { loaded: ["me"] }));
+    });
+    expect(screen.getByText("Waiting for players… 1/3")).toBeInTheDocument();
+
+    // The server starts the Countdown once everyone has reported.
+    await act(async () => {
+      reportLobby(lobbyIn("COUNTDOWN", { countdownMsLeft: 2900 }));
+    });
+    expect(screen.queryByText("Waiting for players… 1/3")).not.toBeInTheDocument();
+    expect(await screen.findByText("ROUND 1 OF 3")).toBeInTheDocument();
+  });
+
+  it("puts the loading Screen back while a client rebuilds its world for another Track", async () => {
+    const seen = freshSeen();
+    stubMatchApi(seen);
+    const { reportLobby, reportWorldReady } = await bootMatch();
+
+    await act(async () => {
+      reportLobby(lobbyIn("RUNNING"));
+    });
+    expect(screen.queryByText("Loading Track…")).not.toBeInTheDocument();
+
+    await act(async () => {
+      reportWorldReady(false);
+    });
+    expect(screen.getByText("Loading Track…")).toBeInTheDocument();
+  });
+
+  const raceHudIn = {
+    kind: "race",
+    place: 2,
+    field: 3,
+    elapsedMs: 84_300,
+    checkpointsReached: 4,
+    checkpoints: 7,
+    splitMs: 2478,
+    threat: { id: "p2", nickname: "Rival" },
+  };
+
+  it("draws the Race HUD over a running Race once GO! has had its beat (ADR 0088)", async () => {
+    const seen = freshSeen();
+    stubMatchApi(seen);
+    const { reportLobby, reportRoundHud } = await bootMatch();
+
+    await act(async () => {
+      reportLobby(lobbyIn("RUNNING"));
+      reportRoundHud(raceHudIn);
+    });
+
+    expect(await screen.findByText("RIVAL IS RIGHT BEHIND YOU", {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.getByText("+2.478")).toBeInTheDocument();
+    expect(screen.getByText("CHECKPOINT 04 / 07")).toBeInTheDocument();
+    expect(screen.getByText("/3")).toBeInTheDocument();
+    expect(await screen.findByText("PB 01:19.904")).toBeInTheDocument();
+  });
+
+  it("gives the Race HUD's place to the verdict once your run ends", async () => {
+    const seen = freshSeen();
+    stubMatchApi(seen);
+    const { reportLobby, reportRoundHud, reportRunEnd } = await bootMatch();
+
+    await act(async () => {
+      reportLobby(lobbyIn("RUNNING"));
+      reportRoundHud(raceHudIn);
+    });
+    expect(await screen.findByText("RIVAL IS RIGHT BEHIND YOU", {}, { timeout: 3000 })).toBeInTheDocument();
+
+    await act(async () => {
+      reportRunEnd(runEndFinished);
+    });
+    expect(await screen.findByText("FINISHED")).toBeInTheDocument();
+    expect(screen.queryByText("RIVAL IS RIGHT BEHIND YOU")).not.toBeInTheDocument();
+  });
+
+  it("draws the Survival HUD — a count, who went last, and the danger warning when critical", async () => {
+    const seen = freshSeen();
+    stubMatchApi(seen);
+    const { reportLobby, reportRoundHud } = await bootMatch();
+
+    await act(async () => {
+      reportLobby(lobbyIn("RUNNING"));
+      reportRoundHud({
+        kind: "survival",
+        remaining: 2,
+        startedWith: 4,
+        alive: ["me", "p2"],
+        youAlive: true,
+        survivedMs: 272_000,
+        lastOut: "Third",
+        critical: true,
+      });
+    });
+
+    expect(await screen.findByText("BEANS LEFT", {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.getByText("STARTED WITH 4")).toBeInTheDocument();
+    expect(screen.getByText("4:32")).toBeInTheDocument();
+    expect(screen.getByText("THIRD WAS ELIMINATED")).toBeInTheDocument();
+    expect(screen.getByText("CRITICAL ZONE")).toBeInTheDocument();
   });
 
   it("flashes YOU GOT HIT mid-Round on a landing, then drops it after one beat", async () => {

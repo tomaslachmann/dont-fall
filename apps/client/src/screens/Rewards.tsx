@@ -85,12 +85,12 @@ export default function Rewards({
           </div>
 
           <div className={s.bar}>
-            <span className={s.node}>{level - 1}</span>
+            <span className={s.node}>{level}</span>
             <span className={s.track}>
               <span className={s.had} style={{ width: `${xpBefore * 100}%` }} />
               <span className={s.earned} style={{ width: `${xpEarned * 100}%` }} />
             </span>
-            <span className={[s.node, s.nodeNext].join(' ')}>{level}</span>
+            <span className={[s.node, s.nodeNext].join(' ')}>{level + 1}</span>
           </div>
 
           <div className={s.breakdown}>

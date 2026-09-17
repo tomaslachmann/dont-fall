@@ -524,6 +524,10 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         rt.inputs.remove(id);
         rt.lobbyPlayers.delete(id);
         rt.spectators.delete(id);
+        // Whoever leaves stops being loaded, and stops being waited for (ADR
+        // 0089): `allLoaded` counts live sockets, so a Round held in LOADING
+        // by the client that just dropped starts for whoever is left.
+        rt.loaded.delete(id);
         // A mid-Round disconnect is eliminated, not removed (M5 ticket 04,
         // ADR 0042) — pulling a rigid body out of the world mid-Round would
         // disturb contact resolution for everyone still racing. Outside

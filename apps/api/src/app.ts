@@ -3,12 +3,13 @@ import cors from "@fastify/cors";
 import {
   BASE_RACE_NAME,
   BASE_RACE_TIME_LIMIT_MS,
+  BASE_RACE_THUMBNAIL_FILE,
   BASE_RACE_TRACK,
   BASE_RACE_TRACK_ID,
   DEFAULT_API_PORT,
   MAX_PLAYERS,
 } from "@dont-fall/shared";
-import { defaultAssetsDir } from "./assets/assets.service.js";
+import { defaultAssetsDir, readThumbnailDataUrl } from "./assets/assets.service.js";
 import { registerAssetRoutes } from "./assets/assets.controller.js";
 import { registerAuthRoutes } from "./auth/auth.controller.js";
 import type { DiscordOAuthConfig, FetchLike } from "./auth/auth.service.js";
@@ -23,6 +24,7 @@ import { registerMatchesRoutes } from "./matches/matches.controller.js";
 import { registerRewardsRoutes } from "./rewards/rewards.controller.js";
 import { registerBetsRoutes } from "./bets/bets.controller.js";
 import { registerFriendsRoutes } from "./friends/friends.controller.js";
+import { registerPersonalBestRoutes } from "./personalBests/personalBests.controller.js";
 import { ServiceError } from "./http/errors.js";
 
 export interface BuildAppOptions {
@@ -101,7 +103,18 @@ export const buildApp = async (options: BuildAppOptions = {}): Promise<FastifyIn
   // The one code-owned seed, the base race (ADR 0078), synced — missing →
   // seeded, drifted → a new Revision with the code's content (ADR 0073). A
   // synced boot writes nothing. Every other Track is authored in the builder.
-  syncSeedTrack(db, { id: BASE_RACE_TRACK_ID, name: BASE_RACE_NAME, track: BASE_RACE_TRACK, timeLimitMs: BASE_RACE_TIME_LIMIT_MS });
+  const assetsDir = options.assetsDir ?? defaultAssetsDir();
+  // Its own screenshot rides with it (ADR 0085) — a seed Track's picture is
+  // code-owned like its Segments, read from the assets directory the GLBs
+  // are served from.
+  const seedThumbnail = readThumbnailDataUrl(assetsDir, BASE_RACE_THUMBNAIL_FILE);
+  syncSeedTrack(db, {
+    id: BASE_RACE_TRACK_ID,
+    name: BASE_RACE_NAME,
+    track: BASE_RACE_TRACK,
+    timeLimitMs: BASE_RACE_TIME_LIMIT_MS,
+    ...(seedThumbnail === undefined ? {} : { thumbnail: seedThumbnail }),
+  });
 
   const maxPlayers = options.maxPlayers ?? MAX_PLAYERS;
   const lobbies = new LobbiesService({
@@ -114,7 +127,6 @@ export const buildApp = async (options: BuildAppOptions = {}): Promise<FastifyIn
     await lobbies.close();
   });
 
-  const assetsDir = options.assetsDir ?? defaultAssetsDir();
   app.get("/health", async () => ({ ok: true }));
   registerTrackRoutes(app, db, options.serviceToken);
   registerAssetRoutes(app, assetsDir);
@@ -130,6 +142,7 @@ export const buildApp = async (options: BuildAppOptions = {}): Promise<FastifyIn
   registerMatchesRoutes(app, db, options.serviceToken);
   registerCareerRoutes(app, db);
   registerFriendsRoutes(app, db, lobbies);
+  registerPersonalBestRoutes(app, db, options.serviceToken);
 
   return app;
 };

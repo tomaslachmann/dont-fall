@@ -258,6 +258,18 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
     )
   `);
 
+  // Personal Bests (ADR 0088): brand-new table, same deal — nothing to migrate.
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS personal_bests (
+      account_id TEXT NOT NULL,
+      track_id TEXT NOT NULL,
+      best_ms INTEGER NOT NULL,
+      match_id TEXT NOT NULL,
+      set_at_ms INTEGER NOT NULL,
+      PRIMARY KEY (account_id, track_id)
+    )
+  `);
+
   // Friends (M9 ticket 12): four brand-new tables, same deal — nothing to
   // migrate. Requests are directional with a pair unique (same-direction
   // double-sends fail at the DB); friendships canonical (a, b) PK; invites

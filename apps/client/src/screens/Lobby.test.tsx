@@ -39,6 +39,7 @@ const baseLobby = (overrides: Partial<LobbySnapshot> = {}): LobbySnapshot => ({
     { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, bodySkin: null, hat: null },
   ],
   trackId: "track-a",
+  loaded: [],
   trackRevision: 1,
   timeLimitMs: 180_000,
   roundType: "race",

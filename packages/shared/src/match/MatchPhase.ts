@@ -7,7 +7,7 @@ import { COUNTDOWN_MS, ROUND_END_MS, STANDINGS_READY_TIMEOUT_MS, TICK_MS, msToTi
  * The full machine ADR 0040 defines. Every phase is produced: M4 ticket 04
  * added LOBBY/COUNTDOWN/RUNNING, ticket 05 the two that end a Round.
  */
-export type MatchPhase = "LOBBY" | "COUNTDOWN" | "RUNNING" | "ROUND_END" | "RESULTS";
+export type MatchPhase = "LOBBY" | "LOADING" | "COUNTDOWN" | "RUNNING" | "ROUND_END" | "RESULTS";
 
 /** The phase plus the Tick it began on — everything the machine needs to advance itself. */
 export interface MatchState {
@@ -41,6 +41,15 @@ export interface MatchPhaseInputs {
    * seconds of it.
    */
   countdownMs?: number;
+  /**
+   * Whether every connected client has reported its world for this Round's
+   * Track built (ADR 0089) — a level, recomputed by the caller every Tick
+   * from whoever is connected now, like `standingsConfirmed`. Nothing starts
+   * without it: a Countdown nobody can see through is a Round they start
+   * already behind. There is deliberately no timeout beside it — a Round
+   * waits for the people in it.
+   */
+  everyoneLoaded?: boolean;
   /**
    * Whether every connected Character has Qualified (M4 ticket 05) — see
    * `allQualified`. Ends the Round early.
@@ -128,11 +137,14 @@ export const phaseNeedsPhysicsStep = (phase: MatchPhase): boolean => phase === "
  * never mutates the state it is handed — the server calls it once per tick
  * and keeps whatever comes back.
  *
- * The transitions M4 ticket 04 owns:
- * - LOBBY → COUNTDOWN once the host's `start` has been validated and handed
+ * The transitions M4 ticket 04 owns, as ADR 0089 re-routed the two that
+ * start a Round through LOADING:
+ * - LOBBY → LOADING once the host's `start` has been validated and handed
  *   in (M4 ticket 07) — replacing ticket 04's own original trigger ("enough
  *   Players connected"), which is now `startRequested`'s job to have already
  *   checked before this ever sees it.
+ * - LOADING → COUNTDOWN once every connected client has its world for this
+ *   Round's Track built and has said so (ADR 0089).
  * - COUNTDOWN → RUNNING after {@link COUNTDOWN_TICKS}, on one exact Tick, for
  *   everyone at once.
  * - anything → LOBBY once the last Player leaves, so the server is ready for
@@ -148,10 +160,11 @@ export const phaseNeedsPhysicsStep = (phase: MatchPhase): boolean => phase === "
  * server rather than changing the phase.
  *
  * And the one M7 ticket 04/10 adds (ADR 0049, ADR 0051):
- * - RESULTS → COUNTDOWN once more Rounds remain in this Match, the next
+ * - RESULTS → LOADING once more Rounds remain in this Match, the next
  *   one's world is ready, and every connected Player has confirmed Ready on
  *   the Standings Screen — or the confirmation timeout has passed, whichever
- *   comes first. A Match's later Rounds never pass through the Lobby.
+ *   comes first. A Match's later Rounds never pass through the Lobby, and
+ *   every one of them loads its own Track before its Countdown (ADR 0089).
  *
  * RESULTS at Match end (no Rounds remaining) is terminal — there is no
  * transition out of it here at all. Each Player leaves independently, for
@@ -166,6 +179,7 @@ export const advanceMatchPhase = (
     tick,
     connectedPlayers,
     startRequested = false,
+    everyoneLoaded = false,
     countdownMs = COUNTDOWN_MS,
     allQualified = false,
     timeExpired = false,
@@ -180,6 +194,9 @@ export const advanceMatchPhase = (
     return state.phase === "LOBBY" ? state : { phase: "LOBBY", phaseStartTick: tick };
   }
   if (state.phase === "LOBBY" && startRequested) {
+    return { phase: "LOADING", phaseStartTick: tick };
+  }
+  if (state.phase === "LOADING" && everyoneLoaded) {
     return { phase: "COUNTDOWN", phaseStartTick: tick };
   }
   if (state.phase === "COUNTDOWN" && tick - state.phaseStartTick >= msToTicks(countdownMs)) {
@@ -197,7 +214,7 @@ export const advanceMatchPhase = (
     nextRoundReady &&
     (standingsConfirmed || tick - state.phaseStartTick >= msToTicks(standingsReadyTimeoutMs))
   ) {
-    return { phase: "COUNTDOWN", phaseStartTick: tick };
+    return { phase: "LOADING", phaseStartTick: tick };
   }
   return state;
 };

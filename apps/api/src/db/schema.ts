@@ -236,6 +236,24 @@ export const trackPlays = sqliteTable("track_plays", {
 });
 
 /**
+ * Each Account's Personal Best on each Track (ADR 0088) — the fastest finished
+ * Race run the match server ever reported for it. Keyed by Track, never by
+ * Revision: a republish keeps every record. Only improved, never replaced by
+ * a slower run; `match_id`/`set_at_ms` name the run that set it.
+ */
+export const personalBests = sqliteTable(
+  "personal_bests",
+  {
+    accountId: text("account_id").notNull(),
+    trackId: text("track_id").notNull(),
+    bestMs: integer("best_ms").notNull(),
+    matchId: text("match_id").notNull(),
+    setAtMs: integer("set_at_ms").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.accountId, table.trackId] })],
+);
+
+/**
  * Pending friend requests (M9 ticket 12) — directional (who asked whom
  * matters for the inbox) and deleted on accept/decline, so a declined
  * stranger can be re-requested later. The pair unique blocks same-direction

@@ -1,0 +1,81 @@
+/* The HUD is a 3x3 grid with four anchors: position TL, timer TC, checkpoints TR, threat BC.
+   The middle row is the live game, left empty. Nothing is absolutely positioned. */
+.screen {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--df-space-6);
+  align-items: start;
+  justify-items: center;
+}
+
+.position {
+  justify-self: start;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--df-space-5);
+  padding: var(--df-space-6) var(--df-space-7);
+  border-radius: var(--df-radius-card);
+  background: var(--df-color-surface-0);
+  box-shadow: 0 var(--df-bevel-4) 0 var(--df-color-shadow-strong);
+}
+.place {
+  font: var(--df-weight-display) var(--df-text-hero) / .82 var(--df-font-display);
+  color: var(--df-color-brand);
+}
+.positionMeta { display: flex; flex-direction: column; gap: var(--df-space-3); padding-bottom: var(--df-space-2); }
+.field { font: var(--df-weight-label) var(--df-text-sm) / 1 var(--df-font-ui); color: var(--df-color-ink-55); }
+.caption {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-ink-45);
+}
+
+.clock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--df-space-4);
+}
+.time {
+  padding: var(--df-space-4) var(--df-space-8);
+  border-radius: var(--df-radius-panel);
+  background: var(--df-color-plate-strong);
+  color: var(--df-color-on-brand);
+  font: var(--df-weight-display) var(--df-text-title) / 1 var(--df-font-display);
+}
+.ms { font-size: .6em; opacity: .7; }
+
+.checkpoints {
+  justify-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--df-space-4);
+  text-align: right;
+}
+.cpLabel {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand-80);
+}
+.pb {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-on-brand-60);
+}
+
+.threat {
+  grid-row: 3;
+  grid-column: 1 / -1;
+  align-self: end;
+  display: flex;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-3) var(--df-space-6) var(--df-space-3) var(--df-space-3);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-plate);
+  color: var(--df-color-on-brand);
+  font: var(--df-weight-label) var(--df-text-xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+}
+.threat svg { width: calc(var(--df-u) * 1.1); fill: var(--df-color-accent); flex: none; }

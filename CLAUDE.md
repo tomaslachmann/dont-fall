@@ -191,8 +191,8 @@ plays fair is the user's live check.
 **M13 planned, the next goal** — Smooth on a weaker PC (`docs/milestones/M13.md`, research in
 `docs/research/gameplay-performance-culling-and-asset-loading.md`, **ADR 0079**). Settled with the
 user on 2026-09-17:
-- measure first: a dev frame overlay (`?perf=1`), a headless base-race simulation benchmark, and a
-  server tick log;
+- measure first: a dev frame overlay (`?perf=1` — since deleted, see below), a headless base-race
+  simulation benchmark, and a server tick log;
 - load only the Track's Assets and share textures (memory-footprint tickets 01/02, kept in
   `.scratch/memory-footprint/issues/`);
 - the camera's far plane follows the fog;
@@ -206,7 +206,10 @@ declined a lighter `trap_trapball` visual and non-casting small pieces. Tickets:
 
 Progress (2026-09-17):
 - **Done on tests:**
-  - 01, the `?perf=1` overlay, with a "copy run" button;
+  - 01, the `?perf=1` overlay, with a "copy run" button — **deleted on 2026-09-17** at the user's
+    request (`perfSession`/`perfMonitor`/`perfOverlay`/`perfText` and the flag are gone; the server
+    tick log under `DONTFALL_PERF=1` and `pnpm bench:sim` stay). The before-numbers in the research
+    note were taken with it;
   - 02, `pnpm bench:sim`, and `DONTFALL_PERF=1` on the Match server;
   - 04, the far plane at `fogFarPlane`, with the cloud floor faded before it;
   - 05, graphics quality in Settings → VIDEO, `lib/graphicsQuality.ts`, and the canvas no
@@ -241,6 +244,27 @@ in-game), generated music, `.ogg` only; a voiced Countdown; Settings → AUDIO w
 - **Waiting on the user:** every listening check (levels, picks, whether a whoosh per spinner sweep is
   too busy), and the throttled frame-time check with 12 Characters.
 
+**A Round loads before it counts down, done on tests** — a `LOADING` phase between the start and the
+Countdown (**ADR 0089**, settled with the user on 2026-09-17): each client builds the Round's Track and
+reports it (`loaded` on the snapshot), and the Countdown starts only once every connected client has,
+with no timeout — a Round waits for the people in it, but never for someone who left. The wait is the
+Round loader, full-screen: the Track's screenshot (ADR 0085) and its name. The base race carries its own
+(`assets/base_race.jpg`, published with the seed).
+
+Found live while wiring it: the game booted on `welcome.trackId` — the Track as of the socket opening,
+not the host's pick — and reloaded only in LOBBY, so a client could draw one Track while the server
+simulated another (Characters standing inside scenery, never falling), and every Round after the first
+drew the previous Round's Track. The boot now follows the snapshot, and a Track mismatch reloads in any
+phase (`apps/client/src/game/roundTrack.ts`).
+
+**Round HUD wired, done on tests** — `RaceHUD` and `SurvivalHud` over the live Round (**ADR 0088**, settled
+with the user on 2026-09-17), replacing the debug text block, which is deleted. What the mocks showed and
+the game lacked is built, not hidden: a live Race placement and Checkpoint Splits computed by the server
+(`SnapshotMessage.liveRace`, `packages/shared/src/match/LiveRace.ts`), Personal Bests per Account and
+Track (the server reports each Race Round's finished runs to the API's `personal_bests`; the client reads
+`GET /tracks/:id/personal-best`), who is right behind you, and a Survival danger warning read off real
+state. **Waiting on the user:** the visual check of both HUDs over a live Round.
+
 **Also open: M9** — Design screens reconciliation (`.scratch/m9-design-screens-reconciliation/issues/`).
 A new design-screens drop (`apps/client/src/test_components/`) turned out to assume six systems
 this game never had — recorded in `docs/research/test-components-design-screens-gap-analysis.md`.
@@ -261,7 +285,7 @@ not yet built.
 - **Server (from M2):** Node. Authoritative. One instance (one `MatchRuntime` + `WebSocketServer`
   pair, fully isolated simulation state) per Match — spun up on-demand, in-process by the API's
   lobbies module rather than as a separate OS process (ADR 0054/0058).
-- **Screens (from M4):** React + `react-router`, code-split from the game module. HUD is plain DOM, not React. (ADR 0008)
+- **Screens (from M4):** React + `react-router`, code-split from the game module. The Round HUD is a deduplicated React overlay (ADR 0008, 0088).
 - **Monorepo:** pnpm workspaces.
 - **Client bundler:** Vite.
 
@@ -298,9 +322,10 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 4. **The Character is a kinematic capsule** driven by a state machine
    (`Controlled → Stagger → Ragdoll → GettingUp → Controlled`). The ragdoll is a
    separate articulated body activated on impact/fall. (ADR 0006)
-5. **The HUD is plain DOM; Screens are React.** React owns the app shell and
-   routing and mounts `<GameCanvas>`; the game loop never runs through React.
-   The in-match HUD is drawn by the game. (ADR 0008)
+5. **Screens and the HUD are React; the game loop never is.** React owns the app
+   shell and routing and mounts `<GameCanvas>`. The Round HUD is a React overlay
+   fed display-rounded values the game raises only when they change — never a
+   per-frame value through React. (ADR 0008, 0060, 0088)
 
 ## Roadmap
 

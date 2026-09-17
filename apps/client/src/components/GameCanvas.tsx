@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useNavigate } from "react-router";
 import { ASSET_PLACEMENT_MODULES, MODULE_LIBRARY, STANDINGS_READY_TIMEOUT_MS, countCheckpoints } from "@dont-fall/shared";
 import { Button } from "@dont-fall/ui";
 import type { ExitReason, GameHandle, StandingsSnapshot } from "../game/index.js";
 import type { HitTakenEvent } from "../game/hitTaken.js";
 import type { PracticeSnapshot } from "../game/practice.js";
+import type { RoundHudSnapshot } from "../game/roundHud.js";
 import type { RunEndEvent } from "../game/runEnd.js";
 import type { SpectateSnapshot } from "../game/spectator.js";
 import { ConnectionError } from "../lib/errors.js";
-import { browserStorage, resolvePerfFlag } from "../lib/perfFlag.js";
+import { browserStorage } from "../lib/browserStorage.js";
 import { readGraphicsQuality } from "../lib/graphicsQuality.js";
 import { setGameActive } from "../lib/gamePresence.js";
 import { skinForPlayerId } from "../lib/avatarSkins.js";
@@ -16,7 +17,14 @@ import { useBeanBalance, useBettingState, usePlaceBet } from "../lib/hooks/useBe
 import { trackThumbnailUrl } from "../lib/api/tracks.js";
 import { useTrackDetail } from "../lib/hooks/useTrackDetail.js";
 import { useTrackList } from "../lib/hooks/useTrackList.js";
-import { formatRaceTime, formatRoundClock, formatSurvived } from "../lib/utils/roundTimer.js";
+import { usePersonalBest } from "../lib/hooks/usePersonalBest.js";
+import {
+  formatRaceClock,
+  formatRaceTime,
+  formatRoundClock,
+  formatSplit,
+  formatSurvived,
+} from "../lib/utils/roundTimer.js";
 import { ordinal, toStandingRows } from "../lib/matchView.js";
 import type { LobbyConnection, LobbySnapshot } from "../lib/socket/lobbyConnection.js";
 import BetweenRounds from "../screens/BetweenRounds.js";
@@ -26,6 +34,8 @@ import HitFeedback from "../screens/HitFeedback.js";
 import { LoadingScreen } from "../screens/LoadingScreen.js";
 import Spectator from "../screens/Spectator.js";
 import { PracticeHud } from "../screens/PracticeHud.js";
+import RaceHUD from "../screens/RaceHUD.js";
+import SurvivalHud from "../screens/SurvivalHud.js";
 import styles from "./GameCanvas.module.css";
 
 export interface GameCanvasProps {
@@ -89,10 +99,6 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
     return () => setGameActive(false);
   }, [practice]);
   const mountRef = useRef<HTMLDivElement | null>(null);
-  // The performance overlay (M13 ticket 01): `?perf=1`, or remembered from an
-  // earlier visit — read once per mount, so the game never reboots over it.
-  const [searchParams] = useSearchParams();
-  const [perf] = useState(() => resolvePerfFlag(searchParams, browserStorage()));
   // Graphics quality (ADR 0079): the device's stored level, read once per
   // mount; a change in Settings applies from the next game entry.
   const [graphicsQuality] = useState(() => readGraphicsQuality(browserStorage()));
@@ -129,6 +135,13 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
   // for the verdict's SPECTATE unless there was never a run to end
   // (a mid-Match joiner spectates with no verdict before it).
   const [spectate, setSpectate] = useState<SpectateSnapshot | null>(null);
+  // The Round HUD's facts (ADR 0088) — raised by the game only when a drawn
+  // value changed, `null` outside RUNNING or without a Character in the Round.
+  const [roundHud, setRoundHud] = useState<RoundHudSnapshot | null>(null);
+  // Whether this client's own world is built (ADR 0089). The Round waits for
+  // every client's, but this is the half only this client can know: until it
+  // is true there is nothing under the loading Screen worth showing.
+  const [worldReady, setWorldReady] = useState(false);
   const [askedSpectate, setAskedSpectate] = useState(false);
   // Local stopwatch anchor for the panel's ALIVE FOR — set on RUNNING entry
   // (display-only elapsed; the server owns every clock that matters).
@@ -201,6 +214,19 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
   const betting = useBettingState(lobby?.matchId, panelWanted ? roundNumber : undefined, panelWanted);
   const beanBalance = useBeanBalance();
   const placeBet = usePlaceBet();
+  const personalBestMs = usePersonalBest(practice ? undefined : lobby?.trackId, roundNumber);
+  // The Round loader (ADR 0089): up while this client is still building its
+  // world, and while the server holds LOADING for everyone else's. The Track
+  // it names is the one the Round runs on, art and all (ADR 0085).
+  const roundLoading = !practice && (!worldReady || lobby === null || lobby.phase === "LOADING");
+  const currentTrackName = (trackDetail?.name ?? lobby?.trackId ?? "").toUpperCase();
+  const currentTrackThumbnail =
+    lobby && trackList?.find((t) => t.id === lobby.trackId)?.hasThumbnail ? trackThumbnailUrl(lobby.trackId) : undefined;
+  // Who the Round is still waiting for, once this client itself is ready.
+  const loadingLabel =
+    lobby !== null && worldReady
+      ? `Waiting for players… ${lobby.loaded.length}/${lobby.players.length}`
+      : "Loading Track…";
   const totalCheckpoints = trackDetail ? countCheckpoints(trackDetail.track, { ...MODULE_LIBRARY, ...ASSET_PLACEMENT_MODULES }) : 0;
   const navigate = useNavigate();
 
@@ -226,7 +252,6 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
           ...(serverPort === undefined ? {} : { serverPort }),
           ...(connection === undefined ? {} : { connection }),
           ...(practice ? { practice: true as const } : {}),
-          ...(perf ? { perf: true } : {}),
           graphicsQuality,
           // The whole React surface of a practice session (m8.1 ticket 03)
           // is this one snapshot — raised at boot and on the finish
@@ -263,6 +288,10 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
             setHitTaken({ event, key: hitKeyRef.current });
           },
           onSpectate: (snapshot) => setSpectate(snapshot),
+          onRoundHud: (snapshot) => setRoundHud(snapshot),
+          // ADR 0089: the game says when its world stands; the server is
+          // told over the socket by the game itself.
+          onWorldReady: (ready) => setWorldReady(ready),
         }),
       )
       .then((bootedHandle) => {
@@ -284,10 +313,12 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
       setLobby(null);
       setStandings(null);
       setPracticeState(null);
+      setRoundHud(null);
+      setWorldReady(false);
       setReadyForNextRound(false);
       setShowGo(false);
     };
-  }, [trackId, serverPort, connection, practice, perf, graphicsQuality]);
+  }, [trackId, serverPort, connection, practice, graphicsQuality]);
 
   // Leaving a practice session is the existing `onExit` path (m8.1 ticket
   // 03) — no new exit mechanism. The teardown above already ran on unmount
@@ -383,6 +414,18 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
   return (
     <>
       <div ref={mountRef} className={styles.mount} />
+      {/* ADR 0089: nothing of the Round shows until this client's world is
+          built and the server has everyone else's — the Track's own
+          screenshot and name fill the wait (ADR 0085). */}
+      {roundLoading && (
+        <div className={styles.screenOverlay}>
+          <LoadingScreen
+            label={loadingLabel}
+            {...(currentTrackName === "" ? {} : { trackName: currentTrackName })}
+            {...(currentTrackThumbnail === undefined ? {} : { thumbnailUrl: currentTrackThumbnail })}
+          />
+        </div>
+      )}
       {lobby && (lobby.phase === "COUNTDOWN" || (lobby.phase === "RUNNING" && showGo)) && !practice && trackDetail && (
         <div className={styles.screenOverlay}>
           <Countdown
@@ -397,6 +440,42 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
             onTheLine={lineOrder.slice(0, 5).map((p) => skinForPlayerId(p.id))}
             othersOnTheLine={Math.max(0, lobby.players.length - 5)}
           />
+        </div>
+      )}
+      {/* ADR 0088: the Round HUD, over the live Round while you are still in it —
+          under the verdict, the Hit flash and the Spectator panel (DOM order is
+          z order), and held back for the GO! beat. Pointer-transparent: a click
+          still reaches the canvas for pointer lock. */}
+      {lobby && lobby.phase === "RUNNING" && roundHud && !showGo && runEnd === null && spectate === null && !practice && (
+        <div className={`${styles.screenOverlay} ${styles.hudOverlay}`}>
+          {roundHud.kind === "race" ? (
+            <RaceHUD
+              position={roundHud.place}
+              field={roundHud.field}
+              time={formatRaceClock(roundHud.elapsedMs).time}
+              ms={formatRaceClock(roundHud.elapsedMs).tenths}
+              delta={roundHud.splitMs === null ? null : formatSplit(roundHud.splitMs)}
+              deltaAhead={roundHud.splitMs !== null && roundHud.splitMs < 0}
+              checkpoint={roundHud.checkpointsReached}
+              checkpoints={roundHud.checkpoints}
+              personalBest={personalBestMs === null ? null : `PB ${formatRaceTime(personalBestMs)}`}
+              threat={
+                roundHud.threat === null
+                  ? null
+                  : { name: roundHud.threat.nickname.toUpperCase(), skin: skinForPlayerId(roundHud.threat.id) }
+              }
+            />
+          ) : (
+            <SurvivalHud
+              remaining={roundHud.remaining}
+              startedWith={roundHud.startedWith}
+              alive={roundHud.alive.map(skinForPlayerId)}
+              youAlive={roundHud.youAlive}
+              survived={formatSurvived(roundHud.survivedMs)}
+              lastOut={roundHud.lastOut === null ? null : `${roundHud.lastOut.toUpperCase()} WAS ELIMINATED`}
+              critical={roundHud.critical}
+            />
+          )}
         </div>
       )}
       {lobby && lobby.phase === "RUNNING" && runEnd && !askedSpectate && !practice && trackDetail && (

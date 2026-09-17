@@ -15,6 +15,13 @@
   overflow-y: auto;
 }
 
+/* The Round HUD (ADR 0088) floats over live gameplay: it never takes a click
+   (pointer lock is a click on the canvas) and never scrolls. */
+.hudOverlay {
+  overflow: hidden;
+  pointer-events: none;
+}
+
 /* A practice boot that rejects is a Track that never loaded — no
    connection exists to blame (m8.1: a Track load error, not a connection
    error), so the local banner stays instead of the app-wide boundary. */

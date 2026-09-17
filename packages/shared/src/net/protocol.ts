@@ -1,5 +1,6 @@
 import type { Vec3 } from "../math/vec3.js";
 import type { SimInputs } from "../simulation/SimInputs.js";
+import type { LiveRace } from "../match/LiveRace.js";
 import type { LobbyPlayer } from "../match/Lobby.js";
 import type { DnfEntry } from "../match/Results.js";
 import type { MatchPhase } from "../match/MatchPhase.js";
@@ -150,6 +151,13 @@ export interface SnapshotMessage {
    */
   standingsReady: string[];
   /**
+   * Ids whose client has this Round's Track built and said so (ADR 0089) —
+   * Round-scoped like `standingsReady`, cleared the moment a Round starts
+   * loading. The LOADING phase ends when every connected Player is in here,
+   * and the loading Screen counts who is still missing from it.
+   */
+  loaded: string[];
+  /**
    * The Track this server currently has loaded, and who's connected to the
    * Lobby around it (M4 ticket 07, ADR 0040). Sent every snapshot — not just
    * once at `welcome` — because both can change live during LOBBY: the host
@@ -241,6 +249,13 @@ export interface SnapshotMessage {
    * the current value via `sync` instead of having missed an event.
    */
   matchOver: { matchId: string } | null;
+  /**
+   * The running Race Round as the HUD reads it (ADR 0088) — live placements
+   * and Checkpoint splits, computed by the server from the Checkpoint arrival
+   * Ticks only it records. `null` outside RUNNING/ROUND_END and in every
+   * Round that is not a Race.
+   */
+  liveRace: LiveRace | null;
 }
 
 /** Server → client, reply to a {@link PingMessage} (time sync, ADR 0019). */
@@ -409,6 +424,21 @@ export interface SyncMessage {
   type: "sync";
 }
 
+/**
+ * Client → server: this client's world for the Round's Track is built and it
+ * is ready to be in the Round (ADR 0089) — the last thing between a start and
+ * a Countdown. Names the Track it actually built, so a report for the Track a
+ * previous Round ran on can never be mistaken for readiness for this one.
+ *
+ * Sent by the game itself, not the Screen around it: only the game knows when
+ * its Stage, physics world and Character models are actually there.
+ */
+export interface LoadedMessage {
+  type: "loaded";
+  trackId: string;
+  trackRevision: number;
+}
+
 export type ClientMessage =
   | InputMessage
   | PingMessage
@@ -422,6 +452,7 @@ export type ClientMessage =
   | PickRoundSlotMessage
   | StartMessage
   | StandingsReadyMessage
+  | LoadedMessage
   | SyncMessage;
 
 /** A nickname longer than this is truncated (M4 ticket 07) — long enough for a real name, short enough not to blow out a Lobby row. */

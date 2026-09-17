@@ -91,7 +91,9 @@ describe("MatchRuntime spectators (M7 ticket 08)", () => {
 
     rt.startNextRound(M1_TRACK);
 
-    expect(rt.match.phase).toBe("COUNTDOWN");
+    // Into LOADING, not the Countdown (ADR 0089) — every client builds the
+    // next Round's Track before it starts.
+    expect(rt.match.phase).toBe("LOADING");
     expect(characterIds(rt)).toEqual(["a", "b"]);
     rt.simulation.dispose();
   });

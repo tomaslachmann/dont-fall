@@ -7,10 +7,14 @@ import {
   allQualified,
   buildResults,
   buildRoundResult,
+  checkpointSplits,
   countdownMsLeft,
+  liveRacePlaces,
+  recordCheckpointArrivals,
   resolveHostId,
   roundTimeLeftMs,
   survivorTargetReached,
+  type LiveRace,
   type PersistedMatchResult,
   type ServerMessage,
   type SimInputs,
@@ -162,6 +166,9 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
         tick: thisTick,
         connectedPlayers: rt.sockets.size,
         startRequested: rt.startRequested,
+        // ADR 0089: the Countdown waits for every client's world, with no
+        // ceiling past it. Read live, like `standingsConfirmed`.
+        everyoneLoaded: rt.allLoaded(),
         countdownMs: rt.config.countdownMs,
         roundEndMs: rt.config.roundEndMs,
         allQualified: rt.roundEnding.allQualified,
@@ -199,7 +206,11 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
       rt.startRequested = false;
       // The Round's clock starts the Tick the Countdown ends, not when the
       // server did (M4 ticket 03's anchor, now owned by this transition).
-      if (nextMatch.phase === "RUNNING" && rt.match.phase !== "RUNNING") rt.roundStartTick = thisTick;
+      // Checkpoint arrivals (ADR 0088) count from the same anchor.
+      if (nextMatch.phase === "RUNNING" && rt.match.phase !== "RUNNING") {
+        rt.roundStartTick = thisTick;
+        rt.checkpointArrivals = {};
+      }
       // Read once and reused below (code review, ticket 05) — the same
       // immutable value for the whole tick, so "which Round type is this"
       // can never silently disagree between the two places that ask it.
@@ -241,6 +252,23 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
           round: rt.roundResults.length,
           winnerIds: roundWinners(finished),
         });
+        // ADR 0088: a Race Round's authed finishers report their run times
+        // for Personal Bests — exact, from Ticks, and only in a Race (a
+        // Survival Round stamps `finishTick` on every survivor at its end,
+        // which is not a run). `roundStartTick` is still this Round's here.
+        if (!isSurvival) {
+          const runs = Object.entries(precomputedState.characters).flatMap(([id, character]) => {
+            if (character.finishTick === null) return [];
+            const accountId = rt.lobbyPlayers.get(id)?.accountId ?? rt.dnf.find((d) => d.id === id)?.accountId;
+            // Clamped: a Finish Zone on the spawn stamps `finishTick` during the
+            // Countdown, before the clock's anchor.
+            const raceTimeMs = Math.max(0, Math.round((character.finishTick - rt.roundStartTick) * TICK_MS));
+            return accountId ? [{ accountId, raceTimeMs }] : [];
+          });
+          if (runs.length > 0) {
+            void rt.personalBests.recordRuns({ trackId: rt.fetched.id, matchId: rt.config.matchId, runs });
+          }
+        }
         // ADR 0059: every finished Round names its racers and their falls for
         // the results save — accumulated here, every Round, because a Player
         // who drops later has no row left to read at Match end. A second
@@ -287,9 +315,12 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
       // the Lobby or from Results (M7 ticket 04). `standingsReady` is the
       // same lifetime (M7 ticket 10, ADR 0051) — a Ready click confirms one
       // Round's own Standings, not the next one's.
-      if (nextMatch.phase === "COUNTDOWN" && rt.match.phase !== "COUNTDOWN") {
+      if (nextMatch.phase === "LOADING" && rt.match.phase !== "LOADING") {
         rt.dnf = [];
         rt.standingsReady.clear();
+        // Nobody has this Round's world yet (ADR 0089) — including whoever
+        // reported for the Round that just ended.
+        rt.loaded.clear();
         // Ticket 14: a fresh Countdown opens a fresh betting Round — roster,
         // Round number and close time go to the API, which owns pools from
         // here. Fire-and-forget: no round row reads as closed, never as open.
@@ -303,7 +334,7 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
           }),
         );
       }
-      if (nextMatch.phase === "COUNTDOWN" && rt.match.phase === "RESULTS") {
+      if (nextMatch.phase === "LOADING" && rt.match.phase === "RESULTS") {
         // M7 ticket 04/05: a Match's later Rounds go straight from Standings
         // into the next Countdown, never through the Lobby. Same "rebuild
         // the world, not just reset the phase" discipline the LOBBY branch
@@ -369,7 +400,7 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
           rt.standingsReady.clear();
           for (const player of rt.lobbyPlayers.values()) player.ready = false;
         }
-      } else if (nextMatch.phase === "COUNTDOWN" && rt.match.phase === "LOBBY") {
+      } else if (nextMatch.phase === "LOADING" && rt.match.phase === "LOBBY") {
         // M9 ticket 16: Round 1 starts on the Lobby's own loaded Track — no
         // draw, no rebuild, so this branch is the only place its play gets
         // reported (later Rounds report from the RESULTS branch above, after
@@ -399,6 +430,9 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
       for (const [id, character] of Object.entries(state.characters)) {
         character.lastInputTick = rt.inputs.lastInputTick(id);
       }
+      // Every Tick, not every snapshot: a split is only as exact as the
+      // arrival Tick it was read on (ADR 0088).
+      if (rt.match.phase === "RUNNING") recordCheckpointArrivals(rt.checkpointArrivals, state.characters, rt.serverTick);
 
       // Before the Round is RUNNING none of its clock has been spent, so it
       // reads its full authored value rather than counting down in the Lobby.
@@ -447,6 +481,15 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
       // stays live (`countdownMsLeft` ticks every tick) and so do RUNNING
       // and the short ROUND_END hold.
       const livePhase = rt.match.phase === "COUNTDOWN" || rt.match.phase === "RUNNING" || rt.match.phase === "ROUND_END";
+      // The Race HUD's live placements and splits (ADR 0088) — once per
+      // snapshot, shared by every client, and only while a Race is being run.
+      const liveRace: LiveRace | null =
+        !isSurvival && (rt.match.phase === "RUNNING" || rt.match.phase === "ROUND_END")
+          ? {
+              places: liveRacePlaces(state.characters, rt.raceTargets),
+              splits: checkpointSplits(rt.checkpointArrivals, state.characters),
+            }
+          : null;
       // Built once per snapshot, not once per client — every connected
       // client sees the identical Lobby (M4 ticket 07), and `hostId` is
       // recomputed from who's here now rather than stored anywhere.
@@ -490,9 +533,11 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
           countdown,
           dnf: rt.dnf,
           standingsReady: [...rt.standingsReady],
+          loaded: [...rt.loaded],
           roundResults: rt.roundResults,
           roundsRemaining: rt.canContinueMatch(),
           matchOver: rt.resultsSavedMatchId === null ? null : { matchId: rt.resultsSavedMatchId },
+          liveRace,
         });
         if (!shouldBroadcastIdle(rt.snapshotDirty, sharedJson, rt.lastBroadcastJson)) return;
         rt.snapshotDirty = false;
@@ -519,6 +564,7 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
             countdownMsLeft: countdown,
             dnf: rt.dnf,
             standingsReady: [...rt.standingsReady],
+            loaded: [...rt.loaded],
             trackId: rt.fetched.id,
             trackRevision: rt.fetched.revision,
             lobby: lobbySnapshot,
@@ -533,6 +579,7 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
             // ADR 0059: set once the terminal save lands (never before),
             // which is also a payload change the idle check above pushes.
             matchOver: rt.resultsSavedMatchId === null ? null : { matchId: rt.resultsSavedMatchId },
+            liveRace,
           } satisfies ServerMessage),
         );
       }

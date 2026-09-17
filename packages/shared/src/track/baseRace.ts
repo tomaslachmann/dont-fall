@@ -25,6 +25,13 @@ export const BASE_RACE_NAME = "Base Race";
  * two and a half, a real run with waiting and falls well over three.
  */
 export const BASE_RACE_TIME_LIMIT_MS = 5 * 60_000;
+/**
+ * The seed's own Thumbnail, served from the assets directory beside the GLBs
+ * (ADR 0085): a framed screenshot of this Track, shipped with the code that
+ * owns it so the Round loader has art for the base race without anyone
+ * republishing it from the builder.
+ */
+export const BASE_RACE_THUMBNAIL_FILE = "base_race.jpg";
 
 type Color = "blue" | "green" | "red" | "yellow";
 type Extra = Omit<Partial<Segment>, "moduleId" | "position">;

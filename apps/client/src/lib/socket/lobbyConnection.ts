@@ -44,6 +44,11 @@ export interface LobbySnapshot {
   hostId: string | undefined;
   players: LobbyPlayer[];
   trackId: string;
+  /**
+   * Ids whose client has this Round's Track built (ADR 0089) — what the
+   * loading Screen counts while LOADING holds the Round.
+   */
+  loaded: string[];
   trackRevision: number;
   /**
    * The currently-loaded Track's Time Limit (ADR 0038: "the Lobby only ever
@@ -106,6 +111,7 @@ export const toLobbySnapshot = (myId: string, maxPlayers: number, message: Snaps
   players: message.lobby.players,
   trackId: message.trackId,
   trackRevision: message.trackRevision,
+  loaded: message.loaded,
   timeLimitMs: message.timeLeftMs,
   roundType: message.lobby.roundType,
   survivorTarget: message.roundRules.survivorTarget,

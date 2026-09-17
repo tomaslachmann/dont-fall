@@ -1,5 +1,5 @@
 import { readAudioVolumes, subscribeAudioVolumes, volumeGain } from "../lib/audioSettings.js";
-import { browserStorage } from "../lib/perfFlag.js";
+import { browserStorage } from "../lib/browserStorage.js";
 import { createSoundEngine } from "./engine.js";
 import { sharedAudioContext } from "./sharedContext.js";
 import type { SoundSlot } from "./slots.js";

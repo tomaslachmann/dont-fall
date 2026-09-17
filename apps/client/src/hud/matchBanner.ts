@@ -34,8 +34,11 @@ export const matchBanner = ({
   switch (phase) {
     case "LOBBY":
       return `waiting for players · ${connectedPlayers}/${playersToStart}`;
-    // The React Countdown overlay owns the count (and the green GO!) — a
-    // canvas banner underneath it would double every beat.
+    // The React loading Screen covers the whole view while a Round loads
+    // (ADR 0089), and the Countdown overlay owns the count and the green GO!
+    // — a canvas banner underneath either would show through nothing, or
+    // double every beat.
+    case "LOADING":
     case "COUNTDOWN":
       return null;
     case "RUNNING":

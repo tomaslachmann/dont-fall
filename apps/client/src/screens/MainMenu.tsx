@@ -88,7 +88,7 @@ export default function MainMenu({
 
             <JellyButton
               variant="tile" tone="go" sub="4 DRAFT TRACKS"
-              onClick={() => console.log('build')}
+              onClick={() => window.open('http://localhost:5174')}
               icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><rect x="3" y="3" width="7.5" height="7.5" rx="2" /><rect x="13.5" y="3" width="7.5" height="7.5" rx="2" /><rect x="3" y="13.5" width="7.5" height="7.5" rx="2" /><path d="M17.25 14v6M14.25 17h6" /></svg>}
             >BUILD</JellyButton>
           </div>

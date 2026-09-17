@@ -1,6 +1,6 @@
 import type { MatchPhase } from "@dont-fall/shared";
 import { musicGain, readAudioVolumes, subscribeAudioVolumes } from "../lib/audioSettings.js";
-import { browserStorage } from "../lib/perfFlag.js";
+import { browserStorage } from "../lib/browserStorage.js";
 import { sharedAudioContext } from "./sharedContext.js";
 import { SOUNDS_BASE_URL } from "./soundBank.js";
 
@@ -27,9 +27,15 @@ export const MUSIC_PLAYLISTS: Readonly<Record<Playlist, readonly string[]>> = {
   round: ["music/round_0.ogg", "music/round_1.ogg", "music/round_2.ogg", "music/round_3.ogg", "music/round_4.ogg"],
 };
 
-/** What a phase plays: the Lobby's playlist, or the Round's, ducked under the jingles that end a Round. */
+/**
+ * What a phase plays: the Lobby's playlist, or the Round's, ducked under the
+ * jingles that end a Round. A Round loading (ADR 0089) is still the Lobby's:
+ * the Round's own music starts with its Countdown, not over a loading Screen.
+ */
 export const musicFor = (phase: MatchPhase): { playlist: Playlist; ducked: boolean } =>
-  phase === "LOBBY" ? { playlist: "lobby", ducked: false } : { playlist: "round", ducked: phase === "ROUND_END" || phase === "RESULTS" };
+  phase === "LOBBY" || phase === "LOADING"
+    ? { playlist: "lobby", ducked: false }
+    : { playlist: "round", ducked: phase === "ROUND_END" || phase === "RESULTS" };
 
 /** A shuffled pick from `tracks` that is never `last` (while there is anything else to play). */
 export const nextTrack = (tracks: readonly string[], last: string | undefined, random: () => number = Math.random): string => {
