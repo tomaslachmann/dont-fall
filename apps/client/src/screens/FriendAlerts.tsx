@@ -15,10 +15,12 @@ export interface FriendAlertsProps {
 }
 
 /**
- * The menu's live friend toasts (M9 ticket 12) — the `FriendRequestAlert`
- * mock's right column, wired: one toast per pending request (answerable in
- * place) and one per Lobby invite (JOIN or dismiss). Renders nothing when
- * there is nothing to answer.
+ * The live friend alerts (M9 ticket 12) — the `FriendRequestAlert` mock's
+ * right column, wired: one alert per pending request (answerable in place)
+ * and one per Lobby invite (JOIN or dismiss). Rendered once by
+ * `<GlobalAlerts>` above the whole authed subtree, so a Lobby invite stays
+ * a visible alert on every route until it is answered or the game starts.
+ * Renders nothing when there is nothing to answer.
  */
 export default function FriendAlerts({
   requests,

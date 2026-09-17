@@ -97,6 +97,12 @@ export const springFiredBy = (position: Vec3, springs: readonly SpringTrigger[])
 export class SpringSquashes {
   private readonly lastEpoch = new Map<string, number>();
   private readonly firedAt = new Map<number, number>();
+  private settledNow: number[] = [];
+
+  /** The Segments whose squash ended in the last {@link update}: a Spring back at rest (M14 ticket 08). */
+  settled(): readonly number[] {
+    return this.settledNow;
+  }
 
   /** Feed this frame's Characters; returns the Segments to squash and by how much. */
   update(
@@ -115,10 +121,12 @@ export class SpringSquashes {
     }
 
     const active = new Map<number, { y: number; xz: number }>();
+    this.settledNow = [];
     for (const [segmentIndex, firedAt] of this.firedAt) {
       const ms = nowMs - firedAt;
       if (ms >= SQUASH_TOTAL_MS) {
         this.firedAt.delete(segmentIndex);
+        this.settledNow.push(segmentIndex);
         // One last exact 1 so a Spring never settles a hair off its own size.
         active.set(segmentIndex, { y: 1, xz: 1 });
         continue;
@@ -132,5 +140,6 @@ export class SpringSquashes {
   reset(): void {
     this.lastEpoch.clear();
     this.firedAt.clear();
+    this.settledNow = [];
   }
 }

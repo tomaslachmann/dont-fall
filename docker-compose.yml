@@ -5,6 +5,19 @@
 #
 #   docker compose up --build api
 #
+# DB GUI (opt-in, localhost only): a lightweight sqlite-web on the same
+# SQLite file the API uses (same named volume, so the -shm/-wal sidecars
+# stay together — WAL readers need them writable, hence no `:ro` below).
+# Behind the `tools` profile so plain `up` never starts it, and with no
+# dependency on `api` so it also browses a stopped API's data:
+#
+#   docker compose --profile tools up db-gui   # then open http://localhost:8082
+# (or `pnpm dev --api=docker --db-gui` to start it with everything else)
+#
+# Port 8082: 8080/8081/5173/5174 are already taken by `scripts/dev.sh`.
+# (`--api=local` keeps its own file at `apps/api/data/track-service.sqlite`
+# instead of this volume — browse that one with a local SQLite client.)
+#
 services:
   api:
     build:
@@ -31,6 +44,22 @@ services:
       # path (`/data/track-service.sqlite`), so existing dev data survives
       # the merge instead of starting on a fresh empty volume. (ADR 0058)
       - track-service-data:/data
+  # Dev-only SQLite browser (see the header comment). A separate service —
+  # not baked into `apps/api/Dockerfile` — so the production API image stays
+  # a single-process container with no dev tools inside.
+  db-gui:
+    image: ghcr.io/coleifer/sqlite-web:latest
+    # The image's entrypoint is `sqlite_wsgi -H 0.0.0.0` and takes the
+    # database path as its positional argument — it reads no env var, so
+    # anything but this `command` fails with "missing required path to
+    # database file".
+    command: ["/data/track-service.sqlite"]
+    ports:
+      - "127.0.0.1:8082:8080"
+    volumes:
+      - track-service-data:/data
+    profiles:
+      - tools
 
 volumes:
   track-service-data:

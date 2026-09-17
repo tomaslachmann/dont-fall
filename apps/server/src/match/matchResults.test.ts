@@ -9,9 +9,11 @@ afterEach(() => {
 const RESULT = {
   matchId: "m1",
   results: [{ rows: [{ id: "a", placement: 1, qualified: true }] }],
+  roundTrackIds: ["track-1"],
   nicknames: { a: "Ann" },
   accountIds: { a: "acc-1" },
   bodySkins: { a: 2 },
+  hats: { a: "crown" },
   totalFalls: { a: 2 },
   endedAtMs: 60_000,
 };

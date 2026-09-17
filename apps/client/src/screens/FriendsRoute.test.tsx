@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useSearchParams } from "react-router";
 import type { FriendRequestView, FriendView, RecentPlayerView } from "@dont-fall/shared";
+import { clearFlashes } from "../lib/flash.js";
+import FlashHost from "../ui/FlashHost.js";
 import { FriendsRoute } from "./FriendsRoute";
 
 const { useFriends } = vi.hoisted(() => ({ useFriends: vi.fn() }));
@@ -77,6 +79,8 @@ const LobbyProbe = () => {
 const renderAt = (entry: string) =>
   render(
     <MemoryRouter initialEntries={[entry]}>
+      {/* The shell mounts the flash stack above the routes — this test does the same. */}
+      <FlashHost />
       <Routes>
         <Route path="/friends" element={<FriendsRoute />} />
         <Route path="/" element={<div>home</div>} />
@@ -86,6 +90,10 @@ const renderAt = (entry: string) =>
   );
 
 describe("FriendsRoute", () => {
+  beforeEach(() => {
+    clearFlashes();
+  });
+
   it("renders the hooked roster — online tab first, requests above", () => {
     useFriends.mockReturnValue(hook());
     renderAt("/friends");
@@ -119,6 +127,7 @@ describe("FriendsRoute", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Accept Goopy" }));
     expect(fns.acceptRequest).toHaveBeenCalledWith("r1");
+    expect(await screen.findByText("Goopy is now your friend.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "JOIN" }));
     expect(resolveLobbyRef).toHaveBeenCalledWith({ kind: "public", lobbyId: "l1" });
@@ -132,6 +141,7 @@ describe("FriendsRoute", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "JOIN" }));
     expect(await screen.findByText("that Lobby is no longer joinable")).toBeInTheDocument();
+    expect(screen.getByText("HOLD ON")).toBeInTheDocument();
     expect(screen.queryByText(/lobby:/)).not.toBeInTheDocument();
   });
 

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { Box } from "../math/box.js";
 import { ASSET_FOOTPRINT_EPSILON, ASSET_VISUAL_WARN } from "../tuning.js";
 import { loadAssetModule, readAssetModel, validateAssetModule } from "./asset.js";
+import { ASSET_MODULE_DEFS } from "./assetModules.js";
 
 // --- Minimal GLB assembler -------------------------------------------------
 // Builds exact-geometry fixtures: no Blender, no checked-in binaries, every
@@ -200,6 +201,25 @@ describe("readAssetModel", () => {
     const model = readAssetModel(assemble(nodes, meshes, [0, 2]));
 
     expect(model.collision[0]!.positions[0]).toEqual({ x: 5, y: 16, z: 7 });
+  });
+
+  it("restores outward winding under a mirroring transform — glTF flips it when the determinant is negative", () => {
+    // The trap pack's arrows are exported with scale (-s, -s, -s): baked
+    // as-is, their closed collision mesh would face inward.
+    const { nodes, meshes } = pair("collision", { scale: [-1, -1, -1] });
+    meshes[0] = [{ positions: TRI, indices: [0, 1, 2] }];
+    const mirrored = readAssetModel(assemble(nodes, meshes));
+    expect(mirrored.collision[0]!.indices).toEqual([0, 2, 1]);
+
+    const { nodes: plainNodes, meshes: plainMeshes } = pair("collision", { scale: [1, -1, 1] });
+    plainMeshes[0] = [{ positions: TRI }];
+    const nonIndexed = readAssetModel(assemble(plainNodes, plainMeshes));
+    expect(nonIndexed.collision[0]!.indices).toEqual([0, 2, 1]);
+
+    const { nodes: evenNodes, meshes: evenMeshes } = pair("collision", { scale: [-1, -1, 1] });
+    evenMeshes[0] = [{ positions: TRI, indices: [0, 1, 2] }];
+    const twoAxes = readAssetModel(assemble(evenNodes, evenMeshes));
+    expect(twoAxes.collision[0]!.indices).toEqual([0, 1, 2]); // two mirrors are a rotation
   });
 
   it("generates sequential indices for a non-indexed mesh", () => {

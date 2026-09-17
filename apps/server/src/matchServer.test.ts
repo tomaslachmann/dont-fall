@@ -10,6 +10,7 @@ import {
   matchScore,
   roundScore,
   type ClientMessage,
+  type PersistedMatchResult,
   type RoundType,
   type ServerMessage,
   type SimInputs,
@@ -26,14 +27,21 @@ import { startServer, type MatchServer } from "./matchServer.js";
 // unchanged — `startServer` picks up the env var as its default.
 let trackService: ApiService;
 
+// The match server's calls into the API (betting, the results save, play
+// counts) are service-token routes: without a shared token every one of them
+// is refused with 403, and a Match whose results save never lands never ends.
+const TEST_SERVICE_TOKEN = "match-server-test-token";
+
 beforeAll(async () => {
-  trackService = await startApi({ port: 0, dbPath: ":memory:" });
+  trackService = await startApi({ port: 0, dbPath: ":memory:", serviceToken: TEST_SERVICE_TOKEN });
   process.env.TRACK_SERVICE_URL = `http://localhost:${trackService.port}`;
+  process.env.SERVICE_TOKEN = TEST_SERVICE_TOKEN;
 });
 
 afterAll(async () => {
   await trackService.close();
   delete process.env.TRACK_SERVICE_URL;
+  delete process.env.SERVICE_TOKEN;
 });
 
 // M4 ticket 04: a Round now waits for `PLAYERS_TO_START` (2) connected
@@ -71,6 +79,7 @@ const noMessageFor = (socket: WebSocket, ms: number): Promise<boolean> =>
     }, ms);
     const onMessage = (): void => {
       clearTimeout(timer);
+      socket.off("message", onMessage);
       resolve(false);
     };
     socket.on("message", onMessage);
@@ -105,6 +114,41 @@ const publishTrack = async (
 
 const nextClose = (socket: WebSocket): Promise<{ code: number; reason: string }> =>
   new Promise((resolve) => socket.once("close", (code, reason) => resolve({ code, reason: reason.toString() })));
+
+/**
+ * `GET /matches/:id` is a player route — any signed-in Account may read any
+ * finished Match — so reading one back needs a session. One Account per API
+ * instance, signed up on first use.
+ */
+let readerSession: { api: ApiService; token: Promise<string> } | undefined;
+const readerToken = (): Promise<string> => {
+  if (readerSession?.api !== trackService) {
+    const token = fetch(`${process.env.TRACK_SERVICE_URL}/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "match-reader@example.com", password: "password-123", displayName: "Reader" }),
+    }).then(async (res) => ((await res.json()) as { token: string }).token);
+    readerSession = { api: trackService, token };
+  }
+  return readerSession.token;
+};
+
+/**
+ * Reads a finished Match's saved results back from the shared API (ADR 0059)
+ * — polling until the save lands, since the server writes it from its own
+ * tick loop a few milliseconds after the terminal tick. Throws past a short
+ * deadline rather than hanging the test on a save that never comes.
+ */
+const pollSavedMatch = async (matchId: string): Promise<PersistedMatchResult> => {
+  const authorization = `Bearer ${await readerToken()}`;
+  const deadline = Date.now() + 3000;
+  for (;;) {
+    const res = await fetch(`${process.env.TRACK_SERVICE_URL}/matches/${matchId}`, { headers: { authorization } });
+    if (res.ok) return (await res.json()) as PersistedMatchResult;
+    if (Date.now() > deadline) throw new Error(`save for Match "${matchId}" never landed (last status ${res.status})`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
+};
 
 const NORTH: SimInputs = { moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: false, dashHeld: false, facing: 0, hitHeld: false, grabHeld: false };
 
@@ -259,7 +303,7 @@ describe("startServer", () => {
       const m = await nextMessage(socket);
       if (m.type === "snapshot") {
         acked = m.state.characters[welcome.playerId]!.lastInputTick;
-        z = m.state.characters[welcome.playerId]!.position.z;
+        z = Math.min(z, m.state.characters[welcome.playerId]!.position.z);
       }
     }
     expect(acked).toBe(base + 10); // every batched tick applied, no dupes stuck in the queue
@@ -533,7 +577,7 @@ describe("startServer — disconnects (ticket 07)", () => {
       const m = await nextMessage(survivor);
       if (m.type === "snapshot") {
         tick = m.state.tick;
-        z = m.state.characters[survivorId]!.position.z;
+        z = Math.min(z, m.state.characters[survivorId]!.position.z);
       }
     }
     expect(z).toBeLessThan(startZ - 0.3); // it actually moved, not just an advancing ack
@@ -743,7 +787,9 @@ describe("startServer — Track Builder Playtest override (`?track=` on the conn
 
     const res = await fetch(`http://localhost:${server.port}/status`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ playerCount: 0, maxPlayers: 7, phase: "LOBBY" });
+    // M9 ticket 11 phase 2b: friends presence reads the authed Accounts and
+    // the Round number alongside the occupancy the broker already polled for.
+    expect(await res.json()).toEqual({ playerCount: 0, maxPlayers: 7, phase: "LOBBY", round: null, accounts: [] });
 
     const socket = connect(server.port);
     await nextMessage(socket); // welcome
@@ -1193,7 +1239,11 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     // Early, on Qualification — not by waiting out the Time Limit. The clock
     // holds whatever was left on it rather than resetting.
     expect(ended.timeLeftMs).toBeGreaterThan(0);
-    const later = await snapshotUntil(socket, (s) => s.state.tick > ended.state.tick + 20);
+    // Terminal RESULTS is idle (ADR 0057) — no stream to wait out a later
+    // Tick on, so pull the current state with `sync` and prove the clock
+    // froze instead of resetting.
+    socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
+    const later = await nextSnapshot(socket);
     expect(later.timeLeftMs).toBe(ended.timeLeftMs);
     socket.close();
   });
@@ -1216,8 +1266,10 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
 
     expect(ended.timeLeftMs).toBe(0);
     // And it stays put rather than springing back to the full Limit or
-    // carrying on counting into the Results.
-    const later = await snapshotUntil(socket, (s) => s.state.tick > ended.state.tick + 20);
+    // carrying on counting into the Results — pulled with `sync`, since
+    // terminal RESULTS is idle and streams nothing (ADR 0057).
+    socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
+    const later = await nextSnapshot(socket);
     expect(later.timeLeftMs).toBe(0);
     socket.close();
   });
@@ -1238,7 +1290,9 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
 
   it("locks input again once the Round is over", async () => {
     const trackId = await publishTrack(INSTANT_FINISH);
-    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0 });
+    // Pinned to one Round — this test is about the post-Round input lock, not
+    // a second Round's own re-seating.
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 1 });
     const socket = connect(server.port, `?track=${trackId}`);
     const welcome = (await nextMessage(socket)) as Extract<ServerMessage, { type: "welcome" }>;
     await startMatch(socket);
@@ -1251,8 +1305,13 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
       sendInput(socket, tick, NORTH);
       tick += 1;
     }, 5);
-    const later = await snapshotUntil(socket, (s) => s.state.tick > results.state.tick + 30);
+    // Terminal RESULTS is idle (ADR 0057) — no stream to wait out a later
+    // Tick on. Give the spam a real window instead, then pull the current
+    // state with `sync` and prove nothing moved.
+    await new Promise((r) => setTimeout(r, 300));
     clearInterval(spam);
+    socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
+    const later = await nextSnapshot(socket);
 
     const after = later.state.characters[welcome.playerId]!.position;
     expect(Math.hypot(after.x - settled.x, after.z - settled.z)).toBeLessThan(0.1);
@@ -1272,7 +1331,9 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
 
     const afterDrop = await snapshotUntil(b, (s) => s.dnf.length > 0);
 
-    expect(afterDrop.dnf).toEqual([{ id: welcomeA.playerId, nickname: "Player" }]);
+    // M9 ticket 11 phase 2b / ticket 15: the row captures the Account and the
+    // body skin at drop, so the Results screen can attribute it afterwards.
+    expect(afterDrop.dnf).toEqual([{ id: welcomeA.playerId, nickname: "Player", accountId: null, bodySkin: null, hat: null }]);
     // Eliminated, not removed (M5 ticket 04, ADR 0042): the entry stays —
     // pulling its rigid body out of the world mid-Round would disturb
     // contact resolution for everyone still racing (the flaw this ticket
@@ -1321,23 +1382,6 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
     const later = await snapshotUntil(b, (s) => s.state.tick > counting.state.tick + 10);
     expect(later.dnf).toEqual([]);
     b.close();
-  });
-
-  it("refuses a joiner while a Round is under way — there is no mid-Round rejoin", async () => {
-    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
-    const playing = connect(server.port);
-    await nextMessage(playing); // welcome
-    await startMatch(playing);
-    await snapshotUntil(playing, (s) => s.phase === "RUNNING");
-
-    const latecomer = connect(server.port);
-    const closed = await nextClose(latecomer);
-
-    // "a Match," not "a Round" (M7 ticket 04/05, code review) — RESULTS can
-    // now be a brief inter-Round interlude, so this refusal's own words no
-    // longer claim specifically a Round is under way.
-    expect(closed.reason).toMatch(/Match/i);
-    playing.close();
   });
 
   it("lets someone join again once the server is back in the Lobby", async () => {
@@ -1586,8 +1630,11 @@ describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
     await snapshotUntil(a, (s) => s.lobby.players.every((p) => p.ready));
     b.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
 
-    // Give the (wrongly) requested start a real chance to land before asserting it didn't.
-    await new Promise((r) => setTimeout(r, 100));
+    // An ignored start broadcasts nothing (ADR 0057) — give it a real chance
+    // to land, prove the silence, then pull the current state with `sync`
+    // and prove the Lobby never moved.
+    expect(await noMessageFor(a, 100)).toBe(true);
+    a.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     const stillLobby = await nextSnapshot(a);
     expect(stillLobby.phase).toBe("LOBBY");
     a.close();
@@ -1605,7 +1652,10 @@ describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
     await snapshotUntil(a, (s) => s.lobby.players.some((p) => p.ready));
     a.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
 
-    await new Promise((r) => setTimeout(r, 100));
+    // An ignored start broadcasts nothing (ADR 0057) — prove the silence,
+    // then pull the current state with `sync` and prove the Lobby never moved.
+    expect(await noMessageFor(a, 100)).toBe(true);
+    a.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     const stillLobby = await nextSnapshot(a);
     expect(stillLobby.phase).toBe("LOBBY");
     a.close();
@@ -1621,7 +1671,10 @@ describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
     await snapshotUntil(a, (s) => s.lobby.players.some((p) => p.ready));
     a.send(JSON.stringify({ type: "start" } satisfies ClientMessage));
 
-    await new Promise((r) => setTimeout(r, 100));
+    // An ignored start broadcasts nothing (ADR 0057) — prove the silence,
+    // then pull the current state with `sync` and prove the Lobby never moved.
+    expect(await noMessageFor(a, 100)).toBe(true);
+    a.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     const stillLobby = await nextSnapshot(a);
     expect(stillLobby.phase).toBe("LOBBY");
     a.close();
@@ -1653,9 +1706,15 @@ describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
     await nextMessage(b); // not host
 
     const altTrackId = await publishTrack();
+    // Drain the join broadcasts first — the silence window below must not
+    // catch their late arrival and mistake it for an answer to the pick.
+    await snapshotUntil(a, (s) => s.lobby.players.length === 2);
     b.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
 
-    await new Promise((r) => setTimeout(r, 200));
+    // An ignored pick broadcasts nothing (ADR 0057) — prove the silence,
+    // then pull the current state with `sync` and prove the Track never moved.
+    expect(await noMessageFor(a, 200)).toBe(true);
+    a.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     const unchanged = await nextSnapshot(a);
     expect(unchanged.trackId).toBe(welcomeA.trackId);
     a.close();
@@ -1721,8 +1780,11 @@ describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
     const landed = await snapshotUntil(a, (s) => s.trackId === trackA || s.trackId === trackB);
     expect(landed.trackId).toBe(trackB);
 
-    // Give trackA's own fetch every chance to resolve late and clobber it.
-    await new Promise((r) => setTimeout(r, 200));
+    // Give trackA's own fetch every chance to resolve late and clobber it —
+    // a superseded fetch is discarded in silence (ADR 0057), so no broadcast
+    // may arrive at all; then pull the current state with `sync`.
+    expect(await noMessageFor(a, 200)).toBe(true);
+    a.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     const settled = await nextSnapshot(a);
     expect(settled.trackId).toBe(trackB);
     a.close();
@@ -1756,8 +1818,11 @@ describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
     expect(reloaded.phase).toBe("LOBBY");
 
     // Confirm it isn't just late — nothing spontaneously starts it, and
-    // Ready survives the reset, so the host only needs to ask again.
-    await new Promise((r) => setTimeout(r, 200));
+    // Ready survives the reset, so the host only needs to ask again. The
+    // Lobby is idle (ADR 0057), so prove the silence, then pull the current
+    // state with `sync`.
+    expect(await noMessageFor(socket, 200)).toBe(true);
+    socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     const stillLobby = await nextSnapshot(socket);
     expect(stillLobby.phase).toBe("LOBBY");
     expect(stillLobby.lobby.players[0]!.ready).toBe(true);
@@ -1812,7 +1877,14 @@ describe("startServer — Standings gates the next Round on confirmation (M7 tic
     // for it to gate.
     standingsReady(socket);
 
-    await new Promise((r) => setTimeout(r, 100));
+    // Terminal RESULTS is idle (ADR 0057): the confirmation's own echo and
+    // the save landing (`matchOver`) are the last broadcasts — consume both
+    // with a listening loop (a bare sleep would let them arrive with no
+    // listener and lose them), then prove nothing else ever comes, then pull
+    // the current state with `sync` and prove it never moved.
+    await snapshotUntil(socket, (s) => s.matchOver !== null && s.standingsReady.length === 1);
+    expect(await noMessageFor(socket, 300)).toBe(true);
+    socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     const stillResults = await nextSnapshot(socket);
     expect(stillResults.phase).toBe("RESULTS");
     socket.close();
@@ -1840,14 +1912,20 @@ describe("startServer — Standings gates the next Round on confirmation (M7 tic
     await nextMessage(a);
     const b = connect(server.port);
     await nextMessage(b);
-    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
+    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: "race" } satisfies ClientMessage));
     await startMatch(a, b);
     await snapshotUntil(a, (s) => s.phase === "RESULTS");
 
     standingsReady(a);
 
     // Only one of two has confirmed — still waiting, not a flash of COUNTDOWN.
-    await new Promise((r) => setTimeout(r, 150));
+    // Mid-match RESULTS is idle (ADR 0057): consume the confirmation's own
+    // echo with a listening loop (a bare sleep would lose it with no
+    // listener attached), then prove the gate holds in silence, then pull
+    // the current state with `sync` and prove it held on RESULTS.
+    await snapshotUntil(a, (s) => s.standingsReady.length === 1);
+    expect(await noMessageFor(a, 200)).toBe(true);
+    a.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     const stillResults = await nextSnapshot(a);
     expect(stillResults.phase).toBe("RESULTS");
 
@@ -1886,7 +1964,7 @@ describe("startServer — Standings gates the next Round on confirmation (M7 tic
     await nextMessage(a);
     const b = connect(server.port);
     await nextMessage(b);
-    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
+    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: "race" } satisfies ClientMessage));
     await startMatch(a, b);
     await snapshotUntil(a, (s) => s.phase === "RESULTS");
 
@@ -1909,7 +1987,7 @@ describe("startServer — Standings gates the next Round on confirmation (M7 tic
     await nextMessage(a);
     const b = connect(server.port);
     await nextMessage(b);
-    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
+    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: "race" } satisfies ClientMessage));
     await startMatch(a, b);
     await snapshotUntil(a, (s) => s.phase === "RESULTS");
 
@@ -1919,19 +1997,32 @@ describe("startServer — Standings gates the next Round on confirmation (M7 tic
     await nextClose(b);
     standingsReady(a);
 
-    await new Promise((r) => setTimeout(r, 100));
+    // Parked RESULTS is idle (ADR 0057): consume the disconnect broadcast,
+    // the confirmation's own echo and the results save landing (`matchOver`
+    // — a Match that cannot continue is over, ADR 0059) with a listening
+    // loop (a bare sleep would lose them with no listener attached), then
+    // prove nothing else ever comes, then pull the current state with `sync`.
+    await snapshotUntil(a, (s) => s.lobby.players.length === 1 && s.standingsReady.length === 1 && s.matchOver !== null);
+    expect(await noMessageFor(a, 200)).toBe(true);
+    a.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     const stillResults = await nextSnapshot(a);
     expect(stillResults.phase).toBe("RESULTS");
 
-    // a leaves too — the only way out left, same as any Match end — and the
-    // next connection finds a genuinely fresh Lobby.
+    // a leaves too — the only way out left, same as any Match end. Nobody
+    // left and nothing left to race, so the server closes itself (ADR 0059)
+    // instead of idling in a fresh Lobby: the next connection is refused.
     a.close();
     await nextClose(a);
+    await new Promise((r) => setTimeout(r, 200));
     const c = connect(server.port);
-    await nextMessage(c);
-    const lobby = await snapshotUntil(c, (s) => s.phase === "LOBBY");
-    expect(lobby.roundResults).toEqual([]);
-    c.close();
+    const messages: ServerMessage[] = [];
+    c.on("message", (raw: Buffer) => messages.push(JSON.parse(raw.toString()) as ServerMessage));
+    c.on("error", () => {});
+    const closed = await nextClose(c);
+    expect(closed.code).toBe(1006);
+    expect(messages).toEqual([]);
+    // The server closed itself — nothing left for `afterEach` to close.
+    server = undefined;
   });
 });
 
@@ -1986,8 +2077,8 @@ describe("startServer — a Match runs several Rounds (M7 ticket 04, ADR 0049)",
     // (every other test's own published Tracks), which is not reliably
     // instant-finish and would make this test about the draw, not about
     // several Rounds running in sequence.
-    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
-    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 2, trackId, roundType: null } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: "race" } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 2, trackId, roundType: "race" } satisfies ClientMessage));
 
     await startMatch(socket);
 
@@ -1996,37 +2087,50 @@ describe("startServer — a Match runs several Rounds (M7 ticket 04, ADR 0049)",
     expect(returnedToLobby).toBe(false);
 
     // And it stays put on the last Round's Results rather than starting a 4th.
-    const later = await snapshotUntil(socket, (s) => s.state.tick > final.state.tick + 20);
+    // Terminal RESULTS is idle (ADR 0057): the results save landing
+    // (`matchOver`) and the auto-confirm's own echo are the last broadcasts
+    // — consume both, then prove nothing else ever comes, then pull the
+    // current state with `sync` and prove it never moved.
+    await snapshotUntil(socket, (s) => s.matchOver !== null && s.standingsReady.length === 1);
+    expect(await noMessageFor(socket, 300)).toBe(true);
+    socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
+    const later = await nextSnapshot(socket);
     expect(later.phase).toBe("RESULTS");
     expect(later.roundResults).toHaveLength(3);
     socket.close();
   });
 
-  it("starts a fresh Match with an empty results list — a second Match does not inherit the first one's Score", async () => {
+  it("closes itself once everyone has left a finished Match — there is no second Match on this server (ADR 0059)", async () => {
     const trackId = await publishTrack(INSTANT_FINISH);
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 1 });
     const socket = connect(server.port, `?track=${trackId}`);
     await nextMessage(socket); // welcome
     await startMatch(socket);
 
-    const firstResults = await snapshotUntil(socket, (s) => s.phase === "RESULTS");
+    // Terminal RESULTS, and the results save has landed (`matchOver`) — the
+    // two preconditions for the self-close below.
+    const firstResults = await snapshotUntil(socket, (s) => s.phase === "RESULTS" && s.matchOver !== null);
     expect(firstResults.roundResults).toHaveLength(1);
 
-    // No group action carries a still-connected group into a second Match
-    // any more (ADR 0051 retires `returnToLobby`) — leaving, the same way
-    // any Player leaves for the Main Menu, is what resets the server.
+    // Everyone leaves for the results page...
     socket.close();
     await nextClose(socket);
 
-    const second = connect(server.port, `?track=${trackId}`);
-    await nextMessage(second);
-    const backInLobby = await snapshotUntil(second, (s) => s.phase === "LOBBY");
-    expect(backInLobby.roundResults).toEqual([]);
+    // ...and the server closes itself instead of idling in a fresh Lobby —
+    // several ticks, so the close-tick has run and the port is actually shut.
+    await new Promise((r) => setTimeout(r, 200));
 
-    await startMatch(second);
-    const secondResults = await snapshotUntil(second, (s) => s.phase === "RESULTS");
-    expect(secondResults.roundResults).toHaveLength(1); // not 2 — the first Match's result is gone
-    second.close();
+    // A new connection is refused at TCP level: an error, a 1006 close, and
+    // never a welcome. (`error` must be observed — an unhandled one throws.)
+    const second = connect(server.port);
+    const messages: ServerMessage[] = [];
+    second.on("message", (raw: Buffer) => messages.push(JSON.parse(raw.toString()) as ServerMessage));
+    second.on("error", () => {});
+    const closed = await nextClose(second);
+    expect(closed.code).toBe(1006);
+    expect(messages).toEqual([]);
+    // The server closed itself — nothing left for `afterEach` to close.
+    server = undefined;
   });
 });
 
@@ -2077,8 +2181,10 @@ describe("startServer — a disconnect does not corrupt the standings (M7 ticket
     // Pin Rounds 2 and 3 to the same instant-finish Track (M7 ticket 05) —
     // otherwise the server draws from the shared pool, which is not reliably
     // instant-finish and would make this test about the draw, not the drop.
-    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
-    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 2, trackId, roundType: null } satisfies ClientMessage));
+    // As a Race: a drawn type is a coin flip, and a Survival Round on this
+    // Track only ends at its Time Limit (nobody falls, the Survivor Target is 1).
+    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: "race" } satisfies ClientMessage));
+    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 2, trackId, roundType: "race" } satisfies ClientMessage));
 
     await startMatch(a, b, c);
     const afterR1 = await snapshotUntil(a, (s) => s.roundResults.length === 1 && s.phase === "RESULTS");
@@ -2105,35 +2211,42 @@ describe("startServer — a disconnect does not corrupt the standings (M7 ticket
     b.close();
   });
 
-  it("ends the Match in a fresh Lobby when everyone drops mid-Match, and keeps serving", async () => {
+  it("saves the partial Match when everyone drops mid-Match, then closes itself instead of idling (ADR 0059)", async () => {
     const trackId = await publishTrack(INSTANT_FINISH);
     server = await startServer({ port: 0, playersToStart: 2, countdownMs: 0, roundEndMs: 0 });
     const a = connect(server.port, `?track=${trackId}`);
-    await welcomeId(a);
+    const aId = await welcomeId(a);
     const b = connect(server.port, `?track=${trackId}`);
-    await welcomeId(b);
+    const bId = await welcomeId(b);
 
     await startMatch(a, b);
-    await snapshotUntil(a, (s) => s.roundResults.length === 1 && s.phase === "RESULTS");
+    const afterR1 = await snapshotUntil(a, (s) => s.roundResults.length === 1 && s.phase === "RESULTS");
 
-    // Both closes observed client-side, so the server has processed them —
-    // the next connection cannot land in the pre-tick RESULTS window with a
-    // stale socket still counted.
+    // Both drop mid-Match — nobody left to race Rounds 2 and 3.
     a.close();
     await nextClose(a);
     b.close();
     await nextClose(b);
 
-    const c = connect(server.port);
-    const cId = await welcomeId(c);
-    const lobby = await snapshotUntil(c, (s) => s.phase === "LOBBY");
-    expect(lobby.roundResults).toEqual([]);
-    expect(lobby.lobby.players.map((p) => p.id)).toEqual([cId]);
+    // The Match can't continue (nobody connected), so it ends here: Round
+    // one's Score is saved, not wiped — the standings survive the drop.
+    const saved = await pollSavedMatch(afterR1.matchId);
+    expect(saved.results).toHaveLength(1);
+    expect(saved.results[0]!.rows.map((r) => r.id).sort()).toEqual([aId, bId].sort());
+    expect(saved.roundTrackIds).toEqual([trackId]);
 
-    // No looping over an empty field: it stays a fresh Lobby.
-    const later = await snapshotUntil(c, (s) => s.state.tick > lobby.state.tick + 10);
-    expect(later.phase).toBe("LOBBY");
-    c.close();
+    // And the emptied server closes itself rather than idling in a fresh
+    // Lobby for Players who are never coming back (ADR 0024: no rejoin).
+    await new Promise((r) => setTimeout(r, 200));
+    const c = connect(server.port);
+    const messages: ServerMessage[] = [];
+    c.on("message", (raw: Buffer) => messages.push(JSON.parse(raw.toString()) as ServerMessage));
+    c.on("error", () => {});
+    const closed = await nextClose(c);
+    expect(closed.code).toBe(1006);
+    expect(messages).toEqual([]);
+    // The server closed itself — nothing left for `afterEach` to close.
+    server = undefined;
   });
 
   it("finishes the Match when the host drops mid-way, over whoever is left", async () => {
@@ -2147,8 +2260,8 @@ describe("startServer — a disconnect does not corrupt the standings (M7 ticket
     await welcomeId(c);
     autoConfirmStandings(b, c); // stands in for their own Ready clicks each Round (ticket 10) — a is about to leave
 
-    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
-    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 2, trackId, roundType: null } satisfies ClientMessage));
+    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: "race" } satisfies ClientMessage));
+    a.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 2, trackId, roundType: "race" } satisfies ClientMessage));
 
     await startMatch(a, b, c);
     await snapshotUntil(a, (s) => s.roundResults.length === 1 && s.phase === "RESULTS");
@@ -2167,7 +2280,14 @@ describe("startServer — a disconnect does not corrupt the standings (M7 ticket
 
     // Terminal now — no group action carries anyone anywhere from here
     // (ADR 0051); each Player leaves independently for the Main Menu.
-    await new Promise((r) => setTimeout(r, 100));
+    // Terminal RESULTS is idle (ADR 0057): the save landing (`matchOver`)
+    // and the auto-confirms' own echoes are the last broadcasts — consume
+    // them with a listening loop (a bare sleep would lose them with no
+    // listener attached), then prove nothing else ever comes, then pull the
+    // current state with `sync`.
+    await snapshotUntil(b, (s) => s.matchOver !== null && s.standingsReady.length === 2);
+    expect(await noMessageFor(b, 300)).toBe(true);
+    b.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     const stillResults = await nextSnapshot(b);
     expect(stillResults.phase).toBe("RESULTS");
     b.close();
@@ -2288,10 +2408,16 @@ describe("startServer — pick or shuffle (M7 ticket 05, ADR 0049)", () => {
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0, matchLengthOverride: 3 });
     const socket = connect(server.port, `?track=${trackId}`);
     await nextMessage(socket); // welcome
+    // Drain the join-push first — the silence window below must not catch
+    // its late arrival and mistake it for an answer to the pick.
+    await snapshotUntil(socket, (s) => s.trackId === trackId);
 
     socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 0, trackId: otherTrackId, roundType: null } satisfies ClientMessage));
 
-    await new Promise((r) => setTimeout(r, 100));
+    // A refused pick broadcasts nothing (ADR 0057) — prove the silence, then
+    // pull the current state with `sync`.
+    expect(await noMessageFor(socket, 100)).toBe(true);
+    socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     const snapshot = await nextSnapshot(socket);
     expect(snapshot.trackId).toBe(trackId); // unchanged — the message was refused, not applied to Round 1
     socket.close();
@@ -2310,13 +2436,19 @@ describe("startServer — pick or shuffle (M7 ticket 05, ADR 0049)", () => {
     // other test's own published Tracks), which is not reliably
     // instant-finish and would make this test about the draw, not the
     // Match length actually changing.
-    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: "race" } satisfies ClientMessage));
     await snapshotUntil(socket, (s) => s.lobby.matchLength === 2);
     await startMatch(socket);
 
     const final = await snapshotUntil(socket, (s) => s.phase === "RESULTS" && s.roundResults.length === 2);
-    // And it stays at 2 — never draws a 3rd the default would have.
-    const later = await snapshotUntil(socket, (s) => s.state.tick > final.state.tick + 20);
+    // And it stays at 2 — never draws a 3rd the default would have. Terminal
+    // RESULTS is idle (ADR 0057): consume the save landing (`matchOver`) and
+    // the auto-confirm's own echo, then prove nothing else ever comes, then
+    // pull the current state with `sync` and prove it never moved.
+    await snapshotUntil(socket, (s) => s.matchOver !== null && s.standingsReady.length === 1);
+    expect(await noMessageFor(socket, 300)).toBe(true);
+    socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
+    const later = await nextSnapshot(socket);
     expect(later.roundResults).toHaveLength(2);
     socket.close();
   });
@@ -2325,11 +2457,15 @@ describe("startServer — pick or shuffle (M7 ticket 05, ADR 0049)", () => {
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port);
     await nextMessage(socket); // welcome
+    await nextSnapshot(socket); // join-push — drained before the silence window below may start
 
     socket.send(JSON.stringify({ type: "setMatchLength", matchLength: 0 } satisfies ClientMessage));
     socket.send(JSON.stringify({ type: "setMatchLength", matchLength: 999 } satisfies ClientMessage));
 
-    await new Promise((r) => setTimeout(r, 100));
+    // Refused lengths broadcast nothing (ADR 0057) — prove the silence, then
+    // pull the current state with `sync`.
+    expect(await noMessageFor(socket, 100)).toBe(true);
+    socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     const snapshot = await nextSnapshot(socket);
     expect(snapshot.lobby.matchLength).toBe(3); // DEFAULT_MATCH_LENGTH, unchanged by either refusal
     socket.close();
@@ -2343,10 +2479,16 @@ describe("startServer — pick or shuffle (M7 ticket 05, ADR 0049)", () => {
     const b = connect(server.port);
     await nextMessage(b);
 
+    // Drain the join broadcasts first — the silence window below must not
+    // catch their late arrival and mistake it for an answer.
+    await snapshotUntil(a, (s) => s.lobby.players.length === 2);
     b.send(JSON.stringify({ type: "setMatchLength", matchLength: 2 } satisfies ClientMessage));
     b.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
 
-    await new Promise((r) => setTimeout(r, 100));
+    // Non-host messages are ignored in silence (ADR 0057) — prove it, then
+    // pull the current state with `sync`.
+    expect(await noMessageFor(a, 100)).toBe(true);
+    a.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     const snapshot = await nextSnapshot(a);
     expect(snapshot.lobby.matchLength).toBe(3);
     expect(snapshot.lobby.roundPicks[0]).toEqual({ trackId: null, roundType: null });
@@ -2361,7 +2503,7 @@ describe("startServer — pick or shuffle (M7 ticket 05, ADR 0049)", () => {
     await nextMessage(socket); // welcome
     autoConfirmStandings(socket);
 
-    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: null } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: "race" } satisfies ClientMessage));
     socket.send(JSON.stringify({ type: "setReady", ready: true } satisfies ClientMessage));
     // Two `start`s back to back, synchronously, before the tick loop can
     // process the first and move `phase` off LOBBY — the exact window the
@@ -2535,8 +2677,11 @@ describe("startServer — the Lobby picks a Round type (M5 ticket 07, ADR 0041/0
 
     pickRoundType(other, "survival");
 
-    // Give the server real ticks to have acted on it, had it been going to.
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Give the server real ticks to have acted on it, had it been going to —
+    // a non-host pick is ignored in silence (ADR 0057), so prove the silence,
+    // then pull the current state with `sync`.
+    expect(await noMessageFor(host, 200)).toBe(true);
+    host.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     expect((await nextSnapshot(host)).lobby.roundType).toBe("race");
     host.close();
     other.close();
@@ -2546,10 +2691,14 @@ describe("startServer — the Lobby picks a Round type (M5 ticket 07, ADR 0041/0
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port);
     await nextMessage(socket);
+    await nextSnapshot(socket); // join-push — drained before the silence window below may start
 
     socket.send(JSON.stringify({ type: "setRoundType", roundType: "battle-royale" }));
 
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    // An unknown Round type is ignored in silence (ADR 0057) — prove it,
+    // then pull the current state with `sync`.
+    expect(await noMessageFor(socket, 200)).toBe(true);
+    socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     expect((await nextSnapshot(socket)).lobby.roundType).toBe("race");
     socket.close();
   });
@@ -2608,7 +2757,10 @@ describe("startServer — the Lobby picks a Round type (M5 ticket 07, ADR 0041/0
 
     await startMatch(socket);
 
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // A refused start broadcasts nothing (ADR 0057) — prove the silence,
+    // then pull the current state with `sync` and prove the Lobby never moved.
+    expect(await noMessageFor(socket, 300)).toBe(true);
+    socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
     expect((await nextSnapshot(socket)).phase).toBe("LOBBY");
     socket.close();
   });
@@ -2710,7 +2862,15 @@ describe("startServer — a Track pick must not freeze the Players already in th
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const socket = connect(server.port);
     await nextMessage(socket); // welcome
-    const before = await snapshotUntil(socket, (s) => s.state.tick > 10);
+    // An idle Lobby broadcasts only on change (ADR 0057), so nothing streams
+    // to wait out — pull snapshots with `sync` until the Tick epoch is far
+    // enough along for the comparison below to be meaningful. Ticks advance
+    // every interval even idly, so this terminates within a dozen Ticks.
+    let before = await nextSnapshot(socket); // join-push
+    while (before.state.tick <= 10) {
+      socket.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
+      before = await nextSnapshot(socket);
+    }
 
     const altTrackId = await publishTrack(M1_TRACK, undefined, 45_000);
     socket.send(JSON.stringify({ type: "selectTrack", trackId: altTrackId } satisfies ClientMessage));
@@ -2745,7 +2905,7 @@ describe("startServer — a Track pick must not freeze the Players already in th
       sendInput(socket, tick + 2, NORTH);
       const snapshot = await nextSnapshot(socket);
       tick = snapshot.state.tick;
-      z = snapshot.state.characters[id]!.position.z;
+      z = Math.min(z, snapshot.state.characters[id]!.position.z);
     }
 
     expect(z).toBeLessThan(startZ - 1); // it walked — the Track pick did not freeze it

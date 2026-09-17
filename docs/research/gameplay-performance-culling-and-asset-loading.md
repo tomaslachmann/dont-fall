@@ -393,3 +393,241 @@ Record each result in this file (or a follow-up) with commit, machine, browser a
    `world.step()` matters? It touches the shared-step invariant and would need an ADR.
 6. Order: ship tickets 01/02 first (as planned), then instrumentation + tiers — or instrumentation
    first so there is a before/after for 01/02?
+
+## Decisions (user, 2026-09-17)
+
+This note becomes milestone **M13 — Smooth on a weaker PC** (`docs/milestones/M13.md`,
+`.scratch/m13-smooth-on-weaker-pcs/issues/`). Answers to the open questions above:
+
+1. *Weaker PC:* **none available, so it is skipped** (user, 2026-09-17: "slabší PC vynecháme,
+   protože nemám k dispozici"). The dev Mac with 4× DevTools CPU throttling stands in for a weak
+   CPU. A weak GPU stays unmeasured, so the GPU side of the quality levels rests on this note's
+   reasoning, not on numbers.
+2. *Quality tiers:* **the player picks the level in Settings, and nothing switches it
+   automatically** ("Jen volba v nastavení"). The lowest level may turn shadows off.
+   Recorded as **ADR 0079** (amends ADR 0074). The research's adaptive downgrade is declined.
+3. *Simplified `trap_trapball`:* **declined.** Recommendation #6 is not built.
+4. *Far plane follows the fog:* **yes.** M13 ticket 04.
+5. *Physics distance activation:* **only if the profile says `world.step()` matters**
+   ("Až podle měření"). M13 ticket 02 measures, ticket 07 decides.
+6. *Order:* **instrumentation first** ("Nejdřív měření"), then tickets 01/02, so they have a
+   before/after.
+
+Also declined: recommendation #7, non-casting small pieces.
+
+## Results
+
+### Before — simulation benchmark (M13 ticket 03, 2026-09-17)
+
+`pnpm bench:sim` (M13 ticket 02), commit `9401968d` plus the uncommitted M13 work, Apple M4 (10
+cores), macOS 25.5, Node 24.1. The machine was not idle (load average ~5), so single spikes are
+noise. 1800 measured ticks per run after 90 warm-up ticks; times in ms.
+
+Columns:
+- step through user changes: Rapier's own profiler, mean per tick.
+- moving seg., char. sweeps, char. updates: timed around the shared step's own loops, outside
+  `world.step()`, mean per tick.
+- snapshot: the Match loop's snapshot build plus one `JSON.stringify` per client.
+- down: the share of Character-ticks spent in `Ragdoll`/`GettingUp`.
+
+The scripted bots fall and get knocked down far more than players do, so these are heavy ticks.
+
+| scenario | chars | tick p50 | p95 | p99 | max | >2 ms | >10 ms | step | collision | solver | user changes | moving seg. | char. sweeps | char. updates | snapshot p95 | replay p95 | falls | down |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| server · start · moving | 1 | 0.150 | 0.450 | 0.640 | 1.951 | 0 | 0 | 0.116 | 0.066 | 0.024 | 0.002 | 0.010 | 0.054 | 0.007 | 0.020 | — | 1 | 35 % |
+| server · start · still | 1 | 0.070 | 0.260 | 0.380 | 0.837 | 0 | 0 | 0.033 | 0.007 | 0.022 | 0.000 | 0.000 | 0.043 | 0.002 | 0.020 | — | 0 | 43 % |
+| server · spread · moving | 1 | 0.150 | 0.190 | 0.200 | 0.714 | 0 | 0 | 0.113 | 0.057 | 0.034 | 0.002 | 0.007 | 0.012 | 0.002 | 0.020 | — | 0 | 74 % |
+| server · spread · still | 1 | 0.070 | 0.110 | 0.130 | 0.800 | 0 | 0 | 0.043 | 0.008 | 0.030 | 0.000 | 0.000 | 0.012 | 0.002 | 0.020 | — | 0 | 72 % |
+| server · start · moving | 4 | 0.320 | 0.590 | 0.710 | 0.990 | 0 | 0 | 0.184 | 0.075 | 0.081 | 0.002 | 0.007 | 0.132 | 0.008 | 0.120 | — | 1 | 51 % |
+| server · start · still | 4 | 0.250 | 0.510 | 0.650 | 1.183 | 0 | 0 | 0.125 | 0.026 | 0.087 | 0.001 | 0.000 | 0.133 | 0.004 | 0.120 | — | 0 | 53 % |
+| server · spread · moving | 4 | 0.190 | 0.360 | 0.510 | 0.771 | 0 | 0 | 0.127 | 0.065 | 0.039 | 0.002 | 0.007 | 0.052 | 0.009 | 0.070 | — | 41 | 20 % |
+| server · spread · still | 4 | 0.100 | 0.210 | 0.380 | 0.858 | 0 | 0 | 0.050 | 0.010 | 0.033 | 0.000 | 0.000 | 0.044 | 0.004 | 0.070 | — | 32 | 19 % |
+| server · start · moving | 12 | 1.070 | 2.330 | 3.080 | 3.904 | 169 | 0 | 0.298 | 0.100 | 0.160 | 0.003 | 0.007 | 0.901 | 0.021 | 0.720 | — | 12 | 35 % |
+| server · start · still | 12 | 1.340 | 2.380 | 3.160 | 6.557 | 219 | 0 | 0.194 | 0.044 | 0.127 | 0.001 | 0.000 | 1.245 | 0.012 | 0.620 | — | 20 | 26 % |
+| server · spread · moving | 12 | 0.510 | 1.460 | 2.300 | 2.685 | 32 | 0 | 0.193 | 0.074 | 0.085 | 0.002 | 0.008 | 0.413 | 0.020 | 0.430 | — | 122 | 16 % |
+| server · spread · still | 12 | 0.580 | 3.990 | 4.430 | 6.422 | 785 | 0 | 0.108 | 0.024 | 0.070 | 0.001 | 0.000 | 1.422 | 0.010 | 0.450 | — | 74 | 13 % |
+| client · 1 predicted + 11 mirrors | 1 | 0.100 | 0.170 | 0.210 | 0.711 | 0 | 0 | 0.088 | 0.053 | 0.015 | 0.002 | 0.008 | 0.011 | 0.002 | — | 1.000 | 168 | 30 % |
+
+**What the numbers say:**
+
+- **The server budget holds on this machine.** With 12 Characters, a tick is 0.5–1.3 ms p50 and
+  2.3–4.4 ms p99, against the 10 ms p99 budget. A server CPU 2–3× slower would sit near the budget
+  with several Lobbies in one process, so the Match server's log (`DONTFALL_PERF=1`) is the
+  number to watch there.
+- **`world.step()` is not the hot part.** At 12 Characters it is 0.1–0.3 ms. Moving vs still
+  adds ~0.1 ms to the step (collision detection 0.07–0.10 vs 0.02–0.04). The per-tick Moving Segment
+  switching costs 0.007–0.010 ms, and Rapier's user-change propagation 0.002–0.003 ms.
+  **Distance activation of Moving Segments would save at most ~0.1 ms of a ~1 ms tick: not worth
+  its ADR** (research §4, recommendation #9). Ticket 07 makes the final call with the after
+  numbers.
+- **The hot part is the Characters' own sweeps** (`beginTick`, the kinematic controller's
+  collision sweep): 0.4–1.4 ms at 12 Characters, against 0.01–0.05 ms for one. The cost grows
+  faster than the Character count and is highest where Characters stand together (`start`, and
+  `spread` runs doubled up at one Respawn). This was not in the research's list; it is the lever to
+  look at before anything in Rapier's step.
+- **Snapshots cost as much as the step.** Building the state and stringifying it once per client is
+  0.43–0.72 ms p95 at 12 clients, almost all of it the twelve `JSON.stringify` calls of
+  near-identical payloads (research §5). Serialising the shared part once would cut most of it.
+- **The client's prediction is cheap here.** One predicted tick is 0.17 ms p95 and a 6-tick replay
+  1.0 ms p95. A worst frame of 5 steps plus a replay is ~2 ms on this machine, and would be ~8–12 ms
+  on a CPU 4–6× slower: a real share of a 16.7 ms frame, but not the first suspect next to
+  rendering.
+
+### Before — browser, dev Mac, no throttling (2026-09-17)
+
+The user's run: free-roam on the base race (`?perf=1`, quality as shipped = today's `high`), the
+M13 overlay's summary.
+- **Machine:** 10 cores (the M4), `devicePixelRatio` 2, canvas 2488 × 1850 (CSS 1244 × 925). The
+  user agent read as a Pixel 9, so DevTools device emulation was on; the hardware is the Mac's.
+- **Run:** 60 s, 3572 frames. It reached z ≈ −400 of −569, so not the whole course.
+
+| | p50 | p95 | p99 | max | over 17 / 33 / 50 ms |
+|---|---|---|---|---|---|
+| frame | 16.7 | 17.8 | 25.2 | 183 | 481 (13 %) / 6 / 5 |
+| sim CPU (up to 5 steps) | 0.45 | 1.05 | 1.40 | 10.5 | — |
+| `stage.render()` CPU | 1.8 | 3.4 | 4.2 | 86 | — |
+
+- **Load:** 4.7 s from boot to first frame; **460 files, 35.5 MB** downloaded (the base race places
+  33 files, 4.9 MB: memory-footprint 01). JS heap after 60 s: 167 MB.
+- **Renderer, latest frame:** 217 calls, 232 k triangles, 54 geometries, 41 textures, 17
+  programs. **Busiest frame:** 253 calls, **550 k triangles** (both counts include the shadow pass).
+
+Per 50 m cell, by where the camera's target stood (x always within −50…50; the camera looks ahead
+along −z). The sections start at: door rush −30, sweepers −66, wrecking balls −126, moving platforms
+−186, spinning squares −271, climb −328, belt climb −382, ice −453, hammer alley −501, finish −561.
+
+| z | frames | p95 | p99 | max | over 17 ms | max calls | max triangles |
+|---|---|---|---|---|---|---|---|
+| −50…0 (start) | 312 | 24.7–25 | 50.2 | **183** | 45 (14 %) | 135 | 388 k |
+| −100…−50 | 344 | 24.7–25 | 25.7 | 51 | 41 (12 %) | 207 | 427 k |
+| −150…−100 | 758 | 17.3–24.9 | 25.2 | 66 | 112 (15 %) | 253 | **550 k** |
+| −200…−150 | 705 | 24.4 | 25.2 | 33 | 110 (16 %) | 245 | 508 k |
+| −250…−200 | 301 | 17.7 | 25.1 | 26 | 39 (13 %) | 236 | 278 k |
+| −300…−250 | 335 | 17.3 | 17.7 | 25 | 25 (7 %) | 236 | 264 k |
+| −350…−300 | 393 | 24.1 | 25.2 | 26 | 66 (17 %) | 233 | 315 k |
+| −400…−350 | 424 | 17.6 | 25.1 | 25 | 43 (10 %) | 225 | 298 k |
+
+**What this run says:**
+
+- **The CPU is not what misses frames here.** Sim plus render CPU is ~2–4 ms of a 16.7 ms frame,
+  yet 13 % of frames run long (mostly ~25 ms). This points at the GPU: pixel ratio 2, 4× MSAA
+  half-float targets and a 2048² soft shadow pass (ticket 05's levers). One run cannot prove it; the
+  4× CPU-throttled run below narrows it; no weak GPU is available to settle it.
+- **Where it misses loosely follows the geometry.**
+  - The three densest bands miss 12–16 % of frames. They hold 427–550 k triangles: the approach
+    to the wrecking balls (four `trap_trapball`, research §Scale) and the balls themselves, seen
+    from −150…−100.
+  - The 264–315 k bands further on miss 7–17 %, so triangles are not the whole story.
+  - The heaviest frame of the run looks at the balls.
+- **The worst hitches are early.** Four of the five frames over 50 ms fall in the first 100 m,
+  including the run's longest (183 ms), and the fifth at −150…−100. The longest `stage.render()`
+  of the run was 86 ms. That fits first-sight shader compiles and texture uploads. That is ticket 06's target (warm-up), with memory-footprint 02 cutting the uploads.
+- **Draw calls (134–253) are within the ~300 budget.** `BatchedMesh` (recommendation #10) has no
+  case yet.
+- **Loading is 7× the budget:** 35.5 MB against ≤ 5 MB. Memory-footprint 01 is the fix.
+
+**Run 2, the same setup, longer (2026-09-17).**
+- **Run:** 188 s, 11 378 frames, again to z ≈ −400. About 100 s of it was spent in the first 50 m
+  (6468 frames there).
+- **Not throttled, whatever the intent:** sim CPU p50 0.10 ms and render CPU p50 1.35 ms are no
+  higher than in run 1, where 4× throttling would roughly quadruple both.
+- **Load:** 4.8 s, the same 460 files / 35.5 MB. Heap 151 MB.
+
+| | p50 | p95 | p99 | max | over 17 / 33 / 50 ms |
+|---|---|---|---|---|---|
+| frame | 16.7 | 24.2 | 25.7 | 279 | 1940 (17 %) / 54 / 9 |
+| sim CPU | 0.10 | 0.95 | 2.85 | 35 | — |
+| `stage.render()` CPU | 1.35 | 3.55 | 4.6 | 53 | — |
+
+- **Renderer:** up to 277 calls and 551 k triangles; 41 textures and 17 programs, the same as run 1.
+- **Where the long frames fall:**
+  - The first 50 m holds 1196 of the 1940 frames over 17 ms (18 % of its frames), 49 of the 54 over
+    33 ms, 6 of the 9 over 50 ms, and the run's longest frame (279 ms). It is also where the most
+    draw calls were counted (277, at 394 k triangles).
+  - The other cells miss 10–19 % of frames. Only −400…−350, where the belt climb (−382) first comes
+    into view, has hitches again: 5 frames over 33 ms, max 93 ms. That is another first-sight
+    pattern for ticket 06.
+- **Both runs agree:** the CPU work per frame is small, a steady 10–17 % of frames run to ~25 ms,
+  and the hitches cluster where the camera sees something for the first time.
+
+### Before — browser, dev Mac, 4× CPU throttling (2026-09-17)
+
+The user's run 3: device emulation off (Chrome 151 on macOS), DevTools CPU 4× slowdown.
+- **Run:** 69 s, 5863 frames, to z ≈ −400.
+- **Not directly comparable to runs 1–2 on the GPU side,** for two reasons:
+  - The canvas is smaller: 1946 × 1562, 3.0 MP against 4.6 MP (DevTools docked beside it).
+  - Frames now pace at ~9 ms (p50 9.1), so the page ran on a 120 Hz display, where runs 1–2 were
+    held to 60 Hz (by the emulation or the display). On a 120 Hz display a frame "over 17 ms" has
+    missed two refreshes.
+- **Load:** **9.6 s** to the first frame (twice run 1's 4.7 s; parsing all 460 files on a slower
+  CPU). Heap 276 MB.
+
+| | p50 | p95 | p99 | max | over 17 / 33 / 50 ms |
+|---|---|---|---|---|---|
+| frame | 9.1 | 17.3 | 17.7 | 292 | 451 (8 %) / 5 / 3 |
+| sim CPU | 0.05 | 3.85 | 4.9 | 29 | — |
+| `stage.render()` CPU | **5.2** | **7.55** | **9.1** | 50 | — |
+
+Renderer: up to 254 calls and 551 k triangles; 43 textures and 17 programs.
+
+**What throttling shows:**
+
+- **`stage.render()` is the CPU cost that grows,** about 4×: 1.35–1.8 → 5.2 ms at p50,
+  3.4–3.55 → 7.55 ms at p95. It is three.js's own work before the GPU sees anything: scene
+  traversal, matrix updates, culling, the shadow pass and the composer passes. On a CPU this slow
+  it is the largest per-frame cost, and it scales with the number of objects and passes. That
+  moves object-count work (instancing/`BatchedMesh`, fewer shadow casters) up the list for weak
+  CPUs, and puts `medium`/`low` (ticket 05) ahead of any physics work.
+- **Prediction stays small but spiky.** Sim CPU is 0 in most 120 Hz frames (p50 0.05, no tick
+  due) and 3.9–4.9 ms at p95/p99, when a frame runs several ticks.
+- **Held against the budgets:**
+  - A slow CPU with this GPU would still make 60 Hz most of the time: p95 17.3 ms, and 8 % of
+    frames over 17 ms.
+  - CPU work alone (render p99 9.1 plus sim p99 4.9) stays under 16.7 ms. A weak GPU is the unknown,
+    and none is available to measure.
+- **Hitches are again at the start:** all three frames over 50 ms fall in the first 50 m (p99 59,
+  max 292 ms).
+- **Loading doubles with the CPU:** 9.6 s, which memory-footprint 01 addresses directly.
+
+No weaker PC will be measured (the user has none, 2026-09-17); this throttled run is the weak-CPU
+reference. Still to run (ticket 03): the Spectator free cam.
+
+### After — browser, dev Mac, `high`, no throttling (2026-09-17)
+
+The user's run, after M13 04, 05, 06 and memory-footprint 01/02, compared with the before runs 1 and 2
+above.
+- **Machine:** Chrome 151 on macOS, canvas 3008 × 1562 (4.7 MP, about run 1's size), quality `high`.
+- **Run:** 214 s, 14 759 frames, the **whole course** (the cells reach z −600).
+
+| | before (runs 1 / 2) | after |
+|---|---|---|
+| boot → first frame | 4.7 s / 4.8 s | **0.74 s** (warm-up included) |
+| files / bytes downloaded | 460 / 35.5 MB | **36 / 6.5 MB** (33 GLBs + 3 sheet textures) |
+| JS heap | 167 / 151 MB | **106 MB** |
+| frame p50 / p95 / p99 | 16.7 / 17.8–24.2 / 25.2–25.7 | 16.7 / **17.6** / **17.7** |
+| frames over 33 / over 50 ms | 6 / 5 and 54 / 9 | **4 / 1** |
+| longest frame | 183 / 279 ms | 166 ms |
+| sim CPU p95 | 1.05 / 0.95 ms | 1.05 ms |
+| `stage.render()` CPU p50 / p95 / max | 1.8 / 3.4 / 86 · 1.35 / 3.55 / 53 | 2.3 / 3.25 / 44 |
+| busiest frame: calls / triangles | 253 / 550 k · 277 / 551 k | **223 / 482 k** |
+| textures / programs | 41 / 17 | **14 / 30** |
+
+**What the after run says:**
+
+- **Loading is the biggest change:** 6× faster to the first frame, 5.5× fewer bytes, 36 % less heap.
+  The 6.5 MB is still over the proposed 5 MB budget; the three sheet textures (ice, mud, bounce,
+  ~1.6 MB) are loaded whether the Track uses them or not.
+- **The ~25 ms frames are gone.** p99 fell from ~25 to 17.7 ms. The "over 17 ms" count (1723, 12 %)
+  is now vsync jitter, frames of 17.1–17.7 ms, not missed frames. The 17 ms threshold is too tight
+  to separate the two; over 33 and over 50 are the meaningful counts.
+- **Shared textures work:** 41 → 14 textures on the GPU. Programs rose from 17 to 30 because the
+  warm-up now compiles everything, hidden and not-yet-seen variants included, ahead of time.
+- **The far plane cuts the far sections.** Triangles at z −250…−300 fell from 262–264 k to
+  163–165 k, and the busiest frame from 550 k to 482 k.
+- **One hitch remains at the start:** 166 ms, the only frame over 50 ms (3 of the 4 over 33 ms are
+  there too). A likely cause, unverified: the account's hat (ADR 0083) and skin tint are applied
+  when `fetchAccount` resolves, after the warm-up. The first draw of the hat then compiles and
+  uploads on the spot. Nothing else in the run hitches: every other cell stays under 33 ms, bar one
+  33.3 ms frame near the finish.
+
+Still to run: the same at `medium` and `low` with 4× CPU throttling, and the Spectator free cam.

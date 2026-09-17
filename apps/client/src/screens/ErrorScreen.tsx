@@ -96,7 +96,7 @@ export default function ErrorScreen({
         <div className={s.actions}>
           <span className={s.retryNote}>{left > 0 ? `AUTO-RETRY IN ${left}s` : 'READY WHEN YOU ARE'}</span>
           <JellyButton variant="tile" centered onClick={onRetry}>TRY AGAIN</JellyButton>
-          <JellyButton variant="tile" tone="glass" centered onClick={onHome}>MAIN MENU</JellyButton>
+          <JellyButton variant="tile" tone="glass" centered sound="back" onClick={onHome}>MAIN MENU</JellyButton>
         </div>
       </div>
     </Stage>

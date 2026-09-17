@@ -94,7 +94,7 @@ export function Toolbar({ engine, onBrowse }: Props) {
 
       <div className={css.group}>
         <button type="button" className={css.save}
-          onClick={() => void engine.saveTrack(name, defaults())}>SAVE</button>
+          onClick={() => engine.startPreviewCapture(name, defaults())}>SAVE</button>
         <Field value={trackId} variant="text" width={74} placeholder={BASE_RACE_TRACK_ID} onChange={setTrackId} />
         <button type="button" className={css.btn}
           onClick={() => void engine.loadTrackById(trackId.trim() || BASE_RACE_TRACK_ID)}>LOAD</button>

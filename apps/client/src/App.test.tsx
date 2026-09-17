@@ -11,7 +11,7 @@ import { parseLobbyParams, parsePlayParams } from "./lib/utils/routeParams.js";
 const { startGame } = vi.hoisted(() => ({ startGame: vi.fn() }));
 vi.mock("./game/index.js", () => ({ startGame }));
 
-const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, xp: 0, coins: 0, bodySkin: 0 };
+const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, xp: 0, coins: 0, bodySkin: 0, hat: null, bindings: null };
 
 // Every existing test below exercises the gated (post-login) routes — a
 // stored token that resolves is the default here, same as any real Player
@@ -198,7 +198,7 @@ describe("NotFound (the catch-all route)", () => {
 
 describe("Discover route (M9 ticket 16)", () => {
   const ROWS = [
-    { id: "t1", name: "Wobble Ramp", authorId: "a1", createdAt: 1_000, plays: 12, hasFinishZone: true },
+    { id: "t1", name: "Wobble Ramp", authorId: "a1", createdAt: 1_000, plays: 12, hasFinishZone: true, hasThumbnail: false },
   ];
 
   beforeEach(() => {

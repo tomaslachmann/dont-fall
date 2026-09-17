@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import type { CSSProperties, MouseEvent, ReactNode } from 'react';
+import type { UiSound } from '../audio/uiSounds';
 import s from './JellyButton.module.css';
 
 export type ButtonVariant = 'hero' | 'tile' | 'pill';
@@ -19,6 +20,8 @@ export interface JellyButtonProps {
   centered?: boolean | undefined;
   onClick?: ((e: MouseEvent<HTMLButtonElement>) => void) | undefined;
   disabled?: boolean | undefined;
+  /** What pressing it sounds like (M14 ticket 12): a click, unless it confirms or goes back. */
+  sound?: UiSound | undefined;
   className?: string | undefined;
   style?: CSSProperties | undefined;
 }
@@ -34,7 +37,7 @@ const TONES: Record<ButtonTone, CSSProperties> = {
 
 export default function JellyButton({
   children, kicker, sub, icon, variant = 'hero', tone = 'accent',
-  centered, onClick, disabled, className, style,
+  centered, onClick, disabled, sound, className, style,
 }: JellyButtonProps) {
   const fire = useCallback((e: MouseEvent<HTMLButtonElement>) => {
     onClick?.(e);
@@ -44,6 +47,7 @@ export default function JellyButton({
     <button
       type="button"
       disabled={disabled}
+      data-ui-sound={sound}
       onClick={fire}
       className={[s.btn, s[variant], centered && s.centered, className].filter(Boolean).join(' ')}
       style={{ ...TONES[tone], ...style }}

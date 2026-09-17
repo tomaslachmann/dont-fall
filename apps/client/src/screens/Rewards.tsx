@@ -12,6 +12,8 @@ export interface RewardsProps {
    * default when the Account didn't load.
    */
   skin?: number | null;
+  /** And their hat (ADR 0083), or none. */
+  hat?: string | null;
   xpGain?: number;
   /** Fraction of the bar you already had, 0-1. */
   xpBefore?: number;
@@ -20,10 +22,14 @@ export interface RewardsProps {
   breakdown?: Array<[string, number]>;
   beans?: number;
   beansSplit?: Array<[string, number]>;
-  unlock?: string;
+  /** What this Match unlocked, by name — the card hides without one. */
+  unlock?: string | undefined;
+  /** Its picture on the card, when there is one. */
+  unlockIcon?: string | undefined;
   onPlayAgain?: () => void;
   onLobby?: () => void;
-  onEquip?: () => void;
+  /** Puts the unlocked hat on — the button hides without one. */
+  onEquip?: (() => void) | undefined;
   onExit?: () => void;
   feel?: Feel;
 }
@@ -45,8 +51,8 @@ const ReplayIcon = () => (
 export default function Rewards({
   level = 43, xpGain = 1240, xpBefore = 0.46, xpEarned = 0.31,
   breakdown = BREAKDOWN, beans = 860, beansSplit = SPLIT,
-  skin = null,
-  unlock, onPlayAgain, onLobby, onEquip, onExit, feel,
+  skin = null, hat = null,
+  unlock, unlockIcon, onPlayAgain, onLobby, onEquip, onExit, feel,
 }: RewardsProps) {
   return (
     <Stage
@@ -62,6 +68,7 @@ export default function Rewards({
 
       <CharacterPreview
         skin={skin}
+        hat={hat}
         animation={WIN_SEQUENCE}
         autoRotate={false}
         className={s.render}
@@ -69,7 +76,6 @@ export default function Rewards({
         sub="LEVEL-UP POSE"
         canvasLabel="3D preview of your bean celebrating"
       />
-      {/* No hat yet — nothing to put on until the inventory exists (see RewardsRoute). */}
 
       <div className={s.cards}>
         <Panel className={s.xp}>
@@ -117,7 +123,10 @@ export default function Rewards({
           <div className={s.unlock}>
             <span className={s.unlockLabel}>UNLOCKED AT {level}</span>
             <span className={s.unlockRow}>
-              <span className={s.item} />
+              <span
+                className={s.item}
+                style={unlockIcon ? { background: `center / contain no-repeat url("${unlockIcon}")`, boxShadow: 'none' } : undefined}
+              />
               <span className={s.itemText}>
                 <span className={s.itemName}>{unlock}</span>
                 <span className={s.itemHint}>EQUIP IN YOUR BEAN</span>
@@ -129,15 +138,15 @@ export default function Rewards({
       </div>
 
       <div className={s.actions}>
-        <JellyButton variant="tile" tone="go" centered onClick={onPlayAgain} icon={<ReplayIcon />}>
+        <JellyButton variant="tile" tone="go" centered sound="confirm" onClick={onPlayAgain} icon={<ReplayIcon />}>
           PLAY AGAIN
         </JellyButton>
-        <JellyButton variant="pill" tone="glass" centered onClick={onLobby}>BACK TO LOBBY</JellyButton>
+        <JellyButton variant="pill" tone="glass" centered sound="back" onClick={onLobby}>BACK TO LOBBY</JellyButton>
         {onEquip && (
         <JellyButton variant="pill" tone="glass" centered onClick={onEquip}>EQUIP NEW HAT</JellyButton>
         )}
         {onExit && (
-        <JellyButton variant="pill" tone="glass" centered onClick={onExit}>EXIT</JellyButton>
+        <JellyButton variant="pill" tone="glass" centered sound="back" onClick={onExit}>EXIT</JellyButton>
         )}
       </div>
     </Stage>

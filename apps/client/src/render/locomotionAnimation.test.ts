@@ -1,39 +1,89 @@
+import { SURFACES, slopeSpeedMultiplier, WALK_SPEED, WALKABLE_SLOPE_MAX_ANGLE } from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
-import { selectLocomotion } from "./locomotionAnimation.js";
+import { RUN_FROM_SPEED, selectLocomotion, WALK_BELOW_SPEED, type LocomotionInput } from "./locomotionAnimation.js";
+
+/** A Character on the ground at full walking pace, doing nothing else. */
+const at = (overrides: Partial<LocomotionInput>): LocomotionInput => ({
+  moving: true,
+  grounded: true,
+  dashing: false,
+  speed: WALK_SPEED,
+  ...overrides,
+});
 
 describe("selectLocomotion", () => {
   it("is idle when grounded, not moving, not dashing", () => {
-    expect(selectLocomotion(false, true, false)).toBe("idle");
+    expect(selectLocomotion(at({ moving: false, speed: 0 }))).toBe("idle");
   });
 
-  it("is walk when grounded and moving, not dashing", () => {
-    expect(selectLocomotion(true, true, false)).toBe("walk");
+  it("runs at full walking pace — a race's ordinary gait is the Run (ADR 0081)", () => {
+    expect(selectLocomotion(at({}))).toBe("run");
   });
 
-  it("is run while dashing and grounded, even with no direction held — a stationary dash still needs a locomotion clip", () => {
-    expect(selectLocomotion(false, true, true)).toBe("run");
-    expect(selectLocomotion(true, true, true)).toBe("run");
+  it("runs through mud, up the steepest walkable slope included — however it got there", () => {
+    // Uphill along +Z: the ground's normal leans back toward −Z.
+    const steepest = WALKABLE_SLOPE_MAX_ANGLE;
+    const uphill = slopeSpeedMultiplier(
+      { x: 0, y: 0, z: 1 },
+      { x: 0, y: Math.cos(steepest), z: -Math.sin(steepest) },
+    );
+    expect(uphill).toBeLessThan(1);
+    const mudUphill = WALK_SPEED * SURFACES.mud!.topSpeedMultiplier * uphill;
+    // Running into it, and from a standstill, where the first frame walks.
+    expect(selectLocomotion(at({ speed: mudUphill }))).toBe("run");
+    expect(selectLocomotion(at({ speed: mudUphill, walking: true }))).toBe("run");
+  });
+
+  it("walks only at the slow end — the first steps on ice, or pushing against a wall", () => {
+    expect(selectLocomotion(at({ speed: 0 }))).toBe("walk");
+    expect(selectLocomotion(at({ speed: 0.5 }))).toBe("walk");
+  });
+
+  it("keeps its gait between the two thresholds, so a speed sitting on the boundary doesn't flicker", () => {
+    const between = (RUN_FROM_SPEED + WALK_BELOW_SPEED) / 2;
+    expect(selectLocomotion(at({ speed: between, walking: true }))).toBe("walk");
+    expect(selectLocomotion(at({ speed: between, walking: false }))).toBe("run");
+  });
+
+  it("walks up to RUN_FROM_SPEED and runs from it; running, it walks again only below WALK_BELOW_SPEED", () => {
+    expect(WALK_BELOW_SPEED).toBeLessThan(RUN_FROM_SPEED);
+    expect(selectLocomotion(at({ speed: RUN_FROM_SPEED - 0.01, walking: true }))).toBe("walk");
+    expect(selectLocomotion(at({ speed: RUN_FROM_SPEED, walking: true }))).toBe("run");
+    expect(selectLocomotion(at({ speed: WALK_BELOW_SPEED, walking: false }))).toBe("run");
+    expect(selectLocomotion(at({ speed: WALK_BELOW_SPEED - 0.01, walking: false }))).toBe("walk");
+  });
+
+  it("sprints for the whole Dash, even with no direction held and before its build-up has any speed", () => {
+    expect(selectLocomotion(at({ dashing: true }))).toBe("sprint");
+    expect(selectLocomotion(at({ dashing: true, moving: false, speed: 0 }))).toBe("sprint");
+    expect(selectLocomotion(at({ dashing: true, speed: 0.5, walking: true }))).toBe("sprint");
   });
 
   it("is jump whenever not grounded, regardless of moving or dashing", () => {
-    expect(selectLocomotion(false, false, false)).toBe("jump");
-    expect(selectLocomotion(true, false, false)).toBe("jump");
-    expect(selectLocomotion(true, false, true)).toBe("jump");
+    expect(selectLocomotion(at({ grounded: false, moving: false, speed: 0 }))).toBe("jump");
+    expect(selectLocomotion(at({ grounded: false }))).toBe("jump");
+    expect(selectLocomotion(at({ grounded: false, dashing: true }))).toBe("jump");
   });
 
-  it("wobbles on the ground and jumps in the air — the slowed tell beats the walk, not the fall (ADR 0072)", () => {
-    expect(selectLocomotion(false, true, false, true)).toBe("wobble");
+  it("wobbles on the ground and jumps in the air — the slowed tell beats the run, not the fall (ADR 0072)", () => {
+    expect(selectLocomotion(at({ moving: false, speed: 0, wobbling: true }))).toBe("wobble");
     // Moving, the wobble walks: the tell stays, and the legs step.
-    expect(selectLocomotion(true, true, false, true)).toBe("wobbleWalk");
+    expect(selectLocomotion(at({ wobbling: true }))).toBe("wobbleWalk");
     // Even mid-Dash — with or without a direction held, the Character is moving.
-    expect(selectLocomotion(true, true, true, true)).toBe("wobbleWalk");
-    expect(selectLocomotion(false, true, true, true)).toBe("wobbleWalk");
+    expect(selectLocomotion(at({ wobbling: true, dashing: true }))).toBe("wobbleWalk");
+    expect(selectLocomotion(at({ wobbling: true, dashing: true, moving: false }))).toBe("wobbleWalk");
     // Airborne, it is still a jump — a wobble reads as feet under you.
-    expect(selectLocomotion(true, false, false, true)).toBe("jump");
+    expect(selectLocomotion(at({ wobbling: true, grounded: false }))).toBe("jump");
   });
 
-  it("leaves every existing caller alone — wobbling defaults off", () => {
-    expect(selectLocomotion(true, true, false)).toBe("walk");
-    expect(selectLocomotion(false, true, false)).toBe("idle");
+  it("wobbles on ice, standing or moving, Dash included — and still jumps off it (ADR 0082)", () => {
+    expect(selectLocomotion(at({ onIce: true, moving: false, speed: 0 }))).toBe("wobble");
+    // Sliding with nothing held is still standing on it.
+    expect(selectLocomotion(at({ onIce: true, moving: false, speed: 4 }))).toBe("wobble");
+    expect(selectLocomotion(at({ onIce: true }))).toBe("wobbleWalk");
+    // The first slow steps too, which off the ice would walk.
+    expect(selectLocomotion(at({ onIce: true, speed: 0.5, walking: true }))).toBe("wobbleWalk");
+    expect(selectLocomotion(at({ onIce: true, dashing: true }))).toBe("wobbleWalk");
+    expect(selectLocomotion(at({ onIce: true, grounded: false }))).toBe("jump");
   });
 });

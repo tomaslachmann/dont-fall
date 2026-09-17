@@ -1,8 +1,14 @@
 import type { Module, Track } from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
-import { BASE_RACE_TRACK, MAX_SURVIVOR_TARGET, MIN_SURVIVOR_TARGET } from "@dont-fall/shared";
+import {
+  BASE_RACE_TRACK,
+  MAX_SURVIVOR_TARGET,
+  MAX_TRACK_THUMBNAIL_CHARS,
+  MIN_SURVIVOR_TARGET,
+  TRACK_THUMBNAIL_DATA_URL_PREFIX,
+} from "@dont-fall/shared";
 import { PUBLISH_MODULES } from "./tracks.service.js";
-import { invalidSurvivorTargetReason, unknownModuleIds } from "./tracks.validation.js";
+import { invalidSurvivorTargetReason, invalidTrackThumbnailReason, unknownModuleIds } from "./tracks.validation.js";
 
 const MODULES: Record<string, Module> = {
   start: {
@@ -83,5 +89,34 @@ describe("invalidSurvivorTargetReason (M5 ticket 07, ADR 0041)", () => {
   it("rejects a fraction of a Player, and a number that is really a string", () => {
     expect(invalidSurvivorTargetReason(2.5)).toMatch(/whole number/);
     expect(invalidSurvivorTargetReason("2")).toMatch(/whole number/);
+  });
+});
+
+describe("invalidTrackThumbnailReason (ADR 0085)", () => {
+  const good = `${TRACK_THUMBNAIL_DATA_URL_PREFIX}aGVsbG8=`;
+
+  it("accepts an omitted thumbnail — a publish without one stores none", () => {
+    expect(invalidTrackThumbnailReason(undefined)).toBeUndefined();
+  });
+
+  it("accepts a well-formed JPEG data URL", () => {
+    expect(invalidTrackThumbnailReason(good)).toBeUndefined();
+  });
+
+  it("rejects a non-string, and a PNG in JPEG's clothing", () => {
+    expect(invalidTrackThumbnailReason(42)).toMatch(/data URL/);
+    expect(invalidTrackThumbnailReason("data:image/png;base64,aGVsbG8=")).toMatch(/data URL/);
+  });
+
+  it("rejects a payload past the cap — a garbage upload can't bloat the row", () => {
+    const oversize = TRACK_THUMBNAIL_DATA_URL_PREFIX + "aGVs".repeat(Math.ceil(MAX_TRACK_THUMBNAIL_CHARS / 4));
+    expect(oversize.length).toBeGreaterThan(MAX_TRACK_THUMBNAIL_CHARS);
+    expect(invalidTrackThumbnailReason(oversize)).toMatch(/at most/);
+  });
+
+  it("rejects an empty or malformed payload — shape-only, the JPEG itself is never decoded", () => {
+    expect(invalidTrackThumbnailReason(TRACK_THUMBNAIL_DATA_URL_PREFIX)).toMatch(/base64/);
+    expect(invalidTrackThumbnailReason(`${TRACK_THUMBNAIL_DATA_URL_PREFIX}!!!`)).toMatch(/base64/);
+    expect(invalidTrackThumbnailReason(`${TRACK_THUMBNAIL_DATA_URL_PREFIX}abc`)).toMatch(/base64/);
   });
 });

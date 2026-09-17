@@ -37,19 +37,12 @@
   border-radius: var(--df-radius-panel);
   background: repeating-linear-gradient(115deg, var(--df-color-ink-08) 0 calc(var(--df-u) * .78), transparent calc(var(--df-u) * .78) calc(var(--df-u) * 1.56));
 }
-/* Honest empty states and the inline notice — muted kicker lines, never fake numbers. */
+/* Honest empty states — muted kicker lines, never fake numbers. */
 .empty {
   font: var(--df-weight-label) var(--df-text-2xs) / 1.4 var(--df-font-ui);
   letter-spacing: var(--df-tracking-label);
   color: var(--df-color-ink-45);
 }
-.notice, .noticeError {
-  margin: 0;
-  font: var(--df-weight-label) var(--df-text-2xs) / 1.4 var(--df-font-ui);
-  letter-spacing: var(--df-tracking-label);
-  color: var(--df-color-ink-45);
-}
-.noticeError { color: var(--df-color-danger-shade); }
 .name { font: var(--df-weight-display) var(--df-text-lg) / 1 var(--df-font-display); }
 .tags { display: flex; flex-wrap: wrap; gap: var(--df-space-3); }
 .xpTrack {

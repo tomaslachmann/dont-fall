@@ -6,13 +6,14 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { KNOCKDOWN_DIRECTIONS, loadCharacterActions, MODEL_YAW_OFFSET } from "./characterModel.js";
 import { FloatLimbs } from "./floatPose.js";
+import { FOOT_CONTACTS } from "./footsteps.js";
 import { KNOCKDOWN_SECTORS } from "./knockdownAnimation.js";
 
 const MODEL_PATH = path.resolve(import.meta.dirname, "../../public/models/BLIP.glb");
 
 /**
  * Loads the REAL BLIP asset (M6.1 ticket 05, code review; retargeted in ADR
- * 0071; v6 knockdown in ADR 0076). Every other test touching bones or clips
+ * 0071; v6 knockdown in ADR 0076; v7 gaits in ADR 0081). Every other test touching bones or clips
  * builds its own synthetic rig, which can only ever be as correct as the
  * convention its author assumed. One such assumption was wrong: the source
  * file's own `nodes[].name` field carries a `.` (`upper_arm.L`), but
@@ -79,7 +80,6 @@ describe("BLIP.glb — real model, real bone names", () => {
     // is true because they are cut from the one clip. Pinned against every
     // bone at both ends of every piece, except the root's height: `Jump_Full`
     // lifts its root by 1.2 units and the pieces do not.
-    const clip = (name: string) => THREE.AnimationClip.findByName(animations, name)!;
     const full = clip("Jump_Full");
     const pieces = ["Jump_Start", "Jump_Rise", "Jump_Apex", "Jump_Fall", "Jump_Land"].map(clip);
     expect(pieces.reduce((sum, piece) => sum + piece.duration, 0)).toBeCloseTo(full.duration, 2);
@@ -103,29 +103,89 @@ describe("BLIP.glb — real model, real bone names", () => {
     expect(new FloatLimbs(scene).complete).toBe(true);
   });
 
+  const clip = (name: string) => THREE.AnimationClip.findByName(animations, name)!;
+
+  /** Poses `scene` on `name` at `time`, runs `read`, and puts the rig back on its bind pose. */
+  const posedAt = <T>(name: string, time: number, read: () => T): T => {
+    const mixer = new THREE.AnimationMixer(scene);
+    const action = mixer.clipAction(clip(name));
+    action.play();
+    action.paused = true;
+    action.time = time;
+    mixer.update(0);
+    scene.updateMatrixWorld(true);
+    try {
+      return read();
+    } finally {
+      mixer.stopAllAction();
+      mixer.uncacheRoot(scene);
+      scene.updateMatrixWorld(true);
+    }
+  };
+  const worldOf = (node: string): THREE.Vector3 => scene.getObjectByName(node)!.getWorldPosition(new THREE.Vector3());
+
+  describe("the gaits (ADR 0081)", () => {
+    const GAITS = ["Walk", "Run", "Sprint"];
+
+    // A change of gait carries its step across (`crossfadeLocomotion`): the
+    // Sprint starts at the point of the stride the Run had reached. That is
+    // only the same step if every gait puts the same foot down at the same
+    // point, so it is measured here rather than taken from the rig's notes.
+    it.each(GAITS)("%s puts the left foot down in front at the start of its stride, and the right halfway", (name) => {
+      const { duration } = clip(name);
+      const feetAt = (stride: number) =>
+        posedAt(name, stride * duration, () => ({ left: worldOf("footL"), right: worldOf("footR") }));
+      let floor = Infinity;
+      for (let stride = 0; stride < 1; stride += 1 / 32) {
+        const { left, right } = feetAt(stride);
+        floor = Math.min(floor, left.y, right.y);
+      }
+      // A Sprint's stance presses the foot about 0.01 below where it lands; a
+      // foot in the air is at least 0.12 above it (in the rig's own 3.5-unit
+      // height).
+      const start = feetAt(0);
+      expect(start.left.y - floor, "left foot on the floor").toBeLessThan(0.02);
+      expect(start.left.z).toBeGreaterThan(start.right.z);
+      const half = feetAt(0.5);
+      expect(half.right.y - floor, "right foot on the floor").toBeLessThan(0.02);
+      expect(half.right.z).toBeGreaterThan(half.left.z);
+    });
+
+    // Footsteps (M14 ticket 04) are heard where these clips put a foot down.
+    // A touchdown is the frame a foot drops below 15% of its lift above the
+    // clip's floor.
+    it.each([...GAITS, "Wobble_Walk"])("%s puts a foot down at every FOOT_CONTACTS fraction, and nowhere else", (name) => {
+      const { duration } = clip(name);
+      const samples = 240;
+      const heights = Array.from({ length: samples }, (_, i) =>
+        posedAt(name, (i / samples) * duration, () => ({ l: worldOf("footL").y, r: worldOf("footR").y })),
+      );
+      const all = heights.flatMap(({ l, r }) => [l, r]);
+      const floor = Math.min(...all);
+      const threshold = floor + (Math.max(...all) - floor) * 0.15;
+      const touchdowns = (["l", "r"] as const).flatMap((foot) =>
+        heights.flatMap((sample, i) => {
+          const previous = heights[(i - 1 + samples) % samples]![foot];
+          return previous > threshold && sample[foot] <= threshold ? [i / samples] : [];
+        }),
+      );
+      const circular = (a: number, b: number) => Math.min(Math.abs(a - b), 1 - Math.abs(a - b));
+      expect(touchdowns).toHaveLength(FOOT_CONTACTS.length);
+      for (const contact of FOOT_CONTACTS) {
+        expect(Math.min(...touchdowns.map((touchdown) => circular(touchdown, contact))), `${name} at ${contact}`).toBeLessThan(0.02);
+      }
+    });
+
+    it("gets quicker as it gets faster — Walk, then Run, then Sprint", () => {
+      const [walk, run, sprint] = GAITS.map((name) => clip(name).duration);
+      expect(walk).toBeGreaterThan(run!);
+      expect(run).toBeGreaterThan(sprint!);
+    });
+  });
+
   describe("the knockdown (ADR 0076)", () => {
-    const clip = (name: string) => THREE.AnimationClip.findByName(animations, name)!;
     const sample = (track: THREE.KeyframeTrack, time: number): number[] =>
       Array.from(track.createInterpolant().evaluate(time) as ArrayLike<number>);
-
-    /** Poses `scene` on `name` at `time`, runs `read`, and puts the rig back on its bind pose. */
-    const posedAt = <T>(name: string, time: number, read: () => T): T => {
-      const mixer = new THREE.AnimationMixer(scene);
-      const action = mixer.clipAction(clip(name));
-      action.play();
-      action.paused = true;
-      action.time = time;
-      mixer.update(0);
-      scene.updateMatrixWorld(true);
-      try {
-        return read();
-      } finally {
-        mixer.stopAllAction();
-        mixer.uncacheRoot(scene);
-        scene.updateMatrixWorld(true);
-      }
-    };
-    const worldOf = (node: string): THREE.Vector3 => scene.getObjectByName(node)!.getWorldPosition(new THREE.Vector3());
 
     it.each(KNOCKDOWN_DIRECTIONS)("ends KO_%s on the very pose GetUp_%s begins with", (direction) => {
       const ko = clip(`KO_${direction}`);

@@ -7,10 +7,17 @@ import "./styles/tokens.css";
 import "./styles/keyframes.css";
 import "./app.css";
 import { App } from "./App";
+import { startAppMusic } from "./audio/music.js";
+import { createUiSoundPlayer, installUiSounds } from "./audio/uiSounds.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { createApiQueryClient } from "./lib/api/query.js";
 
 const mount = document.getElementById("game")!;
+
+// Every Screen's buttons, switches and sliders are heard (M14 ticket 12), from one listener.
+installUiSounds(document, createUiSoundPlayer());
+// The Lobby's playlist is the app's music, on every Screen and in free roam (M14 ticket 11).
+startAppMusic(window);
 
 // One client for the whole session — every query below shares its cache.
 const queryClient = createApiQueryClient();

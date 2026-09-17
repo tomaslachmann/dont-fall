@@ -13,6 +13,8 @@ export interface PodiumPlace {
   pose: string;
   /** Equipped skin at Match end — null for anonymous seats: the default. */
   skin?: number | null;
+  /** And hat (ADR 0083) — null or left out for none. */
+  hat?: string | null;
 }
 
 /** The performance is positional: 1st celebrates, 2nd sulks, 3rd shrugs. Anything past that idles. */
@@ -52,6 +54,7 @@ function Place({ place, rank, index, first }: { place: PodiumPlace; rank: string
     <div className={[s.place, first && s.first].filter(Boolean).join(' ')}>
       <CharacterPreview
         skin={place.skin ?? null}
+        hat={place.hat ?? null}
         animation={performanceForPlace(index)}
         autoRotate={false}
         sub={place.pose}
@@ -102,9 +105,9 @@ export default function MatchOver({
       )}
 
       <div className={s.actions}>
-        {!spectator && <JellyButton variant="tile" centered onClick={onCollect}>COLLECT REWARDS</JellyButton>}
+        {!spectator && <JellyButton variant="tile" centered sound="confirm" onClick={onCollect}>COLLECT REWARDS</JellyButton>}
         <JellyButton variant="pill" tone="glass" centered onClick={onScoreboard}>FULL SCOREBOARD</JellyButton>
-        <JellyButton variant="pill" tone="glass" centered onClick={onSkip}>SKIP</JellyButton>
+        <JellyButton variant="pill" tone="glass" centered sound="back" onClick={onSkip}>SKIP</JellyButton>
       </div>
     </Stage>
   );

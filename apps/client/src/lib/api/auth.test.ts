@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_BINDINGS } from "@dont-fall/shared";
 import {
   discordAuthorizeUrl,
   fetchAccount,
   login,
   logout,
   parseAuthCallbackFragment,
-  saveBodySkin,
+  saveBindings,
+  saveCosmetics,
   signup,
   type Account,
 } from "./auth.js";
@@ -45,7 +47,7 @@ describe("parseAuthCallbackFragment", () => {
   });
 });
 
-const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, xp: 0, coins: 0, bodySkin: 0 };
+const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, xp: 0, coins: 0, bodySkin: 0, hat: null, bindings: null };
 
 describe("signup / login", () => {
   it("signup posts the form and returns {account, token}", async () => {
@@ -141,25 +143,59 @@ describe("discordAuthorizeUrl", () => {
   });
 });
 
-describe("saveBodySkin (M9 ticket 15)", () => {
-  it("PUTs the skin and returns the updated Account", async () => {
+describe("saveCosmetics (M9 ticket 15, ADR 0083)", () => {
+  it("PUTs the skin and the hat and returns the updated Account", async () => {
     setStoredToken("tok-1");
-    const updated = { ...ACCOUNT, bodySkin: 3 };
+    const updated = { ...ACCOUNT, bodySkin: 3, hat: "cone" };
     const fetchMock = vi.fn(async () => new Response(JSON.stringify(updated), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(saveBodySkin(3)).resolves.toEqual(updated);
+    await expect(saveCosmetics({ bodySkin: 3, hat: "cone" })).resolves.toEqual(updated);
     expect(fetchMock).toHaveBeenCalledWith(
       `${API}/auth/me/cosmetics`,
-      expect.objectContaining({ method: "PUT", body: JSON.stringify({ bodySkin: 3 }) }),
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ bodySkin: 3, hat: "cone" }) }),
     );
   });
 
-  it("a locked skin surfaces the server's reason as an ApiError", async () => {
+  it("sends a taken-off hat as null, and leaves out what isn't being changed", async () => {
     setStoredToken("tok-1");
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "bodySkin must be an integer 0–7" }), { status: 400 })));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(ACCOUNT), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
 
-    await expect(saveBodySkin(9)).rejects.toThrow(ApiError);
-    await expect(saveBodySkin(9)).rejects.toThrow("bodySkin must be an integer 0–7");
+    await saveCosmetics({ hat: null });
+
+    expect(fetchMock).toHaveBeenCalledWith(`${API}/auth/me/cosmetics`, expect.objectContaining({ body: '{"hat":null}' }));
+  });
+
+  it("a refused choice surfaces the server's reason as an ApiError", async () => {
+    setStoredToken("tok-1");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "UFO unlocks at level 30" }), { status: 403 })));
+
+    await expect(saveCosmetics({ hat: "ufo" })).rejects.toThrow(ApiError);
+    await expect(saveCosmetics({ hat: "ufo" })).rejects.toThrow("UFO unlocks at level 30");
+  });
+});
+
+describe("saveBindings (M9 controls)", () => {
+  it("PUTs the whole record and returns the updated Account", async () => {
+    setStoredToken("tok-1");
+    const bindings = { ...DEFAULT_BINDINGS, hit: ["Mouse0"] };
+    const updated = { ...ACCOUNT, bindings };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(updated), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(saveBindings(bindings)).resolves.toEqual(updated);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API}/auth/me/bindings`,
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ bindings }) }),
+    );
+  });
+
+  it("a malformed record surfaces the server's reason as an ApiError", async () => {
+    setStoredToken("tok-1");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: 'bindings["hit"] must be an array of controls' }), { status: 400 })));
+
+    await expect(saveBindings({} as never)).rejects.toThrow(ApiError);
+    await expect(saveBindings({} as never)).rejects.toThrow('bindings["hit"] must be an array of controls');
   });
 });

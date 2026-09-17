@@ -34,6 +34,9 @@ vi.mock("../../scene/viewport.js", async (importActual) => {
       isGizmoActive: () => false,
       pickPartPivot: () => undefined,
       pick: () => undefined,
+      setCourseVisible: vi.fn(),
+      capturePreview: () => undefined,
+      resize: vi.fn(),
       render: vi.fn(),
       dispose: vi.fn(),
     }),
@@ -186,6 +189,68 @@ describe("TrackBuilderScreen", () => {
       expect(fetchMock).toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
+      engine.dispose();
+    }
+  });
+
+  it("SAVE frames the Thumbnail fullscreen — chrome hides, the canvas stays mounted, CANCEL puts it all back", () => {
+    const engine = createBuilderEngine();
+    try {
+      render(<TrackBuilderScreen engine={engine} />);
+      act(() => engine.placeModule("fan"));
+      const detach = vi.spyOn(engine, "detachViewport");
+
+      // SAVE doesn't save anymore — it opens capture mode.
+      fireEvent.click(screen.getByText("SAVE"));
+      expect(engine.previewing).toBe(true);
+      expect(screen.getByRole("button", { name: "CREATE PREVIEW" })).toBeDefined();
+      expect(screen.getByRole("button", { name: "CANCEL" })).toBeDefined();
+      expect(screen.queryByText("Track Builder")).toBeNull();
+      expect(screen.queryByText("PLAYTEST")).toBeNull();
+      // The same tree: the Viewport never detached, so the camera survives the switch.
+      expect(detach).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "CANCEL" }));
+      expect(engine.previewing).toBe(false);
+      expect(screen.getByText("SAVE")).toBeDefined();
+      expect(screen.getByText("Track Builder")).toBeDefined();
+      expect(detach).not.toHaveBeenCalled();
+    } finally {
+      engine.dispose();
+    }
+  });
+
+  it("SAVE and CANCEL each re-fit the renderer — the canvas box resizes with no window resize", () => {
+    const engine = createBuilderEngine();
+    try {
+      render(<TrackBuilderScreen engine={engine} />);
+      act(() => engine.placeModule("fan"));
+      const refit = vi.spyOn(engine, "resizeViewport");
+
+      fireEvent.click(screen.getByText("SAVE"));
+      expect(refit).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByRole("button", { name: "CANCEL" }));
+      expect(refit).toHaveBeenCalledTimes(2);
+    } finally {
+      engine.dispose();
+    }
+  });
+
+  it("a capture that yields no pixels stays in capture mode and says so in the bar", async () => {
+    const engine = createBuilderEngine();
+    try {
+      render(<TrackBuilderScreen engine={engine} />);
+      act(() => engine.placeModule("fan"));
+      fireEvent.click(screen.getByText("SAVE"));
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "CREATE PREVIEW" }));
+      });
+
+      expect(engine.previewing).toBe(true);
+      expect(screen.getByText(/capture failed/)).toBeDefined();
+    } finally {
       engine.dispose();
     }
   });

@@ -9,9 +9,13 @@ import type { LocomotionState } from "./locomotionAnimation.js";
 /**
  * BLIP — the game's Character (ADR 0071), `apps/client/public/models/BLIP.glb`.
  * One self-contained GLB: three meshes (body and two eyes) over a 20-joint
- * skeleton, two flat materials and no texture at all, with fifty named clips
- * authored for this game's own verbs (`BLIP_Animated_v6.glb`: v5 with the
- * `Death_*` and `GetUp_*` clips reworked, ADR 0076).
+ * skeleton, two flat materials and no texture at all, with fifty-one named
+ * clips authored for this game's own verbs (`BLIP_Animated_v7.glb`: v6 with
+ * `Walk` and `Run` reworked to share one stride and a new `Sprint`, ADR 0081).
+ * The file served is that rig as the cosmetics pack exports it
+ * (`BLIP_Character_Cosmetics_v1.glb`): the same nodes and clips, byte for
+ * byte, plus the body's `Hat_Tuck` morph that hides the crest under a hat
+ * (ADR 0083).
  *
  * It replaced MushroomKing (Quaternius, CC0), which was a stand-in with five
  * usable clips and no pelvis in its rig.
@@ -75,8 +79,15 @@ export type KnockdownDirection = (typeof KNOCKDOWN_DIRECTIONS)[number];
 /** The named clips a Character's rig plays — one `AnimationAction` per name, bound to one `mixer`/rig instance. */
 export interface CharacterActions {
   idle: THREE.AnimationAction | null;
+  /**
+   * The three gaits (ADR 0081): `run` is the ordinary one, `walk` the slow
+   * end of it, `sprint` the Dash. They share one stride (left foot down at
+   * the start of each clip, right foot halfway), which is what lets
+   * {@link crossfadeLocomotion} carry the step from one into the next.
+   */
   walk: THREE.AnimationAction | null;
   run: THREE.AnimationAction | null;
+  sprint: THREE.AnimationAction | null;
   /**
    * The jump's five pieces, played end to end as one sequence paced to the
    * real arc (`jumpSequence.ts`). Together they are exactly the rig's
@@ -160,6 +171,7 @@ export const loadCharacterActions = (mixer: THREE.AnimationMixer, animations: TH
     idle: clipAction("Idle"),
     walk: clipAction("Walk"),
     run: clipAction("Run"),
+    sprint: clipAction("Sprint"),
     // Never looped: the jump sequence poses each piece frame by frame
     // (`pinClipPose`), so none of them runs on the mixer's own clock.
     // `Jump_Full` stays unbound — see the field's own comment.
@@ -212,9 +224,8 @@ export const bindClipAction = (
 };
 
 /**
- * The actual clip for a {@link LocomotionState} — `run` falls back to `walk`
- * when no dedicated running clip exists, matching the fallback the local
- * Character's own animation has always used for a Dash's locomotion.
+ * The actual clip for a {@link LocomotionState}. A rig missing a gait plays
+ * the next slower one it has: `sprint` falls back to `run`, `run` to `walk`.
  */
 export const actionFor = (state: LocomotionState, actions: CharacterActions): THREE.AnimationAction | null => {
   switch (state) {
@@ -224,6 +235,8 @@ export const actionFor = (state: LocomotionState, actions: CharacterActions): TH
       return actions.walk;
     case "run":
       return actions.run ?? actions.walk;
+    case "sprint":
+      return actions.sprint ?? actions.run ?? actions.walk;
     case "jump":
       // Only the coarse fallback: the real choice is the jump sequence's
       // (`jumpPoseAt`), at the call site that has one.
@@ -284,19 +297,36 @@ export const pinClipPose = (pose: ClipPose): void => {
   pose.action.paused = true;
 };
 
+/** Whether `action` is one of the rig's three gaits, which share one stride (ADR 0081). */
+export const isGait = (action: THREE.AnimationAction | null, actions: CharacterActions): boolean =>
+  action !== null && (action === actions.walk || action === actions.run || action === actions.sprint);
+
 /**
  * Crossfades to `next` if it differs from `current`, otherwise leaves it
  * playing untouched. Returns the action that is now current — the caller
  * holds it in its own per-rig variable (local and remote each track their
  * own).
+ *
+ * `actions`, when given, lets a change of gait keep its step (ADR 0081): if
+ * both `current` and `next` are gaits, `next` starts at the same point of the
+ * stride `current` has reached, instead of from its own first frame. A Dash
+ * starts mid-run all the time, and restarting the Sprint on its left foot
+ * while the Run is on its right blends two opposite legs for the length of
+ * the fade.
  */
 export const crossfadeLocomotion = (
   next: THREE.AnimationAction | null,
   current: THREE.AnimationAction | null,
   crossfadeSeconds: number,
+  actions?: CharacterActions,
 ): THREE.AnimationAction | null => {
   if (!next || next === current) return current;
-  next.reset().fadeIn(crossfadeSeconds).play();
+  next.reset();
+  if (actions && current && isGait(current, actions) && isGait(next, actions)) {
+    const stride = (current.time / current.getClip().duration) % 1;
+    next.time = stride * next.getClip().duration;
+  }
+  next.fadeIn(crossfadeSeconds).play();
   current?.fadeOut(crossfadeSeconds);
   return next;
 };

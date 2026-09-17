@@ -17,6 +17,8 @@ export default function ReadySwitch({ ready = true, onChange, label = 'I’M REA
         type="button"
         role="switch"
         aria-checked={ready}
+        // Turning Ready on confirms (M14 ticket 12); turning it off is a plain toggle.
+        data-ui-sound={ready ? 'toggle' : 'confirm'}
         onClick={() => onChange?.(!ready)}
         className={[s.switch, !ready && s.off].filter(Boolean).join(' ')}
       >

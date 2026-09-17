@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { BASE_BODY_SKIN_ID } from '@dont-fall/shared';
+import { BASE_BODY_SKIN_ID, HATS } from '@dont-fall/shared';
+import { hatIconUrl } from '../lib/hatAssets.js';
 import Stage from '../ui/Stage';
 import Panel from '../ui/Panel';
 import JellyButton from '../ui/JellyButton';
@@ -36,11 +37,11 @@ export interface CharacterSelectProps {
   /** Controlled pick — the Route owns it (it must survive the async account load and reach SAVE). */
   selected: number;
   onSelect?: (index: number) => void;
-  /**
-   * One inline notice under the equipped row — a failed SAVE (error) or the
-   * shop stub (info). Never a `window.alert`: the screen says it itself.
-   */
-  notice?: { text: string; tone: "error" | "info" } | null;
+  /** Controlled hat pick (ADR 0083), owned by the Route like the skin — `null` for none. */
+  hat?: string | null;
+  onSelectHat?: (hat: string | null) => void;
+  /** The Account's level: a hat above it shows locked, with the level it needs. */
+  level?: number;
 }
 
 const stripe = ([a, b]: [string, string]) =>
@@ -51,7 +52,8 @@ const LockIcon = () => (
 );
 
 export default function CharacterSelect({
-  equipped = 'BUBBLEGUM BEAN', onBack, onSave, onShop, feel, selected, onSelect, notice = null,
+  equipped = 'BUBBLEGUM BEAN', onBack, onSave, onShop, feel, selected, onSelect,
+  hat = null, onSelectHat, level = 1,
 }: CharacterSelectProps) {
   const [tab, setTab] = useState<CosmeticTab>('BODY');
   // Turntable one-shots — counters, not booleans, so a second click re-fires.
@@ -61,14 +63,14 @@ export default function CharacterSelect({
   return (
     <Stage background="var(--df-stage-lobby)" sheen="var(--df-sheen-menu)" feel={feel} className={s.screen}>
       <div className={s.topbar}>
-        <button type="button" className={s.back} onClick={onBack} aria-label="Back">
+        <button type="button" className={s.back} data-ui-sound="back" onClick={onBack} aria-label="Back">
           <svg viewBox="0 0 18 18"><path d="M11 3L5 9l6 6" /></svg>
         </button>
         <span className={s.title}>YOUR BEAN</span>
       </div>
 
       <div className={s.turntable}>
-        <Turntable skin={selected} spinToken={spinToken} emoteToken={emoteToken} />
+        <Turntable skin={selected} hat={hat} spinToken={spinToken} emoteToken={emoteToken} />
         <span className={s.shadow} />
         <div className={s.turnActions}>
           <JellyButton variant="pill" tone="glass" centered onClick={() => setSpinToken((t) => t + 1)}>ROTATE</JellyButton>
@@ -102,6 +104,40 @@ export default function CharacterSelect({
         </div>
 
         <div className={s.grid}>
+          {tab === 'HAT' ? (
+            <>
+              <button
+                type="button"
+                aria-label="No hat"
+                aria-pressed={hat === null}
+                onClick={() => onSelectHat?.(null)}
+                className={[s.swatch, s.hatTile, hat === null && s.selected].filter(Boolean).join(' ')}
+              >NONE</button>
+              {HATS.map((def) => level >= def.unlockLevel ? (
+                <button
+                  key={def.id}
+                  type="button"
+                  aria-label={def.name}
+                  aria-pressed={hat === def.id}
+                  onClick={() => onSelectHat?.(def.id)}
+                  className={[s.swatch, s.hatTile, hat === def.id && s.selected].filter(Boolean).join(' ')}
+                >
+                  <img src={hatIconUrl(def.id)} alt="" className={s.hatIcon} draggable={false} />
+                </button>
+              ) : (
+                <span
+                  key={def.id}
+                  title={`${def.name} unlocks at level ${def.unlockLevel}`}
+                  className={[s.swatch, s.hatTile, s.hatLocked].join(' ')}
+                >
+                  <img src={hatIconUrl(def.id)} alt="" className={s.hatIcon} draggable={false} />
+                  <LockIcon />
+                  <span className={s.lockLabel}>LV {def.unlockLevel}</span>
+                </span>
+              ))}
+            </>
+          ) : (
+          <>
           {SKINS.map((pair, i) => (
             <button
               key={i}
@@ -116,6 +152,8 @@ export default function CharacterSelect({
           <span className={[s.swatch, s.locked].join(' ')}><LockIcon /><span className={s.lockLabel}>LV 45</span></span>
           <span className={[s.swatch, s.locked].join(' ')}><LockIcon /></span>
           <span className={[s.swatch, s.shopOnly].join(' ')}>SHOP<br />ONLY</span>
+          </>
+          )}
         </div>
 
         <div className={s.equipped}>
@@ -123,13 +161,8 @@ export default function CharacterSelect({
             <span className={s.equippedLabel}>EQUIPPED</span>
             <span className={s.equippedName}>{equipped}</span>
           </span>
-          <JellyButton variant="pill" tone="go" centered onClick={onSave}>SAVE</JellyButton>
+          <JellyButton variant="pill" tone="go" centered sound="confirm" onClick={onSave}>SAVE</JellyButton>
         </div>
-        {notice && (
-          <p role={notice.tone === "error" ? "alert" : "status"} className={notice.tone === "error" ? s.noticeError : s.notice}>
-            {notice.text}
-          </p>
-        )}
       </Panel>
 
       <div className={s.foot}>

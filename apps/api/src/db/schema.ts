@@ -1,4 +1,4 @@
-import { integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
+import { integer, primaryKey, real, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
 import type { LobbyRef, PersistedMatchResult } from "@dont-fall/shared";
 
 /**
@@ -43,6 +43,14 @@ export const tracks = sqliteTable(
      * and never read by the Match server: it is presentation only.
      */
     environment: text("environment").notNull(),
+    /**
+     * This Revision's Thumbnail (ADR 0085) — the full JPEG data URL the
+     * builder captured, or NULL for a Revision published without one (every
+     * pre-Thumbnail Revision, the code-owned seed, playtests). A row
+     * attribute for the same reasons `environment` is one, and likewise
+     * never read by the Match server.
+     */
+    thumbnail: text("thumbnail"),
   },
   (table) => [primaryKey({ columns: [table.trackId, table.revision] })],
 );
@@ -83,6 +91,19 @@ export const accounts = sqliteTable("accounts", {
    * they pick (and for every pre-skins Account via the backfill).
    */
   bodySkin: integer("body_skin").notNull().default(0),
+  /**
+   * The equipped hat's id (ADR 0083) — one of shared's `HATS`, validated
+   * (and checked against the Account's level) on write. NULL for no hat,
+   * which is where every Account starts, so there is nothing to backfill.
+   */
+  hat: text("hat"),
+  /**
+   * The stored key bindings (M9 controls) — a JSON `KeyBindings` record, or
+   * NULL for "never saved", which the client resolves to shared's defaults.
+   * Nullable with no backfill value: nothing to write for pre-controls
+   * Accounts, exactly like `friend_code`.
+   */
+  bindings: text("bindings"),
 });
 
 /**
@@ -154,6 +175,30 @@ export const matchResults = sqliteTable("match_results", {
   data: text("data", { mode: "json" }).notNull().$type<PersistedMatchResult>(),
   endedAtMs: integer("ended_at_ms").notNull(),
 });
+
+/**
+ * One authed racer's final standing in one finished Match — the career
+ * index. Written by the same save that stores `match_results` (first write
+ * wins on both, so a retried save can't double-count a career); read by the
+ * career endpoint for history rows and aggregates. Anonymous seats leave no
+ * row — there is no Account to attribute them to.
+ *
+ * `placement`/`score` are the exact numbers the results page showed
+ * (`matchPlacements`, never re-derived on read), so history can never
+ * disagree with the table the Player actually saw.
+ */
+export const matchParticipants = sqliteTable(
+  "match_participants",
+  {
+    matchId: text("match_id").notNull(),
+    accountId: text("account_id").notNull(),
+    placement: integer("placement").notNull(),
+    score: real("score").notNull(),
+    falls: integer("falls").notNull(),
+    endedAtMs: integer("ended_at_ms").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.matchId, table.accountId] })],
+);
 
 /**
  * One banked rewards claim (ADR 0059) — what makes `POST /rewards/claim`

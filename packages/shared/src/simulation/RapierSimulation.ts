@@ -4,7 +4,7 @@ import { conjugateQuat, IDENTITY_QUAT } from "../math/quat.js";
 import { addVec3, dotVec3, lengthVec3, normalizeVec3, rotateVec3ByQuat, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
 import { phaseLocksInput, phaseNeedsPhysicsStep, type MatchPhase } from "../match/MatchPhase.js";
 import { DEFAULT_ROUND_RULES, type RoundRules } from "../match/RoundRules.js";
-import { characterSnapshot, type CharacterSnapshot, type ReconcileBase, type SimState } from "../state/SimState.js";
+import { characterSnapshot, type CharacterSnapshot, type RagdollCause, type ReconcileBase, type SimState } from "../state/SimState.js";
 import {
   BUMP_IMPULSE_SCALE,
   CAPSULE_BOTTOM_OFFSET,
@@ -209,7 +209,48 @@ export interface SimulationConfig {
    * reads `qualified`, right beside it.
    */
   roundRules?: RoundRules;
+  /**
+   * Measurement only (M13 ticket 02): a millisecond clock (the caller's
+   * `performance.now`) turns on Rapier's internal profiler and times the
+   * per-tick Moving Segment switching, read back through
+   * {@link RapierSimulation.lastTickTimings}. It never changes what a tick
+   * computes. Omitted — always, in play — nothing is timed.
+   */
+  profileClock?: () => number;
 }
+
+/** What the last tick cost, from a simulation built with `profileClock` (M13 ticket 02). */
+export interface SimulationTimings {
+  /** Rapier's whole last `world.step()` — stale through phases that skip the step. */
+  stepMs: number;
+  collisionDetectionMs: number;
+  broadPhaseMs: number;
+  narrowPhaseMs: number;
+  solverMs: number;
+  ccdMs: number;
+  /** Rapier propagating what changed between steps — every Moving Segment's body-type switch lands here. */
+  userChangesMs: number;
+  /** Outside the step: every Moving Segment switched to `Fixed` for the sweeps, then back with its next pose. */
+  movingSegmentsMs: number;
+  /** Outside the step: every Character's `beginTick` — its movement and its controller's collision sweep. */
+  characterSweepsMs: number;
+  /** Outside the step: every Character's post-step bookkeeping — `endTick`, contacts, Checkpoints, Falls, Surfaces, Volumes. */
+  characterUpdatesMs: number;
+}
+
+/** Every timing at zero — the start of a sum over ticks. */
+export const emptySimulationTimings = (): SimulationTimings => ({
+  stepMs: 0,
+  collisionDetectionMs: 0,
+  broadPhaseMs: 0,
+  narrowPhaseMs: 0,
+  solverMs: 0,
+  ccdMs: 0,
+  userChangesMs: 0,
+  movingSegmentsMs: 0,
+  characterSweepsMs: 0,
+  characterUpdatesMs: 0,
+});
 
 const DEFAULT_SPAWN = vec3(0, 2, 0);
 const DEFAULT_GROUND: OrientedBox = {
@@ -367,6 +408,10 @@ export class RapierSimulation {
 
   private tickCount = 0;
 
+  /** See `SimulationConfig.profileClock`. */
+  private readonly profileClock: (() => number) | null;
+  private readonly lastPhaseMs = { movingSegmentsMs: 0, characterSweepsMs: 0, characterUpdatesMs: 0 };
+
   /**
    * Set by {@link RapierSimulation.dispose}. The Rapier `World` is WASM
    * memory: once freed, every handle into it dangles, and calling through one
@@ -386,6 +431,8 @@ export class RapierSimulation {
     this.roundRules = config.roundRules ?? DEFAULT_ROUND_RULES;
 
     this.world = new RAPIER.World({ x: 0, y: GRAVITY_Y, z: 0 });
+    this.profileClock = config.profileClock ?? null;
+    if (this.profileClock) this.world.profilerEnabled = true;
 
     this.statics.forEach((box, i) => {
       // ADR 0034: a real rotated rigid body, not the old pre-rotated-AABB
@@ -1019,8 +1066,8 @@ export class RapierSimulation {
   }
 
   /** Deliver an Impact to Character `id` (a shove from the Spinner, a wall dash, a Bump…). See {@link CharacterController.applyImpact}. */
-  applyImpact(id: string, impulse: Vec3): void {
-    this.character(id).applyImpact(impulse);
+  applyImpact(id: string, impulse: Vec3, cause?: RagdollCause): void {
+    this.character(id).applyImpact(impulse, cause);
   }
 
   /**
@@ -1201,14 +1248,21 @@ export class RapierSimulation {
       character.setRide(this.rideFor(character));
     }
     this.applyGrabTether(inputs, matchLocked);
+    const clock = this.profileClock;
+    const holdStarted = clock ? clock() : 0;
     for (const segment of this.movingSegments) segment.holdForSweeps();
+    const holdMs = clock ? clock() - holdStarted : 0;
 
+    const sweepsStarted = clock ? clock() : 0;
     for (const [id, character] of this.characters) {
       const progress = this.progress.get(id)!;
       if (progress.eliminated) continue;
       character.beginTick(this.effectiveInput(id, inputs, matchLocked));
     }
+    if (clock) this.lastPhaseMs.characterSweepsMs = clock() - sweepsStarted;
+    const moveStarted = clock ? clock() : 0;
     for (const segment of this.movingSegments) segment.tick(this.tickCount + 1);
+    if (clock) this.lastPhaseMs.movingSegmentsMs = holdMs + clock() - moveStarted;
     // Resolved here — after every Character's `beginTick` has run this tick,
     // but before `world.step()` — the same pre-step timing Bump's own
     // `resolveBump` gets "for free" from firing inside `beginTick`'s own
@@ -1238,6 +1292,7 @@ export class RapierSimulation {
 
     // Each Character must finish moving — including any queued respawn —
     // before Checkpoint and Fall detection read its position for this tick.
+    const updatesStarted = clock ? clock() : 0;
     for (const [id, character] of this.characters) {
       const progress = this.progress.get(id)!;
       if (progress.eliminated) continue;
@@ -1286,6 +1341,7 @@ export class RapierSimulation {
       // M6.1: the reverse of grabbingId — same default-reset treatment.
       character.setHeldByGrabberId(null);
     }
+    if (clock) this.lastPhaseMs.characterUpdatesMs = clock() - updatesStarted;
     this.updateGrabs(inputs, matchLocked);
 
     // Client-only (ADR 0012 / 0016, ticket 06): every Prop is pinned to the
@@ -1520,6 +1576,22 @@ export class RapierSimulation {
       tick: this.tickCount,
       characters,
       props: this.props.map((p) => p.snapshot()),
+    };
+  }
+
+  /** What the last tick cost (M13 ticket 02), or `null` when this simulation was built without a `profileClock`. */
+  lastTickTimings(): SimulationTimings | null {
+    if (!this.profileClock) return null;
+    const world = this.world;
+    return {
+      stepMs: world.timingStep(),
+      collisionDetectionMs: world.timingCollisionDetection(),
+      broadPhaseMs: world.timingBroadPhase(),
+      narrowPhaseMs: world.timingNarrowPhase(),
+      solverMs: world.timingSolver(),
+      ccdMs: world.timingCcd(),
+      userChangesMs: world.timingUserChanges(),
+      ...this.lastPhaseMs,
     };
   }
 

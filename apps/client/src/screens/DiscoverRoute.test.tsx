@@ -9,8 +9,8 @@ const { useDiscoverTracks } = vi.hoisted(() => ({ useDiscoverTracks: vi.fn() }))
 vi.mock("../lib/hooks/useDiscoverTracks.js", () => ({ useDiscoverTracks }));
 
 const ROWS: TrackListing[] = [
-  { id: "t1", name: "Wobble Ramp", authorId: "a1", createdAt: 1_000, plays: 12, hasFinishZone: true },
-  { id: "t2", name: "Arena Bowl", authorId: "a1", createdAt: 2_000, plays: 3, hasFinishZone: false },
+  { id: "t1", name: "Wobble Ramp", authorId: "a1", createdAt: 1_000, plays: 12, hasFinishZone: true, hasThumbnail: false },
+  { id: "t2", name: "Arena Bowl", authorId: "a1", createdAt: 2_000, plays: 3, hasFinishZone: false, hasThumbnail: false },
 ];
 
 const loaded = () => {

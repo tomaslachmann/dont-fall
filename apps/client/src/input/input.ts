@@ -1,47 +1,52 @@
-import type { MovementKeys } from "@dont-fall/shared";
+import type { KeyBindings, MovementKeys } from "@dont-fall/shared";
+import { cloneBindings, DEFAULT_BINDINGS } from "@dont-fall/shared";
 import { applyLook } from "./camera/lookControls.js";
 import { clampPitch } from "./camera/springArm.js";
 import { listen, type ListenerTarget } from "../lib/socket/listeners.js";
 
-const MOVEMENT_CODES: Record<string, keyof MovementKeys> = {
-  KeyW: "forward",
-  ArrowUp: "forward",
-  KeyS: "back",
-  ArrowDown: "back",
-  KeyA: "left",
-  ArrowLeft: "left",
-  KeyD: "right",
-  ArrowRight: "right",
-};
-
-const JUMP_CODES = ["Space"];
-const DASH_CODES = ["ShiftLeft", "ShiftRight"];
-const HIT_CODES = ["KeyF"];
-const GRAB_CODES = ["KeyG"];
 /**
- * Cycles the followed Character in Spectator Mode (M7 ticket 07) — free of
- * every other binding above, and edge-triggered rather than held: one press
- * steps one Character, never a held-key spin.
+ * Codes whose page default (scroll) we swallow while playing — but only
+ * when actually bound (M9 controls): an unbound Space scrolls the page it
+ * sits on, a bound one jumps. Recomputed on every `setBindings`.
  */
-const SPECTATE_NEXT_CODES = ["KeyC"];
-/** Codes whose default (page scroll) we swallow while playing. */
-const SWALLOW_DEFAULT = new Set([...Object.keys(MOVEMENT_CODES), ...JUMP_CODES]);
+const SWALLOWABLE = new Set(["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
 
-/** Tracks held keys and reports them as framework-agnostic input for the sim. */
-export class KeyboardInput {
+/** Tracks held controls — keys and mouse buttons alike — and reports them as framework-agnostic input for the sim. */
+export class PlayerInput {
   private readonly held = new Set<string>();
+  private bindings: KeyBindings = cloneBindings(DEFAULT_BINDINGS);
+  private swallow = new Set<string>();
   private spectateNextPresses = 0;
   private readonly detach: () => void;
 
-  constructor(target: ListenerTarget = window) {
+  constructor(target: ListenerTarget = window, bindings: KeyBindings = DEFAULT_BINDINGS, doc: Document = document) {
+    this.setBindings(bindings);
     const onKeyDown: EventListener = (event) => {
       const e = event as KeyboardEvent;
-      if (SWALLOW_DEFAULT.has(e.code)) e.preventDefault();
+      if (this.swallow.has(e.code)) e.preventDefault();
       this.held.add(e.code);
-      if (!e.repeat && SPECTATE_NEXT_CODES.includes(e.code)) this.spectateNextPresses += 1;
+      // Edge-triggered (M7 ticket 07): one press steps one Character in
+      // Spectator Mode, never a held-key spin.
+      if (!e.repeat && this.bindings.spectateNext.includes(e.code)) this.spectateNextPresses += 1;
     };
     const onKeyUp: EventListener = (event) => {
       this.held.delete((event as KeyboardEvent).code);
+    };
+    const onMouseDown: EventListener = (event) => {
+      // Buttons only count while locked: the click that grabs the pointer
+      // must never fire the action it lands on (a Mouse0 hit would punch
+      // the air every time you click back into the game).
+      if (doc.pointerLockElement == null) return;
+      const button = (event as MouseEvent).button;
+      if (button < 0 || button > 4) return;
+      const control = `Mouse${button}`;
+      this.held.add(control);
+      // The spectator edge, like the keydown one above — mousedown never
+      // auto-repeats, so no repeat guard is needed.
+      if (this.bindings.spectateNext.includes(control)) this.spectateNextPresses += 1;
+    };
+    const onMouseUp: EventListener = (event) => {
+      this.held.delete(`Mouse${(event as MouseEvent).button}`);
     };
     const onBlur: EventListener = () => {
       this.held.clear();
@@ -51,36 +56,51 @@ export class KeyboardInput {
     const stops = [
       listen(target, "keydown", onKeyDown),
       listen(target, "keyup", onKeyUp),
+      listen(target, "mousedown", onMouseDown),
+      listen(target, "mouseup", onMouseUp),
       listen(target, "blur", onBlur),
     ];
     this.detach = () => stops.forEach((stop) => stop());
   }
 
+  /**
+   * Swap the bindings live (M9 controls) — the Settings CONTROLS tab writes
+   * through here, so a rebind takes effect without rebooting the game.
+   * Cloned on the way in: the caller's record stays theirs to keep editing.
+   */
+  setBindings(bindings: KeyBindings): void {
+    this.bindings = cloneBindings(bindings);
+    // Every bound action feeds the swallow set: a Space rebound to Hit must
+    // still not scroll the page out from under the game.
+    this.swallow = new Set(Object.values(this.bindings).flat().filter((code) => SWALLOWABLE.has(code)));
+  }
+
   movementKeys(): MovementKeys {
     const keys: MovementKeys = { forward: false, back: false, left: false, right: false };
     for (const code of this.held) {
-      const dir = MOVEMENT_CODES[code];
-      if (dir) keys[dir] = true;
+      for (const dir of ["forward", "back", "left", "right"] as const) {
+        if (this.bindings[dir].includes(code)) keys[dir] = true;
+      }
     }
     return keys;
   }
 
   jumpHeld(): boolean {
-    return JUMP_CODES.some((code) => this.held.has(code));
+    return this.bindings.jump.some((code) => this.held.has(code));
   }
 
   dashHeld(): boolean {
-    return DASH_CODES.some((code) => this.held.has(code));
+    return this.bindings.dash.some((code) => this.held.has(code));
   }
 
   /** Whether the Hit button is held this tick (M6 ticket 03). */
   hitHeld(): boolean {
-    return HIT_CODES.some((code) => this.held.has(code));
+    return this.bindings.hit.some((code) => this.held.has(code));
   }
 
   /** Whether the Grab button is held this tick (M6 ticket 04). */
   grabHeld(): boolean {
-    return GRAB_CODES.some((code) => this.held.has(code));
+    return this.bindings.grab.some((code) => this.held.has(code));
   }
 
   /**
@@ -96,9 +116,9 @@ export class KeyboardInput {
   }
 
   /**
-   * Stop listening and forget every held key (M4 ticket 01). A game torn down
-   * and started again in the same page session must not leave a second
-   * keyboard listener behind, or one keypress reaches the sim twice.
+   * Stop listening and forget every held control (M4 ticket 01). A game torn
+   * down and started again in the same page session must not leave a second
+   * listener behind, or one keypress reaches the sim twice.
    */
   dispose(): void {
     this.detach();

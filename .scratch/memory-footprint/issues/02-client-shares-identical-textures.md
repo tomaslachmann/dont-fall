@@ -9,10 +9,13 @@ like the other twin pair (`extractVisualRoot`).
 
 **Decided (user, 2026-09-15):** yes — with ticket 01.
 
-**Blocked by:** the builder/Track work in progress landing (ADR 0066 adds the
-first shared image map; check whether texture handling moved first).
+**Milestone:** M13 (`docs/milestones/M13.md`), next with M13/06 (user, 2026-09-17), ahead of 01. It is
+also an upload-hitch fix (M13/06 builds on it), not only a memory one.
 
-**Status:** planned
+**Blocked by:** M13/03. ADR 0066 (the first shared image map) has landed, so
+check whether texture handling moved before starting.
+
+**Status:** done (2026-09-17), tests and typecheck.
 
 ## Why
 
@@ -35,10 +38,10 @@ mipmaps) for what is two images (`docs/research/memory-bloat-investigation.md`).
 
 ## Checklist
 
-- [ ] Client twin of `shareTextures`, applied in `parseAssetVisual`
-- [ ] Tests: two files embedding the same image resolve to one texture; a
+- [x] Client twin of `shareTextures`, applied in `parseAssetVisual`
+- [x] Tests: two files embedding the same image resolve to one texture; a
       differing sampling does not merge; the replaced bitmap is closed
-- [ ] Stage dispose never disposes a shared texture (test via the scene sweep)
+- [x] ~~Stage dispose never disposes a shared texture~~: not needed, see As built
 
 ## Notes
 
@@ -46,3 +49,23 @@ mipmaps) for what is two images (`docs/research/memory-bloat-investigation.md`).
   one shared image map served like ADR 0066's ice sheet. Breaks ADR 0050's
   self-contained GLB rule, so it would need its own ADR; the load-time dedupe
   here needs none.
+
+## As built
+
+- **No twin.** `shareTextures(gltf, cache)` moved from the builder into `packages/render`
+  (`src/assets/shareTextures.ts`), which ADR 0074 created for three.js code the game and the
+  builder share. The builder's `assets.ts` and the client's `render/assetVisuals.ts`
+  (`parseAssetVisual`) both call it, each with its own session cache (`SharedTextureCache`). The
+  logic is the builder's, unchanged: content key plus sampling, and the duplicate's bitmap is closed
+  unless another slot in the same file still draws from it.
+- **Tests** (`shareTextures.test.ts`, Node) parse real KayKit GLBs with a stubbed
+  `createImageBitmap` and `self`:
+  - two files resolve to one texture and the duplicate's bitmap is closed,
+  - a differing `wrapS` stays apart,
+  - a lone file is left as it was.
+- **Disposal.** A Stage's scene sweep still calls `dispose()` on these textures on a Track swap.
+  That frees only the old renderer's GPU copy; every Stage has its own `WebGLRenderer`, so the next
+  one uploads the shared texture again anyway, and the bitmap is never closed by `dispose()`. So no
+  "never dispose" rule is needed.
+- **Still costly:** every file is still fetched and its image decoded before sharing. Ticket 01
+  (Track-only loading) removes that.

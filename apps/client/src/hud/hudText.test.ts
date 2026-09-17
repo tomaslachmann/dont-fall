@@ -1,4 +1,4 @@
-import { DASH_COOLDOWN_MS, HIT_CHARGE_MAX_MS, HIT_COOLDOWN_MS } from "@dont-fall/shared";
+import { DASH_COOLDOWN_MS, DEFAULT_BINDINGS, HIT_CHARGE_MAX_MS, HIT_COOLDOWN_MS } from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
 import { formatHudText, type HudTextValues } from "./hudText.js";
 
@@ -20,6 +20,7 @@ const base: HudTextValues = {
   hitCooldownMs: 0,
   hitChargeMs: 0,
   netMetricsText: "net rtt 12ms",
+  bindings: DEFAULT_BINDINGS,
 };
 
 describe("formatHudText", () => {
@@ -32,13 +33,22 @@ describe("formatHudText", () => {
         `checkpoint spawn · falls 0 · qualified 0/2\n` +
         `dash [##########] ready\n` +
         `hit [##########] ready\n` +
-        `WASD move · Space jump · Shift dash · F hit · mouse look\n` +
+        `WASD move · Space jump · Shift dash · F hit · G grab · mouse look\n` +
         `net rtt 12ms`,
     );
   });
 
   it("lowercases the phase for the status line", () => {
     expect(formatHudText({ ...base, phase: "COUNTDOWN" })).toContain("· countdown\n");
+  });
+
+  it("renders the control hint from the active bindings, not constants", () => {
+    expect(
+      formatHudText({
+        ...base,
+        bindings: { ...DEFAULT_BINDINGS, jump: ["KeyJ"], hit: ["Mouse0"], dash: [] },
+      }),
+    ).toContain("WASD move · J jump · — dash · LMB hit · G grab · mouse look\n");
   });
 
   it("shows 'spawn' before the first Checkpoint, and a 1-based Checkpoint number after", () => {

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { TrackListing } from '@dont-fall/shared';
+import { UNTITLED_TRACK_NAME, type TrackListing } from '@dont-fall/shared';
+import { trackThumbnailUrl } from '../lib/api/tracks.js';
 import Stage from '../ui/Stage';
 import JellyButton from '../ui/JellyButton';
 import Chip from '../ui/Chip';
@@ -103,7 +104,7 @@ export default function Discover({ tracks, isLoading, error, onRetry, selectedId
     <Stage background="var(--df-stage-lobby)" feel={feel} className={s.screen}>
       <div className={s.topbar}>
         <div className={s.crumb}>
-          <button type="button" className={s.back} onClick={onBack} aria-label="Back">
+          <button type="button" className={s.back} data-ui-sound="back" onClick={onBack} aria-label="Back">
             <svg viewBox="0 0 18 18"><path d="M11 3L5 9l6 6" /></svg>
           </button>
           <span className={s.title}>DISCOVER</span>
@@ -144,7 +145,7 @@ export default function Discover({ tracks, isLoading, error, onRetry, selectedId
         <div className={s.grid}>
           {visible.map((t) => {
             const selected = t.id === selectedId;
-            const name = t.name ?? 'UNTITLED TRACK';
+            const name = t.name ?? UNTITLED_TRACK_NAME;
             return (
               <button
                 key={t.id}
@@ -155,6 +156,19 @@ export default function Discover({ tracks, isLoading, error, onRetry, selectedId
               >
                 <span className={s.thumb} style={{ background: stripe(THUMBS[t.hasFinishZone ? 'race' : 'survival']) }}>
                   <span className={s.thumbCaption}>EXISTING<br />TRACK THUMBNAIL</span>
+                  {t.hasThumbnail && (
+                    <img
+                      className={s.thumbImg}
+                      src={trackThumbnailUrl(t.id)}
+                      alt=""
+                      loading="lazy"
+                      onError={(e) => {
+                        // A 404 (a republish dropped the screenshot after the
+                        // listing was read) falls back to the stripes under it.
+                        e.currentTarget.hidden = true;
+                      }}
+                    />
+                  )}
                   <span className={s.thumbTag}>
                     <Chip tone={t.hasFinishZone ? 'race' : 'survival'}>{t.hasFinishZone ? 'RACE' : 'SURVIVAL'}</Chip>
                     {selected && <Chip tone="plate">CURRENT</Chip>}
@@ -177,7 +191,7 @@ export default function Discover({ tracks, isLoading, error, onRetry, selectedId
         <div className={s.featured}>
           <span className={s.featuredText}>
             <span className={s.featuredKicker}>TODAY’S FEATURED CHAOS</span>
-            <span className={s.featuredTitle}>{featured.name ?? 'UNTITLED TRACK'}</span>
+            <span className={s.featuredTitle}>{featured.name ?? UNTITLED_TRACK_NAME}</span>
           </span>
           <JellyButton variant="tile" centered onClick={() => onSelect(featured.id)}>TRY IT</JellyButton>
         </div>

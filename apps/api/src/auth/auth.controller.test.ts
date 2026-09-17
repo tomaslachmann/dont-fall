@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import Database from "better-sqlite3";
+import { DEFAULT_BINDINGS, xpLevelStart } from "@dont-fall/shared";
 import { buildApp } from "../app.js";
 
 const DISCORD_CONFIG = { clientId: "client-1", clientSecret: "secret-1", redirectUri: "http://localhost:0/auth/discord/callback" };
@@ -332,5 +334,120 @@ describe("PUT /auth/me/cosmetics (M9 ticket 15)", () => {
   it("401s without a session — cosmetics need a logged-in Account", async () => {
     expect((await save(undefined, { bodySkin: 1 })).statusCode).toBe(401);
     expect((await save("dead-token", { bodySkin: 1 })).statusCode).toBe(401);
+    expect((await save(undefined, { hat: null })).statusCode).toBe(401);
+  });
+
+  describe("hats (ADR 0083)", () => {
+    const me = async (token: string) =>
+      (await app.inject({ method: "GET", url: "/auth/me", headers: { authorization: `Bearer ${token}` } })).json() as {
+        bodySkin: number;
+        hat: string | null;
+      };
+    /** Levels the Account up the way the economy would: its stored XP. */
+    const reachLevel = (displayName: string, level: number) => {
+      const raw = new Database(join(dir, "test.sqlite"));
+      raw.prepare("UPDATE accounts SET xp = ? WHERE display_name = ?").run(xpLevelStart(level), displayName);
+      raw.close();
+    };
+
+    it("starts every Account with no hat", async () => {
+      const { token } = (await signup()).json() as { token: string };
+      expect(await me(token)).toMatchObject({ hat: null });
+    });
+
+    it("refuses a hat above the Account's level with a 403 naming the level, and wears nothing", async () => {
+      const { token } = (await signup()).json() as { token: string };
+
+      const res = await save(token, { hat: "cone" });
+
+      expect(res.statusCode).toBe(403);
+      expect(JSON.stringify(res.json())).toMatch(/TRAFFIC CONE unlocks at level 2/);
+      expect(await me(token)).toMatchObject({ hat: null });
+    });
+
+    it("wears a hat once the level is reached, keeping the skin, and takes it off again", async () => {
+      const { token } = (await signup()).json() as { token: string };
+      await save(token, { bodySkin: 3 });
+      reachLevel(SIGNUP.displayName, 2);
+
+      const res = await save(token, { hat: "cone" });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ hat: "cone", bodySkin: 3 });
+      expect(await me(token)).toMatchObject({ hat: "cone", bodySkin: 3 });
+
+      expect((await save(token, { hat: null })).json()).toMatchObject({ hat: null, bodySkin: 3 });
+    });
+
+    it("saves a skin and a hat in one request", async () => {
+      const { token } = (await signup()).json() as { token: string };
+      reachLevel(SIGNUP.displayName, 30);
+
+      expect((await save(token, { bodySkin: 6, hat: "ufo" })).json()).toMatchObject({ bodySkin: 6, hat: "ufo" });
+    });
+
+    it("lands nothing when the hat is refused — not even the skin sent with it", async () => {
+      const { token } = (await signup()).json() as { token: string };
+
+      expect((await save(token, { bodySkin: 4, hat: "crown" })).statusCode).toBe(403);
+      expect((await save(token, { bodySkin: 4, hat: "top-hat" })).statusCode).toBe(400);
+      expect(await me(token)).toMatchObject({ bodySkin: 0, hat: null });
+    });
+
+    it("refuses anything that isn't a hat id, with a reason listing the hats", async () => {
+      const { token } = (await signup()).json() as { token: string };
+      reachLevel(SIGNUP.displayName, 30);
+
+      for (const hat of ["Crown", "", 3, {}]) {
+        const res = await save(token, { hat });
+        expect(res.statusCode).toBe(400);
+        expect(JSON.stringify(res.json())).toMatch(/hat must be null or one of/);
+      }
+    });
+  });
+});
+
+describe("PUT /auth/me/bindings (M9 controls)", () => {
+  const signup = () => app.inject({ method: "POST", url: "/auth/signup", payload: SIGNUP });
+  const save = (token: string | undefined, body: unknown) =>
+    app.inject({
+      method: "PUT",
+      url: "/auth/me/bindings",
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+      payload: body as Record<string, unknown>,
+    });
+
+  it("stores a full record and returns the updated Account in the one round trip", async () => {
+    const { token } = (await signup()).json() as { token: string };
+    const bindings = { ...DEFAULT_BINDINGS, hit: ["Mouse0"] };
+
+    const res = await save(token, { bindings });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ bindings });
+    const me = await app.inject({ method: "GET", url: "/auth/me", headers: { authorization: `Bearer ${token}` } });
+    expect(me.json()).toMatchObject({ bindings });
+  });
+
+  it("refuses partial and malformed records with a reason", async () => {
+    const { token } = (await signup()).json() as { token: string };
+    const { jump: _dropped, ...missing } = DEFAULT_BINDINGS;
+
+    for (const body of [
+      {},
+      { bindings: missing },
+      { bindings: { ...DEFAULT_BINDINGS, hit: ["Escape"] } },
+      { bindings: { ...DEFAULT_BINDINGS, fly: ["KeyF"] } },
+      { bindings: "KeyW" },
+    ]) {
+      const res = await save(token, body);
+      expect(res.statusCode).toBe(400);
+      expect(JSON.stringify(res.json())).toMatch(/bindings/i);
+    }
+  });
+
+  it("401s without a session — bindings need a logged-in Account", async () => {
+    expect((await save(undefined, { bindings: DEFAULT_BINDINGS })).statusCode).toBe(401);
+    expect((await save("dead-token", { bindings: DEFAULT_BINDINGS })).statusCode).toBe(401);
   });
 });

@@ -9,7 +9,7 @@ const row = (overrides: Partial<TrackListing> & { id: string }): TrackListing =>
   authorId: "a1",
   createdAt: 1_000,
   plays: 0,
-  hasFinishZone: false,
+  hasFinishZone: false, hasThumbnail: false,
   ...overrides,
 });
 
@@ -37,10 +37,10 @@ describe("isNewTrack", () => {
 
 describe("filterDiscoverTracks", () => {
   const tracks = [
-    row({ id: "old-hot", name: "Old Hot", plays: 10, createdAt: OLD, hasFinishZone: true }),
-    row({ id: "new-hot", name: "New Hot", plays: 10, createdAt: FRESH, hasFinishZone: false }),
-    row({ id: "cold", name: "Cold", plays: 1, createdAt: FRESH, hasFinishZone: true }),
-    row({ id: "unnamed", plays: 50, createdAt: OLD, hasFinishZone: false }),
+    row({ id: "old-hot", name: "Old Hot", plays: 10, createdAt: OLD, hasFinishZone: true, hasThumbnail: false }),
+    row({ id: "new-hot", name: "New Hot", plays: 10, createdAt: FRESH, hasFinishZone: false, hasThumbnail: false }),
+    row({ id: "cold", name: "Cold", plays: 1, createdAt: FRESH, hasFinishZone: true, hasThumbnail: false }),
+    row({ id: "unnamed", plays: 50, createdAt: OLD, hasFinishZone: false, hasThumbnail: false }),
   ];
 
   it("TRENDING ranks by heat — plays desc, newest first on ties", () => {
@@ -91,8 +91,8 @@ describe("Discover", () => {
   // it), so fresh/old are relative to today — unlike the pure-function
   // cases above, which pin their own now.
   const TRACKS = [
-    row({ id: "t1", name: "Wobble Ramp", plays: 12, createdAt: Date.now() - 30 * 24 * 60 * 60 * 1000, hasFinishZone: true }),
-    row({ id: "t2", name: "Arena Bowl", plays: 3, createdAt: Date.now() - 1_000, hasFinishZone: false }),
+    row({ id: "t1", name: "Wobble Ramp", plays: 12, createdAt: Date.now() - 30 * 24 * 60 * 60 * 1000, hasFinishZone: true, hasThumbnail: false }),
+    row({ id: "t2", name: "Arena Bowl", plays: 3, createdAt: Date.now() - 1_000, hasFinishZone: false, hasThumbnail: false }),
   ];
 
   const renderDiscover = (props: Partial<React.ComponentProps<typeof Discover>> = {}) =>
@@ -192,5 +192,32 @@ describe("Discover", () => {
     rerender(<Discover tracks={[row({ id: "t1", name: "Arena" })]} isLoading={false} error={null} onSelect={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "RACE" }));
     expect(screen.getByText(/NOTHING RACEABLE YET/)).toBeInTheDocument();
+  });
+
+  it("shows the captured screenshot on a card whose Revision has one, stripes otherwise (ADR 0085)", () => {
+    renderDiscover({
+      tracks: [
+        row({ id: "shot", name: "Shot", hasThumbnail: true }),
+        row({ id: "bare", name: "Bare", hasThumbnail: false }),
+      ],
+    });
+
+    // Decorative (`alt=""`), so read off the DOM, not the accessible tree.
+    const shot = screen.getByRole("button", { name: /shot/i });
+    expect(shot.querySelector("img")?.getAttribute("src")).toBe("http://localhost:8081/tracks/shot/thumbnail");
+
+    const bare = screen.getByRole("button", { name: /bare/i });
+    expect(bare.querySelector("img")).toBeNull();
+  });
+
+  it("a screenshot that fails to load hides itself — the stripes under it show through", () => {
+    renderDiscover({ tracks: [row({ id: "shot", name: "Shot", hasThumbnail: true })] });
+
+    const card = screen.getByRole("button", { name: /shot/i });
+    const img = card.querySelector("img")!;
+    fireEvent.error(img);
+
+    expect(img).not.toBeVisible();
+    expect(card.getAttribute("aria-label")).toMatch(/shot/i); // the card itself still reads fine
   });
 });

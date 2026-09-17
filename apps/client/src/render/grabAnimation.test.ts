@@ -23,7 +23,7 @@ const rig = () => {
   const struggleHeld = mixer.clipAction(clip("Struggle_Held", 1.2));
   const struggleAir = mixer.clipAction(clip("Struggle_Air", 1.2));
   const actions = {
-    idle: null, walk: null, run: null,
+    idle: null, walk: null, run: null, sprint: null,
     jumpStart: null, jumpRise: null, jumpApex: null, jumpFall: null, jumpLand: null,
     punch: null, hitReact: null,
     ko: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },

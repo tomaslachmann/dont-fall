@@ -1,4 +1,4 @@
-import { useEffect, useRef, type SyntheticEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, type SyntheticEvent } from "react";
 import css from "./Viewport.module.css";
 import { BrowsePanel } from "../BrowsePanel/BrowsePanel";
 import { Transport } from "../Transport/Transport";
@@ -18,12 +18,22 @@ interface Props {
 export function Viewport({ engine, browseOpen, onCloseBrowse }: Props) {
   useEngineVersion(engine);
   const mountRef = useRef<HTMLDivElement | null>(null);
+  // Capture mode frames the bare Track (ADR 0085): no overlays, no banners —
+  // the CaptureBar is the only UI, and it lives outside this region.
+  const previewing = engine.previewing;
 
   useEffect(() => {
     if (!mountRef.current) return;
     engine.attachViewport(mountRef.current);
     return () => engine.detachViewport();
   }, [engine]);
+
+  // Capture mode swaps the layout under a mounted canvas (ADR 0085) — the box
+  // resizes with no window resize, so re-fit the renderer once the new layout
+  // has landed, before paint. A no-op until the viewport is attached.
+  useLayoutEffect(() => {
+    engine.resizeViewport();
+  }, [engine, previewing]);
 
   const empty = engine.track.length === 0;
   const picking = engine.picking;
@@ -37,7 +47,7 @@ export function Viewport({ engine, browseOpen, onCloseBrowse }: Props) {
       onClick={(e) => engine.viewportClick(e.clientX, e.clientY, e.shiftKey)}>
       <div ref={mountRef} className={css.mount} />
 
-      {empty && (
+      {!previewing && empty && (
         <div className={css.empty}>
           <span className={css.emptyPlate} />
           <h3 className={css.emptyTitle}>Empty track</h3>
@@ -45,7 +55,7 @@ export function Viewport({ engine, browseOpen, onCloseBrowse }: Props) {
         </div>
       )}
 
-      {picking && (
+      {!previewing && picking && (
         <div className={css.pickBanner}>
           <span className={css.pickGlyph}>⌖</span>
           {engine.pickingRespawn
@@ -54,29 +64,33 @@ export function Viewport({ engine, browseOpen, onCloseBrowse }: Props) {
         </div>
       )}
 
-      <div className={css.slotBrowse} onClick={swallow} onPointerDown={swallow}>
-        {browseOpen && (
-          <BrowsePanel tracks={engine.browseTracks} state={engine.browseState}
-            activeId={engine.loadedTrack?.id ?? null}
-            onClose={onCloseBrowse}
-            onSelect={(id) => {
-              onCloseBrowse();
-              void engine.loadTrackById(id);
-            }} />
-        )}
-      </div>
-      <div className={css.slotTransport} onClick={swallow} onPointerDown={swallow}>
-        <Transport engine={engine} />
-      </div>
-      <div className={css.slotCourse} onClick={swallow} onPointerDown={swallow}>
-        <CourseStrip engine={engine} />
-      </div>
-      <div className={css.slotHint} onClick={swallow} onPointerDown={swallow}>
-        <HintBar />
-      </div>
-      <div className={css.slotLegend}>
-        <ImpactLegend />
-      </div>
+      {!previewing && (
+        <>
+          <div className={css.slotBrowse} onClick={swallow} onPointerDown={swallow}>
+            {browseOpen && (
+              <BrowsePanel tracks={engine.browseTracks} state={engine.browseState}
+                activeId={engine.loadedTrack?.id ?? null}
+                onClose={onCloseBrowse}
+                onSelect={(id) => {
+                  onCloseBrowse();
+                  void engine.loadTrackById(id);
+                }} />
+            )}
+          </div>
+          <div className={css.slotTransport} onClick={swallow} onPointerDown={swallow}>
+            <Transport engine={engine} />
+          </div>
+          <div className={css.slotCourse} onClick={swallow} onPointerDown={swallow}>
+            <CourseStrip engine={engine} />
+          </div>
+          <div className={css.slotHint} onClick={swallow} onPointerDown={swallow}>
+            <HintBar />
+          </div>
+          <div className={css.slotLegend}>
+            <ImpactLegend />
+          </div>
+        </>
+      )}
     </div>
   );
 }

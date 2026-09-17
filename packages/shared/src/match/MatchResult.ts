@@ -17,6 +17,13 @@ export interface PersistedMatchResult {
   matchId: string;
   /** Every Round played, in order — the same records the snapshots carried live. */
   results: RoundResult[];
+  /**
+   * The Track id each Round was raced on, parallel to `results` — what the
+   * career history reads to name its rows. Ids, not names: the match server
+   * never learns Track names, the API resolves them. Rows saved before this
+   * carry no such list; readers default it to `[]`.
+   */
+  roundTrackIds: string[];
   /** `playerId` → nickname at Match end (or at drop, for Players who left mid-Match). */
   nicknames: Record<string, string>;
   /**
@@ -32,6 +39,12 @@ export interface PersistedMatchResult {
    * Rows persisted before skins carry no such map; readers default `{}`.
    */
   bodySkins: Record<string, number>;
+  /**
+   * `playerId` → equipped hat id at Match end (ADR 0083) — the podium wears
+   * these too. Sparse: absent key, no hat. Rows persisted before hats carry
+   * no such map; readers default `{}`.
+   */
+  hats: Record<string, string>;
   /** `playerId` → falls across every Round they raced. */
   totalFalls: Record<string, number>;
   endedAtMs: number;

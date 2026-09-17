@@ -8,7 +8,7 @@ import {
 import * as THREE from "three";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ENVIRONMENT_ROOT_NAME, createEnvironment, type EnvironmentOptions } from "./createEnvironment.js";
-import { SHADOW_LIGHT_DISTANCE, SHADOW_MAP_TYPE, SHADOW_TEXEL_SIZE, snapToShadowTexels } from "./shadows.js";
+import { SHADOW_LIGHT_DISTANCE, SHADOW_MAP_TYPE, SHADOW_TEXEL_SIZE, shadowTexelSize, snapToShadowTexels } from "./shadows.js";
 
 const DAY = ENVIRONMENT_PRESETS.day;
 
@@ -81,6 +81,19 @@ describe("createEnvironment", () => {
         "environment-sun-target",
       ].sort(),
     );
+  });
+
+  it("finishes the cloud floor before a far plane it is given, and fades at its own edge without one (M13 ticket 04)", () => {
+    const clipped = new THREE.Scene();
+    createEnvironment(clipped, fakeRenderer(), DAY, { ...OPTIONS, farPlane: 180 });
+    const withFar = find<THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>>(clipped, "environment-cloud-floor").material;
+    expect(withFar.defines).toHaveProperty("FADE_FROM_CAMERA");
+    expect(withFar.uniforms.fadeEnd!.value).toBeLessThan(180);
+
+    const open = new THREE.Scene();
+    createEnvironment(open, fakeRenderer(), DAY, OPTIONS);
+    const withoutFar = find<THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial>>(open, "environment-cloud-floor").material;
+    expect(withoutFar.defines ?? {}).not.toHaveProperty("FADE_FROM_CAMERA");
   });
 
   it("lays the cloud floor at the preset's offset above the kill height, under a Track well above it", () => {
@@ -172,6 +185,29 @@ describe("createEnvironment", () => {
     expect(find<THREE.DirectionalLight>(scene, "environment-sun").castShadow).toBe(true);
     expect(renderer.shadowMap.enabled).toBe(true);
     expect(renderer.shadowMap.type).toBe(SHADOW_MAP_TYPE);
+  });
+
+  it("casts a graphics quality level's own shadow map, snapped to its own texels (ADR 0079)", () => {
+    const scene = new THREE.Scene();
+    const renderer = fakeRenderer();
+    const environment = createEnvironment(scene, renderer, DAY, {
+      ...OPTIONS,
+      shadows: { mapSize: 1024, type: THREE.PCFShadowMap },
+    });
+    const sun = find<THREE.DirectionalLight>(scene, "environment-sun");
+
+    expect(sun.castShadow).toBe(true);
+    expect(sun.shadow.mapSize.toArray()).toEqual([1024, 1024]);
+    expect(renderer.shadowMap.type).toBe(THREE.PCFShadowMap);
+
+    const focus = { x: 3.3, y: 2, z: -17.9 };
+    environment.update(new THREE.PerspectiveCamera(), 0, focus);
+    const expected = snapToShadowTexels(focus, sunLightDirection(DAY), shadowTexelSize(1024));
+    expect(sun.target.position.x).toBeCloseTo(expected.x, 10);
+    expect(sun.target.position.z).toBeCloseTo(expected.z, 10);
+
+    environment.dispose();
+    expect(renderer.shadowMap.enabled).toBe(false);
   });
 
   it("casts nothing when asked for no shadows, and leaves the renderer's shadow maps alone", () => {

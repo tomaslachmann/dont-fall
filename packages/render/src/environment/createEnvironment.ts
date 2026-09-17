@@ -1,10 +1,17 @@
 import { cloudFloorY, sunLightDirection, type EnvironmentPreset, type Vec3 } from "@dont-fall/shared";
 import * as THREE from "three";
-import { createCloudFloor } from "./cloudFloor.js";
+import { cloudFloorFade, createCloudFloor } from "./cloudFloor.js";
 import { createCloudPuffs } from "./cloudPuffs.js";
 import { bakeEnvironmentMap } from "./environmentMap.js";
 import { createEnvironmentLights } from "./lights.js";
-import { SHADOW_LIGHT_DISTANCE, SHADOW_MAP_TYPE, SHADOW_TEXEL_SIZE, castSunShadow, snapToShadowTexels } from "./shadows.js";
+import {
+  DEFAULT_SUN_SHADOW,
+  SHADOW_LIGHT_DISTANCE,
+  castSunShadow,
+  shadowTexelSize,
+  snapToShadowTexels,
+  type SunShadowSettings,
+} from "./shadows.js";
 import { createSkyDome } from "./skyDome.js";
 import { createStars } from "./stars.js";
 
@@ -29,10 +36,20 @@ export interface EnvironmentOptions {
   /** `"low"` skips the cloud puffs; the sky, floor, fog and light stay. */
   detail: "full" | "low";
   /**
-   * Whether the sun casts real shadow maps (ADR 0074). The Environment's own
-   * meshes never cast or receive; what does is the caller's to mark.
+   * Whether the sun casts real shadow maps (ADR 0074), and how: `true` is
+   * the default map (the `high` graphics quality level), a settings record is
+   * a level's own size and filter (ADR 0079), `false` draws none. The
+   * Environment's own meshes never cast or receive; what does is the caller's
+   * to mark.
    */
-  shadows: boolean;
+  shadows: boolean | SunShadowSettings;
+  /**
+   * The camera's far plane, when it is near enough to clip the cloud floor
+   * (the game's, which follows the fog: M13 ticket 04). The floor then
+   * finishes fading into the sky before it. Omitted, the floor fades at its
+   * own edge.
+   */
+  farPlane?: number;
 }
 
 export interface Environment {
@@ -81,7 +98,7 @@ export const createEnvironment = (
   // Kept at low detail too: a few hundred points cost next to nothing (research §8).
   const stars = preset.sky.stars && preset.sky.stars.count > 0 ? createStars(preset.sky.stars) : null;
   const floorY = cloudFloorY(preset, options.killPlaneY, options.lowestSegmentY);
-  const floor = createCloudFloor(preset, floorY);
+  const floor = createCloudFloor(preset, floorY, cloudFloorFade(options.farPlane));
   const puffs = options.detail === "full" && preset.puffs.count > 0 ? createCloudPuffs(preset, floorY) : null;
   const lights = createEnvironmentLights(preset);
   // The target joins the root too: a directional light aims at its target's
@@ -92,10 +109,12 @@ export const createEnvironment = (
 
   const toLight = sunLightDirection(preset);
   const previousShadowMap = { enabled: renderer.shadowMap.enabled, type: renderer.shadowMap.type };
-  if (options.shadows) {
-    castSunShadow(lights.sun);
+  const shadow = options.shadows === true ? DEFAULT_SUN_SHADOW : options.shadows === false ? null : options.shadows;
+  const texelSize = shadowTexelSize(shadow?.mapSize ?? DEFAULT_SUN_SHADOW.mapSize);
+  if (shadow) {
+    castSunShadow(lights.sun, shadow.mapSize);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = SHADOW_MAP_TYPE;
+    renderer.shadowMap.type = shadow.type;
   }
   scene.add(root);
 
@@ -124,7 +143,7 @@ export const createEnvironment = (
       floor.update(cameraPosition, nowMs);
       puffs?.update(cameraPosition, nowMs);
       // The box moves in whole shadow-map texels, so shadow edges never crawl.
-      const focus = snapToShadowTexels(shadowFocus ?? cameraPosition, toLight, SHADOW_TEXEL_SIZE);
+      const focus = snapToShadowTexels(shadowFocus ?? cameraPosition, toLight, texelSize);
       lights.sun.target.position.set(focus.x, focus.y, focus.z);
       lights.sun.position.set(
         focus.x + toLight.x * SHADOW_LIGHT_DISTANCE,
@@ -153,7 +172,7 @@ export const createEnvironment = (
         scene.environmentIntensity = previousEnvironmentIntensity;
       }
       if (renderer.toneMappingExposure === preset.exposure) renderer.toneMappingExposure = previousExposure;
-      if (options.shadows && renderer.shadowMap.enabled && renderer.shadowMap.type === SHADOW_MAP_TYPE) {
+      if (shadow && renderer.shadowMap.enabled && renderer.shadowMap.type === shadow.type) {
         renderer.shadowMap.enabled = previousShadowMap.enabled;
         renderer.shadowMap.type = previousShadowMap.type;
       }

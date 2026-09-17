@@ -2,6 +2,7 @@ import { Navigate, useNavigate, useSearchParams } from "react-router";
 import { GameCanvas } from "../components/GameCanvas.js";
 import { ConnectionError } from "../lib/errors.js";
 import { useLobbyConnection } from "../lib/hooks/useLobbyConnection.js";
+import { useMatchMusic } from "../lib/hooks/useMatchMusic.js";
 import { parseLobbyParams } from "../lib/utils/routeParams.js";
 import Lobby from "./Lobby.js";
 import { LoadingScreen } from "./LoadingScreen.js";
@@ -27,6 +28,8 @@ export function LobbyRoute() {
 function BrokeredLobby({ serverPort, code }: { serverPort: number; code?: string }) {
   const navigate = useNavigate();
   const { connection, lobby, actions, error, closed } = useLobbyConnection(serverPort);
+  // The music follows the Match for the whole visit (M14 ticket 11), Lobby and game alike.
+  useMatchMusic(lobby?.phase ?? null);
 
   // Expected connectivity failures go to the app-wide boundary — one
   // ErrorScreen for the whole app, not one per component. A refused welcome

@@ -17,6 +17,8 @@ import {
   MAX_TIME_LIMIT_MS,
   MIN_SURVIVOR_TARGET,
   MIN_TIME_LIMIT_MS,
+  TRACK_THUMBNAIL_DATA_URL_PREFIX,
+  TRACK_THUMBNAIL_MIME,
   type Track,
 } from "@dont-fall/shared";
 import { buildApp } from "../app.js";
@@ -519,5 +521,53 @@ describe("Discover listing metadata (M9 ticket 16)", () => {
     const res = await played("no-such-track", SERVICE_TOKEN);
     expect(res.statusCode).toBe(404);
     expect((res.json() as { error: string }).error).toMatch(/no Track with id "no-such-track"/);
+  });
+
+  it("publishes a Thumbnail with the Revision — flagged on the detail, never inline on it", async () => {
+    const thumb = `${TRACK_THUMBNAIL_DATA_URL_PREFIX}aGVsbG8=`;
+    const { id } = (await publish({ name: "shot", track: SAMPLE_TRACK, thumbnail: thumb })).json() as { id: string };
+
+    const body = (await app.inject({ method: "GET", url: `/tracks/${id}` })).json() as Record<string, unknown>;
+    expect(body).toMatchObject({ hasThumbnail: true });
+    expect(body).not.toHaveProperty("thumbnail");
+
+    const list = (await app.inject({ method: "GET", url: "/tracks" })).json() as { id: string; hasThumbnail: boolean }[];
+    expect(list.find((t) => t.id === id)).toMatchObject({ hasThumbnail: true });
+  });
+
+  it("serves the Thumbnail bytes as raw JPEG — latest revalidates, a pinned Revision caches forever", async () => {
+    const thumb = `${TRACK_THUMBNAIL_DATA_URL_PREFIX}aGVsbG8=`;
+    const { id } = (await publish({ name: "shot", track: SAMPLE_TRACK, thumbnail: thumb })).json() as { id: string };
+
+    const latest = await app.inject({ method: "GET", url: `/tracks/${id}/thumbnail` });
+    expect(latest.statusCode).toBe(200);
+    expect(latest.headers["content-type"]).toBe(TRACK_THUMBNAIL_MIME);
+    expect(latest.body).toBe(Buffer.from("aGVsbG8=", "base64").toString());
+    expect(latest.headers["cache-control"]).toBe("public, max-age=30");
+
+    const pinned = await app.inject({ method: "GET", url: `/tracks/${id}/thumbnail?revision=1` });
+    expect(pinned.statusCode).toBe(200);
+    expect(pinned.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+  });
+
+  it("404s a thumbnail read telling 'no such Track' apart from 'no Thumbnail yet'", async () => {
+    const { id } = (await publish({ name: "bare", track: SAMPLE_TRACK })).json() as { id: string };
+
+    const bare = await app.inject({ method: "GET", url: `/tracks/${id}/thumbnail` });
+    expect(bare.statusCode).toBe(404);
+    expect((bare.json() as { error: string }).error).toMatch(/has no thumbnail yet/);
+
+    const missing = await app.inject({ method: "GET", url: "/tracks/no-such-track/thumbnail" });
+    expect(missing.statusCode).toBe(404);
+    expect((missing.json() as { error: string }).error).toMatch(/no Track with id "no-such-track"/);
+
+    const malformed = await app.inject({ method: "GET", url: `/tracks/${id}/thumbnail?revision=zero` });
+    expect(malformed.statusCode).toBe(400);
+  });
+
+  it("refuses a publish whose thumbnail is not a JPEG data URL", async () => {
+    const res = await publish({ name: "bad-shot", track: SAMPLE_TRACK, thumbnail: "data:image/png;base64,aGVsbG8=" });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { error: string }).error).toMatch(/thumbnail/);
   });
 });

@@ -48,6 +48,32 @@ describe("interpolateState", () => {
     expect(render.characters[ID]!.position).toEqual({ x: 10, y: 20, z: 30 });
   });
 
+  it("carries what the sounds read straight from next (M14 tickets 05, 06)", () => {
+    const prev = { tick: 0, characters: { [ID]: characterSnapshot({ position: { x: 0, y: 0, z: 0 }, dashSpeed: 2 }) }, props: [] };
+    const next = {
+      tick: 1,
+      characters: {
+        [ID]: characterSnapshot({
+          position: { x: 0, y: 0, z: 0 },
+          dashSpeed: 9,
+          respawnCount: 3,
+          eliminated: true,
+          hitChargeMs: 200,
+          ragdollEpoch: 4,
+          ragdollCause: "Spinner",
+        }),
+      },
+      props: [],
+    };
+    const character = interpolateState(prev, next, 0.25).characters[ID]!;
+    expect(character.dashSpeed).toBe(9);
+    expect(character.respawnCount).toBe(3);
+    expect(character.eliminated).toBe(true);
+    expect(character.hitChargeMs).toBe(200);
+    expect(character.ragdollEpoch).toBe(4);
+    expect(character.ragdollCause).toBe("Spinner");
+  });
+
   it("interpolates normally once respawnCount is stable again", () => {
     const render = interpolateState(stateAt(0, 1), stateAt(10, 1), 0.5);
     expect(render.characters[ID]!.position.x).toBe(5);

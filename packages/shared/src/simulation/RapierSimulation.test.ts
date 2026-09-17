@@ -519,6 +519,86 @@ describe("RapierSimulation — Sliding (ticket 03, M3.6, ADR 0037): the band bet
   });
 });
 
+describe("RapierSimulation — the ground under the footprint, not every contact (ADR 0084)", () => {
+  const RUNWAY_END_Z = -100;
+
+  /** Runs north from each lane `x`, settling first, and hands every later tick's Character to `check`. */
+  const runNorth = (
+    config: ConstructorParameters<typeof RapierSimulation>[0],
+    xs: number[],
+    dash: boolean,
+    untilZ: number,
+    check: (character: ReturnType<RapierSimulation["snapshot"]>["characters"][string], where: string) => void,
+  ): void => {
+    for (const x of xs) {
+      const sim = new RapierSimulation({ ...config, withDefaultCharacter: false });
+      sim.addCharacter(DEFAULT_CHARACTER_ID, { x, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 });
+      tick(sim, 0.5);
+      for (let n = 0; n < 6 * TICK_RATE_HZ; n += 1) {
+        // A fresh press every other tick: a new Dash the moment the cooldown allows.
+        sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: { x: 0, y: 0, z: -1 }, dashHeld: dash && n % 2 === 0 }) });
+        const character = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+        // A knockdown ends the lane: a Dash across a trimesh's inner edge can
+        // still read a wall there and go down (a separate, known issue), and
+        // a Character getting up is off the ground by design.
+        if (character.position.z < untilZ || character.ragdollEpoch > 0) break;
+        check(character, `x=${x.toFixed(2)} z=${character.position.z.toFixed(2)}`);
+      }
+      sim.dispose();
+    }
+  };
+  const lanes = (from: number, to: number, step: number): number[] =>
+    Array.from({ length: Math.floor((to - from) / step) + 1 }, (_, i) => from + i * step);
+
+  it("a Dash across a flat trimesh floor never leaves the ground (a tilted contact used to lift the sweep for a tick)", () => {
+    // Two triangles, as flat as a floor gets. Before ADR 0084, 16 ticks across
+    // these lanes came back airborne at Dash speed.
+    const floor = {
+      vertices: [
+        { x: -10, y: 0, z: 20 },
+        { x: 10, y: 0, z: 20 },
+        { x: 10, y: 0, z: RUNWAY_END_Z },
+        { x: -10, y: 0, z: RUNWAY_END_Z },
+      ],
+      indices: [0, 1, 2, 0, 2, 3],
+      surface: DEFAULT_SURFACE,
+    };
+    const airborne: string[] = [];
+    runNorth({ statics: [], staticTrimeshes: [floor] }, lanes(-3, 3, 0.37), true, RUNWAY_END_Z + 10, (character, where) => {
+      if (!character.grounded) airborne.push(where);
+    });
+    expect(airborne).toEqual([]);
+  });
+
+  it("walking over a low step's edge never Slides — a box step, and a chamfered trimesh step", () => {
+    const deck: OrientedBox = { center: { x: 0, y: -0.5, z: -10 }, halfExtents: { x: 5, y: 0.5, z: 20 } };
+    const boxStep: OrientedBox = { center: { x: 0, y: 0.05, z: -17.5 }, halfExtents: { x: 5, y: 0.05, z: 12.5 } };
+    // A 0.2 block from z = −5 back, its front top edge cut at 45° by 0.1 — the
+    // shape of an Asset deck's rounded rim.
+    const chamferedStep = {
+      vertices: [
+        { x: -5, y: 0, z: -5 },
+        { x: 5, y: 0, z: -5 },
+        { x: -5, y: 0.1, z: -5 },
+        { x: 5, y: 0.1, z: -5 },
+        { x: -5, y: 0.2, z: -5.1 },
+        { x: 5, y: 0.2, z: -5.1 },
+        { x: -5, y: 0.2, z: -30 },
+        { x: 5, y: 0.2, z: -30 },
+      ],
+      indices: [0, 1, 3, 0, 3, 2, 2, 3, 5, 2, 5, 4, 4, 5, 7, 4, 7, 6],
+      surface: DEFAULT_SURFACE,
+    };
+    const sliding: string[] = [];
+    const noteSliding = (character: { motionState: string }, where: string): void => {
+      if (character.motionState === "Sliding") sliding.push(where);
+    };
+    runNorth({ statics: [deck, boxStep] }, lanes(-2, 2, 0.5), false, -12, noteSliding);
+    runNorth({ statics: [deck], staticTrimeshes: [chamferedStep] }, lanes(-2, 2, 0.5), false, -12, noteSliding);
+    expect(sliding).toEqual([]);
+  });
+});
+
 describe("RapierSimulation — downhill faster, uphill slower (ticket 04, M3.6, ADR 0037)", () => {
   // A walkable-band pitch (under WALKABLE_SLOPE_MAX_ANGLE ~35°) — this ticket
   // is strictly about the walking model; Sliding's own gravity-projected

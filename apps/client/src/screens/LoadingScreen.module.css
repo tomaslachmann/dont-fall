@@ -29,3 +29,51 @@
   color: var(--df-color-ink-secondary);
   font-size: var(--df-type-body);
 }
+
+/* ---- the Round loader: the Track's screenshot full-bleed under a scrim,
+   its name big in the wordmark's chunky treatment, the wait under it ---- */
+.backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(43, 27, 77, .45) 0%, rgba(43, 27, 77, .8) 100%);
+}
+
+.hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--df-space-5);
+  max-width: min(90vw, 60rem);
+  padding: var(--df-space-8);
+  text-align: center;
+}
+
+.kicker {
+  margin: 0;
+  font: var(--df-weight-label) var(--df-text-sm) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand);
+}
+
+.title {
+  margin: 0;
+  font: var(--df-weight-display) clamp(3rem, 10vw, 7rem) / 1 var(--df-font-display);
+  text-transform: uppercase;
+  text-wrap: balance;
+}
+
+.heroLabel {
+  margin: 0;
+  font: var(--df-weight-label) var(--df-text-sm) / 1.6 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-on-brand);
+}

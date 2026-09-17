@@ -25,8 +25,24 @@ export const SHADOW_NORMAL_BIAS = 0.02;
 /** Soft percentage-closer filtering: the edge of a Character's shadow never looks jagged. */
 export const SHADOW_MAP_TYPE: THREE.ShadowMapType = THREE.PCFSoftShadowMap;
 
-/** World units per shadow-map texel. */
-export const SHADOW_TEXEL_SIZE = (SHADOW_BOX_HALF_EXTENT * 2) / SHADOW_MAP_SIZE;
+/** World units per texel of a `mapSize`² shadow map over the box. */
+export const shadowTexelSize = (mapSize: number): number => (SHADOW_BOX_HALF_EXTENT * 2) / mapSize;
+
+/** World units per shadow-map texel, at the default map size. */
+export const SHADOW_TEXEL_SIZE = shadowTexelSize(SHADOW_MAP_SIZE);
+
+/**
+ * How the sun's shadow is drawn: a graphics quality level's choice (ADR
+ * 0079). The box, the biases and the light distance stay the same at every
+ * level; only the map's resolution and its filter change.
+ */
+export interface SunShadowSettings {
+  mapSize: number;
+  type: THREE.ShadowMapType;
+}
+
+/** ADR 0074's shadows, as M12 shipped them: the `high` level. */
+export const DEFAULT_SUN_SHADOW: SunShadowSettings = { mapSize: SHADOW_MAP_SIZE, type: SHADOW_MAP_TYPE };
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
@@ -62,11 +78,11 @@ export const snapToShadowTexels = (point: Vec3, lightDirection: Vec3, texelSize:
   return { x: snapped.x, y: snapped.y, z: snapped.z };
 };
 
-/** Makes `sun` cast, with the box, map and biases above. */
-export const castSunShadow = (sun: THREE.DirectionalLight): void => {
+/** Makes `sun` cast, with the box and biases above and a `mapSize`² map. */
+export const castSunShadow = (sun: THREE.DirectionalLight, mapSize = SHADOW_MAP_SIZE): void => {
   sun.castShadow = true;
   const { shadow } = sun;
-  shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+  shadow.mapSize.set(mapSize, mapSize);
   shadow.bias = SHADOW_BIAS;
   shadow.normalBias = SHADOW_NORMAL_BIAS;
   const camera = shadow.camera;

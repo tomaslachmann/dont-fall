@@ -218,3 +218,10 @@ These are visual calls settled with the user in the tickets that touch them.
   single-sample one.
 - `CONTEXT.md` gains **Environment**. A future "level theme" is expected to
   *bundle* an Environment with other things, so the word "theme" stays free.
+
+## Amended by ADR 0079 (2026-09-17)
+
+Real shadows are the default, not unconditional: graphics quality is a
+per-device player setting, and its `low` level draws no shadows (`medium` uses
+a 1024² `PCFShadowMap`). The shadow constants above become the `high` level's
+values. Nothing else here changes.

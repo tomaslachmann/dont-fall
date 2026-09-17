@@ -13,6 +13,7 @@ export default function Switch({ checked = false, onChange, label }: SwitchProps
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      data-ui-sound="toggle"
       onClick={() => onChange?.(!checked)}
       className={[s.switch, checked && s.on].filter(Boolean).join(' ')}
     >

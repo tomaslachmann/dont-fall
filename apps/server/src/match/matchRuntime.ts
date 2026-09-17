@@ -1,13 +1,17 @@
 import {
+  ASSET_PLACEMENT_MODULES,
   DEFAULT_MATCH_LENGTH,
   DEFAULT_ROUND_TYPE,
   MODULE_LIBRARY,
+  assetIdsOf,
+  missingAssetIds,
   RapierSimulation,
   resolveRoundRules,
   resolveTrack,
   roundStartBlockedReason,
   roundTypeOverrides,
   trackSpawn,
+  type AssetLibraryLoader,
   type DnfEntry,
   type LobbyPlayer,
   type MatchState,
@@ -71,6 +75,19 @@ export interface MatchConfig {
    * Lobby a real, non-test-only way to set this.
    */
   matchLengthOverride?: number | undefined;
+  /**
+   * Measurement only (M13 ticket 02): handed to every simulation this Match
+   * builds, so the tick log can split a tick into Rapier's own phases. Set
+   * only when the process runs with `DONTFALL_PERF=1`.
+   */
+  profileClock?: (() => number) | undefined;
+  /**
+   * Where Asset collision comes from (memory-footprint ticket 01, ADR 0080):
+   * the ids each Track places are loaded before a world is built on it.
+   * Omitted (tests handing in a finished library), the library is taken as
+   * complete and nothing is loaded.
+   */
+  assets?: AssetLibraryLoader | undefined;
 }
 
 /**
@@ -190,6 +207,14 @@ export class MatchRuntime {
    */
   roundResults: RoundResult[] = [];
   /**
+   * Every Round's Track id, parallel to `roundResults` — the career
+   * history's row names. Match-scoped and cleared with it
+   * ({@link resetToFreshLobby}); recorded at the Round's actual end from the
+   * world it was raced on, never from the draw (a failed draw replays the
+   * current Track, so the plan and the raced world can differ).
+   */
+  roundTrackIds: string[] = [];
+  /**
    * Every racer's nickname, kept for the results save (ADR 0059) —
    * Match-scoped, cleared on a fresh Match ({@link resetToFreshLobby}).
    * Accumulated from each finished Round's own rows rather than read live at
@@ -213,6 +238,8 @@ export class MatchRuntime {
    * defaults them.
    */
   matchBodySkins = new Map<string, number>();
+  /** Every racer's equipped hat (ADR 0083), kept the same way for the same podium. No hat, no entry. */
+  matchHats = new Map<string, string>();
   /**
    * Every racer's falls across every Round they raced (ADR 0059) — the one
    * MatchOver stat Score derivation can't recover (the sim only ever holds
@@ -308,9 +335,11 @@ export class MatchRuntime {
    * Every Module either side may resolve (M8 ticket 02) — the static
    * procedural registry composed with the fetched asset half. Instance
    * state, not a module-level mutation: tests (and a future second runtime
-   * in one process) build their own world from their own bytes.
+   * in one process) build their own world from their own bytes. Since
+   * memory-footprint ticket 01 it holds only the Assets the Tracks this
+   * Match has loaded place, and grows through {@link loadAssetsFor}.
    */
-  readonly library: Record<string, Module>;
+  library: Record<string, Module>;
 
   /**
    * The match server's half of spectator wagering (ticket 14) — opened and
@@ -487,6 +516,19 @@ export class MatchRuntime {
   }
 
   /**
+   * Loads the Assets `track` places that this Match does not hold yet, and
+   * adds them to {@link library} (memory-footprint ticket 01, ADR 0080).
+   * Every path that builds a world on a new Track awaits this first: the
+   * boot, a Playtest reload, a Lobby Track pick, each drawn Round. A Match
+   * built with a finished library (no loader) has nothing to load.
+   */
+  async loadAssetsFor(track: Track): Promise<void> {
+    if (!this.config.assets) return;
+    const loaded = await this.config.assets.load(assetIdsOf(track));
+    this.library = { ...this.library, ...loaded };
+  }
+
+  /**
    * Draws every not-yet-drawn Round slot for this Match (M7 ticket 05, ADR
    * 0049) — kicked off once, the instant `start` fires (`lobby.ts`), well
    * before any Round but the first needs an answer: Round 1 alone almost
@@ -535,12 +577,20 @@ export class MatchRuntime {
             trackServiceUrl: this.config.trackServiceUrl,
             trackFetchRetryOptions: this.config.trackFetchRetryOptions,
             usedTrackIds: this.usedTrackIds,
-            // The same Modules the sim resolves against — the draw must see
-            // asset Tracks exactly as the world does (M8 ticket 04).
-            library: this.library,
+            // Every Module a Track may place, as defs (M8 ticket 04): the
+            // draw only asks whether a Track has a Finish Zone, which needs
+            // no geometry, so it never waits on Assets it may not keep.
+            library: { ...MODULE_LIBRARY, ...ASSET_PLACEMENT_MODULES },
           },
           this.pendingRoundPicks.get(i),
         );
+        if (this.closed || seq !== this.matchStructureSeq) return;
+        // The drawn Track's Assets load now, so the Round can never start
+        // before its world can be built (memory-footprint ticket 01). A
+        // Track that still cannot resolve counts as a failed draw, like one
+        // that could not be fetched.
+        await this.loadAssetsFor(drawn.fetched.track);
+        resolveTrack(this.library, drawn.fetched.track);
         if (this.closed || seq !== this.matchStructureSeq) return;
         this.matchStructure[i] = drawn;
       } catch (err) {
@@ -582,6 +632,10 @@ export class MatchRuntime {
    * follows for `simulation` itself.
    */
   buildSimulationFor(track: Track): { simulation: RapierSimulation; roundRules: RoundRules; trackHasFinishZone: boolean } {
+    const missing = missingAssetIds(track, this.library);
+    if (missing.length > 0) {
+      throw new Error(`the Track places Assets this server has not loaded: ${missing.join(", ")}`);
+    }
     const roundRules = this.resolveRules();
     const resolved = resolveTrack(this.library, track);
     // Retired Modules (ADR 0064) resolve as plain geometry — audible here so
@@ -591,6 +645,7 @@ export class MatchRuntime {
       ...resolved,
       withDefaultCharacter: false,
       roundRules,
+      ...(this.config.profileClock === undefined ? {} : { profileClock: this.config.profileClock }),
     });
     // Onto the Tick the server is already on, before anyone is seated in it
     // (M5 ticket 08) — a Character added at tick 0 and only then jumped
@@ -697,8 +752,11 @@ export class MatchRuntime {
     this.match = { phase: "LOBBY", phaseStartTick: this.serverTick };
     this.startRequested = false;
     this.roundResults = [];
+    this.roundTrackIds = [];
     this.matchNicknames.clear();
     this.matchAccountIds.clear();
+    this.matchBodySkins.clear();
+    this.matchHats.clear();
     this.totalFalls = {};
     this.resultsSavedMatchId = null;
     this.resultsSavedAtMs = null;

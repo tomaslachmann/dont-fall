@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_BINDINGS, type KeyBindings } from "@dont-fall/shared";
+import { sql } from "drizzle-orm";
 import { openDb, type ApiDb } from "../db/db.js";
 import {
   createAccountWithPassword,
@@ -17,7 +19,8 @@ import {
   linkDiscordToAccount,
   linkPasswordToAccount,
   SESSION_TTL_MS,
-  setBodySkin,
+  setBindings,
+  setCosmetics,
   upsertAccountFromDiscord,
   verifyEmailPassword,
   type DiscordIdentity,
@@ -252,26 +255,71 @@ describe("getAccountById / getAccountsByIds", () => {
   });
 });
 
-describe("setBodySkin (M9 ticket 15)", () => {
+describe("setCosmetics (M9 ticket 15, ADR 0083)", () => {
   const signup = () =>
     createAccountWithPassword(db, { email: "bean@example.com", password: "correct horse battery staple", displayName: "Bean" });
 
-  it("defaults to the default bean — signup equips nothing", () => {
+  it("defaults to the default bean and no hat — signup equips nothing", () => {
     const account = signup();
-    expect(account.bodySkin).toBe(0);
-    expect(getAccountById(db, account.id)!.bodySkin).toBe(0);
+    expect(account).toMatchObject({ bodySkin: 0, hat: null });
+    expect(getAccountById(db, account.id)).toMatchObject({ bodySkin: 0, hat: null });
   });
 
-  it("equips and returns the updated Account", () => {
+  it("equips a skin and returns the updated Account", () => {
     const account = signup();
 
-    const updated = setBodySkin(db, account.id, 2)!;
+    const updated = setCosmetics(db, account.id, { bodySkin: 2 })!;
 
     expect(updated.bodySkin).toBe(2);
     expect(getAccountById(db, account.id)!.bodySkin).toBe(2);
   });
 
+  it("puts a hat on and takes it off, leaving the skin alone", () => {
+    const account = signup();
+    setCosmetics(db, account.id, { bodySkin: 3 });
+
+    expect(setCosmetics(db, account.id, { hat: "crown" })).toMatchObject({ bodySkin: 3, hat: "crown" });
+    expect(setCosmetics(db, account.id, { hat: null })).toMatchObject({ bodySkin: 3, hat: null });
+  });
+
+  it("writes both slots at once", () => {
+    const account = signup();
+    expect(setCosmetics(db, account.id, { bodySkin: 5, hat: "ufo" })).toMatchObject({ bodySkin: 5, hat: "ufo" });
+  });
+
   it("returns undefined for an unknown Account — nothing written", () => {
-    expect(setBodySkin(db, "nope", 2)).toBeUndefined();
+    expect(setCosmetics(db, "nope", { bodySkin: 2 })).toBeUndefined();
+  });
+});
+
+describe("setBindings (M9 controls)", () => {
+  const signup = () =>
+    createAccountWithPassword(db, { email: "bean@example.com", password: "correct horse battery staple", displayName: "Bean" });
+  const custom: KeyBindings = { ...DEFAULT_BINDINGS, hit: ["Mouse0"], jump: [] };
+
+  it("defaults to null — signup stores no record, the client resolves defaults", () => {
+    const account = signup();
+    expect(account.bindings).toBeNull();
+    expect(getAccountById(db, account.id)!.bindings).toBeNull();
+  });
+
+  it("stores and returns the updated Account", () => {
+    const account = signup();
+
+    const updated = setBindings(db, account.id, custom)!;
+
+    expect(updated.bindings).toEqual(custom);
+    expect(getAccountById(db, account.id)!.bindings).toEqual(custom);
+  });
+
+  it("returns undefined for an unknown Account — nothing written", () => {
+    expect(setBindings(db, "nope", custom)).toBeUndefined();
+  });
+
+  it("reads corrupt stored JSON as null, never throws the Account away", () => {
+    const account = signup();
+    db.run(sql`UPDATE accounts SET bindings = 'not-json{' WHERE id = ${account.id}`);
+
+    expect(getAccountById(db, account.id)!.bindings).toBeNull();
   });
 });

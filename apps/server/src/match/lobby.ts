@@ -42,6 +42,7 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
       if (player) {
         player.accountId = resolved.accountId;
         player.bodySkin = resolved.bodySkin;
+        player.hat = resolved.hat;
       }
     });
     return true;
@@ -80,6 +81,9 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
       let candidate: FetchedTrack;
       try {
         candidate = await fetchTrack(rt.config.trackServiceUrl, { ...rt.config.trackFetchRetryOptions, trackId: requestedTrackId });
+        // Its Assets before its world (memory-footprint ticket 01). A pick
+        // superseded meanwhile still leaves them loaded, which is harmless.
+        await rt.loadAssetsFor(candidate.track);
       } catch (err) {
         console.warn(`DON'T FALL: Lobby selectTrack failed to load Track "${requestedTrackId}": ${(err as Error).message}`);
         return;

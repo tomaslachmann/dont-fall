@@ -15,6 +15,7 @@ export default function Toggle({ options = ['OFF', 'ON'], value, onChange }: Tog
           key={o}
           type="button"
           aria-pressed={o === value}
+          data-ui-sound="toggle"
           onClick={() => onChange?.(o)}
           className={[s.opt, o === value && s.on].filter(Boolean).join(' ')}
         >{o}</button>

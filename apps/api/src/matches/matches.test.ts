@@ -19,8 +19,10 @@ const RESULT = {
     },
   ],
   nicknames: { p1: "Floppo", p2: "Goopy" },
+  roundTrackIds: ["t1", "t2"],
   accountIds: { p1: "acc-1" },
   bodySkins: { p1: 2 },
+  hats: { p1: "crown" },
   totalFalls: { p1: 1, p2: 3 },
   endedAtMs: 60_000,
 };
@@ -58,6 +60,9 @@ describe("match results service", () => {
       expect(() => saveMatchResult(db, { ...RESULT, nicknames: [] })).toThrowError(/nicknames/);
       expect(() => saveMatchResult(db, { ...RESULT, accountIds: [] })).toThrowError(/accountIds/);
       expect(() => saveMatchResult(db, { ...RESULT, bodySkins: [] })).toThrowError(/bodySkins/);
+      expect(() => saveMatchResult(db, { ...RESULT, hats: "crown" })).toThrowError(/hats/);
+      expect(() => saveMatchResult(db, { ...RESULT, roundTrackIds: "t1" })).toThrowError(/roundTrackIds/);
+      expect(() => saveMatchResult(db, { ...RESULT, roundTrackIds: ["t1", 7] })).toThrowError(/roundTrackIds/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -84,6 +89,32 @@ describe("match results service", () => {
 
       expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
       expect(getMatchResult(db, "m1")).toEqual({ ...legacy, bodySkins: {} });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults a missing hats map — pre-hats saves carry none (ADR 0083)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "api-matches-test-"));
+    try {
+      const db = openDb(join(dir, "test.sqlite"));
+      const { hats: _dropped, ...legacy } = RESULT;
+
+      expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
+      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, hats: {} });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults a missing roundTrackIds list — pre-index saves carry none", () => {
+    const dir = mkdtempSync(join(tmpdir(), "api-matches-test-"));
+    try {
+      const db = openDb(join(dir, "test.sqlite"));
+      const { roundTrackIds: _dropped, ...legacy } = RESULT;
+
+      expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
+      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, roundTrackIds: [] });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

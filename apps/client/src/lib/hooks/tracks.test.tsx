@@ -27,8 +27,8 @@ describe("useTrackList", () => {
 
 describe("useDiscoverTracks", () => {
   const ROWS = [
-    { id: "t1", name: "Wobble Ramp", authorId: "a1", createdAt: 1000, plays: 12, hasFinishZone: true },
-    { id: "t2", name: null, authorId: "a1", createdAt: 2000, plays: 0, hasFinishZone: false },
+    { id: "t1", name: "Wobble Ramp", authorId: "a1", createdAt: 1000, plays: 12, hasFinishZone: true, hasThumbnail: false },
+    { id: "t2", name: null, authorId: "a1", createdAt: 2000, plays: 0, hasFinishZone: false, hasThumbnail: false },
   ];
 
   it("reads full listing rows off /tracks — the same cached key the Lobby's picker reads", async () => {

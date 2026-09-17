@@ -239,6 +239,27 @@ export const trackHasFinishZone = (track: Track, modules: Record<string, Module>
   });
 
 /**
+ * The Thumbnail (CONTEXT.md) contract — one JPEG screenshot per Revision,
+ * captured in the Track builder's capture mode and shown in Discover and the
+ * Round loader (ADR 0085). Fixed frame and encoding on every side, so the
+ * builder captures, the API validates, and the clients lay out against the
+ * same numbers without a second declaration to drift.
+ */
+/** A captured Thumbnail's frame — 16:9, the Discover card's own aspect family. */
+export const TRACK_THUMBNAIL_WIDTH = 1280;
+export const TRACK_THUMBNAIL_HEIGHT = 720;
+/** Thumbnails are always JPEG — a photo of a 3D scene, never line art. */
+export const TRACK_THUMBNAIL_MIME = "image/jpeg";
+/** The data-URL prefix every stored Thumbnail carries (`<prefix><base64>`). */
+export const TRACK_THUMBNAIL_DATA_URL_PREFIX = "data:image/jpeg;base64,";
+/**
+ * The longest stored data URL, in characters — ~1 MB, several times a
+ * 1280×720 q0.85 JPEG, so a busy scene never trips it and a garbage upload
+ * still can't bloat a Revision row without bound.
+ */
+export const MAX_TRACK_THUMBNAIL_CHARS = 1_000_000;
+
+/**
  * One row of the API's `GET /tracks` listing (ticket 09/ADR 0032) — a
  * Track's id/name/author/createdAt without its full Segment data, plus the
  * two facts Discover's category tabs filter and sort on (M9 ticket 16):
@@ -252,6 +273,12 @@ export interface TrackListing {
   name: string | null;
   authorId: string;
   createdAt: number;
+  /**
+   * Whether the latest Revision carries a Thumbnail (ADR 0085) — the bytes
+   * themselves never ride the listing (one JPEG per row would drown it);
+   * clients that need them fetch `GET /tracks/:id/thumbnail`.
+   */
+  hasThumbnail: boolean;
   /**
    * Rounds ever started on this Track (M9 ticket 16) — an anonymous counter,
    * no per-Account data. Feeds TRENDING's sort and nothing else.
@@ -267,6 +294,9 @@ export interface TrackListing {
    */
   hasFinishZone: boolean;
 }
+
+/** Display name for a Track whose Revision carries none (or is gone) — one spelling, every surface. */
+export const UNTITLED_TRACK_NAME = "UNTITLED TRACK";
 
 /**
  * One stored Track Revision, in full — the API's own `GET /tracks/:id`
@@ -290,6 +320,12 @@ export interface StoredTrack extends TrackRoundDefaults {
    * `resolveEnvironmentId`, since a newer API may name a preset it lacks.
    */
   environment: EnvironmentId;
+  /**
+   * Whether this Revision carries a Thumbnail (ADR 0085) — presentation only
+   * like `environment`, and the Match server never reads it either. The bytes
+   * live behind `GET /tracks/:id/thumbnail`, never on this shape.
+   */
+  hasThumbnail: boolean;
 }
 
 /**

@@ -34,7 +34,7 @@ const rig = () => {
   return {
     mixer,
     actions: {
-      idle: null, walk: null, run: null,
+      idle: null, walk: null, run: null, sprint: null,
       jumpStart: clip("Jump_Start", 0.367),
       jumpRise: clip("Jump_Rise", 0.267),
       jumpApex: clip("Jump_Apex", 0.2),

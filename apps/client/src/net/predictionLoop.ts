@@ -54,6 +54,8 @@ export interface ReconcileResult {
   corrected: boolean;
   /** The distance between the predicted and reported position at the acked tick, or `null` when nothing was comparable (e.g. down). */
   positionError: number | null;
+  /** How many unacknowledged ticks the correction re-simulated, each a full shared step (M13 ticket 01). */
+  replayedTicks: number;
 }
 
 /**
@@ -156,8 +158,10 @@ export class PredictionLoop {
    * moves the Character — the caller hands in real input every tick, locked
    * or not, and `RapierSimulation.tick` is what makes this client's own
    * prediction stop and start driving on the identical Tick the server does.
+   *
+   * Returns how many ticks this frame simulated (M13 ticket 01's overlay).
    */
-  step(input: SimInputs, advanceMs: number, onBuffered?: () => void, phase: MatchPhase = "RUNNING"): void {
+  step(input: SimInputs, advanceMs: number, onBuffered?: () => void, phase: MatchPhase = "RUNNING"): number {
     this.accumulatorMs += advanceMs;
     let steps = 0;
     while (this.accumulatorMs + FIXED_STEP_EPSILON_MS >= TICK_MS && steps < MAX_STEPS_PER_FRAME) {
@@ -180,6 +184,7 @@ export class PredictionLoop {
     // No trim here: `recordTick` trims after every tick it runs, and nothing
     // else grows the buffers, so a second pass over up to 120 history keys
     // per frame would only ever be a no-op repeat.
+    return steps;
   }
 
   /**
@@ -265,7 +270,7 @@ export class PredictionLoop {
     // for an input tick before we predicted going down is stale — leave the
     // ragdoll alone.
     if (localDown && !serverDown && this.predictedDownAtTick !== null && acked < this.predictedDownAtTick) {
-      return { corrected: false, positionError: null };
+      return { corrected: false, positionError: null, replayedTicks: 0 };
     }
 
     const predictedAtAck = this.positionHistory.get(acked);
@@ -281,7 +286,7 @@ export class PredictionLoop {
     // default, and the harness's threshold comparisons get the same four
     // conditions instead of a second copy that could drift from them.
     if (!needsCorrection(server, localChar, positionError, this.reconcileEpsilon)) {
-      return { corrected: false, positionError: null };
+      return { corrected: false, positionError: null, replayedTicks: 0 };
     }
 
     const simBefore = localChar.position;
@@ -290,6 +295,7 @@ export class PredictionLoop {
     // (for the Prop offset reseed, the capsule offset, and the render-interp
     // baseline) instead of re-reading the whole sim from Rapier each time.
     let afterCorrection: SimState;
+    let replayedTicks = 0;
     if (!serverDown) {
       // Realign the tick counter so replayed ticks see the right Spinner phase,
       // pin every Prop to the fresh authoritative pose so replayed ticks slide
@@ -306,6 +312,7 @@ export class PredictionLoop {
         if (sp) this.sim.applyAuthoritativePropState(i, sp);
       }
       const replayed = this.sim.replayLocalCharacter(this.myId, unacked.map((entry) => entry.input), phase);
+      replayedTicks = replayed.length;
       afterCorrection = this.sim.snapshot();
       propPrediction.reseedAfterReconcile(renderedBefore, afterCorrection.props);
       this.positionHistory.clear();
@@ -344,7 +351,7 @@ export class PredictionLoop {
     // the error offset above carries the local Character's own visual delta.
     this.previousSnapshot = afterCorrection;
 
-    return { corrected: true, positionError: Number.isFinite(positionError) ? positionError : null };
+    return { corrected: true, positionError: Number.isFinite(positionError) ? positionError : null, replayedTicks };
   }
 
   /**

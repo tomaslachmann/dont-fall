@@ -8,6 +8,7 @@ import {
   type Track,
   type Vec3,
 } from "@dont-fall/shared";
+import { shareTextures, type SharedTextureCache } from "@dont-fall/render";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
@@ -48,6 +49,15 @@ const hasMesh = (root: THREE.Object3D): boolean => {
 };
 
 /**
+ * Every Asset file's textures, shared across files for the page session
+ * (memory-footprint ticket 02): the pack texture is decoded once and uploaded
+ * once per Stage, however many files embed it. A Stage's scene sweep may
+ * still dispose these on a Track swap; that frees only the GPU copy, and the
+ * next Stage, with its own renderer, uploads them again.
+ */
+const sharedTextures: SharedTextureCache = new Map();
+
+/**
  * Parse one fetched asset file into its visual template (M8 ticket 03).
  * Detached from any scene — `buildAssetVisuals` clones it once per placed
  * Segment. Dropped collision geometry is released by reference: nothing has
@@ -62,7 +72,9 @@ export const parseAssetVisual = async (moduleId: string, bytes: Uint8Array): Pro
   exact.set(bytes);
   let scene: THREE.Group;
   try {
-    scene = (await new GLTFLoader().parseAsync(exact.buffer, "")).scene;
+    const gltf = await new GLTFLoader().parseAsync(exact.buffer, "");
+    await shareTextures(gltf, sharedTextures);
+    scene = gltf.scene;
   } catch (err) {
     throw new Error(`asset "${moduleId}": visual parse failed: ${(err as Error).message}`);
   }

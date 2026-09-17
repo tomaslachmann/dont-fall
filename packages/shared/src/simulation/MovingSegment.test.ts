@@ -594,3 +594,53 @@ describe("the real trap_trapball on a Swing (solid parts, ADR 0065)", () => {
     sim.dispose();
   });
 });
+
+describe("profiling the tick (M13 ticket 02)", () => {
+  // A Character riding the sliding deck, so the step has real contacts to solve.
+  const ridingWorld = (profileClock?: () => number): RapierSimulation => {
+    const sim = new RapierSimulation({
+      ...resolveTrack(MODULES, SLIDING),
+      withDefaultCharacter: false,
+      ...(profileClock === undefined ? {} : { profileClock }),
+    });
+    sim.addCharacter("me", { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.05, z: 0 });
+    return sim;
+  };
+
+  it("times nothing without a clock", () => {
+    const sim = ridingWorld();
+    sim.tick({});
+    expect(sim.lastTickTimings()).toBeNull();
+    sim.dispose();
+  });
+
+  it("times the Moving Segment switching and the Character loops, each on its own", () => {
+    let now = 0;
+    // Every read moves the fake clock one millisecond: two reads per timed stretch.
+    const sim = ridingWorld(() => (now += 1));
+    sim.tick({});
+    const timings = sim.lastTickTimings()!;
+    // Two stretches: the switch to Fixed before the sweeps, the switch back after.
+    expect(timings.movingSegmentsMs).toBe(2);
+    expect(timings.characterSweepsMs).toBe(1);
+    expect(timings.characterUpdatesMs).toBe(1);
+    for (const value of Object.values(timings)) {
+      expect(Number.isFinite(value)).toBe(true);
+      expect(value).toBeGreaterThanOrEqual(0);
+    }
+    sim.dispose();
+  });
+
+  it("never changes what a tick computes", () => {
+    const plain = ridingWorld();
+    const profiled = ridingWorld(() => 0);
+    const input = { me: { ...IDLE_INPUTS, moveDirection: { x: 0, y: 0, z: -1 }, jumpHeld: true } };
+    for (let n = 0; n < 3 * TICK_RATE_HZ; n += 1) {
+      plain.tick(input);
+      profiled.tick(input);
+    }
+    expect(profiled.snapshot()).toEqual(plain.snapshot());
+    plain.dispose();
+    profiled.dispose();
+  });
+});

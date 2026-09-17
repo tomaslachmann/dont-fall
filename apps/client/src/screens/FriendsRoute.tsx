@@ -1,11 +1,11 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useLocation, useNavigate } from "react-router";
-import type { LobbyInviteView, LobbyRef } from "@dont-fall/shared";
+import type { LobbyRef } from "@dont-fall/shared";
 import { lobbyPath, resolveLobbyRef } from "../lib/api/lobbyBroker.js";
+import { flash } from "../lib/flash.js";
 import { useFriends } from "../lib/hooks/useFriends.js";
 import { skinForPlayerId } from "../lib/avatarSkins.js";
 import { recentNote, requestNote, tabOf, toFriendRow } from "../lib/friendsView.js";
-import FriendAlerts from "./FriendAlerts.js";
 import Friends from "./Friends.js";
 
 /**
@@ -15,12 +15,16 @@ import Friends from "./Friends.js";
  * Lobby to invite to: the Lobby screen passes its own ref in navigation
  * state when it links here — standalone, the buttons say to join one first
  * instead of failing.
+ *
+ * Every confirmation and failure here is a flash message on the global
+ * stack — the Screen itself carries no notice line. Lobby invites overlay
+ * from `<GlobalAlerts>` (which also suppresses its request toasts on this
+ * route, since the requests render inline below).
  */
 export function FriendsRoute() {
   const navigate = useNavigate();
   const location = useLocation();
   const friends = useFriends();
-  const [notice, setNotice] = useState<string | null>(null);
 
   const lobbyRef = (location.state as { lobbyRef?: LobbyRef } | null)?.lobbyRef ?? null;
 
@@ -58,7 +62,7 @@ export function FriendsRoute() {
   }, [friends.friends, friends.requests, friends.recent, friends.requestedIds]);
 
   const fail = (err: unknown, fallback: string): void => {
-    setNotice(err instanceof Error ? err.message : fallback);
+    flash(err instanceof Error ? err.message : fallback, "error");
   };
 
   const joinRef = async (ref: LobbyRef): Promise<void> => {
@@ -72,102 +76,81 @@ export function FriendsRoute() {
   const joinFriend = (accountId: string): void => {
     const ref = friends.friends.find((friend) => friend.accountId === accountId)?.presence.lobby;
     if (!ref) {
-      setNotice("They left that Lobby — the roster refreshes every 15 seconds.");
+      flash("They left that Lobby — the roster refreshes every 15 seconds.", "info");
       return;
     }
     void joinRef(ref);
   };
 
-  const joinInvite = (invite: LobbyInviteView): void => {
-    friends.dismissInvite(invite.id);
-    void joinRef(invite.lobby);
-  };
-
   const inviteFriend = (accountId: string): void => {
     if (!lobbyRef) {
-      setNotice("Join a Lobby first — invites need somewhere to go.");
+      flash("Join a Lobby first — invites need somewhere to go.", "info");
       return;
     }
     friends.invite(accountId, lobbyRef).then(
-      () => setNotice("Invite sent."),
+      () => flash("Invite sent."),
       (err: unknown) => fail(err, "Could not send that invite."),
     );
   };
 
   const inviteAll = (): void => {
     if (!lobbyRef) {
-      setNotice("Join a Lobby first — invites need somewhere to go.");
+      flash("Join a Lobby first — invites need somewhere to go.", "info");
       return;
     }
     const targets = friends.friends.filter(
       (friend) => friend.presence.status !== "offline" && friend.presence.status !== "in-match",
     );
     if (targets.length === 0) {
-      setNotice("Nobody online to invite.");
+      flash("Nobody online to invite.", "info");
       return;
     }
     void Promise.allSettled(targets.map((target) => friends.invite(target.accountId, lobbyRef))).then(
       (results) => {
         const sent = results.filter((result) => result.status === "fulfilled").length;
-        setNotice(sent === targets.length ? `Invited ${sent}.` : `Invited ${sent} of ${targets.length}.`);
+        flash(sent === targets.length ? `Invited ${sent}.` : `Invited ${sent} of ${targets.length}.`);
       },
     );
   };
 
   return (
-    <>
-      <Friends
-        online={friends.online}
-        total={friends.total}
-        requests={rows.requests}
-        friends={rows.friends}
-        recent={rows.recent}
-        ownCode={friends.code}
-        notice={notice}
-        isLoading={friends.isLoading}
-        error={friends.error}
-        onBack={() => navigate("/")}
-        onInviteAll={inviteAll}
-        onAccept={(id) => friends.acceptRequest(id).then(
-          ({ displayName }) => setNotice(`${displayName} is now your friend.`),
-          (err: unknown) => fail(err, "Could not accept that request."),
-        )}
-        onDecline={(id) => friends.declineRequest(id).then(
-          () => undefined,
-          (err: unknown) => fail(err, "Could not decline that request."),
-        )}
-        onAcceptAll={() => friends.acceptAll().then(
-          (accepted) => setNotice(accepted === 1 ? "Accepted 1 request." : `Accepted ${accepted} requests.`),
-          (err: unknown) => fail(err, "Could not accept those requests."),
-        )}
-        onJoin={joinFriend}
-        onInvite={inviteFriend}
-        onRemove={(accountId) => friends.unfriend(accountId).then(
-          () => undefined,
-          (err: unknown) => fail(err, "Could not remove that friend."),
-        )}
-        onAddByCode={(code) => friends.sendRequest({ code }).then(() => setNotice("Request sent."))}
-        onAddRecent={(accountId) => friends.sendRequest({ accountId }).then(
-          () => undefined,
-          (err: unknown) => fail(err, "Could not send that request."),
-        )}
-        onRetry={friends.retry}
-        onDismissNotice={() => setNotice(null)}
-      />
-      <FriendAlerts
-        requests={[]}
-        invites={friends.invites}
-        onAccept={(id) => friends.acceptRequest(id).then(
-          () => undefined,
-          (err: unknown) => fail(err, "Could not accept that request."),
-        )}
-        onDecline={(id) => friends.declineRequest(id).then(
-          () => undefined,
-          (err: unknown) => fail(err, "Could not decline that request."),
-        )}
-        onJoinInvite={joinInvite}
-        onDismissInvite={friends.dismissInvite}
-      />
-    </>
+    <Friends
+      online={friends.online}
+      total={friends.total}
+      requests={rows.requests}
+      friends={rows.friends}
+      recent={rows.recent}
+      ownCode={friends.code}
+      isLoading={friends.isLoading}
+      error={friends.error}
+      onBack={() => navigate("/")}
+      onInviteAll={inviteAll}
+      onAccept={(id) => friends.acceptRequest(id).then(
+        ({ displayName }) => flash(`${displayName} is now your friend.`),
+        (err: unknown) => fail(err, "Could not accept that request."),
+      )}
+      onDecline={(id) => friends.declineRequest(id).then(
+        () => undefined,
+        (err: unknown) => fail(err, "Could not decline that request."),
+      )}
+      onAcceptAll={() => friends.acceptAll().then(
+        (accepted) => flash(accepted === 1 ? "Accepted 1 request." : `Accepted ${accepted} requests.`),
+        (err: unknown) => fail(err, "Could not accept those requests."),
+      )}
+      onJoin={joinFriend}
+      onInvite={inviteFriend}
+      onRemove={(accountId) => friends.unfriend(accountId).then(
+        () => undefined,
+        (err: unknown) => fail(err, "Could not remove that friend."),
+      )}
+      onAddByCode={(code) => friends.sendRequest({ code }).then(() => {
+        flash("Request sent.");
+      })}
+      onAddRecent={(accountId) => friends.sendRequest({ accountId }).then(
+        () => undefined,
+        (err: unknown) => fail(err, "Could not send that request."),
+      )}
+      onRetry={friends.retry}
+    />
   );
 }

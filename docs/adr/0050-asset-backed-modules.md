@@ -74,7 +74,8 @@ serves the bytes (`GET /assets/:name`, read from a disk dir), and all three
 loaders — match server at boot, client at track load, builder at tab
 open — fetch through it. Reason: two `public/` copies drift silently, and a
 sync script treats the symptom; one pipe deletes the problem. Revisions
-float (latest wins); in-match consistency comes from fetch-once-per-loader,
+float (latest wins); in-match consistency comes from fetch-once-per-loader
+(per id per loader since ADR 0080, which loads only the Assets a Track places),
 with a documented window — an asset edit landing *between* the server's and
 a client's fetch splits that match, the exact window ADR 0032 closed for
 tracks, accepted here because art edits are rare and revision-pinned art

@@ -39,7 +39,7 @@ const snapshot = (overrides: Partial<SnapshotMessage> = {}): SnapshotMessage =>
     trackRevision: 3,
     lobby: {
       hostId: "p1",
-      players: [{ id: "p1", nickname: "Host", ready: false, joinOrder: 0, accountId: null, bodySkin: null }],
+      players: [{ id: "p1", nickname: "Host", ready: false, joinOrder: 0, accountId: null, bodySkin: null, hat: null }],
       roundType: "race",
       matchLength: 3,
       roundPicks: [
@@ -62,7 +62,7 @@ describe("toLobbySnapshot", () => {
       matchOver: null,
       countdownMsLeft: 0,
       hostId: "p1",
-      players: [{ id: "p1", nickname: "Host", ready: false, joinOrder: 0, accountId: null, bodySkin: null }],
+      players: [{ id: "p1", nickname: "Host", ready: false, joinOrder: 0, accountId: null, bodySkin: null, hat: null }],
       trackId: "track-1",
       trackRevision: 3,
       timeLimitMs: 180_000,

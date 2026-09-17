@@ -25,28 +25,6 @@
 }
 .topActions { display: flex; gap: var(--df-space-3); }
 
-.notice {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--df-space-4);
-  padding: var(--df-space-4) var(--df-space-6);
-  border-radius: var(--df-radius-row);
-  background: var(--df-color-surface-0);
-  font: var(--df-weight-label) var(--df-text-2xs) / 1.4 var(--df-font-ui);
-  letter-spacing: var(--df-tracking-kicker);
-}
-.noticeDismiss {
-  display: grid;
-  place-items: center;
-  width: calc(var(--df-u) * 2.4);
-  aspect-ratio: 1;
-  border-radius: var(--df-radius-chip);
-  background: #F2EDFC;
-}
-.noticeDismiss svg { width: 36%; fill: none; stroke: var(--df-color-ink-55); stroke-width: 3; stroke-linecap: round; }
-
 .codePanel {
   grid-column: 1 / -1;
   flex-direction: row;

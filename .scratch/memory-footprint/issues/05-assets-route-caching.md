@@ -5,7 +5,8 @@
 files, and stops copying each file twice (`readFile` → `Uint8Array` →
 `Buffer.from`); optionally an in-memory cache of hashes keyed by mtime.
 
-**Decided:** not yet — proposal (option C).
+**Decided:** not yet — proposal (option C). Listed in M13 (`docs/milestones/M13.md`)
+as still needing the user's yes.
 
 **Status:** proposal
 

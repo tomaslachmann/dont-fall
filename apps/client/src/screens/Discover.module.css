@@ -76,6 +76,14 @@
   letter-spacing: var(--df-tracking-kicker);
   color: var(--df-color-ink-55);
 }
+/* the captured screenshot, over the stripes — a failed load hides it and the stripes show through */
+.thumbImg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
 /* the mode tag sits in the thumbnail's own corner (CURRENT joins it in pick mode) */
 .thumbTag {
   position: absolute;

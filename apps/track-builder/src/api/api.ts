@@ -13,7 +13,9 @@ export type { StoredTrack, TrackListing, TrackRoundDefaults };
  * `defaults.survivorTarget` reads as itself at every call.
  *
  * `environment` (ADR 0074) is written with it, as its own argument: it is not
- * a Round default.
+ * a Round default. `thumbnail` (ADR 0085) rides the same way — the capture
+ * mode's screenshot data URL, omitted (never nulled) when there is none, so
+ * a thumbnail-less publish sends exactly what it always sent.
  */
 export const saveTrack = async (
   baseUrl: string,
@@ -21,11 +23,13 @@ export const saveTrack = async (
   track: Track,
   defaults: TrackRoundDefaults,
   environment: EnvironmentId,
+  thumbnail?: string,
 ): Promise<{ id: string }> => {
+  const payload = name ? { name, track, ...defaults, environment } : { track, ...defaults, environment };
   const res = await fetch(`${baseUrl}/tracks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(name ? { name, track, ...defaults, environment } : { track, ...defaults, environment }),
+    body: JSON.stringify(thumbnail ? { ...payload, thumbnail } : payload),
   });
   if (!res.ok) throw new Error(`save failed: HTTP ${res.status}`);
   return (await res.json()) as { id: string };

@@ -18,6 +18,7 @@ import { registerTrackRoutes } from "./tracks/tracks.controller.js";
 import { LobbiesService, type LobbiesDeps } from "./lobbies/lobbies.service.js";
 import { registerLobbyRoutes } from "./lobbies/lobbies.controller.js";
 import { registerSettingsRoutes } from "./settings/settings.controller.js";
+import { registerCareerRoutes } from "./career/career.controller.js";
 import { registerMatchesRoutes } from "./matches/matches.controller.js";
 import { registerRewardsRoutes } from "./rewards/rewards.controller.js";
 import { registerBetsRoutes } from "./bets/bets.controller.js";
@@ -127,6 +128,7 @@ export const buildApp = async (options: BuildAppOptions = {}): Promise<FastifyIn
   registerRewardsRoutes(app, db);
   registerBetsRoutes(app, db, options.serviceToken);
   registerMatchesRoutes(app, db, options.serviceToken);
+  registerCareerRoutes(app, db);
   registerFriendsRoutes(app, db, lobbies);
 
   return app;

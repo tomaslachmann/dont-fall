@@ -78,8 +78,10 @@ describe("toMatchResultsView", () => {
       },
     ],
     nicknames: { a: "GOOPY", b: "NOODLE", c: "FLOPPO" },
+    roundTrackIds: ["t1", "t2"],
     accountIds: { a: "acc-a", b: "acc-b" },
     bodySkins: { a: 2, b: 0 },
+    hats: { b: "crown" },
     totalFalls: { a: 2, b: 5, c: 1 },
     endedAtMs: 60_000,
   };
@@ -87,9 +89,9 @@ describe("toMatchResultsView", () => {
   it("ranks the final table by total Score — b 190, a 140, c 0", () => {
     const view = toMatchResultsView(twoRounds, "a");
     expect(view.table).toEqual([
-      { id: "b", nickname: "NOODLE", score: 190, placement: 1, bodySkin: 0 },
-      { id: "a", nickname: "GOOPY", score: 140, placement: 2, bodySkin: 2 },
-      { id: "c", nickname: "FLOPPO", score: 0, placement: 3, bodySkin: null },
+      { id: "b", nickname: "NOODLE", score: 190, placement: 1, bodySkin: 0, hat: "crown" },
+      { id: "a", nickname: "GOOPY", score: 140, placement: 2, bodySkin: 2, hat: null },
+      { id: "c", nickname: "FLOPPO", score: 0, placement: 3, bodySkin: null, hat: null },
     ]);
   });
 
@@ -131,15 +133,17 @@ describe("toMatchResultsView", () => {
         },
       ],
       nicknames: { a: "GOOPY", b: "NOODLE" },
+      roundTrackIds: ["t1", "t2"],
       accountIds: {},
       bodySkins: {},
+      hats: {},
       totalFalls: { a: 0, b: 0 },
       endedAtMs: 60_000,
     };
     const view = toMatchResultsView(tied, "a");
     expect(view.table).toEqual([
-      { id: "b", nickname: "NOODLE", score: 140, placement: 1, bodySkin: null },
-      { id: "a", nickname: "GOOPY", score: 140, placement: 1, bodySkin: null },
+      { id: "b", nickname: "NOODLE", score: 140, placement: 1, bodySkin: null, hat: null },
+      { id: "a", nickname: "GOOPY", score: 140, placement: 1, bodySkin: null, hat: null },
     ]);
   });
 

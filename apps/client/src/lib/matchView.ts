@@ -1,4 +1,4 @@
-import { matchScore, rankWithTies, roundScore, type PersistedMatchResult } from "@dont-fall/shared";
+import { matchPlacements, roundScore, type PersistedMatchResult } from "@dont-fall/shared";
 import { skinForPlayerId } from "./avatarSkins.js";
 
 /**
@@ -80,6 +80,8 @@ export interface MatchTableRow {
   placement: number;
   /** Equipped skin at Match end — null for anonymous seats and pre-skins results: the default. */
   bodySkin: number | null;
+  /** Equipped hat at Match end (ADR 0083) — null for none, and for pre-hats results. */
+  hat: string | null;
 }
 
 export interface MatchResultsView {
@@ -103,21 +105,14 @@ export const toMatchResultsView = (
   result: PersistedMatchResult,
   myId: string | undefined,
 ): MatchResultsView => {
-  const totals = matchScore(result.results);
   const lastRound = result.results[result.results.length - 1];
-  const lastPlacement = new Map(lastRound?.rows.map((row) => [row.id, row.placement]) ?? []);
-  const ordered = Object.keys(totals).sort((a, b) => {
-    if (totals[b]! !== totals[a]!) return totals[b]! - totals[a]!;
-    const placementDelta = (lastPlacement.get(a) ?? Number.POSITIVE_INFINITY) - (lastPlacement.get(b) ?? Number.POSITIVE_INFINITY);
-    return placementDelta !== 0 ? placementDelta : a.localeCompare(b);
-  });
-  const placements = rankWithTies(ordered, (prev, curr) => totals[prev] === totals[curr]);
-  const table: MatchTableRow[] = ordered.map((id, i) => ({
-    id,
-    nickname: result.nicknames[id] ?? id,
-    score: totals[id]!,
-    placement: placements[i]!,
-    bodySkin: (result.bodySkins ?? {})[id] ?? null,
+  const table: MatchTableRow[] = matchPlacements(result.results).map((row) => ({
+    id: row.id,
+    nickname: result.nicknames[row.id] ?? row.id,
+    score: row.score,
+    placement: row.placement,
+    bodySkin: (result.bodySkins ?? {})[row.id] ?? null,
+    hat: (result.hats ?? {})[row.id] ?? null,
   }));
 
   const myRounds: ClaimedRoundRow[] = [];

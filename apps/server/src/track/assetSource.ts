@@ -1,15 +1,16 @@
-import { loadAssetLibrary, type Module } from "@dont-fall/shared";
+import { createAssetLibraryLoader, type AssetLibraryLoader } from "@dont-fall/shared";
 
 /**
- * Fetches every asset Module's bytes through the API and shapes the
- * asset half of the Module library (M8 ticket 02, ADR 0050 as amended).
- * Called once at boot — fetch-once-per-loader, so a mid-Match art edit
- * cannot split this server from the world it already built. (The documented
- * window is the *clients'* own fetch landing on different bytes; nothing
- * this server can do about someone else's HTTP timing.)
+ * This Match server's Asset loader (M8 ticket 02, ADR 0050; per Track since
+ * memory-footprint ticket 01, ADR 0080): each Asset Module's bytes come from
+ * the API the first time a Track this server loads places it, and never again,
+ * so a mid-Match art edit cannot split this server from a world it already
+ * built. (The documented window is the clients' own fetch landing on
+ * different bytes, and a later Track's first use of an id seeing a newer
+ * revision than a boot-time fetch would have.)
  */
-export const fetchAssetLibrary = async (trackServiceUrl: string): Promise<Record<string, Module>> =>
-  loadAssetLibrary(async (url: string): Promise<Uint8Array> => {
+export const createServerAssetLoader = (trackServiceUrl: string): AssetLibraryLoader =>
+  createAssetLibraryLoader(async (url: string): Promise<Uint8Array> => {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`GET ${url} answered ${res.status}`);
     return new Uint8Array(await res.arrayBuffer());

@@ -59,7 +59,7 @@ export function MatchResultsRoute() {
 
   return (
     <MatchOver
-      podium={view.table.slice(0, 3).map((row, i) => ({ name: row.nickname, points: row.score, pose: POSES[i] ?? "", skin: row.bodySkin })) as [
+      podium={view.table.slice(0, 3).map((row, i) => ({ name: row.nickname, points: row.score, pose: POSES[i] ?? "", skin: row.bodySkin, hat: row.hat })) as [
         PodiumPlace,
         ...PodiumPlace[],
       ]}

@@ -1,0 +1,12 @@
+.badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: calc(var(--df-u) * 1.72);
+  height: calc(var(--df-u) * 1.72);
+  padding-inline: var(--df-space-2);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-danger);
+  color: var(--df-color-on-brand);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+}
+.pulse { animation: df-badge-pulse 2.4s ease-out infinite; }

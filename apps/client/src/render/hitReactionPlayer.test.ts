@@ -15,6 +15,7 @@ const silentActions = (): CharacterActions => ({
   idle: null,
   walk: null,
   run: null,
+  sprint: null,
   jumpStart: null,
   jumpRise: null,
   jumpApex: null,

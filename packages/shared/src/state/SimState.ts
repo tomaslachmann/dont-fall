@@ -88,7 +88,7 @@ export interface CharacterSnapshot {
   launchPadEpoch: number;
   /**
    * World-space yaw in radians this Character is currently facing (M6, ADR
-   * 0045) — sent from the owning client's own camera every Tick, mirrored
+   * 0045) — where the owning client's body is turned (ADR 0085), mirrored
    * onto the Snapshot so every other client can orient its rendered model
    * and Hit/Grab can target "the Character just ahead of you." Not restored
    * during reconciliation (see `ReconcileBase`): it's an input mirror, not

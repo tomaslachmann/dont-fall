@@ -16,6 +16,7 @@ import {
 } from "@dont-fall/shared";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { MatchRuntime, type MatchConfig } from "./matchRuntime.js";
+import type { ResolvedAccount } from "./accountResolution.js";
 import { handleLobbyMessage } from "./lobby.js";
 import type { FetchedTrack } from "../track/trackSource.js";
 
@@ -49,11 +50,11 @@ const seat = (
   ids.forEach((entry, joinOrder) => {
     const id = typeof entry === "string" ? entry : entry.id;
     const accountId = typeof entry === "string" ? null : entry.accountId;
-    rt.lobbyPlayers.set(id, { id, nickname: id, ready: true, joinOrder, accountId, bodySkin: null });
+    rt.lobbyPlayers.set(id, { id, nickname: id, ready: true, joinOrder, accountId, bodySkin: null, hat: null });
   });
 };
 
-const authedRuntime = (resolveAccount: (token: string) => Promise<{ accountId: string; bodySkin: number | null } | null>): MatchRuntime =>
+const authedRuntime = (resolveAccount: (token: string) => Promise<ResolvedAccount | null>): MatchRuntime =>
   new MatchRuntime(config, fetched, undefined, undefined, undefined, undefined, { resolveAccount });
 
 const characterIds = (rt: MatchRuntime): string[] => Object.keys(rt.simulation.snapshot().characters).sort();
@@ -101,6 +102,8 @@ describe("MatchRuntime spectators (M7 ticket 08)", () => {
     rt.spectators.add("c");
     rt.roundResults.push({ rows: [{ id: "a", placement: 1, qualified: true }] });
     rt.matchNicknames.set("a", "Ann");
+    rt.matchBodySkins.set("a", 3);
+    rt.matchHats.set("a", "crown");
     rt.totalFalls = { a: 2 };
     rt.resultsSavedMatchId = "m1";
     rt.resultsSavedAtMs = 5_000;
@@ -112,6 +115,8 @@ describe("MatchRuntime spectators (M7 ticket 08)", () => {
     expect(rt.match.phase).toBe("LOBBY");
     expect(rt.roundResults).toEqual([]);
     expect(rt.matchNicknames.size).toBe(0);
+    expect(rt.matchBodySkins.size).toBe(0);
+    expect(rt.matchHats.size).toBe(0);
     expect(rt.totalFalls).toEqual({});
     expect(rt.resultsSavedMatchId).toBeNull();
     expect(rt.resultsSavedAtMs).toBeNull();
@@ -166,7 +171,7 @@ describe("auth message binding (M9 ticket 11 phase 2b)", () => {
   const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
   it("binds a resolving token's Account to the sender's Lobby row", async () => {
-    const resolveAccount = vi.fn(async () => ({ accountId: "acc-1", bodySkin: 2 }));
+    const resolveAccount = vi.fn(async () => ({ accountId: "acc-1", bodySkin: 2, hat: "crown" }));
     const rt = authedRuntime(resolveAccount);
     try {
       seat(rt, "a");
@@ -177,6 +182,8 @@ describe("auth message binding (M9 ticket 11 phase 2b)", () => {
       expect(resolveAccount).toHaveBeenCalledWith("tok");
       expect(rt.lobbyPlayers.get("a")?.accountId).toBe("acc-1");
       expect(rt.lobbyPlayers.get("a")?.bodySkin).toBe(2);
+      // The hat rides the same row, and with it every snapshot's roster (ADR 0083).
+      expect(rt.lobbyPlayers.get("a")?.hat).toBe("crown");
     } finally {
       rt.simulation.dispose();
     }
@@ -197,8 +204,8 @@ describe("auth message binding (M9 ticket 11 phase 2b)", () => {
   });
 
   it("a resolution landing after the Player left binds nothing and throws nothing", async () => {
-    let release!: (id: { accountId: string; bodySkin: number | null } | null) => void;
-    const gate = new Promise<{ accountId: string; bodySkin: number | null } | null>((resolve) => {
+    let release!: (id: ResolvedAccount | null) => void;
+    const gate = new Promise<ResolvedAccount | null>((resolve) => {
       release = resolve;
     });
     const rt = authedRuntime(() => gate);
@@ -207,7 +214,7 @@ describe("auth message binding (M9 ticket 11 phase 2b)", () => {
       handleLobbyMessage(rt, "a", { type: "auth", token: "tok" });
       rt.lobbyPlayers.delete("a");
 
-      release({ accountId: "acc-1", bodySkin: 2 });
+      release({ accountId: "acc-1", bodySkin: 2, hat: null });
       await flush();
 
       expect(rt.lobbyPlayers.has("a")).toBe(false);
@@ -217,7 +224,7 @@ describe("auth message binding (M9 ticket 11 phase 2b)", () => {
   });
 
   it("re-auth re-binds — latest send wins", async () => {
-    const rt = authedRuntime(async (token) => ({ accountId: `acc-for-${token}`, bodySkin: null }));
+    const rt = authedRuntime(async (token) => ({ accountId: `acc-for-${token}`, bodySkin: null, hat: null }));
     try {
       seat(rt, "a");
 
@@ -232,7 +239,7 @@ describe("auth message binding (M9 ticket 11 phase 2b)", () => {
   });
 
   it("ignores a malformed auth — no token, no resolution, row untouched", async () => {
-    const resolveAccount = vi.fn(async () => ({ accountId: "acc-1", bodySkin: 2 }));
+    const resolveAccount = vi.fn(async () => ({ accountId: "acc-1", bodySkin: 2, hat: null }));
     const rt = authedRuntime(resolveAccount);
     try {
       seat(rt, "a");

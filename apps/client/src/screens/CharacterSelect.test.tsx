@@ -65,17 +65,10 @@ describe("CharacterSelect", () => {
     expect(onSelect).toHaveBeenCalledWith(0);
   });
 
-  it("the notice renders inline under the equipped row — alert for errors, status for info", () => {
-    const { rerender } = renderScreen();
+  it("carries no notice line of its own — confirmations and failures are global flashes", () => {
+    renderScreen();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("status")).toBeNull();
-
-    rerender(<CharacterSelect selected={0} notice={{ text: "Couldn't save your bean: boom", tone: "error" }} />);
-    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't save your bean: boom");
-
-    rerender(<CharacterSelect selected={0} notice={{ text: "The shop isn't here yet.", tone: "info" }} />);
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.getByRole("status")).toHaveTextContent("The shop isn't here yet.");
   });
 
   it("back, save and shop fire their callbacks — the Route decides what they do", () => {
@@ -90,5 +83,49 @@ describe("CharacterSelect", () => {
     expect(onBack).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onShop).toHaveBeenCalledTimes(1);
+  });
+
+  describe("the HAT tab (ADR 0083)", () => {
+    const openHats = (props: Partial<React.ComponentProps<typeof CharacterSelect>> = {}) => {
+      renderScreen(props);
+      fireEvent.click(screen.getByRole("tab", { name: "HAT" }));
+    };
+
+    it("offers no hat and every hat the level has unlocked, and shows the rest locked with their level", () => {
+      openHats({ level: 9 });
+
+      expect(screen.getByRole("button", { name: "No hat" })).toBeInTheDocument();
+      for (const name of ["TRAFFIC CONE", "POT", "BUCKET"]) {
+        expect(screen.getByRole("button", { name })).toBeInTheDocument();
+      }
+      for (const name of ["PROPELLER CAP", "CROWN", "UFO"]) {
+        expect(screen.queryByRole("button", { name })).toBeNull();
+      }
+      expect(screen.getByText("LV 14")).toBeInTheDocument();
+      expect(screen.getByText("LV 20")).toBeInTheDocument();
+      expect(screen.getByText("LV 30")).toBeInTheDocument();
+      // The skins are the BODY tab's, not this one's.
+      expect(screen.queryByRole("button", { name: "Skin 1" })).toBeNull();
+    });
+
+    it("a fresh Account (level 1) can only go bareheaded", () => {
+      openHats();
+
+      expect(screen.getByRole("button", { name: "No hat" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.queryByRole("button", { name: "TRAFFIC CONE" })).toBeNull();
+      expect(screen.getByText("LV 2")).toBeInTheDocument();
+    });
+
+    it("the hat pick is controlled — tiles report up, the pressed one is the Route's", () => {
+      const onSelectHat = vi.fn();
+      openHats({ level: 30, hat: "crown", onSelectHat });
+
+      expect(screen.getByRole("button", { name: "CROWN" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("button", { name: "No hat" })).toHaveAttribute("aria-pressed", "false");
+      fireEvent.click(screen.getByRole("button", { name: "UFO" }));
+      expect(onSelectHat).toHaveBeenCalledWith("ufo");
+      fireEvent.click(screen.getByRole("button", { name: "No hat" }));
+      expect(onSelectHat).toHaveBeenLastCalledWith(null);
+    });
   });
 });

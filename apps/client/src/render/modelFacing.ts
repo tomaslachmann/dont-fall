@@ -1,12 +1,18 @@
 import type { Vec3 } from "@dont-fall/shared";
 
 /**
- * How fast the Character model turns toward its own movement direction
- * (rad/s). Cosmetic only (ADR 0045 keeps the *replicated* facing separate) —
- * an eased turn rather than a snap, so a direction change reads as weight
- * rather than a flick.
+ * How quickly the Character's body closes on the direction it runs (1/s):
+ * every second it covers all but e^−rate of the turn still left, so a turn
+ * slows into a soft stop instead of halting on the spot (user call,
+ * 2026-09-17: the old constant-speed turn read as jerky under WASD). Since
+ * ADR 0085 this is also how fast the Character's aim turns. With
+ * {@link FACING_TURN_SPEED_MAX}, a quarter turn comes within 10° in about
+ * 0.2 s and turning around takes about 0.3 s.
  */
-export const FACING_TURN_SPEED = 14;
+export const FACING_TURN_RATE = 12;
+
+/** The fastest the body ever turns (rad/s), so turning around takes visibly longer than a quarter turn. */
+export const FACING_TURN_SPEED_MAX = 12;
 
 export interface ModelYawInput {
   /** The model's current cosmetic yaw (radians). */
@@ -39,19 +45,30 @@ const wrapAngle = (angle: number): number =>
   ((((angle + Math.PI) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) - Math.PI;
 
 /**
- * The Character model's cosmetic yaw for this frame (M6.1) — extracted from
+ * The Character model's yaw for this frame (M6.1) — extracted from
  * `scene.ts` as a pure rule so the Grab-hold lock has somewhere to be tested
- * without a WebGL context.
+ * without a WebGL context. Since ADR 0085 it is also the Character's
+ * `facing`, through {@link facingFromModelYaw}.
  *
- * Turns toward `moveDirection` at {@link FACING_TURN_SPEED}, never
- * overshooting it, and holds still whenever there is no direction to turn
- * toward — or whenever a hold has {@link ModelYawInput.facingLocked | locked
- * the facing}.
+ * Eases toward `moveDirection` at {@link FACING_TURN_RATE}, never faster than
+ * {@link FACING_TURN_SPEED_MAX} and never past it, and holds still whenever
+ * there is no direction to turn toward — or whenever a hold has
+ * {@link ModelYawInput.facingLocked | locked the facing}.
  */
 export const nextModelYaw = ({ currentYaw, moveDirection, deltaSeconds, facingLocked }: ModelYawInput): number => {
   if (facingLocked) return currentYaw;
   if (moveDirection.x === 0 && moveDirection.z === 0) return currentYaw;
   const delta = wrapAngle(Math.atan2(moveDirection.x, moveDirection.z) - currentYaw);
-  const maxStep = FACING_TURN_SPEED * deltaSeconds;
-  return currentYaw + Math.max(-maxStep, Math.min(maxStep, delta));
+  const eased = delta * (1 - Math.exp(-FACING_TURN_RATE * deltaSeconds));
+  const maxStep = FACING_TURN_SPEED_MAX * deltaSeconds;
+  return currentYaw + Math.max(-maxStep, Math.min(maxStep, eased));
 };
+
+/**
+ * The `facing` (ADR 0045's convention: yaw 0 looks down −Z, like the camera)
+ * of a body turned to `modelYaw` (`atan2(x, z)`: yaw 0 looks down +Z), wrapped
+ * into (−π, π]. What the local client sends as its facing (ADR 0085), so every
+ * other client draws the body where its owner sees it, and Hit and Grab aim
+ * where it is turned.
+ */
+export const facingFromModelYaw = (modelYaw: number): number => -wrapAngle(modelYaw - Math.PI);

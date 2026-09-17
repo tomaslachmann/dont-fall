@@ -9,7 +9,9 @@ import {
   invalidMudReason,
   MAX_SEGMENT_SCALE,
   MAX_SURVIVOR_TARGET,
+  MAX_TRACK_THUMBNAIL_CHARS,
   MIN_SEGMENT_SCALE,
+  TRACK_THUMBNAIL_DATA_URL_PREFIX,
   MAX_TIME_LIMIT_MS,
   MIN_SURVIVOR_TARGET,
   MIN_TIME_LIMIT_MS,
@@ -280,3 +282,33 @@ export const invalidTrackSurfaceConflictReason = (value: unknown): string | unde
 };
 
 export const isTrack = (value: unknown): value is Track => Array.isArray(value) && value.every(isSegment);
+
+/** Base64 payload characters — what `canvas.toDataURL("image/jpeg")` emits after the prefix, nothing else. */
+const BASE64_PAYLOAD = /^[A-Za-z0-9+/]*={0,2}$/;
+
+/**
+ * Validates a published Thumbnail (ADR 0085), returning the reason it is
+ * unacceptable or `undefined` if it's fine. `undefined` input is valid — a
+ * publish that omits it stores no Thumbnail, which is what keeps every
+ * pre-Thumbnail caller (and the playtest publish) working unchanged.
+ *
+ * Rejected rather than clamped or re-encoded, like the Time Limit above: a
+ * Revision is immutable (ADR 0032), so a silently-altered screenshot would
+ * be permanent and invisible to the author who framed it. The payload check
+ * is shape-only (prefix, alphabet, length) — the API never decodes the
+ * JPEG, it just refuses anything that could not be one.
+ */
+export const invalidTrackThumbnailReason = (value: unknown): string | undefined => {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !value.startsWith(TRACK_THUMBNAIL_DATA_URL_PREFIX)) {
+    return `thumbnail must be a "${TRACK_THUMBNAIL_DATA_URL_PREFIX}…" data URL`;
+  }
+  if (value.length > MAX_TRACK_THUMBNAIL_CHARS) {
+    return `thumbnail must be at most ${MAX_TRACK_THUMBNAIL_CHARS} characters, got ${value.length}`;
+  }
+  const payload = value.slice(TRACK_THUMBNAIL_DATA_URL_PREFIX.length);
+  if (payload.length === 0 || payload.length % 4 !== 0 || !BASE64_PAYLOAD.test(payload)) {
+    return "thumbnail payload must be non-empty base64";
+  }
+  return undefined;
+};

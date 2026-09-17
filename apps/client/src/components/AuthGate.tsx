@@ -1,6 +1,7 @@
 import { Navigate, Outlet } from "react-router";
 import { Screen } from "@dont-fall/ui";
 import { useAccount } from "../lib/hooks/useAccount.js";
+import GlobalAlerts from "./GlobalAlerts.js";
 import styles from "./AuthGate.module.css";
 
 /**
@@ -24,5 +25,13 @@ export function AuthGate() {
 
   if (status === "unauthed") return <Navigate to="/auth" replace />;
 
-  return <Outlet />;
+  // The global overlay stack lives here, above the whole authed subtree —
+  // flash messages and the sticky friend/Lobby-invite alerts stay visible
+  // across navigation instead of belonging to one Screen.
+  return (
+    <>
+      <Outlet />
+      <GlobalAlerts />
+    </>
+  );
 }

@@ -9,10 +9,19 @@ import {
   DEFAULT_SURVIVOR_TARGET,
   DEFAULT_TIME_LIMIT_MS,
   MODULE_LIBRARY,
+  TRACK_THUMBNAIL_DATA_URL_PREFIX,
   type Track,
 } from "@dont-fall/shared";
 import { openDb, type ApiDb } from "../db/db.js";
-import { getTrackById, getTrackPlays, listTracks, recordTrackPlay, saveTrack, syncSeedTrack } from "./tracks.dao.js";
+import {
+  getTrackById,
+  getTrackPlays,
+  getTrackThumbnail,
+  listTracks,
+  recordTrackPlay,
+  saveTrack,
+  syncSeedTrack,
+} from "./tracks.dao.js";
 import { tracks } from "../db/schema.js";
 
 let dir: string;
@@ -371,5 +380,69 @@ describe("the Environment a Revision is drawn inside (M12 ticket 09, ADR 0074)",
     expect(stored.timeLimitMs).toBe(90_000); // and what it did author is untouched
     expect(stored.survivorTarget).toBe(3);
     expect(stored.track).toEqual(SAMPLE_TRACK);
+  });
+});
+
+describe("a Revision's Thumbnail (ADR 0085)", () => {
+  const THUMB = `${TRACK_THUMBNAIL_DATA_URL_PREFIX}aGVsbG8=`;
+
+  it("stores and returns the captured data URL, and flags the Revision", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK, thumbnail: THUMB });
+
+    expect(getTrackById(db, id)!.hasThumbnail).toBe(true);
+    expect(getTrackThumbnail(db, id)).toBe(THUMB);
+  });
+
+  it("reads a Revision published without one as thumbnail-less, not missing — null, not undefined", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK });
+
+    expect(getTrackById(db, id)!.hasThumbnail).toBe(false);
+    expect(getTrackThumbnail(db, id)).toBeNull();
+    expect(getTrackThumbnail(db, "no-such-track")).toBeUndefined();
+  });
+
+  it("pins to the exact Revision — a thumbnail-less republish doesn't erase Revision 1's", () => {
+    const { id } = saveTrack(db, { id: "revised", track: SAMPLE_TRACK, thumbnail: THUMB });
+    saveTrack(db, { id: "revised", track: SAMPLE_TRACK });
+
+    expect(getTrackById(db, id)!.hasThumbnail).toBe(false); // latest is bare
+    expect(getTrackThumbnail(db, id)).toBeNull();
+    expect(getTrackThumbnail(db, id, 1)).toBe(THUMB); // Revision 1 keeps its own
+    const listed = listTracks(db, MODULE_LIBRARY).find((t) => t.id === id)!;
+    expect(listed.hasThumbnail).toBe(false); // the listing follows the latest
+  });
+
+  it("flags a Revision published with one on the listing too", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK, thumbnail: THUMB });
+
+    expect(listTracks(db, MODULE_LIBRARY).find((t) => t.id === id)).toMatchObject({ hasThumbnail: true });
+  });
+
+  it("migrates a table from before the column — old rows read thumbnail-less and keep everything", () => {
+    const legacyPath = join(dir, "pre-thumbnail.sqlite");
+    const legacy = new Database(legacyPath);
+    legacy.exec(`
+      CREATE TABLE tracks (
+        track_id TEXT NOT NULL, revision INTEGER NOT NULL, name TEXT,
+        author_id TEXT NOT NULL, content_hash TEXT NOT NULL, data TEXT NOT NULL,
+        created_at INTEGER NOT NULL, time_limit_ms INTEGER NOT NULL, survivor_target INTEGER NOT NULL,
+        environment TEXT NOT NULL,
+        PRIMARY KEY (track_id, revision)
+      )
+    `);
+    legacy
+      .prepare("INSERT INTO tracks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run("old-track", 1, "pre-thumbnail", "local-author", "hash", JSON.stringify(SAMPLE_TRACK), Date.now(), 90_000, 3, "night");
+    legacy.close();
+
+    const migrated = openDb(legacyPath);
+
+    const stored = getTrackById(migrated, "old-track")!;
+    expect(stored.hasThumbnail).toBe(false);
+    expect(getTrackThumbnail(migrated, "old-track")).toBeNull();
+    expect(stored.environment).toBe("night"); // and what it did author is untouched
+    expect(listTracks(migrated, MODULE_LIBRARY).find((t) => t.id === "old-track")).toMatchObject({
+      hasThumbnail: false,
+    });
   });
 });

@@ -3,9 +3,11 @@ import {
   HIT_CHARGE_MAX_MS,
   HIT_COOLDOWN_MS,
   type CharacterMotionState,
+  type KeyBindings,
   type MatchPhase,
   type Vec3,
 } from "@dont-fall/shared";
+import { controlsHint } from "../lib/controlsHint.js";
 
 /** Everything the HUD's main text block reads — all of it already computed by the frame loop (M4.5 ticket 06). */
 export interface HudTextValues {
@@ -31,6 +33,8 @@ export interface HudTextValues {
   hitChargeMs: number;
   /** `NetMetrics.format()`'s own output — this function only places it. */
   netMetricsText: string;
+  /** The active bindings — the control hint line renders from these, never constants. */
+  bindings: KeyBindings;
 }
 
 /**
@@ -60,7 +64,7 @@ export const formatHudText = (v: HudTextValues): string => {
     `checkpoint ${checkpoint} · falls ${v.fallCount} · qualified ${v.qualifiedCount}/${v.connectedPlayers}${qualificationBanner}\n` +
     `dash [${dashBar}]${v.dashCooldownMs === 0 ? " ready" : ""}\n` +
     `hit [${hitBar}]${hitLabel}\n` +
-    `WASD move · Space jump · Shift dash · F hit · mouse look\n` +
+    `${controlsHint(v.bindings)} · mouse look\n` +
     v.netMetricsText
   );
 };

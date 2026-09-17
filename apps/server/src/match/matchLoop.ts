@@ -19,6 +19,7 @@ import {
 import { trySend } from "../net/wire.js";
 import { openBettingArgs, roundWinners } from "./betting.js";
 import type { MatchRuntime } from "./matchRuntime.js";
+import type { TickPerf } from "./tickPerf.js";
 
 /**
  * The idle-phase broadcast decision (ADR 0057) — pure, so tests can pin the
@@ -45,9 +46,11 @@ export interface SaveRuntime {
   closed: boolean;
   config: { matchId: string };
   roundResults: MatchRuntime["roundResults"];
+  roundTrackIds: string[];
   matchNicknames: Map<string, string>;
   matchAccountIds: Map<string, string>;
   matchBodySkins: Map<string, number>;
+  matchHats: Map<string, string>;
   totalFalls: Record<string, number>;
   matchResults: MatchRuntime["matchResults"];
 }
@@ -67,9 +70,11 @@ export const saveMatchResultIfDue = (rt: SaveRuntime, thisTick: number): void =>
   const result: PersistedMatchResult = {
     matchId: rt.config.matchId,
     results: [...rt.roundResults],
+    roundTrackIds: [...rt.roundTrackIds],
     nicknames: Object.fromEntries(rt.matchNicknames),
     accountIds: Object.fromEntries(rt.matchAccountIds),
     bodySkins: Object.fromEntries(rt.matchBodySkins),
+    hats: Object.fromEntries(rt.matchHats),
     totalFalls: { ...rt.totalFalls },
     endedAtMs: Date.now(),
   };
@@ -116,6 +121,8 @@ export const terminalCloseDue = (rt: CloseRuntime, nowMs: number): boolean => {
 export interface MatchLoopHooks {
   /** Fired once when a finished server should close itself (ADR 0059) — the server owns the actual close. */
   onTerminalClose?: () => void;
+  /** Tick timing (M13 ticket 02), present only when the process asked for it. */
+  perf?: TickPerf | null;
 }
 
 export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS.Timeout => {
@@ -126,7 +133,8 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
   // 12-player path drop to 20 Hz later with no other change.
   const SNAPSHOT_INTERVAL_MS = 1000 / SNAPSHOT_HZ;
   let snapshotAccumulatorMs = 0;
-  return setInterval(() => {
+  const perf = hooks?.perf ?? null;
+  const runTick = (): void => {
     // The Match loop must survive a bad tick (a physics edge case, a NaN) —
     // one hiccup crashing the process would drop every connected player. Log
     // and carry on; the next tick usually recovers (ADR 0011).
@@ -220,6 +228,11 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
         precomputedState = rt.simulation.snapshot();
         const finished = buildRoundResult(precomputedState.characters, [...rt.lobbyPlayers.values()], rt.dnf);
         rt.roundResults.push(finished);
+        // Parallel to `roundResults` above: this Round's Track id, read off
+        // the world it was actually raced on (`rt.fetched` still points at
+        // this Round — the next Round's draw assigns it later). The career
+        // history names its rows from this; the API resolves display names.
+        rt.roundTrackIds.push(rt.fetched.id);
         // Ticket 14: the Round's winners settle its betting pool — placement
         // 1 takes it, ties share it. Fire-and-forget: a down API strands the
         // settlement in the server log, never the Match (the notifier swallows).
@@ -246,6 +259,8 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
           // The equipped skin, from the same two places — the podium wears these.
           const bodySkin = rt.lobbyPlayers.get(row.id)?.bodySkin ?? rt.dnf.find((d) => d.id === row.id)?.bodySkin;
           if (typeof bodySkin === "number") rt.matchBodySkins.set(row.id, bodySkin);
+          const hat = rt.lobbyPlayers.get(row.id)?.hat ?? rt.dnf.find((d) => d.id === row.id)?.hat;
+          if (hat) rt.matchHats.set(row.id, hat);
           rt.totalFalls[row.id] = (rt.totalFalls[row.id] ?? 0) + row.fallCount;
         }
         if (rt.canContinueMatch()) {
@@ -487,6 +502,7 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
         // included — no pending push survives past it.
         rt.snapshotDirty = false;
       }
+      const sendStarted = perf ? performance.now() : 0;
       for (const [id, socket] of rt.sockets) {
         if (socket.readyState !== socket.OPEN) continue;
         trySend(
@@ -520,6 +536,7 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
           } satisfies ServerMessage),
         );
       }
+      perf?.recordSend(performance.now() - sendStarted, rt.match.phase);
     } catch (err) {
       // Rate-limit the log: a persistently broken sim shouldn't spam 30×/s.
       if (consecutiveTickFailures % TICK_RATE_HZ === 0) {
@@ -527,5 +544,11 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
       }
       consecutiveTickFailures += 1;
     }
+  };
+  if (!perf) return setInterval(runTick, TICK_MS);
+  return setInterval(() => {
+    const started = performance.now();
+    runTick();
+    perf.recordTick(performance.now() - started, rt.match.phase, rt.sockets.size, rt.simulation.lastTickTimings());
   }, TICK_MS);
 };

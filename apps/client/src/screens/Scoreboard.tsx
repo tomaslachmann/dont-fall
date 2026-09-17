@@ -48,7 +48,7 @@ export default function Scoreboard({ title = 'STANDINGS', rows = [], onBack }: S
       </Panel>
 
       <div className={s.actions}>
-        <JellyButton variant="pill" tone="glass" centered onClick={onBack}>BACK</JellyButton>
+        <JellyButton variant="pill" tone="glass" centered sound="back" onClick={onBack}>BACK</JellyButton>
       </div>
     </Stage>
   );

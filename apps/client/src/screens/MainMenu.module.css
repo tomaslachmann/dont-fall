@@ -86,13 +86,6 @@
 }
 .navItem { position: relative; display: grid; }
 .navBadge { position: absolute; top: calc(var(--df-u) * -0.7); right: calc(var(--df-u) * -0.5); }
-.notice {
-  padding: var(--df-space-4) var(--df-space-5);
-  border-radius: var(--df-radius-row);
-  background: var(--df-color-surface-0);
-  font: var(--df-weight-label) var(--df-text-2xs) / 1.4 var(--df-font-ui);
-  letter-spacing: var(--df-tracking-kicker);
-}
 
 .hero { height: 100%; }
 

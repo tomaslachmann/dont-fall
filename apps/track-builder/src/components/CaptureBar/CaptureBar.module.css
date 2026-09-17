@@ -1,0 +1,73 @@
+/* One floating bar, bottom-centre, over the fullscreen capture viewport — the ink
+   plate of the pick banner's own language, with the Toolbar's chunky go-green
+   primary. The only two actions in capture mode. */
+.bar {
+  position: absolute;
+  left: 50%;
+  bottom: var(--tb-float-inset);
+  translate: -50% 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-6);
+  max-width: calc(100% - var(--tb-float-inset) * 2);
+  padding: var(--tb-s-5) var(--tb-s-6);
+  border-radius: var(--tb-r-xl);
+  background: var(--df-color-ink);
+  box-shadow: 0 8px 24px rgba(20, 10, 40, .45);
+  color: var(--df-color-on-brand);
+}
+
+.hint {
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1.4 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  white-space: nowrap;
+}
+
+.error {
+  max-width: 320px;
+  padding: var(--tb-s-3) var(--tb-s-5);
+  border-radius: var(--tb-r-pill);
+  background: var(--tb-color-note-danger);
+  box-shadow: inset 0 0 0 2px var(--df-color-danger);
+  color: var(--df-color-danger-shade);
+  font: var(--df-weight-label) var(--tb-t-2xs) / 1.3 var(--df-font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--tb-s-4);
+}
+
+.cancel {
+  padding: var(--tb-s-4) var(--tb-s-6);
+  border-radius: var(--tb-r-md);
+  background: var(--df-color-surface-0);
+  box-shadow: var(--tb-bevel-1);
+  font: var(--df-weight-label) var(--tb-t-xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  white-space: nowrap;
+}
+.cancel:hover { translate: 0 var(--df-lift); }
+.cancel:active { translate: 0 var(--df-squash); box-shadow: none; }
+
+.capture {
+  padding: var(--tb-s-4) var(--tb-s-7);
+  border-radius: var(--tb-r-md);
+  background: var(--df-color-go);
+  box-shadow: 0 3px 0 var(--df-color-go-shade);
+  color: var(--df-color-go-ink);
+  font: var(--df-weight-label) var(--tb-t-xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  white-space: nowrap;
+}
+.capture:hover { translate: 0 var(--df-lift); }
+.capture:active { translate: 0 var(--df-squash); box-shadow: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cancel:hover, .capture:hover { translate: none; }
+}

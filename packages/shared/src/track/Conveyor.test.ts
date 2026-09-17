@@ -53,8 +53,8 @@ describe("isSegmentConveyor", () => {
   });
 });
 
-describe("DEPRECATED_MODULE_IDS (ADR 0064/0066/0067/0068)", () => {
-  it("names exactly the retired Modules — the two pads, ice and mud, and the course blocks", () => {
+describe("DEPRECATED_MODULE_IDS (ADR 0064/0066/0067/0068/0075)", () => {
+  it("names exactly the retired Modules — the two pads, ice and mud, the course blocks, and the updraft last of all", () => {
     expect([...DEPRECATED_MODULE_IDS].sort()).toEqual([
       "checkpoint-end-props",
       "checkpoint-spinner",
@@ -65,6 +65,7 @@ describe("DEPRECATED_MODULE_IDS (ADR 0064/0066/0067/0068)", () => {
       "slow-pad",
       "speed-pad",
       "start",
+      "updraft",
     ]);
   });
 });

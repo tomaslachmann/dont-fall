@@ -51,6 +51,7 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
       time_limit_ms INTEGER NOT NULL DEFAULT ${sql.raw(String(DEFAULT_TIME_LIMIT_MS))},
       survivor_target INTEGER NOT NULL DEFAULT ${sql.raw(String(DEFAULT_SURVIVOR_TARGET))},
       environment TEXT NOT NULL DEFAULT '${sql.raw(DEFAULT_ENVIRONMENT_ID)}',
+      thumbnail TEXT,
       PRIMARY KEY (track_id, revision)
     )
   `);
@@ -89,6 +90,14 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
     sqlite.exec(`ALTER TABLE tracks ADD COLUMN environment TEXT NOT NULL DEFAULT '${DEFAULT_ENVIRONMENT_ID}'`);
   }
 
+  // Thumbnails (ADR 0085): nullable, so pre-Thumbnail Revisions need no
+  // backfill value — NULL reads as "no Thumbnail", exactly like the
+  // account `bindings` column below. The old screenshot-less Revisions keep
+  // loading and playing unchanged; clients fall back to generated art.
+  if (!columns.some((c) => c.name === "thumbnail")) {
+    sqlite.exec("ALTER TABLE tracks ADD COLUMN thumbnail TEXT");
+  }
+
   // M9 ticket 11: `accounts` first shipped Discord-only (`discord_id TEXT
   // NOT NULL UNIQUE`, no `email`/`password_hash`) at commit 87b1426, before
   // ADR 0053 corrected the decision to "both login methods." That old shape
@@ -116,7 +125,9 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
       created_at INTEGER NOT NULL,
       xp INTEGER NOT NULL DEFAULT 0,
       coins INTEGER NOT NULL DEFAULT 0,
-      body_skin INTEGER NOT NULL DEFAULT 0
+      body_skin INTEGER NOT NULL DEFAULT 0,
+      bindings TEXT,
+      hat TEXT
     )
   `);
   // Match earnings (economy slice): additive backfill in the same style as
@@ -134,6 +145,16 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
   if (!accountColumns.some((c) => c.name === "body_skin")) {
     console.log("api: backfilling body_skin = 0 onto pre-skins Accounts");
     sqlite.exec("ALTER TABLE accounts ADD COLUMN body_skin INTEGER NOT NULL DEFAULT 0");
+  }
+  // M9 controls: the stored bindings — nullable, so pre-controls Accounts
+  // need no backfill value; NULL reads as "never saved".
+  if (!accountColumns.some((c) => c.name === "bindings")) {
+    sqlite.exec("ALTER TABLE accounts ADD COLUMN bindings TEXT");
+  }
+  // ADR 0083: the equipped hat — nullable, and NULL is "no hat", so
+  // pre-hats Accounts need no backfill value.
+  if (!accountColumns.some((c) => c.name === "hat")) {
+    sqlite.exec("ALTER TABLE accounts ADD COLUMN hat TEXT");
   }
   // M9 ticket 12: the friend code ADD BY CODE resolves. Nullable with no
   // backfill — codes generate lazily on first read, so there is nothing to
@@ -214,6 +235,19 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
     )
   `);
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_reward_claims_account ON reward_claims (account_id)`);
+  // Career index (the Profile screen's history): brand-new table, same deal.
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS match_participants (
+      match_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      placement INTEGER NOT NULL,
+      score REAL NOT NULL,
+      falls INTEGER NOT NULL,
+      ended_at_ms INTEGER NOT NULL,
+      PRIMARY KEY (match_id, account_id)
+    )
+  `);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_match_participants_account ON match_participants (account_id)`);
 
   // Anonymous per-Track play counts (M9 ticket 16): brand-new table, so
   // plain `CREATE TABLE IF NOT EXISTS` — no backfill, nothing to migrate.

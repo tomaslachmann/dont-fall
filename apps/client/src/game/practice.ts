@@ -14,16 +14,27 @@ import {
   resolveTrack,
   trackSpawn,
   trackSpawnYaw,
+  type KeyBindings,
   type SimInputs,
 } from "@dont-fall/shared";
 import { loadCharacterModel } from "../render/characterModel.js";
+import { gameAudioContext } from "../audio/gameAudio.js";
+import { STAGE_SOUND_SLOTS } from "../audio/slots.js";
+import { decodedBytes, loadSoundBank } from "../audio/soundBank.js";
+import { stageSoundSlots } from "../audio/stageSounds.js";
+import { resumeOnFirstGesture } from "../audio/unlock.js";
+import { applyAudioVolumes, readAudioVolumes, subscribeAudioVolumes } from "../lib/audioSettings.js";
+import { browserStorage } from "../lib/perfFlag.js";
 import { assetPlacements } from "../render/assetVisuals.js";
 import { springTriggers } from "../render/springSquash.js";
-import { FreeLookCamera, KeyboardInput } from "../input/input.js";
+import { FreeLookCamera, PlayerInput } from "../input/input.js";
+import { loadBootBindings, resolveEffectiveBindings, writeStoredBindings } from "../lib/bindingsStore.js";
 import { createTeardown, type Teardown } from "../lib/utils/teardown.js";
 import { fetchAccount } from "../lib/api/auth.js";
 import { createStage } from "../render/scene.js";
 import { createTrackLoading } from "./trackLoading.js";
+import { createPerfSession } from "./perfSession.js";
+import { DEFAULT_GRAPHICS_QUALITY, GRAPHICS_QUALITY_SETTINGS, type GraphicsQuality } from "../lib/graphicsQuality.js";
 import type { GameHandle } from "./index.js";
 
 /**
@@ -35,6 +46,8 @@ import type { GameHandle } from "./index.js";
 export interface PracticeSnapshot {
   trackName: string;
   finished: boolean;
+  /** The bindings the session currently plays with — re-emitted when the Account record lands. */
+  bindings: KeyBindings;
 }
 
 export interface PracticeConfig {
@@ -45,6 +58,10 @@ export interface PracticeConfig {
   /** Track to roam. Required — with no server there is nothing to default to. */
   trackId: string;
   onPracticeState?: (snapshot: PracticeSnapshot) => void;
+  /** Show the performance overlay (M13 ticket 01) — the same one a Match shows. */
+  perf?: boolean;
+  /** The graphics quality level to draw at (ADR 0079). Omitted, `high`. */
+  graphicsQuality?: GraphicsQuality;
 }
 
 /**
@@ -73,17 +90,28 @@ export const startPracticeGame = async (config: PracticeConfig): Promise<GameHan
 };
 
 const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise<GameHandle> => {
-  const [, characterModel] = await Promise.all([initPhysics(), loadCharacterModel()]);
+  const bootStartedAt = performance.now();
+  // Sounds decode alongside the rest of the load, never on first play (ADR 0087).
+  const audioContext = gameAudioContext();
+  if (audioContext) teardown.add(resumeOnFirstGesture(audioContext, window));
+  const [, characterModel] = await Promise.all([
+    initPhysics(),
+    loadCharacterModel(),
+    audioContext ? loadSoundBank(audioContext, STAGE_SOUND_SLOTS) : undefined,
+  ]);
 
-  const { fetchTrack, loadLibrary, loadVisualTemplates, loadIceTexture, loadMudTexture, loadBounceTexture } =
+  const { fetchTrack, loadLibrary, loadVisualTemplates, loadIceTexture, loadMudTexture, loadBounceTexture, fetchStats } =
     createTrackLoading(config.host);
   const { track, name, environment } = await fetchTrack(config.trackId);
   const trackName = name ?? config.trackId;
-  const library = await loadLibrary();
+  const library = await loadLibrary(track);
   const resolved = resolveTrack(library, track);
+  // The Track's own sounds join what every Character makes (already decoding above).
+  const sounds = audioContext ? await loadSoundBank(audioContext, stageSoundSlots({ ...resolved, environment })) : undefined;
 
   const stage = createStage({
     mount: config.mount,
+    graphics: GRAPHICS_QUALITY_SETTINGS[config.graphicsQuality ?? DEFAULT_GRAPHICS_QUALITY],
     statics: resolved.statics,
     checkpoints: resolved.checkpoints,
     finishZones: resolved.finishZones,
@@ -93,7 +121,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     spinners: resolved.spinners,
     props: resolved.props,
     characterModel,
-    assetTemplates: await loadVisualTemplates(),
+    assetTemplates: await loadVisualTemplates(track),
     assetPlacements: assetPlacements(track, library),
     springs: springTriggers(resolved.launchPads, resolved.launchPadOwners),
     bounceDecks: resolved.bounceDecks,
@@ -105,16 +133,50 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     mudTexture: await loadMudTexture(),
     bounceTexture: await loadBounceTexture(),
     volumes: resolved.volumes,
+    sounds,
   });
   teardown.add(() => stage.dispose());
-  // The bean wears its skin in practice too (M9 ticket 15) — best effort, a
+  // Volumes (ADR 0087): this device's, then every change from Settings, live.
+  applyAudioVolumes(stage.sound, readAudioVolumes(browserStorage()));
+  teardown.add(subscribeAudioVolumes((volumes) => applyAudioVolumes(stage.sound, volumes), browserStorage()));
+  // First-sight compiles and uploads happen now, not in the first metres (M13 ticket 06).
+  stage.warmUp();
+  const perf = config.perf
+    ? createPerfSession({
+        mount: config.mount,
+        mode: "practice",
+        bootStartedAt,
+        stage: () => stage,
+        trackId: () => config.trackId,
+        fetchStats,
+        audio: () =>
+          stage.sound && audioContext ? { ...stage.sound.stats(), decodedBytes: decodedBytes(audioContext) } : null,
+      })
+    : null;
+  if (perf) teardown.add(() => perf.dispose());
+  // The bean wears its skin and hat in practice too (M9 ticket 15, ADR 0083) — best effort, a
   // failed fetch leaves the model natural rather than blocking the boot. The
   // stored token authenticates against the page-host API (that's where login
   // happened), so no host threading even when the Track came from elsewhere.
+  // Controls (M9): boot bindings immediately — no boot wait — then the
+  // Account's own record when it resolves, applied live (and re-emitted, so
+  // the hint bar never disagrees with the hands).
+  let keyBindings = loadBootBindings();
+  const keyboard = new PlayerInput(window, keyBindings);
+  const emitState = (finished: boolean): void => {
+    config.onPracticeState?.({ trackName, finished, bindings: keyBindings });
+  };
   void fetchAccount()
-    .then((account) => stage.setLocalSkin(account?.bodySkin ?? null))
+    .then((account) => {
+      stage.setLocalSkin(account?.bodySkin ?? null);
+      stage.setLocalHat(account?.hat ?? null);
+      keyBindings = resolveEffectiveBindings(account);
+      keyboard.setBindings(keyBindings);
+      // Refresh the offline mirror while we're here.
+      if (account?.bindings) writeStoredBindings(account.id, account.bindings);
+      emitState(finishAnnounced);
+    })
     .catch(() => stage.setLocalSkin(null));
-  const keyboard = new KeyboardInput();
   teardown.add(() => keyboard.dispose());
   const look = new FreeLookCamera(stage.domElement);
   // Start looking along the Start's forward (ADR 0068).
@@ -145,7 +207,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
   teardown.add(() => sim.dispose());
   sim.addCharacter(DEFAULT_CHARACTER_ID, trackSpawn(track, 0, library));
 
-  config.onPracticeState?.({ trackName, finished: false });
+  emitState(false);
 
   let accumulatorMs = 0;
   let previousSnapshot = sim.snapshot();
@@ -167,7 +229,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
       dashHeld: keyboard.dashHeld(),
       hitHeld: keyboard.hitHeld(),
       grabHeld: keyboard.grabHeld(),
-      facing: look.yaw,
+      facing: stage.characterFacing(), // ADR 0085: where the body is turned
     };
 
     // Fixed-timestep local stepping (ADR 0004) — the same accumulator shape
@@ -176,6 +238,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     // ever locks input (M5 ticket 01's gate reads the phase we pass).
     accumulatorMs += elapsedMs;
     let steps = 0;
+    const simStartedAt = performance.now();
     while (accumulatorMs + FIXED_STEP_EPSILON_MS >= TICK_MS && steps < MAX_STEPS_PER_FRAME) {
       previousSnapshot = sim.snapshot();
       sim.tick({ [DEFAULT_CHARACTER_ID]: input }, "RUNNING");
@@ -183,6 +246,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
       steps += 1;
     }
     if (accumulatorMs + FIXED_STEP_EPSILON_MS >= TICK_MS) accumulatorMs = 0;
+    const simMs = performance.now() - simStartedAt;
 
     const snapshot = sim.snapshot();
     const render = interpolateState(previousSnapshot, snapshot, accumulatorMs / TICK_MS);
@@ -194,6 +258,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     stage.applyRenderState({ character: visualCharacter, props: render.props });
     stage.applySpringSquash({ [DEFAULT_CHARACTER_ID]: visualCharacter }, now);
     stage.applyBounceSheets({ [DEFAULT_CHARACTER_ID]: visualCharacter }, now);
+    stage.applyCharacterSounds({ [DEFAULT_CHARACTER_ID]: visualCharacter }, DEFAULT_CHARACTER_ID, now);
     // Air columns (ADR 0075) — practice draws the same flow a Match does.
     stage.updateAirColumns(now);
     stage.updateCharacterAnimation(
@@ -218,7 +283,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
       false,
     );
     stage.updateMotion(snapshot.tick - 1 + accumulatorMs / TICK_MS);
-    stage.updateCamera(visualCharacter.position, look.yaw, look.pitch);
+    stage.updateCamera(visualCharacter.position, look.yaw, look.pitch, Math.min(elapsedMs, 100) / 1000);
 
     // The finish that reports instead of ending (m8.1 ticket 02) — position
     // in a finish trigger, read off the same resolved zones the stage
@@ -231,12 +296,14 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     lastPosition = c.position;
     if (shouldAnnounceFinish(finishAnnounced, insideNow)) {
       finishAnnounced = true;
-      config.onPracticeState?.({ trackName, finished: true });
+      emitState(true);
     } else if (!insideNow) {
       finishAnnounced = false;
     }
 
+    const renderStartedAt = performance.now();
     stage.render();
+    perf?.frame(now, elapsedMs, simMs, steps, performance.now() - renderStartedAt, visualCharacter.position);
 
     frameHandle = requestAnimationFrame(frame);
   };

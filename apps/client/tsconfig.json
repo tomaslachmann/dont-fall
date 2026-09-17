@@ -6,5 +6,8 @@
     "types": ["vite/client", "@testing-library/jest-dom"],
     "noEmit": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // A reference design drop (M9) whose `ui/` kit and `styles/tokens.css` were
+  // never committed, so its imports cannot resolve; nothing in the app imports it.
+  "exclude": ["src/test_components"]
 }

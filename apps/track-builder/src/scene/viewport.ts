@@ -9,6 +9,8 @@ import {
   segmentScale,
   quatToEuler,
   TICK_RATE_HZ,
+  TRACK_THUMBNAIL_HEIGHT,
+  TRACK_THUMBNAIL_WIDTH,
   type EnvironmentPreset,
   type Module,
   type MotionPose,
@@ -150,6 +152,13 @@ export const createModulePreview = (canvas: HTMLCanvasElement, module: Module, t
 
 const SELECTION_COLOR = 0x7b3fe4;
 
+/**
+ * The Thumbnail capture's JPEG quality (ADR 0085) — high enough that a
+ * 1280×720 scene stays crisp as a Discover card and a full-page loader,
+ * low enough to sit far under the API's size cap.
+ */
+const PREVIEW_JPEG_QUALITY = 0.85;
+
 export interface TrackViewport {
   /**
    * Rebuilds the whole-Track overview. `assetTemplates` (M8 ticket 05) holds
@@ -248,6 +257,28 @@ export interface TrackViewport {
    * none. `undefined` off a Checkpoint.
    */
   respawnOf: (index: number) => { floor: { x: number; y: number; z: number } | undefined } | undefined;
+  /** Shows or hides the course markers (ADR 0068) — hidden while the Thumbnail capture frames the bare Track. */
+  setCourseVisible: (visible: boolean) => void;
+  /**
+   * Captures the current view as this Track's Thumbnail (ADR 0085) — a
+   * 1280×720 JPEG data URL at the shared frame, whatever the window's own
+   * size. Renders synchronously and reads the canvas back in the same task
+   * (no `preserveDrawingBuffer` needed that way), then restores the
+   * container's own size. `undefined` when the canvas won't give its pixels
+   * up (a tainted canvas throws) — the caller stays in capture mode and says
+   * so, rather than saving a Revision with no screenshot.
+   *
+   * Captures exactly what's drawn: the engine's capture mode clears the
+   * selection, the guides and the course markers before this ever runs, so
+   * this hides nothing itself.
+   */
+  capturePreview: () => string | undefined;
+  /**
+   * Re-fits the renderer to its container — the capture-mode swap (ADR 0085)
+   * resizes the canvas box with no window resize, so the shell asks for this
+   * after the layout lands (the window listener never fires for it).
+   */
+  resize: () => void;
   render: () => void;
   dispose: () => void;
 }
@@ -951,6 +982,36 @@ export const createTrackViewport = (
       return course.pickFloor(rayFrom(clientX, clientY));
     },
     respawnOf: (index) => course.respawnOf(index),
+    setCourseVisible(visible) {
+      course.setVisible(visible);
+    },
+    resize,
+    capturePreview() {
+      const prevPixelRatio = renderer.getPixelRatio();
+      const prevSize = new THREE.Vector2();
+      renderer.getSize(prevSize);
+      const prevAspect = camera.aspect;
+      // A fixed bitmap whatever the window (shared's frame), at pixel ratio
+      // 1 so it is exactly that many pixels — `updateStyle: false` keeps the
+      // element's own layout untouched throughout.
+      renderer.setPixelRatio(1);
+      renderer.setSize(TRACK_THUMBNAIL_WIDTH, TRACK_THUMBNAIL_HEIGHT, false);
+      camera.aspect = TRACK_THUMBNAIL_WIDTH / TRACK_THUMBNAIL_HEIGHT;
+      camera.updateProjectionMatrix();
+      this.render();
+      let url: string | undefined;
+      try {
+        url = renderer.domElement.toDataURL("image/jpeg", PREVIEW_JPEG_QUALITY);
+      } catch {
+        url = undefined;
+      }
+      renderer.setPixelRatio(prevPixelRatio);
+      renderer.setSize(prevSize.x, prevSize.y);
+      camera.aspect = prevAspect;
+      camera.updateProjectionMatrix();
+      this.render();
+      return url;
+    },
     render() {
       orbitControls.update();
       course.follow();

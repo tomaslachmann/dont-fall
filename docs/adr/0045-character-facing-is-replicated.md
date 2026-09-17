@@ -31,3 +31,10 @@ most likely to be used — the one case this field exists to serve.
   a replacement for the local player's own cosmetic lean/turn easing.
 - Hit's and Grab's own targeting (who is "just ahead of you") reads this field rather than
   re-deriving a direction from position history.
+
+## Amended by ADR 0085 (2026-09-17)
+
+`facing` is still a real, replicated field, but the client now sends where the Character's body
+is turned, not its camera's look-yaw. Other players see the body as its owner sees it, and Hit and
+Grab aim where the body is turned. The local Character's turn easing is therefore no longer purely
+cosmetic.

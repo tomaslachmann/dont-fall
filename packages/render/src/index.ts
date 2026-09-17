@@ -1,6 +1,11 @@
 export { ENVIRONMENT_ROOT_NAME, createEnvironment } from "./environment/createEnvironment.js";
 export type { Environment, EnvironmentOptions } from "./environment/createEnvironment.js";
 export { localBounds, lowestDrawnY, lowestMovingY } from "./environment/lowestDrawnY.js";
+export { FOG_FAR_PLANE_MARGIN, fogFarPlane } from "./environment/farPlane.js";
+export { DEFAULT_SUN_SHADOW } from "./environment/shadows.js";
+export type { SunShadowSettings } from "./environment/shadows.js";
 export { createPuffLook } from "./environment/cloudPuffs.js";
 export type { PuffLook } from "./environment/cloudPuffs.js";
 export { findSpinningParts, spinParts, spinRate } from "./spinningParts.js";
+export { shareTextures } from "./assets/shareTextures.js";
+export type { SharedTextureCache } from "./assets/shareTextures.js";

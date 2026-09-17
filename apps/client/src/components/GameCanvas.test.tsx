@@ -2,7 +2,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useParams, useSearchParams } from "react-router";
+import { DEFAULT_BINDINGS } from "@dont-fall/shared";
 import { GameCanvas } from "./GameCanvas";
+import { getGameActiveSnapshot } from "../lib/gamePresence.js";
+import type { PracticeSnapshot } from "../game/practice.js";
 import { ErrorBoundary } from "./ErrorBoundary.js";
 import { WithQuery } from "../test/query.js";
 import { RewardsRoute } from "../screens/RewardsRoute.js";
@@ -854,9 +857,9 @@ describe("GameCanvas practice mode (m8.1 tickets 01+03)", () => {
   });
 
   it("renders the practice hint bar once the session reports its Track, then the finish toast", async () => {
-    let reportPractice!: (snapshot: { trackName: string; finished: boolean }) => void;
+    let reportPractice!: (snapshot: PracticeSnapshot) => void;
     startGame.mockImplementationOnce(
-      async (config: { onPracticeState?: (snapshot: { trackName: string; finished: boolean }) => void }) => {
+      async (config: { onPracticeState?: (snapshot: PracticeSnapshot) => void }) => {
         reportPractice = config.onPracticeState!;
         return { stop: vi.fn() };
       },
@@ -865,21 +868,21 @@ describe("GameCanvas practice mode (m8.1 tickets 01+03)", () => {
     renderAtPlayRoute({ trackId: "abc123", practice: true });
     await waitFor(() => expect(startGame).toHaveBeenCalledTimes(1));
 
-    reportPractice({ trackName: "Asset demo", finished: false });
+    reportPractice({ trackName: "Asset demo", finished: false, bindings: DEFAULT_BINDINGS });
     expect(await screen.findByText("Asset demo")).toBeInTheDocument();
     expect(screen.getByText(/WASD move/)).toBeInTheDocument();
     expect(screen.queryByText(/Finished — keep running/)).not.toBeInTheDocument();
 
-    reportPractice({ trackName: "Asset demo", finished: true });
+    reportPractice({ trackName: "Asset demo", finished: true, bindings: DEFAULT_BINDINGS });
     expect(await screen.findByText("Finished — keep running")).toBeInTheDocument();
   });
 
   it("leaves through the existing onExit path on Back click and on Esc, disposing the session on unmount", async () => {
     const onExit = vi.fn();
     const stop = vi.fn();
-    let reportPractice!: (snapshot: { trackName: string; finished: boolean }) => void;
+    let reportPractice!: (snapshot: PracticeSnapshot) => void;
     startGame.mockImplementationOnce(
-      async (config: { onPracticeState?: (snapshot: { trackName: string; finished: boolean }) => void }) => {
+      async (config: { onPracticeState?: (snapshot: PracticeSnapshot) => void }) => {
         reportPractice = config.onPracticeState!;
         return { stop };
       },
@@ -887,7 +890,7 @@ describe("GameCanvas practice mode (m8.1 tickets 01+03)", () => {
 
     const { unmount } = renderAtPlayRoute({ trackId: "abc123", practice: true, onExit });
     await waitFor(() => expect(startGame).toHaveBeenCalledTimes(1));
-    reportPractice({ trackName: "Asset demo", finished: false });
+    reportPractice({ trackName: "Asset demo", finished: false, bindings: DEFAULT_BINDINGS });
     expect(await screen.findByText("Asset demo")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
@@ -907,5 +910,20 @@ describe("GameCanvas practice mode (m8.1 tickets 01+03)", () => {
 
     expect(await screen.findByText(/failed to load Track/)).toBeInTheDocument();
     expect(screen.getByText(/could not fetch Track/)).toBeInTheDocument();
+  });
+
+  it("a practice boot is not a game start — only a Match boot hides the social alerts", async () => {
+    startGame.mockResolvedValue({ stop: vi.fn() });
+
+    const practice = renderAtPlayRoute({ trackId: "abc123", practice: true });
+    await waitFor(() => expect(startGame).toHaveBeenCalledTimes(1));
+    expect(getGameActiveSnapshot()).toBe(false);
+    practice.unmount();
+
+    const match = renderAtPlayRoute({ trackId: "abc123" });
+    await waitFor(() => expect(startGame).toHaveBeenCalledTimes(2));
+    expect(getGameActiveSnapshot()).toBe(true);
+    match.unmount();
+    expect(getGameActiveSnapshot()).toBe(false);
   });
 });

@@ -5,8 +5,9 @@ import {
   type AssetCategory,
   type Module,
 } from "@dont-fall/shared";
+import { shareTextures, type SharedTextureCache } from "@dont-fall/render";
 import * as THREE from "three";
-import { GLTFLoader, type GLTF } from "three/addons/loaders/GLTFLoader.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 /**
  * The Assets tab's fixed Module set (M8 ticket 05): exactly the registry's
@@ -64,79 +65,12 @@ const hasMesh = (root: THREE.Object3D): boolean => {
 };
 
 /**
- * Every asset file embeds its own copy of its pack's texture — 456 files over
- * ~6 distinct images — and each parse decodes a fresh 1024² bitmap and would
- * upload it to the GPU once per file (in the viewport's and the previews'
- * contexts both). Textures whose embedded image bytes and sampling match
- * resolve to one shared `THREE.Texture` for the session; a replaced
- * duplicate's decoded bitmap is released at once rather than left to GC.
+ * Every asset file embeds its own copy of its pack's texture; `shareTextures`
+ * (`@dont-fall/render`, shared with the game) resolves identical ones to one
+ * `THREE.Texture` for the builder's session — in the viewport's and the
+ * previews' contexts both.
  */
-const sharedTextures = new Map<string, THREE.Texture>();
-
-/** Two FNV-1a passes with different seeds — a content key, not a security hash. */
-const contentKey = (bytes: Uint8Array): string => {
-  let a = 0x811c9dc5;
-  let b = 0x01000193 ^ bytes.length;
-  for (let i = 0; i < bytes.length; i += 1) {
-    a = Math.imul(a ^ bytes[i]!, 0x01000193);
-    b = Math.imul(b ^ bytes[i]!, 0x5bd1e995);
-  }
-  return `${bytes.length}:${(a >>> 0).toString(16)}:${(b >>> 0).toString(16)}`;
-};
-
-const shareTextures = async (gltf: GLTF): Promise<void> => {
-  const { parser } = gltf;
-  const slots: { material: THREE.Material; key: string; texture: THREE.Texture }[] = [];
-  gltf.scene.traverse((object) => {
-    const mesh = object as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-      for (const [key, value] of Object.entries(material)) {
-        if ((value as THREE.Texture | null)?.isTexture) slots.push({ material, key, texture: value as THREE.Texture });
-      }
-    }
-  });
-
-  const keyByTexture = new Map<THREE.Texture, string | null>();
-  for (const { texture } of slots) {
-    if (keyByTexture.has(texture)) continue;
-    // A texture the loader cloned without a glTF association (a non-zero
-    // `texCoord`) can't be traced to its image, so it simply stays unshared.
-    const textureIndex = parser.associations.get(texture)?.textures;
-    const bufferView = textureIndex === undefined ? undefined : parser.json.images?.[parser.json.textures[textureIndex].source]?.bufferView;
-    if (bufferView === undefined) {
-      keyByTexture.set(texture, null);
-      continue;
-    }
-    const image = new Uint8Array((await parser.getDependency("bufferView", bufferView)) as ArrayBuffer);
-    const sampling = [texture.colorSpace, texture.channel, texture.flipY, texture.wrapS, texture.wrapT, texture.magFilter, texture.minFilter];
-    keyByTexture.set(texture, `${contentKey(image)}|${sampling.join(",")}`);
-  }
-
-  const replaced = new Set<THREE.Texture>();
-  for (const { material, key, texture } of slots) {
-    const contentKeyOrNull = keyByTexture.get(texture);
-    if (!contentKeyOrNull) continue;
-    const shared = sharedTextures.get(contentKeyOrNull);
-    if (!shared) {
-      sharedTextures.set(contentKeyOrNull, texture);
-      continue;
-    }
-    if (shared === texture) continue;
-    (material as unknown as Record<string, unknown>)[key] = shared;
-    material.needsUpdate = true;
-    replaced.add(texture);
-  }
-
-  // Release a duplicate's bitmap only when nothing in this file still draws
-  // from its image (clones share one `source`).
-  const stillUsed = new Set(slots.map((slot) => (slot.material as unknown as Record<string, THREE.Texture>)[slot.key]!.source));
-  for (const texture of replaced) {
-    if (stillUsed.has(texture.source)) continue;
-    (texture.image as { close?: () => void } | null)?.close?.();
-    texture.dispose();
-  }
-};
+const sharedTextures: SharedTextureCache = new Map();
 
 /**
  * Parse one fetched asset file into its visual template (M8 ticket 05).
@@ -152,7 +86,7 @@ export const parseAssetVisual = async (moduleId: string, bytes: Uint8Array): Pro
   let scene: THREE.Group;
   try {
     const gltf = await new GLTFLoader().parseAsync(exact.buffer, "");
-    await shareTextures(gltf);
+    await shareTextures(gltf, sharedTextures);
     scene = gltf.scene;
   } catch (err) {
     throw new Error(`asset "${moduleId}": visual parse failed: ${(err as Error).message}`);

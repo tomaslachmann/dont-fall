@@ -43,4 +43,8 @@
 
 /* social */
 @keyframes df-toast-in { 0% { opacity: 0; transform: translateX(120%); } 5% { opacity: 1; transform: translateX(-4%); } 8%,72% { opacity: 1; transform: translateX(0); } 80%,100% { opacity: 0; transform: translateX(120%); } }
+/* The live toast beat: `df-toast-in`'s attack, but it SETTLES visible —
+   sticky alerts and flashes dismiss via JS, never via the animation. Fired
+   once per toast by mounting (each toast keys its own flash/alert id). */
+@keyframes df-toast-settle { 0% { opacity: 0; transform: translateX(120%); } 30% { opacity: 1; transform: translateX(-4%); } 45%,100% { opacity: 1; transform: translateX(0); } }
 @keyframes df-badge-pulse { 0%,100% { transform: scale(1); } 12% { transform: scale(1.35); } 24% { transform: scale(1); } }

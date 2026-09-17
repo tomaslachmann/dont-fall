@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
-import { randomBearerToken } from "@dont-fall/shared";
+import { invalidBindingsReason, randomBearerToken, type KeyBindings } from "@dont-fall/shared";
 import type { ApiDb } from "../db/db.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import { accounts, sessions } from "../db/schema.js";
@@ -16,6 +16,10 @@ export interface Account {
   coins: number;
   /** The body's equipped skin id (M9 ticket 15) — a small int, default bean until picked. */
   bodySkin: number;
+  /** The equipped hat's id (ADR 0083) — `null` for no hat. */
+  hat: string | null;
+  /** The stored key bindings (M9 controls) — `null` when never saved, which the client resolves to defaults. */
+  bindings: KeyBindings | null;
 }
 
 /** The Discord identity a successful OAuth exchange resolves to (`discordAuth.ts`). */
@@ -34,6 +38,21 @@ export interface EmailSignup {
 /** How long a session stays valid without being used again (ADR 0052: mandatory login, but not naggingly short-lived). */
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+/**
+ * Stored bindings JSON into a record — `null` for never-saved AND for
+ * anything that no longer parses or validates (a corrupt row degrades to
+ * defaults on the client, never to a broken Account).
+ */
+const toBindings = (stored: string | null): KeyBindings | null => {
+  if (stored === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(stored);
+    return invalidBindingsReason(parsed) ? null : (parsed as KeyBindings);
+  } catch {
+    return null;
+  }
+};
+
 const toAccount = (row: typeof accounts.$inferSelect): Account => ({
   id: row.id,
   discordId: row.discordId,
@@ -43,15 +62,40 @@ const toAccount = (row: typeof accounts.$inferSelect): Account => ({
   xp: row.xp,
   coins: row.coins,
   bodySkin: row.bodySkin,
+  hat: row.hat,
+  bindings: toBindings(row.bindings),
 });
 
+/** What one cosmetics write changes — any slot left out keeps what it had. */
+export interface CosmeticsPatch {
+  bodySkin?: number;
+  hat?: string | null;
+}
+
 /**
- * Equips a body skin (M9 ticket 15) — the only writer of `bodySkin`, called
- * with an already-validated id (the service owns the rule, shared owns its
- * shape). Returns the updated Account, or `undefined` for an unknown id.
+ * Equips cosmetics (M9 ticket 15, ADR 0083) — the only writer of `bodySkin`
+ * and `hat`, called with already-validated values (the service owns the
+ * rules, shared owns their shape). Both slots land in one statement, so a
+ * save never half-applies. Returns the updated Account, or `undefined` for
+ * an unknown id.
  */
-export const setBodySkin = (db: ApiDb, accountId: string, bodySkin: number): Account | undefined => {
-  const updated = db.update(accounts).set({ bodySkin }).where(eq(accounts.id, accountId)).run();
+export const setCosmetics = (db: ApiDb, accountId: string, patch: CosmeticsPatch): Account | undefined => {
+  const updated = db.update(accounts).set(patch).where(eq(accounts.id, accountId)).run();
+  if (updated.changes === 0) return undefined;
+  return getAccountById(db, accountId);
+};
+
+/**
+ * Stores key bindings (M9 controls) — the only writer of `bindings`, called
+ * with an already-validated record (the service owns the rule, shared owns
+ * its shape). Returns the updated Account, or `undefined` for an unknown id.
+ */
+export const setBindings = (db: ApiDb, accountId: string, bindings: KeyBindings): Account | undefined => {
+  const updated = db
+    .update(accounts)
+    .set({ bindings: JSON.stringify(bindings) })
+    .where(eq(accounts.id, accountId))
+    .run();
   if (updated.changes === 0) return undefined;
   return getAccountById(db, accountId);
 };

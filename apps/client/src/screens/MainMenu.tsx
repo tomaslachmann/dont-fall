@@ -1,11 +1,10 @@
-import { useState } from 'react';
 import { levelForXp } from '@dont-fall/shared';
 import Stage from '../ui/Stage';
 import JellyButton from '../ui/JellyButton';
 import Logo from '../ui/Logo';
 import Avatar from '../ui/Avatar';
 import { CharacterPreview } from './CharacterPreview.js';
-import { Badge } from '../ui/Toast';
+import { Badge } from '../ui/Badge';
 import { StatTile } from '../ui/Pill';
 import type { Feel } from '../tokens';
 import s from './MainMenu.module.css';
@@ -14,13 +13,10 @@ import { useAccount } from '../lib/hooks/useAccount';
 import { useFriends } from '../lib/hooks/useFriends';
 import { useGameSettings } from '../lib/hooks/useGameSettings';
 import { formatBeansOnline } from '../lib/api/settings';
-import { lobbyPath, resolveLobbyRef } from '../lib/api/lobbyBroker.js';
-import type { LobbyInviteView } from '@dont-fall/shared';
 import SettingsIcon from '../ui/SettingsIcon';
-import FriendAlerts from './FriendAlerts';
 
 export type MenuDestination =
-  | 'settings' | 'survival' | 'build' | 'discover' | 'leaderboards' | 'friends' | 'character';
+  | 'settings' | 'survival' | 'build' | 'discover' | 'leaderboards' | 'friends' | 'character' | 'credits';
 
 export interface MainMenuProps {
   level?: number;
@@ -33,6 +29,7 @@ const NAV: Array<[string, MenuDestination]> = [
   ['FRIENDS', 'friends'],
   ['DISCOVER', 'discover'],
   ['LEADERBOARDS', 'leaderboards'],
+  ['CREDITS', 'credits'],
 ];
 
 export default function MainMenu({
@@ -47,18 +44,10 @@ export default function MainMenu({
   // wins, and before the fetch lands there is simply no count to show.
   const settings = useGameSettings();
   const beansOnline = online ?? (settings ? formatBeansOnline(settings.onlinePlayers) : undefined);
-  // The FRIENDS badge and the alert toasts read the same cached overview the
-  // Friends screen reads — the menu never fetches the roster twice.
+  // The FRIENDS badge reads the same cached overview the Friends screen
+  // reads — the menu never fetches the roster twice. Answering requests and
+  // invites is the global alert stack's job, not this Screen's.
   const friends = useFriends();
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const joinInvite = (invite: LobbyInviteView) => {
-    friends.dismissInvite(invite.id);
-    resolveLobbyRef(invite.lobby).then(
-      (lobby) => navigate(lobbyPath(lobby)),
-      (err: unknown) => setNotice(err instanceof Error ? err.message : 'Could not join that Lobby.'),
-    );
-  };
   return (
     <Stage
       background="var(--df-stage-menu)"
@@ -109,7 +98,15 @@ export default function MainMenu({
               // Leaderboards has no screen yet — it logs until its own exists
               // rather than navigating nowhere.
               const target =
-                dest === 'character' ? '/character' : dest === 'discover' ? '/discover' : dest === 'friends' ? '/friends' : null;
+                dest === 'character'
+                  ? '/character'
+                  : dest === 'discover'
+                    ? '/discover'
+                    : dest === 'friends'
+                      ? '/friends'
+                      : dest === 'credits'
+                        ? '/credits'
+                        : null;
               const button = (
                 <JellyButton
                   key={dest}
@@ -133,11 +130,11 @@ export default function MainMenu({
               );
             })}
           </nav>
-          {notice !== null && <p className={s.notice}>{notice}</p>}
         </div>
 
         <CharacterPreview
           skin={account?.bodySkin ?? null}
+          hat={account?.hat ?? null}
           animation={[{ clip: "Idle", seconds: 4 }, { clip: "Win_Loop", seconds: 3.2 }]}
           sub="IDLE + WIN POSE LOOP"
           canvasLabel="3D preview of your bean"
@@ -151,20 +148,6 @@ export default function MainMenu({
         <StatTile label="WINS" value="137" />
         <StatTile label="GRABS BROKEN" value="892" accent />
       </div>
-      <FriendAlerts
-        requests={friends.requests}
-        invites={friends.invites}
-        onAccept={(id) => friends.acceptRequest(id).then(
-          () => undefined,
-          (err: unknown) => setNotice(err instanceof Error ? err.message : 'Could not accept that request.'),
-        )}
-        onDecline={(id) => friends.declineRequest(id).then(
-          () => undefined,
-          (err: unknown) => setNotice(err instanceof Error ? err.message : 'Could not decline that request.'),
-        )}
-        onJoinInvite={joinInvite}
-        onDismissInvite={friends.dismissInvite}
-      />
     </Stage>
   );
 }

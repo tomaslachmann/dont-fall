@@ -163,6 +163,13 @@ on. Publishing a Draft again creates a new Revision; an existing Revision is
 never mutated.
 _Avoid_: version, save
 
+**Thumbnail**:
+One Revision's screenshot — the JPEG its author framed in the Track builder
+just before saving, shown in Discover and on the Round loader. A Revision
+published without one simply has none.
+_Avoid_: preview (in the builder that means a live 3D vignette), screenshot,
+map image
+
 **Module**:
 A reusable template for a piece of Track (e.g. "Spinner", "Bounce", "Moving
 Platforms", "Straight", "Gap"). Authored once.
@@ -449,6 +456,12 @@ An Account's persistent, spendable currency — the only one. Spent on cosmetics
 Bet; never earned back by a Bet's own losers (the pot redistributes to winners, not the house).
 _Avoid_: gem, gold, credits, currency (when you mean this specific one)
 
+**Hat**:
+A cosmetic an Account's Character wears on its head — at most one, seen by every Player, in every
+Match and on every Screen that shows the Character. Unlocked by the Account's XP, never bought.
+Purely visual: it changes nothing about how the Character moves, collides or is hit.
+_Avoid_: headwear, accessory, helmet, cap (unless naming one hat)
+
 **Bet**:
 A wager an eliminated Player makes in Spectator Mode, staking Coins on which still-active Player
 wins the Round. Odds move dynamically with how many Coins are staked on each Player (more staked
@@ -459,6 +472,19 @@ _Avoid_: wager, guess
 **Skyfall**:
 The signature Final Race concept — a tall vertical Track the last Players climb;
 first to the top wins.
+
+### Controls
+
+**Control**:
+One physical input a Player presses — a keyboard key or a mouse button. The
+atoms gameplay actions bind to; UI chrome (Esc-back, form keys) is never one.
+_Avoid_: key, button (when you mean the bindable concept)
+
+**Key bindings**:
+The mapping from gameplay actions (move, jump, dash, hit, grab,
+spectate-next) to the Controls that drive them. One record per Account,
+edited in Settings; guests keep theirs on their own machine.
+_Avoid_: shortcuts, hotkeys, keymap
 
 ### Presentation
 
@@ -480,6 +506,15 @@ A full-viewport view shown *outside* a running Round — main menu, lobby,
 settings, account/registration, results, the Bet screen. Screens are React
 (ADR 0008).
 _Avoid_: menu, page, view, route
+
+**Flash message**:
+A transient confirmation or failure note on the global overlay stack — visible on every Screen
+until it fades or is dismissed. A failure flash is sticky until dismissed; actionable social
+traffic (friend requests, Lobby invites) is not flashes — those stay as sticky alerts.
+_Avoid_: notice, success message, popup. The style internals (`.toast` classes, the
+`df-toast-*` keyframes) deliberately keep the design mock's own `toast` name so the live
+styles diff 1:1 against `FriendRequestAlert` — that is the mock's visual vocabulary, not
+this game's concept word.
 
 ## Networking
 

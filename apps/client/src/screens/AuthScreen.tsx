@@ -200,7 +200,7 @@ export function AuthScreen() {
             )}
           </div>
 
-          <JellyButton variant="tile" centered onClick={submit} disabled={submitting}>{copy.cta}</JellyButton>
+          <JellyButton variant="tile" centered sound="confirm" onClick={submit} disabled={submitting}>{copy.cta}</JellyButton>
 
           <div className={s.divider}>
             <span className={s.rule} />

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { performance } from "node:perf_hooks";
+import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import {
   DEFAULT_API_PORT,
   DEFAULT_SERVER_PORT,
@@ -18,6 +18,7 @@ import {
   STANDINGS_READY_TIMEOUT_MS,
   allQualified,
   allReady,
+  assetIdsOf,
   resolveHostId,
   PLAYERS_TO_START,
   advanceMatchPhase,
@@ -43,9 +44,13 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { handleLobbyMessage } from "./match/lobby.js";
 import { startMatchLoop } from "./match/matchLoop.js";
 import { MatchRuntime } from "./match/matchRuntime.js";
+import { TickPerf, tickPerfRequested } from "./match/tickPerf.js";
 import { send, truncateForCloseReason, trySend } from "./net/wire.js";
-import { fetchAssetLibrary } from "./track/assetSource.js";
+import { createServerAssetLoader } from "./track/assetSource.js";
 import { fetchTrack, type FetchedTrack } from "./track/trackSource.js";
+
+/** How often the event-loop monitor samples under `DONTFALL_PERF=1` (M13 ticket 02); its readings include this much. */
+const EVENT_LOOP_RESOLUTION_MS = 10;
 
 /**
  * The authoritative match server (ADR 0002, ticket 02): one `RapierSimulation`
@@ -225,17 +230,21 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   // both with a freshly-fetched/rebuilt Track+simulation while the server is
   // The Track this server boots on. From here it lives on the runtime, which a
   // Playtest `?track=` reload or a Lobby Track pick can replace while running.
-  // Asset art loads once, here (M8 ticket 02) — fetch-once-per-loader, so a
-  // mid-Match edit on the API cannot split this server from the world
-  // it already built. A boot with no asset Modules in any Track still pays
-  // four tiny fetches; correctness of the library beats saving them.
+  // Asset art loads once per id (M8 ticket 02, ADR 0050 as amended by 0080),
+  // so a mid-Match edit on the API cannot split this server from the world
+  // it already built.
   const bootTrack = await fetchTrack(trackServiceUrl, trackFetchRetryOptions);
-  const library = { ...MODULE_LIBRARY, ...(await fetchAssetLibrary(trackServiceUrl)) };
+  // Only the boot Track's Assets (memory-footprint ticket 01, ADR 0080); the
+  // runtime loads more as later Tracks need them, each id once.
+  const assets = createServerAssetLoader(trackServiceUrl);
+  const library = { ...MODULE_LIBRARY, ...(await assets.load(assetIdsOf(bootTrack.track))) };
   // This Match's own id (ticket 14) — one stable name for the Match that the
   // API (betting pools keyed by `(matchId, round)`) and every client share
   // via the snapshot. The broker needs none of it: its Lobby id stays its
   // own bookkeeping, never crossing into the Match.
   const matchId = randomUUID();
+  // M13 ticket 02: tick timing, only when the process asks for it.
+  const perfRequested = tickPerfRequested(process.env);
   const rt = new MatchRuntime(
     {
       matchId,
@@ -249,6 +258,8 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       ...(config.timeLimitMsOverride !== undefined ? { timeLimitMsOverride: config.timeLimitMsOverride } : {}),
       ...(config.survivorTargetOverride !== undefined ? { survivorTargetOverride: config.survivorTargetOverride } : {}),
       ...(config.matchLengthOverride !== undefined ? { matchLengthOverride: config.matchLengthOverride } : {}),
+      ...(perfRequested ? { profileClock: () => performance.now() } : {}),
+      assets,
     },
     bootTrack,
     library,
@@ -347,6 +358,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         let candidate: FetchedTrack;
         try {
           candidate = await fetchTrack(trackServiceUrl, { ...trackFetchRetryOptions, trackId: requestedTrackId });
+          await rt.loadAssetsFor(candidate.track);
         } catch (err) {
           socket.close(4002, truncateForCloseReason(`failed to load Track "${requestedTrackId}": ${(err as Error).message}`));
           return;
@@ -425,7 +437,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       // The host is the first joiner (M4 ticket 07, ADR 0040) — `joinOrder`
       // is what `resolveHostId` reads to decide that, recomputed from
       // whoever is still connected rather than stored.
-      rt.lobbyPlayers.set(id, { id, nickname: "Player", ready: false, joinOrder, accountId: null, bodySkin: null });
+      rt.lobbyPlayers.set(id, { id, nickname: "Player", ready: false, joinOrder, accountId: null, bodySkin: null, hat: null });
       // A mid-Match spectator is in the Lobby's list, not in the Round (M7
       // ticket 08): registered and welcomed above, but seated by no
       // simulation — `buildSimulationFor` seats everyone else, and only a
@@ -506,7 +518,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
         const midRound = rt.match.phase === "RUNNING";
         if (midRound && !spectating && !rt.dnf.some((entry) => entry.id === id)) {
           const row = rt.lobbyPlayers.get(id);
-          rt.dnf.push({ id, nickname: row?.nickname ?? "Player", accountId: row?.accountId ?? null, bodySkin: row?.bodySkin ?? null });
+          rt.dnf.push({ id, nickname: row?.nickname ?? "Player", accountId: row?.accountId ?? null, bodySkin: row?.bodySkin ?? null, hat: row?.hat ?? null });
         }
         rt.sockets.delete(id);
         rt.inputs.remove(id);
@@ -526,7 +538,17 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
   // ADR 0059: a finished server closes itself — everyone left for the
   // results page, or the straggler grace ran out. `closeServer` below is only
   // *called* from a later tick, so referencing it here is safe.
-  const interval = startMatchLoop(rt, { onTerminalClose: () => void closeServer() });
+  const eventLoop = perfRequested ? monitorEventLoopDelay({ resolution: EVENT_LOOP_RESOLUTION_MS }) : null;
+  eventLoop?.enable();
+  const perf = perfRequested
+    ? new TickPerf({
+        now: () => performance.now(),
+        log: (line) => console.log(`${line} · match ${matchId}`),
+        eventLoop,
+        eventLoopResolutionMs: EVENT_LOOP_RESOLUTION_MS,
+      })
+    : null;
+  const interval = startMatchLoop(rt, { onTerminalClose: () => void closeServer(), perf });
 
   const port =
     config.portRange !== undefined
@@ -548,6 +570,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       // listening to anymore — see `MatchRuntime.closed`'s own doc.
       rt.closed = true;
       clearInterval(interval);
+      eventLoop?.disable();
       for (const socket of rt.sockets.values()) socket.close();
       // `wss` was created with `{ server: httpServer }` — closing it only
       // stops the WebSocket layer, never the HTTP server underneath it

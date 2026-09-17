@@ -138,6 +138,14 @@ export interface BuilderEngine {
    * authoring canvas (ADR 0063, which stays the default).
    */
   readonly environmentPreview: boolean;
+  /**
+   * Whether the builder is framing the save's Thumbnail (ADR 0085) — the
+   * viewport goes fullscreen with everything on (the authored Environment,
+   * running Motions, Impact tints) and no authoring UI, and the only actions
+   * are capture-and-save or cancel. The camera stays the author's: orbit,
+   * zoom and pan keep working, picking does not.
+   */
+  readonly previewing: boolean;
   readonly clockSeconds: number;
   readonly apiUrl: string;
   readonly recentAssets: readonly string[];
@@ -151,6 +159,12 @@ export interface BuilderEngine {
 
   attachViewport: (container: HTMLElement) => void;
   detachViewport: () => void;
+  /**
+   * Re-fits the viewport's renderer to its container — the shell calls this
+   * after a layout swap (ADR 0085's capture mode) resizes the canvas box. A
+   * no-op with no viewport attached.
+   */
+  resizeViewport: () => void;
   attachMotionPanel: (container: HTMLElement) => void;
   detachMotionPanel: () => void;
   /** Attaches a palette/tile preview; the returned cleanup unregisters it (StrictMode remounts). */
@@ -227,6 +241,20 @@ export interface BuilderEngine {
 
   setApiUrl: (url: string) => void;
   saveTrack: (name: string, defaults: TrackRoundDefaults) => Promise<void>;
+  /**
+   * Enters Thumbnail capture for a save with `name`/`defaults` (ADR 0085) —
+   * stashes them until the author confirms (capture-and-save) or cancels.
+   * Forces the fullscreen view on; restoring it is confirm's and cancel's job.
+   */
+  startPreviewCapture: (name: string, defaults: TrackRoundDefaults) => void;
+  /** Leaves capture mode without saving — the stashed save is dropped, the authoring view restored. */
+  cancelPreviewCapture: () => void;
+  /**
+   * Captures the current view as the stashed save's Thumbnail and saves.
+   * Stays in capture mode on any failure (no pixels, save refused), so the
+   * author can reframe or retry instead of starting over.
+   */
+  confirmPreviewCapture: () => Promise<void>;
   loadTrackById: (id: string) => Promise<void>;
   fetchTrackList: () => Promise<void>;
   /** Publishes the Draft for playtest — the toolbar passes its own fields, the engine holds no text. */
@@ -295,6 +323,23 @@ export const createBuilderEngine = (opts?: {
   /** The viewport draws the picked Environment while previewing it, the authoring canvas otherwise. */
   const syncEnvironmentView = (): void => {
     viewport?.setEnvironment(environmentPreview ? ENVIRONMENT_PRESETS[environment] : null);
+  };
+  /** The save waiting on its Thumbnail while `previewing`, dropped on cancel. */
+  let pendingSave: { name: string; defaults: TrackRoundDefaults } | null = null;
+  /** The authoring view as capture mode found it — restored on confirm and on cancel. */
+  let savedView: { environmentPreview: boolean; playing: boolean; tintVisible: boolean } | null = null;
+  /** Leaves capture mode: drops the stashed save and puts the authoring view back as it was. */
+  const exitPreviewCapture = (): void => {
+    pendingSave = null;
+    if (savedView) {
+      environmentPreview = savedView.environmentPreview;
+      playing = savedView.playing;
+      tintVisible = savedView.tintVisible;
+      savedView = null;
+    }
+    syncEnvironmentView();
+    viewport?.setImpactTintVisible(tintVisible);
+    viewport?.setCourseVisible(true);
   };
   let apiUrl = DEFAULT_API_URL;
   let recentAssets: string[] = [];
@@ -550,6 +595,9 @@ export const createBuilderEngine = (opts?: {
     get environmentPreview() {
       return environmentPreview;
     },
+    get previewing() {
+      return pendingSave !== null;
+    },
     get clockSeconds() {
       return clockSeconds;
     },
@@ -601,6 +649,9 @@ export const createBuilderEngine = (opts?: {
     detachViewport: () => {
       viewport?.dispose();
       viewport = undefined;
+    },
+    resizeViewport: () => {
+      viewport?.resize();
     },
 
     attachMotionPanel: (container) => {
@@ -870,6 +921,9 @@ export const createBuilderEngine = (opts?: {
       pointerDownAt = { x, y };
     },
     viewportClick: (x, y, shiftKey) => {
+      // Capture mode frames, never picks — the orbit controls still eat the
+      // drag itself, this only skips the selection that would follow it.
+      if (pendingSave) return;
       if (respawnPick) {
         const index = primary();
         const hit = viewport?.pickFloor(x, y);
@@ -953,6 +1007,66 @@ export const createBuilderEngine = (opts?: {
         loadedTrack = { id, name: name.trim(), timeLimitMs: defaults.timeLimitMs, survivorTarget: defaults.survivorTarget };
         setStatus(`saved as "${id}"`, "ok");
       } catch (err) {
+        setStatus(`save failed: ${(err as Error).message}`, "error");
+      }
+      notify();
+    },
+    startPreviewCapture: (name, defaults) => {
+      if (pendingSave) return;
+      if (history.track.length === 0) {
+        setStatus("cannot save an empty Track — place a Module first", "error");
+        notify();
+        return;
+      }
+      pendingSave = { name, defaults };
+      savedView = { environmentPreview, playing, tintVisible };
+      // The bare Track, everything on: no selection (no gizmo, no boxes), no
+      // guides, no course markers, the authored Environment drawn, Motions
+      // running, Impact tints lit — and the whole Track framed to start from.
+      pivotPick = undefined;
+      respawnPick = false;
+      selected = new Set();
+      syncSelectionView();
+      viewport?.setCourseVisible(false);
+      environmentPreview = true;
+      syncEnvironmentView();
+      playing = true;
+      tintVisible = true;
+      viewport?.setImpactTintVisible(true);
+      viewport?.frameTrack();
+      setStatus("frame the Track — orbit · zoom · pan — then Create Preview", "quiet");
+      notify();
+    },
+    cancelPreviewCapture: () => {
+      if (!pendingSave) return;
+      exitPreviewCapture();
+      setStatus(`${history.track.length} Segment(s)`, "quiet");
+      notify();
+    },
+    confirmPreviewCapture: async () => {
+      const save = pendingSave;
+      if (!save) return;
+      const thumbnail = viewport?.capturePreview();
+      if (!thumbnail) {
+        setStatus("capture failed — the canvas gave no pixels, reframe or Cancel", "error");
+        notify();
+        return;
+      }
+      setStatus("saving…", "quiet");
+      notify();
+      try {
+        const { id } = await saveTrack(apiUrl, save.name.trim(), history.track, save.defaults, environment, thumbnail);
+        loadedTrack = {
+          id,
+          name: save.name.trim(),
+          timeLimitMs: save.defaults.timeLimitMs,
+          survivorTarget: save.defaults.survivorTarget,
+        };
+        exitPreviewCapture();
+        setStatus(`saved as "${id}"`, "ok");
+      } catch (err) {
+        // Still previewing: the framing survives, so the author retries
+        // instead of starting over.
         setStatus(`save failed: ${(err as Error).message}`, "error");
       }
       notify();
@@ -1121,6 +1235,10 @@ export const createBuilderEngine = (opts?: {
     },
 
     handleKeyDown: (event) => {
+      if (event.code === "Escape" && pendingSave) {
+        engine.cancelPreviewCapture();
+        return true;
+      }
       if (event.code === "Escape" && pivotPick) {
         engine.cancelPivotPick();
         return true;

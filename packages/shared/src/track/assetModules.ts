@@ -8,6 +8,7 @@ import { TRAP_MODULE_DEFS } from "./trapAssetDefs.js";
 import type { Footprint, Hazard, Module, Socket } from "./Module.js";
 import type { VolumeConfig } from "../simulation/Volume.js";
 import type { SurfaceId } from "./Surface.js";
+import type { Track } from "./Track.js";
 
 /**
  * The code-authored half of an asset Module (M8 ticket 02, ADR 0050) —
@@ -202,4 +203,68 @@ export const loadAssetLibrary = async (
     entries[def.id] = attachAssetGeometry(def, validated);
   }
   return entries;
+};
+
+const ASSET_DEF_BY_ID = new Map(ASSET_MODULE_DEFS.map((def) => [def.id, def]));
+
+/**
+ * The Asset Module ids `track` places, each once, in the order first placed
+ * (memory-footprint ticket 01): the files a loader needs for this Track and
+ * nothing else. Procedural and unknown ids are not Assets; `resolveTrack`
+ * still names an unknown one when the Track is built.
+ */
+export const assetIdsOf = (track: Track): string[] => [
+  ...new Set(track.map((segment) => segment.moduleId).filter((id) => ASSET_DEF_BY_ID.has(id))),
+];
+
+/** The Asset ids `track` places that `library` holds no geometry for yet. */
+export const missingAssetIds = (track: Track, library: Record<string, Module>): string[] =>
+  assetIdsOf(track).filter((id) => library[id]?.asset === undefined);
+
+/**
+ * A loader that fetches Assets as Tracks need them (memory-footprint ticket
+ * 01, ADR 0080). Each id is fetched and parsed at most once per loader, so a
+ * running server never refetches an id under a world it already built (ADR
+ * 0050's fetch-once rule, per id). Concurrent loads of the same id share one
+ * fetch. A failed id is not remembered, so a later load tries it again.
+ */
+export interface AssetLibraryLoader {
+  /** Loads whatever of `ids` is not loaded yet, then resolves to every Asset this loader holds. */
+  load: (ids: readonly string[]) => Promise<Record<string, Module>>;
+}
+
+export const createAssetLibraryLoader = (
+  fetchBytes: (url: string) => Promise<Uint8Array>,
+  baseUrl: string,
+  onWarning?: AssetWarningHandler,
+): AssetLibraryLoader => {
+  const loading = new Map<string, Promise<Module>>();
+  const loaded: Record<string, Module> = {};
+  const loadOne = (def: AssetModuleDef): Promise<Module> => {
+    const existing = loading.get(def.id);
+    if (existing) return existing;
+    const pending = loadAssetLibrary(fetchBytes, baseUrl, [def], onWarning).then(
+      (entries) => {
+        const module = entries[def.id]!;
+        loaded[def.id] = module;
+        return module;
+      },
+      (err: unknown) => {
+        loading.delete(def.id);
+        throw err;
+      },
+    );
+    loading.set(def.id, pending);
+    return pending;
+  };
+  return {
+    load: async (ids) => {
+      const defs = [...new Set(ids)].flatMap((id) => {
+        const def = ASSET_DEF_BY_ID.get(id);
+        return def === undefined ? [] : [def];
+      });
+      await Promise.all(defs.map(loadOne));
+      return { ...loaded };
+    },
+  };
 };

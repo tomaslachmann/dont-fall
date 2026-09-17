@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import type { LobbySnapshot } from "../lib/socket/lobbyConnection.js";
+import { clearFlashes } from "../lib/flash.js";
+import FlashHost from "../ui/FlashHost.js";
 import Lobby, { type LobbyProps } from "./Lobby";
 import { WithQuery } from "../test/query.js";
 
@@ -10,6 +12,7 @@ import { WithQuery } from "../test/query.js";
 // stubbed by default so tests that don't care about it never hit a real
 // (nonexistent, in this test environment) network address.
 beforeEach(() => {
+  clearFlashes();
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 })));
 });
 
@@ -32,8 +35,8 @@ const baseLobby = (overrides: Partial<LobbySnapshot> = {}): LobbySnapshot => ({
   matchOver: null,
   hostId: "host-id",
   players: [
-    { id: "host-id", nickname: "Host Player", ready: false, joinOrder: 0, accountId: null, bodySkin: null },
-    { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, bodySkin: null },
+    { id: "host-id", nickname: "Host Player", ready: false, joinOrder: 0, accountId: null, bodySkin: null, hat: null },
+    { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, bodySkin: null, hat: null },
   ],
   trackId: "track-a",
   trackRevision: 1,
@@ -54,6 +57,8 @@ const noop = () => {};
 const renderLobby = (props: Partial<LobbyProps> = {}) =>
   render(
     <MemoryRouter>
+      {/* The shell mounts the flash stack above the routes — this test does the same. */}
+      <FlashHost />
       <WithQuery><Lobby
         lobby={baseLobby()}
         onSetNickname={noop}
@@ -108,7 +113,7 @@ describe("Lobby", () => {
   it("sends nothing when the roster already shows the Account's name", async () => {
     const onSetNickname = vi.fn();
     renderLobby({
-      lobby: baseLobby({ players: [{ id: "host-id", nickname: "Wobbleton", ready: false, joinOrder: 0, accountId: null, bodySkin: null }] }),
+      lobby: baseLobby({ players: [{ id: "host-id", nickname: "Wobbleton", ready: false, joinOrder: 0, accountId: null, bodySkin: null, hat: null }] }),
       onSetNickname,
     });
 
@@ -127,8 +132,8 @@ describe("Lobby", () => {
         <WithQuery><Lobby
           lobby={baseLobby({
             players: [
-              { id: "host-id", nickname: "Host Player", ready: true, joinOrder: 0, accountId: null, bodySkin: null },
-              { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, bodySkin: null },
+              { id: "host-id", nickname: "Host Player", ready: true, joinOrder: 0, accountId: null, bodySkin: null, hat: null },
+              { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, bodySkin: null, hat: null },
             ],
           })}
           onSetNickname={noop}
@@ -200,7 +205,7 @@ describe("Lobby", () => {
       expect(screen.getByRole("button", { name: "INVITE FRIENDS" })).toBeDisabled();
     });
 
-    it("copies the code for sharing, and never offers to when there is none", () => {
+    it("copies the code for sharing and flashes it, and never offers to when there is none", async () => {
       const writeText = vi.fn().mockResolvedValue(undefined);
       vi.stubGlobal("navigator", { clipboard: { writeText } });
 
@@ -208,7 +213,19 @@ describe("Lobby", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "INVITE FRIENDS" }));
       expect(writeText).toHaveBeenCalledWith("PLUMJA");
-      expect(screen.getByRole("button", { name: "CODE COPIED" })).toBeInTheDocument();
+      expect(await screen.findByText("Invite code copied.")).toBeInTheDocument();
+      // The button keeps its label — the flash carries the confirmation.
+      expect(screen.getByRole("button", { name: "INVITE FRIENDS" })).toBeInTheDocument();
+    });
+
+    it("a copy that fails flashes why instead of claiming it", async () => {
+      const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+      vi.stubGlobal("navigator", { clipboard: { writeText } });
+
+      renderLobby({ code: "PLUMJA" });
+
+      fireEvent.click(screen.getByRole("button", { name: "INVITE FRIENDS" }));
+      expect(await screen.findByText("Couldn't copy the code.")).toBeInTheDocument();
     });
   });
 
@@ -243,8 +260,8 @@ describe("Lobby", () => {
 
     it("shows the server's reason a Round can't start, and disables Start with it", () => {
       const readyPlayers = [
-        { id: "host-id", nickname: "Host Player", ready: true, joinOrder: 0, accountId: null, bodySkin: null },
-        { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, bodySkin: null },
+        { id: "host-id", nickname: "Host Player", ready: true, joinOrder: 0, accountId: null, bodySkin: null, hat: null },
+        { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, bodySkin: null, hat: null },
       ];
       renderLobby({ lobby: baseLobby({ players: readyPlayers, startBlockedReason: "This Track has no Finish Zone." }) });
 
@@ -377,8 +394,8 @@ describe("Lobby", () => {
 
   describe("inline Track browser (M9 ticket 16)", () => {
     const ROWS = [
-      { id: "track-a", name: "Wobble Ramp", authorId: "a1", createdAt: 1_000, plays: 12, hasFinishZone: true },
-      { id: "track-b", name: "Arena Bowl", authorId: "a1", createdAt: 2_000, plays: 3, hasFinishZone: false },
+      { id: "track-a", name: "Wobble Ramp", authorId: "a1", createdAt: 1_000, plays: 12, hasFinishZone: true, hasThumbnail: false },
+      { id: "track-b", name: "Arena Bowl", authorId: "a1", createdAt: 2_000, plays: 3, hasFinishZone: false, hasThumbnail: false },
     ];
 
     beforeEach(() => {

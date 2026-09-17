@@ -1,3 +1,5 @@
+import { levelForXp } from "./economy.js";
+
 /**
  * Body skins (M9 ticket 15) — the Player's bean color, the first cosmetic.
  * Stored as a small int on the Account (`bodySkin`), validated here so the
@@ -54,3 +56,67 @@ export const bodySkinHue = (skin: number | null): number | null | undefined => {
     ? BODY_SKIN_HUES[skin]!
     : undefined;
 };
+
+/**
+ * A hat BLIP can wear (ADR 0083): the first cosmetic with its own art,
+ * rigid, on the head bone. Worn by at most one per Character, stored on the
+ * Account as its `id`.
+ */
+export interface HatDef {
+  /** Stored on the Account and sent on the Lobby roster — never renamed once shipped. */
+  id: string;
+  /** What the wardrobe calls it. */
+  name: string;
+  /** The level (`levelForXp` of the Account's XP) it unlocks at. */
+  unlockLevel: number;
+  /** Whether it covers BLIP's crest, which the rig then tucks into the head. The crown leaves it showing. */
+  coversCrest: boolean;
+}
+
+/**
+ * Every hat, in wardrobe order: cheapest unlock first. The levels are the
+ * art pack's own suggestion (`BLIP_Cosmetics_v1`), kept as data so tuning
+ * them is an edit here and nowhere else.
+ */
+export const HATS: readonly HatDef[] = [
+  { id: "cone", name: "TRAFFIC CONE", unlockLevel: 2, coversCrest: true },
+  { id: "pot", name: "POT", unlockLevel: 5, coversCrest: true },
+  { id: "bucket", name: "BUCKET", unlockLevel: 9, coversCrest: true },
+  { id: "propeller-cap", name: "PROPELLER CAP", unlockLevel: 14, coversCrest: true },
+  { id: "crown", name: "CROWN", unlockLevel: 20, coversCrest: false },
+  { id: "ufo", name: "UFO", unlockLevel: 30, coversCrest: true },
+];
+
+/** The hat `id` names, or `undefined` for anything that isn't one. */
+export const hatById = (id: unknown): HatDef | undefined =>
+  typeof id === "string" ? HATS.find((hat) => hat.id === id) : undefined;
+
+/**
+ * Why `hat` isn't something to wear at all, or `undefined` when it is: a
+ * known hat id, or `null` for none.
+ */
+export const invalidHatReason = (hat: unknown): string | undefined => {
+  if (hat === null || hatById(hat)) return undefined;
+  return `hat must be null or one of: ${HATS.map((known) => known.id).join(", ")}`;
+};
+
+/** Whether an Account with `xp` has unlocked `hat`. */
+export const isHatUnlocked = (hat: HatDef, xp: number): boolean => levelForXp(xp) >= hat.unlockLevel;
+
+/**
+ * Why an Account with `xp` can't wear `hat` yet, or `undefined` when it can.
+ * Taking a hat off (`null`) is always allowed, and so is an id that isn't a
+ * hat at all — that is {@link invalidHatReason}'s to refuse.
+ */
+export const lockedHatReason = (hat: string | null, xp: number): string | undefined => {
+  const def = hatById(hat);
+  if (!def || isHatUnlocked(def, xp)) return undefined;
+  return `${def.name} unlocks at level ${def.unlockLevel}`;
+};
+
+/**
+ * The hats an Account unlocked by going from `xpBefore` to `xpAfter`, in
+ * wardrobe order — what the Rewards screen announces after a Match.
+ */
+export const hatsUnlockedBetween = (xpBefore: number, xpAfter: number): HatDef[] =>
+  HATS.filter((hat) => !isHatUnlocked(hat, xpBefore) && isHatUnlocked(hat, xpAfter));

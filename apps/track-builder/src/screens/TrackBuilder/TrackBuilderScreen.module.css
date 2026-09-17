@@ -62,6 +62,27 @@
   z-index: 2;
 }
 
+/* Thumbnail capture (ADR 0085): the canvas alone, fullscreen, with the
+   CaptureBar floating over it. Same tree as `.screen` (the keyed Viewport
+   stays mounted), only the chrome swaps. */
+.capture {
+  container: tbscreen / inline-size;
+  position: relative;
+  height: 100dvh;
+  background: var(--tb-color-canvas);
+  color: var(--df-color-ink);
+  font-family: var(--df-font-ui);
+}
+
+.captureBody {
+  position: absolute;
+  inset: 0;
+  /* Grid, not block: the Viewport's only in-flow content is absolutely
+     positioned (the canvas mount), so a block child collapses to zero height
+     and the screen goes blank — a grid child stretches fullscreen instead. */
+  display: grid;
+}
+
 @container tbscreen (max-width: 1400px) {
   .body {
     --tb-palette-w: 224px;

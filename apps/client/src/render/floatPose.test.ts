@@ -4,7 +4,7 @@ import type { CharacterActions } from "./characterModel.js";
 import { FLOAT_STRUGGLE_SHARE, FLOAT_STRUGGLE_SPEED, FloatLimbs, blendFloatStruggle } from "./floatPose.js";
 
 const actionsWith = (struggleAir: THREE.AnimationAction | null): CharacterActions => ({
-  idle: null, walk: null, run: null,
+  idle: null, walk: null, run: null, sprint: null,
   jumpStart: null, jumpRise: null, jumpApex: null, jumpFall: null, jumpLand: null,
   punch: null, hitReact: null,
   ko: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },

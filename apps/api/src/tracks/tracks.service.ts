@@ -16,7 +16,15 @@ import {
 import type { ApiDb } from "../db/db.js";
 import { ServiceError } from "../http/errors.js";
 import { generateRandomTrack } from "./generate.js";
-import { getAnyTrack, getTrackById, getTrackPlays, listTracks, recordTrackPlay, saveTrack } from "./tracks.dao.js";
+import {
+  getAnyTrack,
+  getTrackById,
+  getTrackPlays,
+  getTrackThumbnail,
+  listTracks,
+  recordTrackPlay,
+  saveTrack,
+} from "./tracks.dao.js";
 import {
   invalidSurvivorTargetReason,
   invalidTimeLimitReason,
@@ -28,6 +36,7 @@ import {
   invalidTrackLaunchReason,
   invalidTrackMudReason,
   invalidTrackSurfaceConflictReason,
+  invalidTrackThumbnailReason,
   isTrack,
   unknownModuleIds,
 } from "./tracks.validation.js";
@@ -48,6 +57,7 @@ export interface PublishInput {
   timeLimitMs?: unknown;
   survivorTarget?: unknown;
   environment?: unknown;
+  thumbnail?: unknown;
 }
 
 /**
@@ -95,6 +105,10 @@ export const publishTrack = (db: ApiDb, input: PublishInput): { id: string } => 
   // must name a preset this build has, so a typo is never stored forever.
   const badEnvironment = input.environment === undefined ? undefined : invalidEnvironmentReason(input.environment);
   if (badEnvironment) throw new ServiceError(400, badEnvironment);
+  // Absent means no Thumbnail (ADR 0085); anything present must already be
+  // the data URL the builder captured, stored verbatim.
+  const badThumbnail = invalidTrackThumbnailReason(input.thumbnail);
+  if (badThumbnail) throw new ServiceError(400, badThumbnail);
   return saveTrack(db, {
     track: input.track,
     ...(typeof input.id === "string" ? { id: input.id } : {}),
@@ -104,7 +118,19 @@ export const publishTrack = (db: ApiDb, input: PublishInput): { id: string } => 
     ...(typeof input.timeLimitMs === "number" ? { timeLimitMs: input.timeLimitMs } : {}),
     ...(typeof input.survivorTarget === "number" ? { survivorTarget: input.survivorTarget } : {}),
     ...(isEnvironmentId(input.environment) ? { environment: input.environment } : {}),
+    ...(typeof input.thumbnail === "string" ? { thumbnail: input.thumbnail } : {}),
   });
+};
+
+/** Parses the raw `?revision=` query value both Revision-pinned reads share — latest when absent, 400 when malformed. */
+const parseRevisionParam = (revisionParam: string | string[] | undefined): number | undefined => {
+  const first = Array.isArray(revisionParam) ? revisionParam[0] : revisionParam;
+  if (first === undefined) return undefined;
+  const revision = Number(first);
+  if (!Number.isInteger(revision) || revision < 1) {
+    throw new ServiceError(400, `revision must be a positive integer, got "${first}"`);
+  }
+  return revision;
 };
 
 /**
@@ -115,14 +141,7 @@ export const publishTrack = (db: ApiDb, input: PublishInput): { id: string } => 
  * route answered.
  */
 export const fetchTrack = (db: ApiDb, id: string, revisionParam: string | string[] | undefined): StoredTrack => {
-  const first = Array.isArray(revisionParam) ? revisionParam[0] : revisionParam;
-  let revision: number | undefined;
-  if (first !== undefined) {
-    revision = Number(first);
-    if (!Number.isInteger(revision) || revision < 1) {
-      throw new ServiceError(400, `revision must be a positive integer, got "${first}"`);
-    }
-  }
+  const revision = parseRevisionParam(revisionParam);
   const stored = getTrackById(db, id, revision);
   if (!stored) {
     throw new ServiceError(
@@ -131,6 +150,35 @@ export const fetchTrack = (db: ApiDb, id: string, revisionParam: string | string
     );
   }
   return stored;
+};
+
+/**
+ * Fetches one Revision's Thumbnail data URL (ADR 0085) — latest, or the exact
+ * `revision` pinned. 400 for a malformed revision (the same message as
+ * `fetchTrack`), 404 naming the miss — told apart, so a client can tell "no
+ * such Track" (a bug or a deleted id) from "no Thumbnail yet" (a Revision
+ * published without one, which falls back to generated art).
+ */
+export const fetchTrackThumbnail = (
+  db: ApiDb,
+  id: string,
+  revisionParam: string | string[] | undefined,
+): { thumbnail: string; revisionPinned: boolean } => {
+  const revision = parseRevisionParam(revisionParam);
+  const thumbnail = getTrackThumbnail(db, id, revision);
+  if (thumbnail === undefined) {
+    throw new ServiceError(
+      404,
+      revision === undefined ? `no Track with id "${id}"` : `no Track with id "${id}" at revision ${revision}`,
+    );
+  }
+  if (thumbnail === null) {
+    throw new ServiceError(
+      404,
+      revision === undefined ? `Track "${id}" has no thumbnail yet` : `Track "${id}" has no thumbnail at revision ${revision}`,
+    );
+  }
+  return { thumbnail, revisionPinned: revision !== undefined };
 };
 
 export const fetchAnyTrack = (db: ApiDb): StoredTrack => {

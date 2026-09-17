@@ -24,6 +24,8 @@ export interface ProfileProps {
   name?: string;
   /** Whose card this is — the render wears their skin, or the default while unknown. */
   skin?: number | null;
+  /** And their hat (ADR 0083), or none. */
+  hat?: string | null;
   level?: number;
   /** No season system exists, so the Route passes none and the chip hides. */
   season?: string;
@@ -31,18 +33,22 @@ export interface ProfileProps {
   xp?: number;
   /** XP span to leave it. */
   xpTarget?: number;
-  /** Null until career stats are tracked — the section says so instead of faking numbers. */
+  /** Null while the career loads — the section says so instead of faking numbers. */
   stats?: ProfileStat[] | null;
-  /** Null until the inventory exists — same honest empty state. */
+  /** Null while the career loads — same loading state. */
   badges?: { earned: number; total: number } | null;
-  /** Null until match history exists — same honest empty state. */
+  /** Earned badge names in tile order — what each numbered tile's tooltip says. */
+  badgeNames?: string[];
+  /** Null while the career loads; an empty list is a career with no finished Matches yet. */
   matches?: MatchRow[] | null;
-  /** One inline notice — share/see-all stubs say it here, never in a `window.alert`. */
-  notice?: { text: string; tone: "error" | "info" } | null;
+  /** The career fetch failed — every section says so. */
+  failed?: boolean;
   onBack?: () => void;
   onShare?: () => void;
   onEditBean?: () => void;
   onSeeAll?: () => void;
+  /** The history toggle's label — "SEE ALL" collapsed, "SHOW LESS" expanded. */
+  seeAllLabel?: string;
   feel?: Feel;
 }
 
@@ -51,9 +57,9 @@ const LockIcon = () => (
 );
 
 export default function Profile({
-  name = 'BEAN', skin = null, level = 1, season, xp = 0, xpTarget = 1000,
-  stats = null, badges = null, matches = null, notice = null,
-  onBack, onShare, onEditBean, onSeeAll, feel,
+  name = 'BEAN', skin = null, hat = null, level = 1, season, xp = 0, xpTarget = 1000,
+  stats = null, badges = null, badgeNames = [], matches = null, failed = false,
+  onBack, onShare, onEditBean, onSeeAll, seeAllLabel = 'SEE ALL', feel,
 }: ProfileProps) {
   // Earned tiles first (numbered — no badge catalog exists to picture them),
   // locks for the visible rest, one overflow tile for everything past nine.
@@ -65,20 +71,21 @@ export default function Profile({
     <Stage background="var(--df-stage-lobby)" sheen="var(--df-sheen-menu)" feel={feel} className={s.screen}>
       <div className={s.topbar}>
         <div className={s.crumb}>
-          <button type="button" className={s.back} onClick={onBack} aria-label="Back">
+          <button type="button" className={s.back} data-ui-sound="back" onClick={onBack} aria-label="Back">
             <svg viewBox="0 0 18 18"><path d="M11 3L5 9l6 6" /></svg>
           </button>
           <span className={s.title}>PROFILE</span>
         </div>
         <div className={s.topActions}>
           <JellyButton variant="pill" tone="glass" centered onClick={onShare}>SHARE CARD</JellyButton>
-          <JellyButton variant="pill" tone="glass" centered onClick={onEditBean}>EDIT BEAN</JellyButton>
+          <JellyButton variant="pill" tone="ink" centered onClick={onEditBean}>EDIT BEAN</JellyButton>
         </div>
       </div>
 
       <Panel className={s.card}>
         <CharacterPreview
           skin={skin}
+          hat={hat}
           animation={WIN_SEQUENCE}
           autoRotate={false}
           label="3D CHARACTER RENDER"
@@ -91,21 +98,28 @@ export default function Profile({
           <Chip tone="any">LEVEL {level}</Chip>
           {season !== undefined && <Chip tone="waiting">{season}</Chip>}
         </span>
-        <span className={s.xpTrack}><span className={s.xpFill} style={{ width: `${Math.min(100, Math.max(0, (xp / xpTarget) * 100))}%` }} /></span>
+        {/* Divs, not spans — an inline fill ignores the percentage width entirely (the bar would never fill). */}
+        <div className={s.xpTrack}>
+          <div
+            className={s.xpFill}
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={xpTarget}
+            aria-valuenow={Math.round(xp)}
+            style={{ width: `${Math.min(100, Math.max(0, (xp / xpTarget) * 100))}%` }}
+          />
+        </div>
         <span className={s.xpNote} data-df-numeric>
           {xp.toLocaleString('en-US').replace(/,/g, ' ')} / {xpTarget.toLocaleString('en-US').replace(/,/g, ' ')} XP TO LEVEL {level + 1}
         </span>
-        {notice && (
-          <p role={notice.tone === "error" ? "alert" : "status"} className={notice.tone === "error" ? s.noticeError : s.notice}>
-            {notice.text}
-          </p>
-        )}
       </Panel>
 
       <div className={s.right}>
         <div className={s.stats}>
-          {stats === null ? (
-            <span className={s.empty}>Career stats aren't tracked yet.</span>
+          {failed ? (
+            <span className={s.empty}>Couldn't load the career.</span>
+          ) : stats === null ? (
+            <span className={s.empty}>Loading…</span>
           ) : (
             stats.map((st) => (
               <div key={st.label} className={[s.stat, st.hero && s.statHero].filter(Boolean).join(' ')}>
@@ -117,8 +131,10 @@ export default function Profile({
         </div>
 
         <div className={s.badges}>
-          {badges === null ? (
-            <span className={s.empty}>Badges aren't here yet.</span>
+          {failed ? (
+            <span className={s.empty}>Couldn't load the career.</span>
+          ) : badges === null ? (
+            <span className={s.empty}>Loading…</span>
           ) : (
             <>
               <div className={s.badgeHead}>
@@ -127,7 +143,7 @@ export default function Profile({
               </div>
               <div className={s.badgeGrid}>
                 {Array.from({ length: earnedShown }, (_, i) => (
-                  <span key={`earned-${i}`} className={[s.badge, s.badgeGold].join(' ')}>{i + 1}</span>
+                  <span key={`earned-${i}`} className={[s.badge, s.badgeGold].join(' ')} title={badgeNames[i]}>{i + 1}</span>
                 ))}
                 {Array.from({ length: locksShown }, (_, i) => (
                   <span key={`locked-${i}`} className={s.badge}><LockIcon /></span>
@@ -141,10 +157,14 @@ export default function Profile({
         <Panel className={s.recent}>
           <div className={s.recentHead}>
             <span className={s.recentTitle}>RECENT MATCHES</span>
-            <button type="button" className={s.seeAll} onClick={onSeeAll}>SEE ALL</button>
+            <button type="button" className={s.seeAll} onClick={onSeeAll}>{seeAllLabel}</button>
           </div>
-          {matches === null ? (
-            <span className={s.empty}>Match history isn't here yet.</span>
+          {failed ? (
+            <span className={s.empty}>Couldn't load the career.</span>
+          ) : matches === null ? (
+            <span className={s.empty}>Loading…</span>
+          ) : matches.length === 0 ? (
+            <span className={s.empty}>No finished Matches yet — race one and it lands here.</span>
           ) : (
             <div className={s.matches}>
               {matches.map((m, i) => (

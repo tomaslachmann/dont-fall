@@ -5,6 +5,7 @@
  * and the auth Screens are the only callers. Origin, token storage, and
  * transport come from the shared base (`api.ts`) — no `baseUrl` threading.
  */
+import type { KeyBindings } from "@dont-fall/shared";
 import { ApiError, apiBaseUrl, apiFetch, apiJson, apiPost, getStoredToken } from "./base.js";
 
 export interface Account {
@@ -18,6 +19,10 @@ export interface Account {
   coins: number;
   /** The body's equipped skin id (M9 ticket 15) — a small int, default bean until picked. */
   bodySkin: number;
+  /** The equipped hat's id (ADR 0083) — `null` for no hat. */
+  hat: string | null;
+  /** The stored key bindings (M9 controls) — `null` when never saved, which resolves to defaults. */
+  bindings: KeyBindings | null;
 }
 
 export interface AuthCallbackResult {
@@ -80,15 +85,35 @@ export const fetchAccount = async (): Promise<Account | null> => {
 /** Where the "Log in with Discord" button sends the browser — the API does the whole OAuth dance and redirects back to `/auth/callback`. */
 export const discordAuthorizeUrl = (): string => `${apiBaseUrl()}/auth/discord/authorize`;
 
+/** What one cosmetics save equips — a slot left out keeps what the Account has; `hat: null` takes the hat off. */
+export interface CosmeticsChoice {
+  bodySkin?: number;
+  hat?: string | null;
+}
+
 /**
- * Equips a body skin (M9 ticket 15) — PUTs the cosmetics sub-resource and
- * returns the updated Account, so the screen refreshes in the one round
- * trip. Throws `ApiError` (a 400 for a locked skin, 401 for a dead token)
- * like every other authed call.
+ * Equips cosmetics (M9 ticket 15, ADR 0083) — PUTs the cosmetics
+ * sub-resource and returns the updated Account, so the screen refreshes in
+ * the one round trip. Throws `ApiError` like every other authed call: a 400
+ * for something that isn't a skin or a hat, a 403 for a hat above the
+ * Account's level, a 401 for a dead token.
  */
-export const saveBodySkin = async (bodySkin: number): Promise<Account> =>
+export const saveCosmetics = async (choice: CosmeticsChoice): Promise<Account> =>
   apiJson<Account>("/auth/me/cosmetics", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bodySkin }),
+    body: JSON.stringify(choice),
+  });
+
+/**
+ * Stores key bindings (M9 controls) — PUTs the whole record and returns the
+ * updated Account, so the screen refreshes in the one round trip. Throws
+ * `ApiError` (a 400 for a malformed record, 401 for a dead token) like
+ * every other authed call.
+ */
+export const saveBindings = async (bindings: KeyBindings): Promise<Account> =>
+  apiJson<Account>("/auth/me/bindings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bindings }),
   });

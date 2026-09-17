@@ -22,6 +22,9 @@ import {
   type CharacterModel,
 } from "./characterModel.js";
 import { HitReactionPlayer } from "./hitReactionPlayer.js";
+import type { Wardrobe } from "./hats.js";
+import type { IceFootingQuery } from "./iceFooting.js";
+import { Footsteps, steppingClip, type SteppingClip } from "./footsteps.js";
 import { selectLocomotion } from "./locomotionAnimation.js";
 import { tintHueForSkin, tintModel } from "./playerTint.js";
 
@@ -105,6 +108,12 @@ export interface RemoteCharacterPool {
    * material, so unchanged rigs are never touched).
    */
   setSkins: (next: ReadonlyMap<string, number | null>) => void;
+  /**
+   * Refresh equipped hats by session id (ADR 0083), off the same roster as
+   * `setSkins` and before `apply` for the same reason. A rig is only
+   * re-dressed when its hat changed.
+   */
+  setHats: (next: ReadonlyMap<string, string | null>) => void;
   /** Tear down every pooled rig still standing — this rig's own exclusively-owned GPU resources included (`disposeRemoteRig`). */
   dispose: () => void;
 }
@@ -115,19 +124,35 @@ export interface RemotePoolWorld {
   floorBelow?: FloorQuery;
   /** Whether a capsule centre is inside a Volume that holds a Character up (ADR 0077). Without one, nobody Floats. */
   inUpdraft?: (point: Vec3) => boolean;
+  /** Whether a Character with this capsule centre stands on ice (ADR 0082). Without one, there is no ice. */
+  onIce?: IceFootingQuery;
+  /** Puts each rig's hat on (ADR 0083). Without one, nobody wears a hat. */
+  wardrobe?: Wardrobe;
+  /** A rig's foot came down in `clip`, the Character's capsule centre at `centre` (M14 ticket 04). Without one, nobody is heard stepping. */
+  onFootstep?: (clip: SteppingClip, centre: Vec3) => void;
 }
 
 export const createRemoteCharacterPool = (
   scene: THREE.Scene,
   characterModel: CharacterModel,
-  { floorBelow = () => null, inUpdraft = () => false }: RemotePoolWorld = {},
+  { floorBelow = () => null, inUpdraft = () => false, onIce = () => false, wardrobe, onFootstep }: RemotePoolWorld = {},
 ): RemoteCharacterPool => {
   const rigs = new Map<string, RemoteRig>();
   /** Equipped skins by session id (M9 ticket 15) — the stage refreshes this off every snapshot's lobby roster. */
   const skins = new Map<string, number | null>();
+  /** Equipped hats by session id (ADR 0083), refreshed the same way. */
+  const hats = new Map<string, string | null>();
+
+  /** Takes a rig's hat off before its materials are freed: a worn hat's belong to the wardrobe. */
+  const retire = (rig: RemoteRig): void => {
+    wardrobe?.wear(rig.root, null);
+    scene.remove(rig.root);
+    disposeRemoteRig(rig.root);
+  };
 
   const grabAnimations = new GrabAnimations();
   const jumpSequences = new JumpSequences();
+  const footsteps = new Footsteps();
   const knockdowns = new Knockdowns();
 
   const buildRig = (id: string): RemoteRig => {
@@ -139,6 +164,9 @@ export const createRemoteCharacterPool = (
     const root = cloneRig(characterModel.scene);
     const appliedHue = tintHueForSkin(skins.get(id) ?? null);
     tintModel(root, appliedHue);
+    // Even with no hat of its own: the clone copied whatever the local
+    // Character wears, and this takes that copy off.
+    wardrobe?.wear(root, hats.get(id) ?? null);
     scene.add(root);
 
     const mixer = new THREE.AnimationMixer(root);
@@ -192,6 +220,7 @@ export const createRemoteCharacterPool = (
     );
 
     if (isDownMotionState(motionState)) {
+      footsteps.forget(id);
       // Code review, M6.1: keeps the reaction baseline current even though
       // no reaction may play while down — see
       // `HitReactionPlayer.observeBaseline`'s own doc.
@@ -241,6 +270,7 @@ export const createRemoteCharacterPool = (
     const reacting = rig.hitReactionPlayer.update(hitEpoch, hitReactEpoch, rig.actions, LOCOMOTION_CROSSFADE_SECONDS, rig.activeAction);
     if (reacting) {
       knockdowns.forget(id);
+      footsteps.forget(id);
       rig.activeAction = reacting;
       rig.mixer.update(deltaSeconds);
       rig.root.rotation.y = Math.PI + MODEL_YAW_OFFSET - facing;
@@ -254,7 +284,19 @@ export const createRemoteCharacterPool = (
     // The get-up's tail only survives a frame with nothing else to draw.
     const posed = grabPose ?? jumpPose ?? knockdownPose;
     const next =
-      posed?.action ?? actionFor(selectLocomotion(moving, grounded, dashing, motionState === "Stagger"), rig.actions);
+      posed?.action ??
+      actionFor(
+        selectLocomotion({
+          moving,
+          grounded,
+          dashing,
+          wobbling: motionState === "Stagger",
+          onIce: onIce(position),
+          speed: horizontalSpeed,
+          walking: rig.activeAction !== null && rig.activeAction === rig.actions.walk,
+        }),
+        rig.actions,
+      );
     rig.activeAction = crossfadeLocomotion(
       next,
       rig.activeAction,
@@ -265,6 +307,7 @@ export const createRemoteCharacterPool = (
           : posed === knockdownPose
             ? KNOCKDOWN_CROSSFADE_SECONDS
             : LOCOMOTION_CROSSFADE_SECONDS,
+      rig.actions,
     );
     if (posed) pinClipPose(posed);
     // A Float's overlay (ADR 0077), only ever under the jump's own pose.
@@ -272,6 +315,12 @@ export const createRemoteCharacterPool = (
     blendFloatStruggle(rig.actions, floatWeight, rig.activeAction);
     rig.mixer.update(deltaSeconds);
     rig.floatLimbs.apply(floatWeight, velocity.y, nowMs);
+
+    // Footsteps (M14 ticket 04), under the local Character's own rule.
+    const stepping =
+      posed === null && grounded && motionState !== "Sliding" && (moving || dashing) ? steppingClip(rig.activeAction, rig.actions) : null;
+    const feetDown = footsteps.update(id, stepping ? rig.activeAction : null);
+    if (stepping && onFootstep) for (let foot = 0; foot < feetDown; foot += 1) onFootstep(stepping, position);
 
     // ADR 0045: oriented by the Character's own replicated facing, already
     // smoothly interpolated (shortest-arc) upstream — no extra turn-rate
@@ -298,6 +347,11 @@ export const createRemoteCharacterPool = (
         rig.appliedHue = hue;
       }
     },
+    setHats: (next) => {
+      hats.clear();
+      for (const [id, hat] of next) hats.set(id, hat);
+      for (const [id, rig] of rigs) wardrobe?.wear(rig.root, hats.get(id) ?? null);
+    },
     apply: (characters, deltaSeconds) => {
       for (const [id, rc] of Object.entries(characters)) {
         let rig = rigs.get(id);
@@ -309,8 +363,7 @@ export const createRemoteCharacterPool = (
       }
       for (const [id, rig] of rigs) {
         if (id in characters) continue;
-        scene.remove(rig.root);
-        disposeRemoteRig(rig.root);
+        retire(rig);
         rigs.delete(id);
         // The per-id bookkeeping is keyed by session id, not held on the rig,
         // so it outlives the rig unless dropped here — and an id that comes
@@ -319,13 +372,11 @@ export const createRemoteCharacterPool = (
         grabAnimations.forget(id);
         jumpSequences.forget(id);
         knockdowns.forget(id);
+        footsteps.forget(id);
       }
     },
     dispose: () => {
-      for (const rig of rigs.values()) {
-        scene.remove(rig.root);
-        disposeRemoteRig(rig.root);
-      }
+      for (const rig of rigs.values()) retire(rig);
       rigs.clear();
       grabAnimations.reset();
       jumpSequences.reset();

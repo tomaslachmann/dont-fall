@@ -35,6 +35,19 @@ export interface BouncePress {
 const IMPACT_MIN_SPEED = 3;
 
 /**
+ * A Character that stopped falling this frame, fast enough to ring a sheet:
+ * a bounce deck's thump (M14 ticket 05). It is reported wherever it
+ * happened. Whether a deck was under it is the caller's question.
+ */
+export interface BounceLanding {
+  id: string;
+  /** Capsule centre, world space. */
+  position: Vec3;
+  /** How fast it was falling (units/s). */
+  speed: number;
+}
+
+/**
  * Turns replicated Character state into presses (ADR 0070).
  *
  * Every input is already on the wire — position and velocity — so a bouncing
@@ -47,10 +60,17 @@ const IMPACT_MIN_SPEED = 3;
 export class BouncePresses {
   private readonly falling = new Map<string, number>();
   private readonly impacts = new Map<string, { atMs: number; speed: number }>();
+  private landed: BounceLanding[] = [];
+
+  /** Who landed in the last {@link update}. */
+  landings(): readonly BounceLanding[] {
+    return this.landed;
+  }
 
   update(characters: Record<string, RenderCharacter>, nowMs: number): BouncePress[] {
     const presses: BouncePress[] = [];
     const live = new Set<string>();
+    this.landed = [];
 
     for (const [id, character] of Object.entries(characters)) {
       live.add(id);
@@ -61,7 +81,10 @@ export class BouncePresses {
 
       // Stopped falling this frame, having fallen fast enough to matter: that
       // is the landing, whether the deck bounced it back or it simply stood.
-      if (peak === 0 && wasFalling >= IMPACT_MIN_SPEED) this.impacts.set(id, { atMs: nowMs, speed: wasFalling });
+      if (peak === 0 && wasFalling >= IMPACT_MIN_SPEED) {
+        this.impacts.set(id, { atMs: nowMs, speed: wasFalling });
+        this.landed.push({ id, position: { ...character.position }, speed: wasFalling });
+      }
 
       const impact = this.impacts.get(id);
       const ring = impact ? bounceWobble(nowMs - impact.atMs, impact.speed) : 0;
@@ -88,6 +111,7 @@ export class BouncePresses {
   reset(): void {
     this.falling.clear();
     this.impacts.clear();
+    this.landed = [];
   }
 }
 

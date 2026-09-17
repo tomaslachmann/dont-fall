@@ -31,6 +31,7 @@ export default function Slider({ label, value, onChange, tone = 'brand', min = 0
         <input
           className={s.input}
           type="range"
+          data-ui-sound="tick"
           min={min}
           max={max}
           value={value}

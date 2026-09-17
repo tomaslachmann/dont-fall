@@ -5,8 +5,15 @@ import {
   BODY_SKIN_HUES,
   bodySkinHue,
   DEFAULT_BODY_SKIN,
+  HATS,
+  hatById,
+  hatsUnlockedBetween,
   invalidBodySkinReason,
+  invalidHatReason,
+  isHatUnlocked,
+  lockedHatReason,
 } from "./cosmetics.js";
+import { levelForXp, xpLevelStart } from "./economy.js";
 
 describe("body skins (M9 ticket 15)", () => {
   it("accepts every owned skin — an int in range", () => {
@@ -39,5 +46,52 @@ describe("body skins (M9 ticket 15)", () => {
     for (const junk of [null, BODY_SKIN_COUNT, -1, 1.5, Number.NaN]) {
       expect(bodySkinHue(junk)).toBeUndefined();
     }
+  });
+});
+
+describe("hats (ADR 0083)", () => {
+  it("has unique ids, and lists the cheapest unlock first", () => {
+    expect(new Set(HATS.map((hat) => hat.id)).size).toBe(HATS.length);
+    const levels = HATS.map((hat) => hat.unlockLevel);
+    expect([...levels].sort((a, b) => a - b)).toEqual(levels);
+    expect(Math.min(...levels)).toBeGreaterThan(1);
+  });
+
+  it("covers the crest with every hat but the crown", () => {
+    expect(HATS.filter((hat) => !hat.coversCrest).map((hat) => hat.id)).toEqual(["crown"]);
+  });
+
+  it("finds a hat by id, and nothing for anything else", () => {
+    expect(hatById("crown")?.name).toBe("CROWN");
+    for (const junk of ["Crown", "", null, undefined, 3, {}]) expect(hatById(junk)).toBeUndefined();
+  });
+
+  it("accepts a known hat or none, and refuses the rest with a reason naming the fix", () => {
+    expect(invalidHatReason(null)).toBeUndefined();
+    for (const hat of HATS) expect(invalidHatReason(hat.id)).toBeUndefined();
+    for (const junk of ["Crown", "", undefined, 3, {}]) {
+      expect(invalidHatReason(junk)).toMatch(/hat must be null or one of: cone, /);
+    }
+  });
+
+  it("unlocks a hat at its level of XP, not a point before", () => {
+    const cone = hatById("cone")!;
+    expect(isHatUnlocked(cone, 0)).toBe(false);
+    expect(isHatUnlocked(cone, xpLevelStart(cone.unlockLevel) - 1)).toBe(false);
+    expect(isHatUnlocked(cone, xpLevelStart(cone.unlockLevel))).toBe(true);
+    expect(levelForXp(xpLevelStart(cone.unlockLevel))).toBe(cone.unlockLevel);
+  });
+
+  it("says which level a locked hat needs, and nothing for taking a hat off", () => {
+    expect(lockedHatReason("ufo", 0)).toBe("UFO unlocks at level 30");
+    expect(lockedHatReason("ufo", xpLevelStart(30))).toBeUndefined();
+    expect(lockedHatReason(null, 0)).toBeUndefined();
+  });
+
+  it("lists the hats a Match's XP unlocked — none when no unlock level was crossed", () => {
+    expect(hatsUnlockedBetween(0, xpLevelStart(2) - 1)).toEqual([]);
+    expect(hatsUnlockedBetween(0, xpLevelStart(2)).map((hat) => hat.id)).toEqual(["cone"]);
+    expect(hatsUnlockedBetween(xpLevelStart(4), xpLevelStart(9)).map((hat) => hat.id)).toEqual(["pot", "bucket"]);
+    expect(hatsUnlockedBetween(xpLevelStart(9), xpLevelStart(9) + 10)).toEqual([]);
   });
 });

@@ -8,6 +8,8 @@ const EMOTE_HOLD_MS = 1_400;
 export interface TurntableProps {
   /** Equipped-skin preview — the bean wears `skin` the moment it changes, SAVE or not. */
   skin: number;
+  /** Hat preview (ADR 0083) — worn the moment it changes, like `skin`. */
+  hat: string | null;
   /** Increment to spin the bean one full extra turn. */
   spinToken: number;
   /** Increment to play the emote. */
@@ -22,7 +24,7 @@ export interface TurntableProps {
  * doubles as one). No WebGL (or no model) degrades to the caption instead
  * of a dead canvas — which is also what jsdom renders in tests.
  */
-export function Turntable({ skin, spinToken, emoteToken }: TurntableProps) {
+export function Turntable({ skin, hat, spinToken, emoteToken }: TurntableProps) {
   const [emoting, setEmoting] = useState(false);
   const firstEmote = useRef(true);
 
@@ -39,6 +41,7 @@ export function Turntable({ skin, spinToken, emoteToken }: TurntableProps) {
   return (
     <CharacterPreview
       skin={skin}
+      hat={hat}
       animation={emoting ? "Wobble" : "Idle"}
       spinToken={spinToken}
       label="LIVE 3D CHARACTER RENDER · TURNTABLE + IDLE"

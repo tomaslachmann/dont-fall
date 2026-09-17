@@ -4,7 +4,7 @@ import { lerpVec3, type Vec3 } from "../math/vec3.js";
 import type { CharacterMotionState } from "../simulation/CharacterStateMachine.js";
 import type { PropSnapshot } from "../simulation/Prop.js";
 import type { BoneSnapshot } from "../simulation/ragdollSkeleton.js";
-import type { SimState } from "./SimState.js";
+import type { RagdollCause, SimState } from "./SimState.js";
 
 interface Posed {
   position: Vec3;
@@ -37,6 +37,18 @@ export interface RenderCharacter {
   velocity: Vec3;
   grounded: boolean;
   dashing: boolean;
+  /** Not interpolated — taken straight from `next`, like `dashing`. How far into its build-up a burst is: the Dash's woosh follows it (M14 ticket 05). */
+  dashSpeed: number;
+  /** Not interpolated — the counter `position` snaps on. Its rise is the Respawn's pop (M14 ticket 05). */
+  respawnCount: number;
+  /** Not interpolated — an eliminated Character is marked, never removed (ADR 0042), and makes no more sound. */
+  eliminated: boolean;
+  /** Not interpolated — the charge a Hit is being held at. The last one seen before a swing is how hard the swing is heard (M14 ticket 06). */
+  hitChargeMs: number;
+  /** Not interpolated — the Epoch of a knockdown (ADR 0023). */
+  ragdollEpoch: number;
+  /** Not interpolated — why the latest knockdown happened: how heavy it sounds (M14 ticket 06). */
+  ragdollCause: RagdollCause;
   /** Not interpolated — the Epoch idiom, diffed against the last-seen value to trigger the Punch animation exactly once (M6 ticket 03, ADR 0046). */
   hitEpoch: number;
   /** Not interpolated — same idiom, triggers the HitReact animation exactly once. */
@@ -102,6 +114,12 @@ export const interpolateState = (
       velocity: { ...n.velocity },
       grounded: n.grounded,
       dashing: n.dashing,
+      dashSpeed: n.dashSpeed,
+      respawnCount: n.respawnCount,
+      eliminated: n.eliminated,
+      hitChargeMs: n.hitChargeMs,
+      ragdollEpoch: n.ragdollEpoch,
+      ragdollCause: n.ragdollCause,
       hitEpoch: n.hitEpoch,
       hitReactEpoch: n.hitReactEpoch,
       grabEpoch: n.grabEpoch,

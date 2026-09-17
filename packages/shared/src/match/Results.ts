@@ -50,6 +50,8 @@ export interface DnfEntry {
    * `null` for a seat with none.
    */
   bodySkin: number | null;
+  /** Their equipped hat (ADR 0083), captured at drop like `bodySkin`. `null` for none. */
+  hat: string | null;
 }
 
 /**

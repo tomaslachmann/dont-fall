@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MAX_ROUND_SCORE, QUALIFICATION_SCORE_BONUS } from "../tuning.js";
-import { buildRoundResult, matchScore, matchWinner, roundScore, type RoundResult } from "./Score.js";
+import { buildRoundResult, matchPlacements, matchScore, matchWinner, roundScore, type RoundResult } from "./Score.js";
 
 describe("roundScore", () => {
   it.each([2, 4, 12])("first always takes MAX_ROUND_SCORE, at N = %i", (n) => {
@@ -84,10 +84,10 @@ describe("buildRoundResult", () => {
     const result = buildRoundResult(
       { stayed: { finishTick: 90, checkpointIndex: 4, fallCount: 0 } },
       [
-        { id: "stayed", nickname: "Stayed", ready: true, joinOrder: 0, accountId: null, bodySkin: null },
-        { id: "left", nickname: "Left", ready: true, joinOrder: 1, accountId: null, bodySkin: null },
+        { id: "stayed", nickname: "Stayed", ready: true, joinOrder: 0, accountId: null, bodySkin: null, hat: null },
+        { id: "left", nickname: "Left", ready: true, joinOrder: 1, accountId: null, bodySkin: null, hat: null },
       ],
-      [{ id: "left", nickname: "Left", accountId: null, bodySkin: null }],
+      [{ id: "left", nickname: "Left", accountId: null, bodySkin: null, hat: null }],
     );
 
     expect(result.rows.map((r) => r.id)).toEqual(["stayed"]);
@@ -186,5 +186,47 @@ describe("matchWinner", () => {
 
   it("returns nothing for a Match with no Rounds played yet", () => {
     expect(matchWinner([])).toEqual([]);
+  });
+});
+
+describe("matchPlacements", () => {
+  it("orders by total Score, best first, with 1-based placements", () => {
+    const results: RoundResult[] = [
+      { rows: [{ id: "a", placement: 1, qualified: true }, { id: "b", placement: 2, qualified: false }] },
+    ];
+
+    expect(matchPlacements(results)).toEqual([
+      { id: "a", score: matchScore(results).a, placement: 1 },
+      { id: "b", score: matchScore(results).b, placement: 2 },
+    ]);
+  });
+
+  it("breaks display order by last-Round placement, but tied totals still share one placement", () => {
+    const results: RoundResult[] = [
+      { rows: [{ id: "a", placement: 1, qualified: false }, { id: "b", placement: 2, qualified: false }] },
+      { rows: [{ id: "a", placement: 2, qualified: false }, { id: "b", placement: 1, qualified: false }] },
+    ];
+
+    // Symmetric totals — b ahead on the last-Round tiebreak, both still rank 1.
+    expect(matchPlacements(results)).toEqual([
+      { id: "b", score: matchScore(results).b, placement: 1 },
+      { id: "a", score: matchScore(results).a, placement: 1 },
+    ]);
+  });
+
+  it("skips the placement after a tie — standard competition ranking, like every other rank in the codebase", () => {
+    const results: RoundResult[] = [
+      { rows: [{ id: "a", placement: 1, qualified: true }, { id: "b", placement: 1, qualified: true }, { id: "c", placement: 3, qualified: false }] },
+    ];
+
+    expect(matchPlacements(results).map((row) => [row.id, row.placement])).toEqual([
+      ["a", 1],
+      ["b", 1],
+      ["c", 3],
+    ]);
+  });
+
+  it("ranks nobody when no Rounds were played", () => {
+    expect(matchPlacements([])).toEqual([]);
   });
 });

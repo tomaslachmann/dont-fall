@@ -27,6 +27,12 @@ export interface LobbyPlayer {
    * slow `auth` resolutions learn it with no extra handshake.
    */
   bodySkin: number | null;
+  /**
+   * The equipped hat's id (ADR 0083), bound from the same `/auth/me`
+   * response as `bodySkin` and riding the roster the same way. `null` for no
+   * hat, and while anonymous.
+   */
+  hat: string | null;
 }
 
 /**

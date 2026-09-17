@@ -8,6 +8,7 @@ import {
   loginWithPassword,
   logout,
   signupWithPassword,
+  updateBindings,
   updateCosmetics,
   whoAmI,
   type DiscordOAuthConfig,
@@ -76,6 +77,15 @@ export const registerAuthRoutes = (app: FastifyInstance, db: ApiDb, deps: AuthRo
       db,
       bearerToken(request.headers.authorization),
       (request.body ?? {}) as Parameters<typeof updateCosmetics>[2],
+    );
+    return reply.code(200).send(updated);
+  });
+
+  app.put("/auth/me/bindings", async (request, reply) => {
+    const updated = updateBindings(
+      db,
+      bearerToken(request.headers.authorization),
+      (request.body ?? {}) as Parameters<typeof updateBindings>[2],
     );
     return reply.code(200).send(updated);
   });

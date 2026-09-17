@@ -20,13 +20,12 @@ export interface SimInputs {
   /** Whether the Grab button is held this tick (M6 ticket 04). */
   grabHeld: boolean;
   /**
-   * Which way this Character is looking, world-space yaw in radians (M6, ADR
-   * 0045). Sent from the owning client's own camera every tick, exactly like
-   * {@link moveDirection} — the simulation never needs to know about the
-   * camera itself, only the plain angle it resolved to. Unlike moveDirection,
-   * this is not derived from movement: a Character can face one way while
-   * walking another (strafing, backpedaling), which is exactly the case Hit
-   * and Grab need to aim correctly.
+   * Which way this Character's body is turned, world-space yaw in radians
+   * (M6, ADR 0045; the body rather than the camera since ADR 0085). Yaw 0
+   * looks down −Z. The owning client turns the body toward where it runs and
+   * sends where it has got to every tick, so it lags a change of direction
+   * and holds still while standing. The simulation only ever sees the plain
+   * angle (ADR 0009). Hit and Grab aim along it.
    */
   facing: number;
 }

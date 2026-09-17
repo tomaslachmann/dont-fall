@@ -1,4 +1,4 @@
-/* Live friend toasts — the FriendRequestAlert mock's right column, as an overlay. */
+/* Live friend alerts — the FriendRequestAlert mock's right column, as an overlay. */
 .alerts {
   position: fixed;
   right: var(--df-space-6);
@@ -17,13 +17,14 @@
   border-radius: calc(var(--df-u) * 2.2);
   background: var(--df-color-surface-0);
   box-shadow: 0 var(--df-bevel-4) 0 var(--df-color-drop), var(--df-drop);
-  animation: df-toast-in 7s ease-in-out infinite;
+  /* One-shot settle, never the mock's looping fade: a Lobby invite stays a
+     visible alert until it is answered or the game starts. */
+  animation: df-toast-settle 0.45s ease-out 1;
 }
 .toastDark {
   background: var(--df-color-plate);
   color: var(--df-color-on-brand);
   box-shadow: none;
-  animation-delay: 3.5s;
 }
 .toastText { display: flex; flex-direction: column; gap: var(--df-space-3); flex: 1; min-width: 0; }
 .toastKicker {

@@ -1,7 +1,15 @@
 import { ENVIRONMENT_PRESETS } from "@dont-fall/shared";
 import * as THREE from "three";
 import { describe, expect, it, vi } from "vitest";
-import { CLOUD_FLOOR_NOISE_SCALE, CLOUD_FLOOR_RADIUS, cloudFloorScroll, createCloudFloor } from "./cloudFloor.js";
+import {
+  CLOUD_FLOOR_FADE_START,
+  CLOUD_FLOOR_FAR_PLANE_MARGIN,
+  CLOUD_FLOOR_NOISE_SCALE,
+  CLOUD_FLOOR_RADIUS,
+  cloudFloorFade,
+  cloudFloorScroll,
+  createCloudFloor,
+} from "./cloudFloor.js";
 import { createSkyDome } from "./skyDome.js";
 
 const DAY = ENVIRONMENT_PRESETS.day;
@@ -139,5 +147,32 @@ describe("cloudFloorScroll", () => {
       expect(value).toBeGreaterThanOrEqual(0);
       expect(value).toBeLessThan(1);
     }
+  });
+});
+
+describe("cloudFloorFade (M13 ticket 04)", () => {
+  it("fades across the plane to its own edge when no far plane can clip it", () => {
+    for (const fade of [cloudFloorFade(), cloudFloorFade(1000)]) {
+      expect(fade).toEqual({ start: CLOUD_FLOOR_FADE_START * CLOUD_FLOOR_RADIUS, end: CLOUD_FLOOR_RADIUS, fromCamera: false });
+    }
+  });
+
+  it("is all sky, measured from the camera, before a far plane that would clip the plane", () => {
+    const fade = cloudFloorFade(180);
+    expect(fade.fromCamera).toBe(true);
+    expect(fade.end).toBe(180 - CLOUD_FLOOR_FAR_PLANE_MARGIN);
+    expect(fade.start).toBeCloseTo(CLOUD_FLOOR_FADE_START * fade.end, 10);
+  });
+
+  it("reaches the shader: the fade distances, and where they are measured from", () => {
+    const clipped = createCloudFloor(DAY, 0, cloudFloorFade(180)).mesh.material;
+    expect(clipped.defines).toHaveProperty("FADE_FROM_CAMERA");
+    expect(clipped.uniforms.fadeEnd!.value).toBe(175);
+    expect(clipped.fragmentShader).toContain("length(vWorld - cameraPosition)");
+
+    const open = createCloudFloor(DAY, 0).mesh.material;
+    expect(open.defines ?? {}).not.toHaveProperty("FADE_FROM_CAMERA");
+    expect(open.uniforms.fadeStart!.value).toBe(CLOUD_FLOOR_FADE_START * CLOUD_FLOOR_RADIUS);
+    expect(open.fragmentShader).toContain("smoothstep(fadeStart, fadeEnd, fadeDistance)");
   });
 });

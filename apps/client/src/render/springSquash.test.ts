@@ -116,6 +116,19 @@ describe("SpringSquashes", () => {
     }
   });
 
+  it("reports a Spring settling once, on the frame its squash ends (M14 ticket 08)", () => {
+    const squashes = new SpringSquashes();
+    squashes.update({ a: character(on(SPRING), 0) }, [SPRING], 0);
+    squashes.update({ a: character(on(SPRING), 1) }, [SPRING], 100);
+    expect(squashes.settled()).toEqual([]);
+    squashes.update({ a: character(on(SPRING), 1) }, [SPRING], 100 + SQUASH_TOTAL_MS / 2);
+    expect(squashes.settled()).toEqual([]);
+    squashes.update({ a: character(on(SPRING), 1) }, [SPRING], 100 + SQUASH_TOTAL_MS);
+    expect(squashes.settled()).toEqual([SPRING.segmentIndex]);
+    squashes.update({ a: character(on(SPRING), 1) }, [SPRING], 100 + SQUASH_TOTAL_MS + 16);
+    expect(squashes.settled()).toEqual([]);
+  });
+
   it("forgets everything on reset — Segment indices stop meaning what they meant across a Track reload", () => {
     const squashes = new SpringSquashes();
     squashes.update({ a: character(on(SPRING), 0) }, [SPRING], 0);

@@ -10,6 +10,34 @@ import { SKY_COLOUR_GLSL, skyUniforms } from "./skyDome.js";
  */
 export const CLOUD_FLOOR_RADIUS = 250;
 export const CLOUD_FLOOR_FADE_START = 0.6;
+/**
+ * How far short of the camera's far plane the floor has finished melting into
+ * the sky, when the camera has one near enough to clip it (M13 ticket 04).
+ * Measured from the camera, not across the plane, so it holds however high
+ * the camera flies.
+ */
+export const CLOUD_FLOOR_FAR_PLANE_MARGIN = 5;
+
+/** Where the floor's edge starts and finishes fading, and what the distance is measured from. */
+export interface CloudFloorFade {
+  start: number;
+  end: number;
+  /** From the camera (a clipping far plane), or across the plane from its centre (none). */
+  fromCamera: boolean;
+}
+
+/**
+ * The fade for a camera whose far plane is `farPlane`, or the plane's own
+ * edge without one. The floor must be all sky before the far plane clips it,
+ * or the clip would show against the dome behind it.
+ */
+export const cloudFloorFade = (farPlane?: number): CloudFloorFade => {
+  if (farPlane === undefined || farPlane - CLOUD_FLOOR_FAR_PLANE_MARGIN >= CLOUD_FLOOR_RADIUS) {
+    return { start: CLOUD_FLOOR_FADE_START * CLOUD_FLOOR_RADIUS, end: CLOUD_FLOOR_RADIUS, fromCamera: false };
+  }
+  const end = farPlane - CLOUD_FLOOR_FAR_PLANE_MARGIN;
+  return { start: CLOUD_FLOOR_FADE_START * end, end, fromCamera: true };
+};
 
 /** Noise tiles per world unit for the broad layer: one tile every ~67 units. */
 export const CLOUD_FLOOR_NOISE_SCALE = 0.015;
@@ -71,6 +99,8 @@ uniform vec2 detailScroll;
 uniform vec3 lit;
 uniform vec3 shade;
 uniform float openBelow;
+uniform float fadeStart;
+uniform float fadeEnd;
 
 varying vec3 vWorld;
 varying vec2 vLocal;
@@ -94,7 +124,12 @@ void main() {
   // The edge melts into the sky drawn behind it. After the fog, and with the
   // sky taken through the same output steps the dome's own shader takes, so
   // the two meet on the same colour on both render paths.
-  float edge = smoothstep(${CLOUD_FLOOR_FADE_START.toFixed(2)}, 1.0, length(vLocal) / ${CLOUD_FLOOR_RADIUS.toFixed(1)});
+  #ifdef FADE_FROM_CAMERA
+    float fadeDistance = length(vWorld - cameraPosition);
+  #else
+    float fadeDistance = length(vLocal);
+  #endif
+  float edge = smoothstep(fadeStart, fadeEnd, fadeDistance);
   vec4 sky = vec4(skyColour(normalize(vWorld - cameraPosition)), 1.0);
   #ifdef TONE_MAPPING
     sky.rgb = toneMapping(sky.rgb);
@@ -119,7 +154,7 @@ export interface CloudFloor {
  * casts or receives a shadow and never collides; the simulation's kill plane
  * does not move with it.
  */
-export const createCloudFloor = (preset: EnvironmentPreset, y: number): CloudFloor => {
+export const createCloudFloor = (preset: EnvironmentPreset, y: number, fade: CloudFloorFade = cloudFloorFade()): CloudFloor => {
   const { cloudFloor } = preset;
 
   const noise = new THREE.DataTexture(
@@ -148,10 +183,13 @@ export const createCloudFloor = (preset: EnvironmentPreset, y: number): CloudFlo
         lit: { value: new THREE.Color(cloudFloor.lit) },
         shade: { value: new THREE.Color(cloudFloor.shade) },
         openBelow: { value: cloudFloor.openBelow },
+        fadeStart: { value: fade.start },
+        fadeEnd: { value: fade.end },
       },
     ]),
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
+    ...(fade.fromCamera ? { defines: { FADE_FROM_CAMERA: "" } } : {}),
     fog: true,
   });
   // Assigned after the merge: `UniformsUtils.merge` clones textures, and the

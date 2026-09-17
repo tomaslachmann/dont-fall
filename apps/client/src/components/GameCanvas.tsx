@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { ASSET_PLACEMENT_MODULES, MODULE_LIBRARY, STANDINGS_READY_TIMEOUT_MS, countCheckpoints } from "@dont-fall/shared";
 import { Button } from "@dont-fall/ui";
 import type { ExitReason, GameHandle, StandingsSnapshot } from "../game/index.js";
@@ -8,8 +8,12 @@ import type { PracticeSnapshot } from "../game/practice.js";
 import type { RunEndEvent } from "../game/runEnd.js";
 import type { SpectateSnapshot } from "../game/spectator.js";
 import { ConnectionError } from "../lib/errors.js";
+import { browserStorage, resolvePerfFlag } from "../lib/perfFlag.js";
+import { readGraphicsQuality } from "../lib/graphicsQuality.js";
+import { setGameActive } from "../lib/gamePresence.js";
 import { skinForPlayerId } from "../lib/avatarSkins.js";
 import { useBeanBalance, useBettingState, usePlaceBet } from "../lib/hooks/useBetting.js";
+import { trackThumbnailUrl } from "../lib/api/tracks.js";
 import { useTrackDetail } from "../lib/hooks/useTrackDetail.js";
 import { useTrackList } from "../lib/hooks/useTrackList.js";
 import { formatRaceTime, formatRoundClock, formatSurvived } from "../lib/utils/roundTimer.js";
@@ -75,7 +79,23 @@ const HIT_FLASH_MS = 1000;
  * through React.
  */
 export function GameCanvas({ trackId, serverPort, connection, practice, onMatchEnd, onExit }: GameCanvasProps) {
+  // While a Match is mounted a game owns the screen — the global social
+  // alerts step aside for it (a Lobby invite returns once the game is gone,
+  // unless the Player answered it first). A practice boot is not a game
+  // start: the alerts stay up over free-roam.
+  useEffect(() => {
+    if (practice) return;
+    setGameActive(true);
+    return () => setGameActive(false);
+  }, [practice]);
   const mountRef = useRef<HTMLDivElement | null>(null);
+  // The performance overlay (M13 ticket 01): `?perf=1`, or remembered from an
+  // earlier visit — read once per mount, so the game never reboots over it.
+  const [searchParams] = useSearchParams();
+  const [perf] = useState(() => resolvePerfFlag(searchParams, browserStorage()));
+  // Graphics quality (ADR 0079): the device's stored level, read once per
+  // mount; a change in Settings applies from the next game entry.
+  const [graphicsQuality] = useState(() => readGraphicsQuality(browserStorage()));
   const handleRef = useRef<GameHandle | null>(null);
   const [bootError, setBootError] = useState<Error | null>(null);
   const [exitReason, setExitReason] = useState<ExitReason | null>(null);
@@ -206,6 +226,8 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
           ...(serverPort === undefined ? {} : { serverPort }),
           ...(connection === undefined ? {} : { connection }),
           ...(practice ? { practice: true as const } : {}),
+          ...(perf ? { perf: true } : {}),
+          graphicsQuality,
           // The whole React surface of a practice session (m8.1 ticket 03)
           // is this one snapshot — raised at boot and on the finish
           // crossing, never for anything else. Never wired in a Match;
@@ -265,7 +287,7 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
       setReadyForNextRound(false);
       setShowGo(false);
     };
-  }, [trackId, serverPort, connection, practice]);
+  }, [trackId, serverPort, connection, practice, perf, graphicsQuality]);
 
   // Leaving a practice session is the existing `onExit` path (m8.1 ticket
   // 03) — no new exit mechanism. The teardown above already ran on unmount
@@ -308,7 +330,7 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
           </div>
         ) : (
           practiceState && (
-            <PracticeHud trackName={practiceState.trackName} finished={practiceState.finished} onBack={exitPractice} />
+            <PracticeHud trackName={practiceState.trackName} finished={practiceState.finished} bindings={practiceState.bindings} onBack={exitPractice} />
           )
         )}
       </>
@@ -330,6 +352,12 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
     : (lobby?.players ?? []);
   const nextPick = lobby ? lobby.roundPicks[roundNumber - 1] : undefined;
   const nextTrackName = nextPick?.trackId ? trackNameOf(nextPick.trackId) : "UNREVEALED";
+  // The Round loader's screenshot (ADR 0085) — the same next Track
+  // BetweenRounds names above, art only when its Revision captured one.
+  const nextTrackThumbnail =
+    nextPick?.trackId && trackList?.find((t) => t.id === nextPick.trackId)?.hasThumbnail
+      ? trackThumbnailUrl(nextPick.trackId)
+      : undefined;
   // The Match is over and its results are persisted (ADR 0059) — leave for
   // the results page, which unmounts this canvas (game, physics, socket)
   // behind the navigation. `?me=` names whose page it is; a standalone
@@ -478,7 +506,10 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
         standings &&
         !practice &&
         (readyForNextRound ? (
-          <LoadingScreen />
+          <LoadingScreen
+            trackName={nextTrackName}
+            {...(nextTrackThumbnail ? { thumbnailUrl: nextTrackThumbnail } : {})}
+          />
         ) : standings.roundsRemaining ? (
           <div className={styles.screenOverlay}>
             <BetweenRounds

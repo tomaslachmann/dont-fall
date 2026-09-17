@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import css from "./TrackBuilderScreen.module.css";
+import { CaptureBar } from "../../components/CaptureBar/CaptureBar";
 import { ModulePalette } from "../../components/ModulePalette/ModulePalette";
 import { Viewport } from "../../components/Viewport/Viewport";
 import { Inspector } from "../../components/Inspector/Inspector";
@@ -32,26 +33,42 @@ export function TrackBuilderScreen({ engine }: { engine: BuilderEngine }) {
     });
   };
 
+  // Capture mode (ADR 0085) keeps this same tree — the keyed Viewport never
+  // remounts across the switch, so the author's camera survives it — and only
+  // swaps the chrome: everything hides, the fullscreen canvas stays, and the
+  // CaptureBar floats over it.
+  const previewing = engine.previewing;
   return (
-    <div className={css.screen} data-tb-scope>
-      <header className={css.masthead}>
-        <h1 className={css.wordmark}>Track Builder</h1>
-        <span className={css.note}>DON'T FALL · TRACK AUTHORING TOOL</span>
-      </header>
+    <div className={previewing ? css.capture : css.screen} data-tb-scope>
+      {!previewing && (
+        <header className={css.masthead}>
+          <h1 className={css.wordmark}>Track Builder</h1>
+          <span className={css.note}>DON'T FALL · TRACK AUTHORING TOOL</span>
+        </header>
+      )}
 
-      <div className={css.body}>
-        <ModulePalette engine={engine} />
+      <div className={previewing ? css.captureBody : css.body}>
+        {!previewing && <ModulePalette engine={engine} />}
 
-        <Viewport engine={engine} browseOpen={browseOpen} onCloseBrowse={() => setBrowseOpen(false)} />
+        <Viewport
+          key="viewport"
+          engine={engine}
+          browseOpen={browseOpen && !previewing}
+          onCloseBrowse={() => setBrowseOpen(false)}
+        />
 
-        {engine.selection.length > 0 && (
+        {!previewing && engine.selection.length > 0 && (
           <div className={css.inspector}>
             <Inspector engine={engine} />
           </div>
         )}
       </div>
 
-      <Toolbar key={engine.loadedTrack?.id ?? "draft"} engine={engine} onBrowse={toggleBrowse} />
+      {previewing ? (
+        <CaptureBar engine={engine} />
+      ) : (
+        <Toolbar key={engine.loadedTrack?.id ?? "draft"} engine={engine} onBrowse={toggleBrowse} />
+      )}
     </div>
   );
 }

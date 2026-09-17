@@ -53,6 +53,9 @@ const makeViewportStub = (): ViewportStub => ({
   pick: vi.fn(() => undefined),
   pickFloor: vi.fn(() => undefined),
   respawnOf: vi.fn(() => undefined),
+  setCourseVisible: vi.fn(),
+  capturePreview: vi.fn(() => "data:image/jpeg;base64,aGVsbG8="),
+  resize: vi.fn(),
   render: vi.fn(),
   dispose: vi.fn(),
 });
@@ -454,6 +457,138 @@ describe("the Environment (ADR 0074)", () => {
     expect(engine.environment).toBe(DEFAULT_ENVIRONMENT_ID);
     expect(engine.status.kind).toBe("error");
     expect(engine.status.text).toMatch(/loaded "abc".*aurora/);
+  });
+});
+
+describe("Thumbnail capture (ADR 0085)", () => {
+  const defaults = { timeLimitMs: 120000, survivorTarget: 8 };
+  const THUMB = "data:image/jpeg;base64,aGVsbG8=";
+
+  const postedBodies = (): Record<string, unknown>[] =>
+    (vi.mocked(fetch).mock.calls as unknown as [string, RequestInit | undefined][])
+      .filter(([, init]) => init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init!.body)) as Record<string, unknown>);
+
+  it("refuses to frame an empty Track — there is no map to shoot yet", () => {
+    engine.startPreviewCapture("Mine", defaults);
+
+    expect(engine.previewing).toBe(false);
+    expect(engine.status).toMatchObject({ kind: "error", text: expect.stringMatching(/empty Track/) as string });
+  });
+
+  it("enters with the bare Track and everything on — no selection, no guides, Environment drawn, Motions running", () => {
+    engine.attachViewport(document.createElement("div"));
+    engine.placeModule(DECK);
+    engine.setEnvironment("night");
+    engine.setPlaying(false);
+    engine.setTintVisible(false);
+    vi.mocked(viewport.setEnvironment).mockClear();
+
+    engine.startPreviewCapture("Mine", defaults);
+
+    expect(engine.previewing).toBe(true);
+    expect(engine.selection).toEqual([]);
+    expect(viewport.setSelected).toHaveBeenLastCalledWith([]);
+    expect(viewport.showMotionGuide).toHaveBeenLastCalledWith(undefined);
+    expect(viewport.showLaunchArc).toHaveBeenLastCalledWith(undefined);
+    expect(viewport.setCourseVisible).toHaveBeenLastCalledWith(false);
+    // Everything on: the *authored* Environment (not the default), playing, tinted, framed.
+    expect(viewport.setEnvironment).toHaveBeenLastCalledWith(ENVIRONMENT_PRESETS.night);
+    expect(engine.playing).toBe(true);
+    expect(viewport.setImpactTintVisible).toHaveBeenLastCalledWith(true);
+    expect(viewport.frameTrack).toHaveBeenCalled();
+  });
+
+  it("never picks while framing — clicks don't select", () => {
+    engine.attachViewport(document.createElement("div"));
+    engine.placeModule(DECK);
+    engine.startPreviewCapture("Mine", defaults);
+    vi.mocked(viewport.pick).mockReturnValue(0);
+
+    engine.viewportClick(10, 10, false);
+
+    expect(viewport.pick).not.toHaveBeenCalled();
+    expect(engine.selection).toEqual([]);
+  });
+
+  it("cancels without saving and puts the authoring view back as it was", () => {
+    engine.attachViewport(document.createElement("div"));
+    engine.placeModule(DECK);
+    engine.setPlaying(false);
+    engine.setTintVisible(false);
+    engine.startPreviewCapture("Mine", defaults);
+    vi.mocked(viewport.setEnvironment).mockClear();
+
+    engine.cancelPreviewCapture();
+
+    expect(engine.previewing).toBe(false);
+    expect(engine.playing).toBe(false);
+    expect(engine.tintVisible).toBe(false);
+    expect(viewport.setEnvironment).toHaveBeenLastCalledWith(null); // the canvas, not the preview
+    expect(viewport.setCourseVisible).toHaveBeenLastCalledWith(true);
+    expect(viewport.setImpactTintVisible).toHaveBeenLastCalledWith(false);
+    expect(postedBodies()).toEqual([]);
+  });
+
+  it("cancels on Escape, like every other modal pick in this builder", () => {
+    engine.placeModule(DECK);
+    engine.startPreviewCapture("Mine", defaults);
+
+    expect(engine.handleKeyDown({ code: "Escape", shiftKey: false, target: null })).toBe(true);
+    expect(engine.previewing).toBe(false);
+  });
+
+  it("confirms by capturing the view and saving it with the Revision, then leaves capture mode", async () => {
+    engine.attachViewport(document.createElement("div"));
+    engine.placeModule(DECK);
+    vi.mocked(viewport.capturePreview).mockReturnValue(THUMB);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ id: "abc" })));
+
+    engine.startPreviewCapture("  Mine  ", defaults);
+    await engine.confirmPreviewCapture();
+
+    expect(viewport.capturePreview).toHaveBeenCalledTimes(1);
+    expect(postedBodies()).toEqual([
+      expect.objectContaining({ name: "Mine", thumbnail: THUMB, timeLimitMs: 120000, survivorTarget: 8 }),
+    ]);
+    expect(engine.previewing).toBe(false);
+    expect(engine.loadedTrack).toMatchObject({ id: "abc", name: "Mine" });
+    expect(engine.status).toMatchObject({ kind: "ok", text: 'saved as "abc"' });
+    expect(viewport.setCourseVisible).toHaveBeenLastCalledWith(true);
+  });
+
+  it("stays in capture mode when the canvas gives no pixels — the framing survives the retry", async () => {
+    engine.attachViewport(document.createElement("div"));
+    engine.placeModule(DECK);
+    vi.mocked(viewport.capturePreview).mockReturnValue(undefined);
+
+    engine.startPreviewCapture("Mine", defaults);
+    await engine.confirmPreviewCapture();
+
+    expect(engine.previewing).toBe(true);
+    expect(engine.status.kind).toBe("error");
+    expect(postedBodies()).toEqual([]);
+  });
+
+  it("re-fits the renderer to the swapped layout on demand — the shell asks once capture mode lands", () => {
+    engine.attachViewport(document.createElement("div"));
+
+    engine.resizeViewport();
+
+    expect(viewport.resize).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays in capture mode when the save is refused — the author retries instead of starting over", async () => {
+    engine.attachViewport(document.createElement("div"));
+    engine.placeModule(DECK);
+    vi.mocked(viewport.capturePreview).mockReturnValue(THUMB);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 400 })));
+
+    engine.startPreviewCapture("Mine", defaults);
+    await engine.confirmPreviewCapture();
+
+    expect(engine.previewing).toBe(true);
+    expect(engine.status).toMatchObject({ kind: "error", text: expect.stringMatching(/save failed/) as string });
   });
 });
 

@@ -9,6 +9,7 @@ import {
   roundTypeLabel,
   type RoundType,
 } from '@dont-fall/shared';
+import { copyText } from '../lib/clipboard.js';
 import Stage from '../ui/Stage';
 import Panel from '../ui/Panel';
 import JellyButton from '../ui/JellyButton';
@@ -92,7 +93,6 @@ export default function Lobby({
   const navigate = useNavigate();
   const me = lobby.players.find((p) => p.id === lobby.myId);
   const isHost = lobby.hostId === lobby.myId;
-  const [invited, setInvited] = useState(false);
   const { account } = useAccount();
 
   /**
@@ -147,8 +147,7 @@ export default function Lobby({
 
   const copyInvite = (): void => {
     if (code === undefined) return;
-    void navigator.clipboard?.writeText(code);
-    setInvited(true);
+    copyText(code, "Invite code copied.", "Couldn't copy the code.");
   };
 
   /**
@@ -197,7 +196,7 @@ export default function Lobby({
             centered
             disabled={code === undefined}
             onClick={copyInvite}
-          >{invited ? 'CODE COPIED' : 'INVITE FRIENDS'}</JellyButton>
+          >INVITE FRIENDS</JellyButton>
           <Chip tone="plate" lg>{code === undefined ? 'PUBLIC' : 'PRIVATE'}</Chip>
         </div>
       </div>
@@ -404,6 +403,7 @@ export default function Lobby({
             className={s.start}
             disabled={!allReady(lobby.players) || lobby.startBlockedReason !== undefined}
             kicker={`${lobby.matchLength} ${lobby.matchLength === 1 ? 'ROUND' : 'ROUNDS'} · ${readyCount}/${lobby.players.length} READY`}
+            sound="confirm"
             onClick={onStart}
           >START MATCH</JellyButton>
         ) : (

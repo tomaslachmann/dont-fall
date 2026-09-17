@@ -107,6 +107,35 @@ describe("the code split (ADR 0008)", () => {
     expect(violations).toEqual([]);
   });
 
+  it("keeps three.js out of the menu bundle, whichever helper would bring it (M14 ticket 12)", () => {
+    // The menu's sounds (`audio/uiSounds`, `audio/music`) live beside the
+    // game's, in a neutral directory: this is what keeps the one file there
+    // that needs three.js (`audio/gameAudio`) out of the shell's reach.
+    const reachesThree: string[] = [];
+    for (const entry of sourceFiles.filter((f) => sideOf(f) === "shell")) {
+      const seen = new Set<string>([entry]);
+      const queue = [entry];
+      while (queue.length > 0) {
+        const file = queue.shift()!;
+        const source = readFileSync(join(SRC, file), "utf8");
+        if (staticValueImports(source).some((specifier) => specifier === "three" || specifier.startsWith("three/"))) {
+          reachesThree.push(file === entry ? entry : `${entry} via ${file}`);
+        }
+        for (const target of importsOf(file)) {
+          if (sideOf(target) === "game") continue;
+          const next = fileFor(target);
+          if (next && !seen.has(next)) {
+            seen.add(next);
+            queue.push(next);
+          }
+        }
+      }
+    }
+    expect(reachesThree).toEqual([]);
+    // Guards the guard: the one audio file that does import three is really seen as importing it.
+    expect(staticValueImports(readFileSync(join(SRC, "audio/gameAudio.ts"), "utf8"))).toContain("three");
+  });
+
   it("catches the engine arriving through a neutral helper, not just directly", () => {
     // The transitive case, proven rather than assumed: `lib/` is a leaf today,
     // so the direct-only version of this test would pass either way.

@@ -130,3 +130,33 @@ export const matchWinner = (results: readonly RoundResult[]): MatchWinner[] => {
     .sort()
     .map((id) => ({ id, score: maxScore }));
 };
+
+/** One Player's final standing in a finished Match — the results page's table row, best first. */
+export interface MatchPlacement {
+  id: string;
+  score: number;
+  placement: number;
+}
+
+/**
+ * The whole Match ranked, best first (ADR 0049): totals are `matchScore`,
+ * display order breaks total-ties by last-Round placement (then id, so the
+ * order is deterministic), and placements share across equal totals with the
+ * next one skipping — standard competition ranking, the same rule as every
+ * other rank in the codebase. This is the exact derivation the results page
+ * used to hand-roll over a fetched Match; the API's save now stores these
+ * same placements per participant, so career history can never disagree with
+ * the table the Player actually saw.
+ */
+export const matchPlacements = (results: readonly RoundResult[]): MatchPlacement[] => {
+  const totals = matchScore(results);
+  const lastRound = results[results.length - 1];
+  const lastPlacement = new Map(lastRound?.rows.map((row) => [row.id, row.placement]) ?? []);
+  const ordered = Object.keys(totals).sort((a, b) => {
+    if (totals[b]! !== totals[a]!) return totals[b]! - totals[a]!;
+    const delta = (lastPlacement.get(a) ?? Number.POSITIVE_INFINITY) - (lastPlacement.get(b) ?? Number.POSITIVE_INFINITY);
+    return delta !== 0 ? delta : a.localeCompare(b);
+  });
+  const placements = rankWithTies(ordered, (prev, curr) => totals[prev] === totals[curr]);
+  return ordered.map((id, i) => ({ id, score: totals[id]!, placement: placements[i]! }));
+};

@@ -41,6 +41,21 @@ import type { SimInputs } from "./SimInputs.js";
 /** A ground normal's Y component below this is steeper than {@link WALKABLE_SLOPE_MAX_ANGLE} — the walkable/Sliding boundary, ticket 03. */
 const WALKABLE_NORMAL_MIN_Y = Math.cos(WALKABLE_SLOPE_MAX_ANGLE);
 
+const DOWN = vec3(0, -1, 0);
+
+/** Where `walkableUnderfoot` casts from, around the capsule's axis (ADR 0084): the centre and a radius out along each axis. */
+const FOOTPRINT_PROBE_OFFSETS: readonly (readonly [number, number])[] = [
+  [0, 0],
+  [CAPSULE_RADIUS, 0],
+  [-CAPSULE_RADIUS, 0],
+  [0, CAPSULE_RADIUS],
+  [0, -CAPSULE_RADIUS],
+];
+
+/** A ground query's filter: another Character is never the floor. */
+const isNotCharacter = (collider: RAPIER.Collider): boolean =>
+  ((collider.collisionGroups() >>> 16) & GROUP_CHARACTER) === 0;
+
 interface PendingImpact {
   magnitude: number;
   impulse: Vec3;
@@ -715,9 +730,15 @@ export class CharacterController {
     // itself already has relative to jump/landing. `currentGroundNormal` is
     // `undefined` both while airborne and while grounded on a Surface flat
     // enough to be filtered out by `SURFACE_GROUND_NORMAL_MIN_Y`, so both
-    // correctly read as "not too steep" here.
+    // correctly read as "not too steep" here. A steep contact alone is not
+    // enough (ADR 0084): the ground under the footprint has to agree, so the
+    // rounded bottom of the capsule brushing a step's edge or chamfer doesn't
+    // read as a slope.
     const tooSteepToWalk =
-      this.grounded && this.currentGroundNormal !== undefined && this.currentGroundNormal.y < WALKABLE_NORMAL_MIN_Y;
+      this.grounded &&
+      this.currentGroundNormal !== undefined &&
+      this.currentGroundNormal.y < WALKABLE_NORMAL_MIN_Y &&
+      !this.walkableUnderfoot();
     const state = this.machine.tick(settled, tooSteepToWalk);
 
     // Every entry to Ragdoll is a new down episode (ADR 0023) — whether it came
@@ -739,6 +760,60 @@ export class CharacterController {
     if (!this.tickingRagdoll) {
       this.beginCapsuleTick(input, jumpPressed, dashPressed, grabPressed);
     }
+  }
+
+  /**
+   * Whether any of five downward rays under the capsule — its centre and four
+   * points a radius out — lands on walkable ground within
+   * {@link GROUND_SNAP_DISTANCE} of its feet (ADR 0084). On a real slope every
+   * ray lands on the slope. Against a step's edge or chamfer, which the
+   * capsule's rounded bottom touches at 45–60° while it still stands on the
+   * deck, at least one lands on the deck: a chamfer on these Assets is
+   * narrower than the ring is wide. Only asked when the contact is already
+   * too steep, so a Character on flat ground casts nothing.
+   */
+  private walkableUnderfoot(): boolean {
+    const at = this.body.translation();
+    const originY = at.y - CAPSULE_HALF_HEIGHT; // the bottom sphere's centre
+    for (const [dx, dz] of FOOTPRINT_PROBE_OFFSETS) {
+      const hit = this.world.castRayAndGetNormal(
+        new RAPIER.Ray({ x: at.x + dx, y: originY, z: at.z + dz }, DOWN),
+        CAPSULE_RADIUS + GROUND_SNAP_DISTANCE,
+        true,
+        undefined,
+        CHARACTER_GROUPS,
+        this.collider,
+        undefined,
+        isNotCharacter,
+      );
+      if (hit && hit.normal.y >= WALKABLE_NORMAL_MIN_Y) return true;
+    }
+    return false;
+  }
+
+  /**
+   * How far below the capsule, once moved by `movement`, standable ground
+   * lies — within {@link GROUND_SNAP_DISTANCE}, or `undefined` (ADR 0084).
+   * The same cast Rapier's own snap-to-ground makes, for the one case it
+   * skips: a sweep that ended higher than it started.
+   */
+  private standableGroundBelow(movement: Vec3): number | undefined {
+    const at = this.body.translation();
+    const hit = this.world.castShape(
+      { x: at.x + movement.x, y: at.y + movement.y, z: at.z + movement.z },
+      this.body.rotation(),
+      DOWN,
+      this.collider.shape,
+      CHARACTER_CONTROLLER_OFFSET,
+      GROUND_SNAP_DISTANCE,
+      false,
+      undefined,
+      CHARACTER_GROUPS,
+      this.collider,
+      undefined,
+      isNotCharacter,
+    );
+    return hit && hit.normal1.y > WALL_NORMAL_MAX_Y ? hit.time_of_impact : undefined;
   }
 
   /** The other half of {@link beginTick}, run after the shared `world.step()`. */
@@ -985,7 +1060,23 @@ export class CharacterController {
     );
     const ownMovement = this.rapierController.computedMovement();
     const corrected = vec3(ownMovement.x, ownMovement.y, ownMovement.z);
+    const wasGrounded = this.grounded;
     this.grounded = this.rapierController.computedGrounded();
+    // ADR 0084: a sweep that starts on the floor can come back tilted — Rapier
+    // resolves it against a contact normal a few degrees off vertical (noise
+    // on flat trimeshes, or a chamfer between two decks) and slides the whole
+    // step along it. At Dash speed that lifts the capsule ~0.1 clear of the
+    // floor, and Rapier's own snap-to-ground only pulls down a sweep that went
+    // down, so it reported one airborne tick mid-run. Nothing sent this
+    // Character up — no jump this tick, no upward speed (a launch, a bounce,
+    // an updraft all have one) — so it goes back down onto the floor.
+    if (!this.grounded && wasGrounded && takeoff === null && this.velocity.y <= 0) {
+      const drop = this.standableGroundBelow(corrected);
+      if (drop !== undefined) {
+        corrected.y -= drop;
+        this.grounded = true;
+      }
+    }
     if (this.grounded) this.keptRideVelocity = undefined;
     // Skipped while Sliding: this would overwrite the very slope-gravity
     // velocity just built up above with a flat constant every tick, which

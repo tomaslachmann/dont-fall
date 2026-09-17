@@ -41,9 +41,11 @@ const saveRuntime = (saveResult: (result: unknown) => Promise<boolean>): SaveRun
   closed: false,
   config: { matchId: "m1" },
   roundResults: [{ rows: [{ id: "a", placement: 1, qualified: true }] }],
+  roundTrackIds: ["track-1"],
   matchNicknames: new Map([["a", "Ann"]]),
   matchAccountIds: new Map([["a", "acc-1"]]),
   matchBodySkins: new Map([["a", 2]]),
+  matchHats: new Map([["a", "crown"]]),
   totalFalls: { a: 2 },
   matchResults: { saveResult: saveResult as SaveRuntime["matchResults"]["saveResult"] },
 });
@@ -66,8 +68,10 @@ describe("saveMatchResultIfDue (ADR 0059)", () => {
     expect(saveResult.mock.calls[0]![0]).toMatchObject({
       matchId: "m1",
       results: [{ rows: [{ id: "a", placement: 1, qualified: true }] }],
+      roundTrackIds: ["track-1"],
       nicknames: { a: "Ann" },
       bodySkins: { a: 2 },
+      hats: { a: "crown" },
       totalFalls: { a: 2 },
     });
     expect(rt.savingResults).toBe(false);

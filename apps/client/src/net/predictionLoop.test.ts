@@ -57,14 +57,14 @@ describe("PredictionLoop — seeding (ADR 0027)", () => {
 describe("PredictionLoop — step (the fixed-timestep accumulator)", () => {
   it("runs no ticks and just accumulates when advanceMs is under one tick", () => {
     const loop = new PredictionLoop(newSim(), DEFAULT_CHARACTER_ID);
-    loop.step(IDLE, TICK_MS / 2);
+    expect(loop.step(IDLE, TICK_MS / 2)).toBe(0);
     expect(loop.tick).toBe(0);
     expect(loop.accumulatorMs).toBeCloseTo(TICK_MS / 2, 5);
   });
 
   it("runs exactly the ticks the accumulated time covers, buffering each by tick number", () => {
     const loop = new PredictionLoop(newSim(), DEFAULT_CHARACTER_ID);
-    loop.step(EAST, TICK_MS * 3);
+    expect(loop.step(EAST, TICK_MS * 3)).toBe(3);
     expect(loop.tick).toBe(3);
     expect(loop.inputBuffer.map((e) => e.tick)).toEqual([1, 2, 3]);
     expect(loop.inputBuffer.every((e) => e.input === EAST)).toBe(true);
@@ -86,7 +86,7 @@ describe("PredictionLoop — step (the fixed-timestep accumulator)", () => {
 
   it("clamps a long stall to MAX_STEPS_PER_FRAME rather than spiralling to catch up", () => {
     const loop = new PredictionLoop(newSim(), DEFAULT_CHARACTER_ID);
-    loop.step(IDLE, TICK_MS * (MAX_STEPS_PER_FRAME + 50));
+    expect(loop.step(IDLE, TICK_MS * (MAX_STEPS_PER_FRAME + 50))).toBe(MAX_STEPS_PER_FRAME);
     expect(loop.tick).toBe(MAX_STEPS_PER_FRAME);
   });
 
@@ -141,7 +141,7 @@ describe("PredictionLoop — reconcile (the correction gate, ADR 0013/0026)", ()
     // gate agreeing with itself, not about zero physics drift.
     const settled = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
     const result = loop.reconcile(serverReport({ position: settled }), 1, [], new PropPredictionController());
-    expect(result).toEqual({ corrected: false, positionError: null });
+    expect(result).toEqual({ corrected: false, positionError: null, replayedTicks: 0 });
   });
 
   it("corrects and replays when the server disagrees on position past the epsilon", () => {
@@ -150,6 +150,8 @@ describe("PredictionLoop — reconcile (the correction gate, ADR 0013/0026)", ()
     const result = loop.reconcile(serverReport({ position: { x: 5, y: 1.2, z: 0 } }), 1, [], new PropPredictionController());
     expect(result.corrected).toBe(true);
     expect(result.positionError).toBeGreaterThan(1);
+    // Acked at 1 of 3 predicted: ticks 2 and 3 are simulated again.
+    expect(result.replayedTicks).toBe(2);
   });
 
   it("corrects on a Qualification disagreement even when positions agree (ADR 0039)", () => {
@@ -205,8 +207,11 @@ describe("PredictionLoop — reconcile (the correction gate, ADR 0013/0026)", ()
     );
     expect(result.corrected).toBe(true);
     // The replayed (unacked) ticks 2 and 3 ran locked — the Character stayed
-    // put at the server's corrected position rather than continuing east.
-    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x).toBeCloseTo(5, 5);
+    // put at the server's corrected position rather than continuing east (a
+    // tick of walking is ~0.2). Reported grounded 0.34 above the floor, it
+    // snaps down onto it (ADR 0084), and a sweep along the floor moves it a
+    // few micrometres sideways — hence 4 places, not 5.
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x).toBeCloseTo(5, 4);
   });
 });
 

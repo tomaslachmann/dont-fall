@@ -20,6 +20,13 @@ describe("createSceneComposer", () => {
     }
   });
 
+  it("takes a graphics quality level's sample count, down to none (ADR 0079)", () => {
+    for (const samples of [2, 0]) {
+      const composer = createSceneComposer(fakeRenderer(800, 600, 1), samples);
+      for (const target of [composer.renderTarget1, composer.renderTarget2]) expect(target.samples).toBe(samples);
+    }
+  });
+
   it("sizes its buffers to the drawing buffer, pixel ratio included, and keeps doing so on resize", () => {
     const composer = createSceneComposer(fakeRenderer(800, 600, 2));
     expect([composer.renderTarget1.width, composer.renderTarget1.height]).toEqual([1600, 1200]);

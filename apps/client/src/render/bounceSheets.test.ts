@@ -29,6 +29,12 @@ const character = (over: Partial<Vec3> & { grounded?: boolean; vy?: number } = {
     velocity: { x: 0, y: over.vy ?? 0, z: 0 },
     grounded: over.grounded ?? true,
     dashing: false,
+    dashSpeed: 0,
+    respawnCount: 0,
+    eliminated: false,
+    hitChargeMs: 0,
+    ragdollEpoch: 0,
+    ragdollCause: "Fall",
     hitEpoch: 0,
     hitReactEpoch: 0,
     grabEpoch: 0,
@@ -156,6 +162,17 @@ describe("BouncePresses", () => {
     const stepped = presses.update({ a: character() }, 16);
     // The ordinary press only — nothing extra from the "landing".
     expect(stepped[0]!.depth).toBeCloseTo(BOUNCE_PRESS_DEPTH, 10);
+    expect(presses.landings()).toEqual([]);
+  });
+
+  it("reports each landing for its frame only: who, where, and how fast (M14 ticket 05)", () => {
+    const presses = new BouncePresses();
+    presses.update({ a: character({ grounded: false, vy: -18 }), b: character({ x: 2, grounded: false, vy: -2 }) }, 0);
+    expect(presses.landings()).toEqual([]);
+    presses.update({ a: character({ grounded: false, vy: 15 }), b: character({ x: 2 }) }, 16);
+    expect(presses.landings()).toEqual([{ id: "a", position: character().position, speed: 18 }]);
+    presses.update({ a: character({ grounded: false, vy: 14 }), b: character({ x: 2 }) }, 32);
+    expect(presses.landings()).toEqual([]);
   });
 
   it("answers every Character, not only the local one", () => {

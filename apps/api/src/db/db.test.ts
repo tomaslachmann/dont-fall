@@ -126,6 +126,45 @@ describe("openDb migrating the pre-ADR-0053 accounts schema", () => {
     });
   });
 
+  it("adds a nullable hat column to pre-hats accounts, preserving rows (ADR 0083)", () => {
+    // The exact pre-hats shape by hand — every column except `hat`.
+    const raw = new Database(dbPath);
+    raw.exec(`
+      CREATE TABLE accounts (
+        id TEXT PRIMARY KEY,
+        discord_id TEXT UNIQUE,
+        email TEXT UNIQUE,
+        password_hash TEXT,
+        display_name TEXT NOT NULL,
+        avatar_url TEXT,
+        friend_code TEXT UNIQUE,
+        created_at INTEGER NOT NULL,
+        xp INTEGER NOT NULL DEFAULT 0,
+        coins INTEGER NOT NULL DEFAULT 0,
+        body_skin INTEGER NOT NULL DEFAULT 0,
+        bindings TEXT
+      )
+    `);
+    raw.prepare("INSERT INTO accounts (id, email, display_name, created_at, body_skin) VALUES (?, ?, ?, ?, ?)").run(
+      "old-id",
+      "old@example.com",
+      "Old Bean",
+      Date.now(),
+      4,
+    );
+    raw.close();
+
+    const db = openDb(dbPath);
+
+    expect(db.select().from(accounts).where(eq(accounts.id, "old-id")).get()).toMatchObject({
+      displayName: "Old Bean",
+      bodySkin: 4,
+      hat: null,
+    });
+    db.update(accounts).set({ hat: "cone" }).where(eq(accounts.id, "old-id")).run();
+    expect(db.select().from(accounts).where(eq(accounts.id, "old-id")).get()?.hat).toBe("cone");
+  });
+
   it("leaves an already-current accounts schema (and its data) untouched on reopen", () => {
     const db = openDb(dbPath);
     db.insert(accounts)

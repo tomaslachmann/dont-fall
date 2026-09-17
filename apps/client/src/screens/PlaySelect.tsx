@@ -138,7 +138,7 @@ export default function PlaySelect({
         <PanelHead title="PLAY">
           <div className={s.headMeta}>
             <Pill>{beansOnline ? `${beansOnline} BEANS ONLINE` : 'BEANS ONLINE'}</Pill>
-            <button type="button" className={s.close} onClick={() => navigate("/")} aria-label="Back to menu">×</button>
+            <button type="button" className={s.close} data-ui-sound="back" onClick={() => navigate("/")} aria-label="Back to menu">×</button>
           </div>
         </PanelHead>
 

@@ -43,6 +43,8 @@ export interface CourseOverlay {
   respawnOf: (index: number) => { floor: Vec3 | undefined } | undefined;
   /** The world point on a still Segment's surface under the cursor ray — a respawn spot being picked. */
   pickFloor: (raycaster: THREE.Raycaster) => { index: number; point: Vec3 } | undefined;
+  /** Shows or hides every marker — the Thumbnail capture frames the bare Track, no pills or badges. */
+  setVisible: (visible: boolean) => void;
   dispose: () => void;
 }
 
@@ -471,6 +473,10 @@ export const createCourseOverlay = (scene: THREE.Scene): CourseOverlay => {
       while (node && typeof node.userData.segmentIndex !== "number") node = node.parent;
       if (!node) return undefined;
       return { index: node.userData.segmentIndex as number, point: { x: hit.point.x, y: hit.point.y, z: hit.point.z } };
+    },
+
+    setVisible(visible) {
+      root.visible = visible;
     },
 
     dispose() {

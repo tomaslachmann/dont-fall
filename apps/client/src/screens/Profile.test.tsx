@@ -16,6 +16,16 @@ describe("Profile", () => {
     expect(screen.getByText(/SIGNATURE VICTORY POSE/)).toBeInTheDocument();
   });
 
+  it("the XP fill is block-level and proportional — 240 of 2000 fills 12% (an inline span would ignore the width)", () => {
+    renderProfile({ xp: 240, xpTarget: 2000 });
+
+    const fill = screen.getByRole("progressbar");
+    expect(fill.tagName).toBe("DIV");
+    expect(fill).toHaveStyle({ width: "12%" });
+    expect(fill).toHaveAttribute("aria-valuenow", "240");
+    expect(fill).toHaveAttribute("aria-valuemax", "2000");
+  });
+
   it("the season chip renders only when a season is known — no system, no chip", () => {
     renderProfile();
     expect(screen.queryByText(/SINCE/)).toBeNull();
@@ -24,31 +34,40 @@ describe("Profile", () => {
     expect(screen.getAllByText("SINCE S1")).toHaveLength(1);
   });
 
-  it("stats render when provided, honestly empty when not", () => {
+  it("stats render when provided, loading while the career loads", () => {
     renderProfile({ stats: [{ label: "CROWNS", value: "3", hero: true }] });
     expect(screen.getByText("CROWNS")).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
-
-    renderProfile({ stats: null });
-    expect(screen.getByText("Career stats aren't tracked yet.")).toBeInTheDocument();
   });
 
-  it("badges show counts and numbered tiles when provided, honestly empty when not", () => {
-    renderProfile({ badges: { earned: 2, total: 60 } });
-    expect(screen.getByText("2 OF 60")).toBeInTheDocument();
-
-    renderProfile({ badges: null });
-    expect(screen.getByText("Badges aren't here yet.")).toBeInTheDocument();
+  it("badges show counts and named tiles when provided", () => {
+    renderProfile({ badges: { earned: 2, total: 6 }, badgeNames: ["First Steps", "Winner"] });
+    expect(screen.getByText("2 OF 6")).toBeInTheDocument();
+    expect(screen.getByTitle("First Steps")).toHaveTextContent("1");
+    expect(screen.getByTitle("Winner")).toHaveTextContent("2");
   });
 
-  it("recent matches render rows when provided, honestly empty when not", () => {
+  it("recent matches render rows when provided, a zero-state on an empty career", () => {
     renderProfile({
       matches: [{ rank: 1, track: "THE BIG WOBBLE · RACE", points: 520, when: "18 MIN AGO" }],
     });
     expect(screen.getByText("THE BIG WOBBLE · RACE")).toBeInTheDocument();
 
-    renderProfile({ matches: null });
-    expect(screen.getByText("Match history isn't here yet.")).toBeInTheDocument();
+    renderProfile({ matches: [] });
+    expect(screen.getByText("No finished Matches yet — race one and it lands here.")).toBeInTheDocument();
+  });
+
+  it("null sections are loading states, failed ones say the career didn't load", () => {
+    renderProfile({ stats: null, badges: null, matches: null });
+    expect(screen.getAllByText("Loading…")).toHaveLength(3);
+
+    renderProfile({ stats: null, badges: null, matches: null, failed: true });
+    expect(screen.getAllByText("Couldn't load the career.")).toHaveLength(3);
+  });
+
+  it("the history toggle wears the Route's label", () => {
+    renderProfile({ seeAllLabel: "SHOW LESS" });
+    expect(screen.getByRole("button", { name: "SHOW LESS" })).toBeInTheDocument();
   });
 
   it("back, share, edit bean and see-all fire their callbacks — the Route decides what they do", () => {
@@ -68,14 +87,9 @@ describe("Profile", () => {
     expect(onSeeAll).toHaveBeenCalledTimes(1);
   });
 
-  it("the notice renders inline — alert for errors, status for info", () => {
-    const { rerender } = renderProfile();
+  it("carries no notice line of its own — confirmations and failures are global flashes", () => {
+    renderProfile();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByRole("status")).toBeNull();
-
-    rerender(
-      <Profile name="Wobbleton" level={2} xp={240} xpTarget={2000} notice={{ text: "Sharing isn't here yet.", tone: "info" }} />,
-    );
-    expect(screen.getByRole("status")).toHaveTextContent("Sharing isn't here yet.");
   });
 });

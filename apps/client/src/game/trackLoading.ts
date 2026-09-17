@@ -1,7 +1,8 @@
 import {
-  ASSET_MODULE_DEFS,
   MODULE_LIBRARY,
-  loadAssetLibrary,
+  assetFileName,
+  assetIdsOf,
+  createAssetLibraryLoader,
   resolveEnvironmentId,
   type EnvironmentId,
   type Module,
@@ -9,7 +10,7 @@ import {
 } from "@dont-fall/shared";
 import type * as THREE from "three";
 import { resolveEndpoints } from "../lib/socket/connection.js";
-import { loadAssetVisuals } from "../render/assetVisuals.js";
+import { parseAssetVisual } from "../render/assetVisuals.js";
 import { loadIceTexture } from "../render/iceOverlays.js";
 import { loadMudTexture } from "../render/mudOverlays.js";
 import { loadBounceTexture } from "../render/bounceSheets.js";
@@ -39,10 +40,14 @@ export interface FetchedRevision {
 export interface TrackLoading {
   /** `GET {apiUrl}/tracks/:id` — revision omitted means latest. */
   fetchTrack: (trackId: string, trackRevision?: number) => Promise<FetchedRevision>;
-  /** Collision library, session-cached (M8 ticket 02, ADR 0050 as amended). */
-  loadLibrary: () => Promise<Record<string, Module>>;
-  /** Visual templates, session-cached alongside the library (M8 ticket 03). */
-  loadVisualTemplates: () => Promise<Record<string, THREE.Group>>;
+  /**
+   * The Module library for `track`: the procedural registry plus the Assets
+   * `track` places, each fetched and parsed once per session
+   * (memory-footprint ticket 01, ADR 0080).
+   */
+  loadLibrary: (track: Track) => Promise<Record<string, Module>>;
+  /** Visual templates for the Assets `track` places, cached per id beside the library (M8 ticket 03). */
+  loadVisualTemplates: (track: Track) => Promise<Record<string, THREE.Group>>;
   /**
    * The shared ice texture (ADR 0066), session-cached like the templates —
    * or null when it cannot be loaded (an older API, a failed fetch/decode).
@@ -57,7 +62,11 @@ export interface TrackLoading {
   loadMudTexture: () => Promise<THREE.Texture | null>;
   /** The shared bounce sheet texture, cached per session; `null` when it could not be loaded (ADR 0070). */
   loadBounceTexture: () => Promise<THREE.Texture | null>;
+  /** How many asset files this session downloaded, and their decoded bytes (M13 ticket 01). */
+  fetchStats: () => { files: number; bytes: number };
 }
+
+type AssetHalf = "collision" | "visual";
 
 export const createTrackLoading = (host: string | undefined): TrackLoading => {
   const endpoints = resolveEndpoints(host ?? location.hostname);
@@ -77,58 +86,84 @@ export const createTrackLoading = (host: string | undefined): TrackLoading => {
     return { track: body.track, name: body.name, environment: environment.id };
   };
 
-  // One `fetchBytes` serves both loaders (M8 ticket 03): the collision half
-  // (`loadAssetLibrary`) and the visual half (`loadAssetVisuals`) parse the
-  // same bytes twice with different code — "two loaders, one truth" — so
-  // they share one promise cache and no URL is ever fetched twice per
-  // session, however the two loads interleave.
-  const fetchedBytes = new Map<string, Promise<Uint8Array>>();
-  const fetchBytes = (url: string): Promise<Uint8Array> => {
-    const cached = fetchedBytes.get(url);
-    if (cached) return cached;
-    const pending = (async (): Promise<Uint8Array> => {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`GET ${url} answered ${res.status}`);
-      return new Uint8Array(await res.arrayBuffer());
-    })();
-    fetchedBytes.set(url, pending);
-    return pending;
+  const fetched = { files: 0, bytes: 0 };
+  const download = async (url: string): Promise<Uint8Array> => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`GET ${url} answered ${res.status}`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    fetched.files += 1;
+    fetched.bytes += bytes.byteLength;
+    return bytes;
   };
   const assetsBaseUrl = `${endpoints.apiUrl}/assets`;
 
-  let assetLibrary: Record<string, Module> | null = null;
-  const loadLibrary = async (): Promise<Record<string, Module>> => {
-    if (!assetLibrary) {
-      const assets = await loadAssetLibrary(
-        fetchBytes,
-        assetsBaseUrl,
-        ASSET_MODULE_DEFS,
-        // Ticket 01's visual-escapes-collision check, surfaced where a
-        // developer will see it (a dev warning, never an error).
-        (moduleId, warning) => console.warn(`DON'T FALL: asset "${moduleId}": ${warning}`),
-      );
-      assetLibrary = { ...MODULE_LIBRARY, ...assets };
+  // One download per Asset file serves both halves (M8 ticket 03): collision
+  // and visuals parse the same bytes with different code ("two loaders, one
+  // truth"), however their loads interleave. The cache lets go of a file's
+  // bytes once both halves have taken them (memory-footprint ticket 01), so
+  // they are freed when the second parse finishes; a failed download is
+  // dropped at once, so the next load tries again.
+  const glbBytes = new Map<string, { bytes: Promise<Uint8Array>; waiting: Set<AssetHalf> }>();
+  const takeGlbBytes = (half: AssetHalf) => (url: string): Promise<Uint8Array> => {
+    let entry = glbBytes.get(url);
+    if (!entry) {
+      const bytes = download(url);
+      const created = { bytes, waiting: new Set<AssetHalf>(["collision", "visual"]) };
+      glbBytes.set(url, created);
+      bytes.catch(() => {
+        if (glbBytes.get(url) === created) glbBytes.delete(url);
+      });
+      entry = created;
     }
-    return assetLibrary;
+    entry.waiting.delete(half);
+    if (entry.waiting.size === 0) glbBytes.delete(url);
+    return entry.bytes;
   };
 
-  let assetTemplates: Record<string, THREE.Group> | null = null;
-  const loadVisualTemplates = async (): Promise<Record<string, THREE.Group>> => {
-    if (!assetTemplates) {
-      assetTemplates = await loadAssetVisuals(
-        fetchBytes,
-        assetsBaseUrl,
-        ASSET_MODULE_DEFS.map((def) => def.id),
-      );
-    }
-    return assetTemplates;
+  const collision = createAssetLibraryLoader(
+    takeGlbBytes("collision"),
+    assetsBaseUrl,
+    // Ticket 01's visual-escapes-collision check, surfaced where a
+    // developer will see it (a dev warning, never an error).
+    (moduleId, warning) => console.warn(`DON'T FALL: asset "${moduleId}": ${warning}`),
+  );
+  const loadLibrary = async (track: Track): Promise<Record<string, Module>> => ({
+    ...MODULE_LIBRARY,
+    ...(await collision.load(assetIdsOf(track))),
+  });
+
+  const templates = new Map<string, Promise<THREE.Group>>();
+  const takeVisualBytes = takeGlbBytes("visual");
+  const loadTemplate = (moduleId: string): Promise<THREE.Group> => {
+    const cached = templates.get(moduleId);
+    if (cached) return cached;
+    const url = `${assetsBaseUrl}/${assetFileName(moduleId)}`;
+    const pending = (async (): Promise<THREE.Group> => {
+      let bytes: Uint8Array;
+      try {
+        bytes = await takeVisualBytes(url);
+      } catch (err) {
+        throw new Error(`asset "${moduleId}": could not fetch ${url}: ${(err as Error).message}`);
+      }
+      return parseAssetVisual(moduleId, bytes);
+    })();
+    templates.set(moduleId, pending);
+    pending.catch(() => {
+      if (templates.get(moduleId) === pending) templates.delete(moduleId);
+    });
+    return pending;
+  };
+  const loadVisualTemplates = async (track: Track): Promise<Record<string, THREE.Group>> => {
+    const ids = assetIdsOf(track);
+    const loaded = await Promise.all(ids.map(loadTemplate));
+    return Object.fromEntries(ids.map((id, i) => [id, loaded[i]!]));
   };
 
   let iceTexture: THREE.Texture | null | undefined;
   const loadIceTextureCached = async (): Promise<THREE.Texture | null> => {
     if (iceTexture === undefined) {
       try {
-        iceTexture = await loadIceTexture(fetchBytes, assetsBaseUrl);
+        iceTexture = await loadIceTexture(download, assetsBaseUrl);
       } catch (err) {
         console.warn(`DON'T FALL: ice overlay unavailable: ${(err as Error).message}`);
         iceTexture = null;
@@ -141,7 +176,7 @@ export const createTrackLoading = (host: string | undefined): TrackLoading => {
   const loadMudTextureCached = async (): Promise<THREE.Texture | null> => {
     if (mudTexture === undefined) {
       try {
-        mudTexture = await loadMudTexture(fetchBytes, assetsBaseUrl);
+        mudTexture = await loadMudTexture(download, assetsBaseUrl);
       } catch (err) {
         console.warn(`DON'T FALL: mud overlay unavailable: ${(err as Error).message}`);
         mudTexture = null;
@@ -154,7 +189,7 @@ export const createTrackLoading = (host: string | undefined): TrackLoading => {
   const loadBounceTextureCached = async (): Promise<THREE.Texture | null> => {
     if (bounceTexture === undefined) {
       try {
-        bounceTexture = await loadBounceTexture(fetchBytes, assetsBaseUrl);
+        bounceTexture = await loadBounceTexture(download, assetsBaseUrl);
       } catch (err) {
         console.warn(`DON'T FALL: bounce sheet unavailable: ${(err as Error).message}`);
         bounceTexture = null;
@@ -170,5 +205,6 @@ export const createTrackLoading = (host: string | undefined): TrackLoading => {
     loadIceTexture: loadIceTextureCached,
     loadMudTexture: loadMudTextureCached,
     loadBounceTexture: loadBounceTextureCached,
+    fetchStats: () => ({ ...fetched }),
   };
 };

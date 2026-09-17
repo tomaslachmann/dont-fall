@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   DEFAULT_ENVIRONMENT_ID,
   DEFAULT_SURVIVOR_TARGET,
@@ -37,6 +37,9 @@ const toStored = (row: typeof tracks.$inferSelect): StoredTrack => ({
   // Validated on publish, so this only ever falls back for a row this build
   // could not have written (a newer API's preset, after a rollback).
   environment: resolveEnvironmentId(row.environment).id,
+  // The bytes stay behind `GET /tracks/:id/thumbnail` (ADR 0085) — this
+  // shape only ever says whether they exist.
+  hasThumbnail: row.thumbnail !== null,
 });
 
 /**
@@ -75,6 +78,8 @@ export const saveTrack = (
     timeLimitMs?: number;
     survivorTarget?: number;
     environment?: EnvironmentId;
+    /** The Revision's Thumbnail data URL (ADR 0085) — already validated, or absent for none. */
+    thumbnail?: string;
   },
 ): { id: string } => {
   // An empty string is treated the same as absent (code review, ticket 10) —
@@ -109,6 +114,9 @@ export const saveTrack = (
       // Out of the content hash too (ADR 0074): the same Segments under
       // another sky are the same Track content.
       environment: input.environment ?? DEFAULT_ENVIRONMENT_ID,
+      // Out of the content hash for the same reason (ADR 0085): a
+      // re-framed screenshot is not new Segments.
+      thumbnail: input.thumbnail ?? null,
     })
     .run();
   return { id: trackId };
@@ -130,6 +138,60 @@ export const getTrackById = (db: ApiDb, id: string, revision?: number): StoredTr
           .where(and(eq(tracks.trackId, id), eq(tracks.revision, revision)))
           .get();
   return row ? toStored(row) : undefined;
+};
+
+/**
+ * One Revision's Thumbnail data URL (ADR 0085) — the latest, or the exact
+ * `revision` when pinned. Reads only the `thumbnail` column, never the
+ * Segment JSON: a thumbnail fetch must not pay for a Track parse. Three
+ * outcomes, and the caller needs all three told apart: `undefined` (no such
+ * Revision at all), `null` (a Revision published without one), or the data
+ * URL itself.
+ */
+export const getTrackThumbnail = (
+  db: ApiDb,
+  id: string,
+  revision?: number,
+): string | null | undefined => {
+  const row =
+    revision === undefined
+      ? db
+          .select({ thumbnail: tracks.thumbnail })
+          .from(tracks)
+          .where(eq(tracks.trackId, id))
+          .orderBy(desc(tracks.revision))
+          .limit(1)
+          .get()
+      : db
+          .select({ thumbnail: tracks.thumbnail })
+          .from(tracks)
+          .where(and(eq(tracks.trackId, id), eq(tracks.revision, revision)))
+          .get();
+  return row === undefined ? undefined : row.thumbnail;
+};
+
+/**
+ * Latest-Revision display names for a batch of Track ids (the career
+ * history's row names) — one query, whatever Revisions exist. Absent key, no
+ * such Track; a present-but-null name, an unnamed Revision. Either way the
+ * caller falls back to `UNTITLED_TRACK_NAME`, never to the id.
+ */
+export const getTrackNamesByIds = (db: ApiDb, ids: readonly string[]): Map<string, string | null> => {
+  const names = new Map<string, string | null>();
+  if (ids.length === 0) return names;
+  const rows = db
+    .select({ trackId: tracks.trackId, name: tracks.name, revision: tracks.revision })
+    .from(tracks)
+    .where(inArray(tracks.trackId, [...ids]))
+    .all();
+  const best = new Map<string, { name: string | null; revision: number }>();
+  for (const row of rows) {
+    if ((best.get(row.trackId)?.revision ?? -1) < row.revision) {
+      best.set(row.trackId, { name: row.name, revision: row.revision });
+    }
+  }
+  for (const [id, row] of best) names.set(id, row.name);
+  return names;
 };
 
 /** Fetches the latest Revision of an arbitrary stored `trackId` (Match server's "give me any" — ADR 0028). */
@@ -169,9 +231,11 @@ export const listTracks = (db: ApiDb, modules: Record<string, Module>): TrackLis
     createdAt: number;
     data: string;
     plays: number;
+    hasThumbnail: number;
   }>(sql`
     SELECT track_id as trackId, name, author_id as authorId, created_at as createdAt, data,
-      COALESCE((SELECT plays FROM track_plays WHERE track_plays.track_id = t1.track_id), 0) as plays
+      COALESCE((SELECT plays FROM track_plays WHERE track_plays.track_id = t1.track_id), 0) as plays,
+      thumbnail IS NOT NULL as hasThumbnail
     FROM tracks t1
     WHERE revision = (SELECT MAX(revision) FROM tracks t2 WHERE t2.track_id = t1.track_id)
     ORDER BY created_at DESC
@@ -182,6 +246,7 @@ export const listTracks = (db: ApiDb, modules: Record<string, Module>): TrackLis
     name: row.name,
     authorId: row.authorId,
     createdAt: row.createdAt,
+    hasThumbnail: row.hasThumbnail === 1,
     plays: row.plays,
     // Latest Revision's own Segments, against today's library — a republish
     // can gain or lose the Zone, and the listing follows it. Lenient on

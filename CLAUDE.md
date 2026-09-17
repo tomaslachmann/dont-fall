@@ -188,7 +188,60 @@ id `base-race`, five-minute clock), a Fall Guys-style course of ten obstacle sec
 Checkpoints, proven walkable end to end by `baseRace.test.ts`. Whether its moving obstacles' timing
 plays fair is the user's live check.
 
-**Next: M9** — Design screens reconciliation (`.scratch/m9-design-screens-reconciliation/issues/`).
+**M13 planned, the next goal** — Smooth on a weaker PC (`docs/milestones/M13.md`, research in
+`docs/research/gameplay-performance-culling-and-asset-loading.md`, **ADR 0079**). Settled with the
+user on 2026-09-17:
+- measure first: a dev frame overlay (`?perf=1`), a headless base-race simulation benchmark, and a
+  server tick log;
+- load only the Track's Assets and share textures (memory-footprint tickets 01/02, kept in
+  `.scratch/memory-footprint/issues/`);
+- the camera's far plane follows the fog;
+- graphics quality levels the player picks in Settings → VIDEO, never switched automatically, with
+  shadows off at `low` (ADR 0079 amends 0074);
+- warm up shaders and textures before the Round runs.
+
+Physics distance activation is designed only if the measured numbers ask for it (ticket 07). The user
+declined a lighter `trap_trapball` visual and non-casting small pieces. Tickets:
+`.scratch/m13-smooth-on-weaker-pcs/issues/`.
+
+Progress (2026-09-17):
+- **Done on tests:**
+  - 01, the `?perf=1` overlay, with a "copy run" button;
+  - 02, `pnpm bench:sim`, and `DONTFALL_PERF=1` on the Match server;
+  - 04, the far plane at `fogFarPlane`, with the cloud floor faded before it;
+  - 05, graphics quality in Settings → VIDEO, `lib/graphicsQuality.ts`, and the canvas no
+    longer antialiased;
+  - 06, `Stage.warmUp`;
+  - memory-footprint 01, Track-only Asset loading on both sides (ADR 0080);
+  - memory-footprint 02, `shareTextures`, now in `packages/render`.
+- **Waiting on the user:** the after runs and visual checks; the default level (`high`, or
+  `medium`?); memory-footprint 05, still a proposal; ticket 07's decisions.
+- **Before numbers:** in the research note's "Results", except the Spectator run. No weaker PC is
+  available; the dev Mac with 4× CPU throttling stands in for it.
+- **What they showed:** start-of-Round hitches, 35.5 MB of Assets loaded, `stage.render()` as the
+  CPU cost that grows, and the Characters' own sweeps (not Moving Segments) as the server's hot
+  path.
+
+**M14 done on tests, listening pending** — The game has sound (`docs/milestones/M14.md`, research in
+`docs/research/game-audio.md`, **ADR 0087** and its amendments). Settled with the user on 2026-09-17:
+sound is presentation only, derived on the client from state it already has (no protocol change); one
+`AudioContext` with master/effects/environment/music/ui buses; equal-power spatial sound for other players
+and moving Assets under a voice budget; CC0 Kenney packs plus CC0/CC-BY Freesound recordings (credited
+in-game), generated music, `.ogg` only; a voiced Countdown; Settings → AUDIO wired per device. Tickets
+01–14 in `.scratch/m14-sound/issues/` are done on tests and typecheck, each with an "As built":
+- Character sounds (`audio/characterSounds.ts`): getting around (05) and fighting (06), from pure
+  per-id edge detectors (`movementCues.ts`, `fightCues.ts`, `riseLatch.ts`) fed the drawn Character once
+  a frame. A replay's second rise of `launchPadEpoch`/`respawnCount`/`hitEpoch` (not in `ReconcileBase`)
+  is silenced by a refractory window.
+- Moving Segments (07), fans/belts/Springs (08), Environment ambience (09), match calls on the server's
+  clock (10), music outside any Stage on a three-free page context, the Lobby's playlist app-wide and
+  the Round's only in a Match's Round (11), Screens click through one
+  delegated listener (12), a 12-Character budget run on the real base race (13, no constant moved),
+  and a Credits Screen at `/credits` (14).
+- **Waiting on the user:** every listening check (levels, picks, whether a whoosh per spinner sweep is
+  too busy), and the throttled frame-time check with 12 Characters.
+
+**Also open: M9** — Design screens reconciliation (`.scratch/m9-design-screens-reconciliation/issues/`).
 A new design-screens drop (`apps/client/src/test_components/`) turned out to assume six systems
 this game never had — recorded in `docs/research/test-components-design-screens-gap-analysis.md`.
 Ticket 04's scope call is decided (**ADR 0052**): DON'T FALL becomes a persisted-identity game —
@@ -271,6 +324,8 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 | **M10** | Visual Module authoring — compose rounded, colored Modules from boxes/cylinders in the builder (no code, no Blender) and export them to the registry. |
 | **M11** | Moving Segments — Spin / Swing / Slide on any placed piece, ridden and hit through the Impact rule, previewed in the builder (ADR 0061). |
 | **M12** | The Environment — a sky, cloud floor, clouds, fog, light and real shadows a Track's author picks (`day`/`sunset`/`night`), render-only, shared by game and builder via `packages/render` (ADR 0074). |
+| **M13** | Smooth on a weaker PC — measured before/after, Track-only Asset loading, far plane at the fog, player-picked graphics quality (ADR 0079), shader warm-up; physics activation only if the numbers ask. |
+| **M14** | The game has sound — Character, moving Assets, Environment, music and UI; spatial, budgeted, presentation only (ADR 0087). Done on tests. |
 | later | Accounts (mandatory Discord login) → XP/currency → Betting (dynamic pari-mutuel) → Friends (full presence) → Track discovery (browsing + filters) — scope decided in ADR 0052, one milestone each, build order TBD per milestone. Also: collapsing terrain, Power-ups, reconnection, level themes, the Skyfall final. |
 
 ## Working agreements

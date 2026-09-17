@@ -103,6 +103,23 @@
 }
 .locked svg { width: 34%; fill: none; stroke: var(--df-color-ink-45); stroke-width: 2.6; stroke-linecap: round; }
 .lockLabel { font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui); color: var(--df-color-ink-45); }
+/* Hats (ADR 0083): the art pack's own icons on a pale tile; a locked one greys out under its lock. */
+.hatTile {
+  position: relative;
+  display: grid;
+  place-items: center;
+  background: #F7F3FF;
+  overflow: hidden;
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+  color: var(--df-color-ink-45);
+}
+.hatIcon { width: 88%; height: 88%; object-fit: contain; pointer-events: none; }
+.hatLocked { grid-template-rows: auto auto; align-content: center; gap: var(--df-space-2); cursor: default; }
+.hatLocked:hover, .hatLocked:active { transform: none; }
+.hatLocked .hatIcon { position: absolute; inset: 6%; width: 88%; height: 88%; filter: grayscale(1); opacity: .3; }
+.hatLocked svg { position: relative; width: 34%; fill: none; stroke: var(--df-color-ink-45); stroke-width: 2.6; stroke-linecap: round; }
+.hatLocked .lockLabel { position: relative; }
 .shopOnly {
   display: grid;
   place-items: center;
@@ -130,15 +147,5 @@
   color: var(--df-color-ink-45);
 }
 .equippedName { font: var(--df-weight-display) var(--df-text-base) / 1.1 var(--df-font-display); }
-
-/* One inline notice under the equipped row — rendered only while set, so the
-   panel's three-row layout is untouched the rest of the time. */
-.notice, .noticeError {
-  margin: 0;
-  font: var(--df-weight-label) var(--df-text-2xs) / 1.4 var(--df-font-ui);
-  letter-spacing: var(--df-tracking-label);
-  color: var(--df-color-ink-45);
-}
-.noticeError { color: var(--df-color-danger-shade); }
 
 .foot { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--df-space-4); }

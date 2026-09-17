@@ -24,7 +24,7 @@ const rig = (): CharacterActions => {
   const byDirection = (make: (d: KnockdownDirection) => THREE.AnimationAction | null) =>
     Object.fromEntries(KNOCKDOWN_DIRECTIONS.map((d) => [d, make(d)])) as Record<KnockdownDirection, THREE.AnimationAction | null>;
   return {
-    idle: null, walk: null, run: null,
+    idle: null, walk: null, run: null, sprint: null,
     jumpStart: null, jumpRise: null, jumpApex: null, jumpFall: null, jumpLand: null,
     punch: null, hitReact: null,
     ko: byDirection((d) => clip(`KO_${d}`, KO_SECONDS)),

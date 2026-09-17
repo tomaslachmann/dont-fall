@@ -68,6 +68,25 @@ Body-color selection (shipped, superseding the stub above):
   `playerTint.test.ts` (eyes/base/restore), `CharacterSelect.test.tsx`,
   `CharacterSelectRoute.test.tsx` (incl. base SAVE), API auth suite
 
+Hats (ADR 0083, 2026-09-17):
+
+- [x] Six hats from the first cosmetics pack, catalogued in shared (`HATS`),
+  unlocked by the Account's level (derived from XP, no ownership table)
+- [x] Saved on the Account (`accounts.hat`) through the same `PUT
+  /auth/me/cosmetics` (403 for a locked hat), replicated on the Lobby roster
+  and kept on the saved Match result for the podium
+- [x] Worn on the head bone by every rig: local, remote, free-roam, the
+  turntable, the menu hero, Profile, Rewards and the podium; the crest tucks
+  under every hat but the crown
+- [x] The HAT tab picks one (locked tiles show their level); Rewards
+  announces a hat a Match unlocked and EQUIP NEW HAT puts it on
+- [x] Covered: `cosmetics.test.ts`, the API auth, DAO and DB suites,
+  `hats.test.ts` (against the real files), `remoteCharacterPool.hats.test.ts`,
+  `CharacterSelect.test.tsx`, `CharacterSelectRoute.test.tsx`,
+  `endRoutes.test.tsx`
+- [ ] Live check (the user's): the hats on every skin, the crest under a hat
+  while Floating, the preview framing of the crown and UFO
+
 Real selection (deferred — revisit when new character art or ticket 13 lands):
 
 - [ ] Not yet scoped

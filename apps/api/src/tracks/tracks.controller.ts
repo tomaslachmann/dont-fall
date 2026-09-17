@@ -1,7 +1,16 @@
 import type { FastifyInstance } from "fastify";
+import { TRACK_THUMBNAIL_DATA_URL_PREFIX, TRACK_THUMBNAIL_MIME } from "@dont-fall/shared";
 import type { ApiDb } from "../db/db.js";
 import { ServiceError } from "../http/errors.js";
-import { fetchAnyTrack, fetchTrack, generateTrack, listAllTracks, publishTrack, recordPlay } from "./tracks.service.js";
+import {
+  fetchAnyTrack,
+  fetchTrack,
+  fetchTrackThumbnail,
+  generateTrack,
+  listAllTracks,
+  publishTrack,
+  recordPlay,
+} from "./tracks.service.js";
 
 /**
  * Track routes (ADR 0028/0032/0038/0041) — thin by contract: extract, call
@@ -37,6 +46,19 @@ export const registerTrackRoutes = (app: FastifyInstance, db: ApiDb, serviceToke
   });
 
   app.get("/tracks/any", async () => fetchAnyTrack(db));
+
+  // A Revision's Thumbnail bytes (ADR 0085) — raw JPEG, so an `<img>` can
+  // point straight at it. Revision-pinned reads cache forever (a Revision is
+  // immutable, ADR 0032); "latest" can move under a republish, so it
+  // revalidates quickly. Errors stay the API's usual `{error}` JSON.
+  app.get("/tracks/:id/thumbnail", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { revision } = request.query as { revision?: string | string[] };
+    const { thumbnail, revisionPinned } = fetchTrackThumbnail(db, id, revision);
+    const bytes = Buffer.from(thumbnail.slice(TRACK_THUMBNAIL_DATA_URL_PREFIX.length), "base64");
+    reply.header("Cache-Control", revisionPinned ? "public, max-age=31536000, immutable" : "public, max-age=30");
+    return reply.type(TRACK_THUMBNAIL_MIME).send(bytes);
+  });
 
   app.get("/tracks/:id", async (request) => {
     const { id } = request.params as { id: string };

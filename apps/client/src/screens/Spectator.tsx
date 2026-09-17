@@ -168,7 +168,7 @@ export default function Spectator({
         </button>
         <span className={s.sep} />
         <JellyButton variant="pill" tone="glass" centered onClick={onFreeCam}>FREE CAM{freeCam ? ' · ON' : ''}</JellyButton>
-        <JellyButton variant="pill" tone="danger" centered onClick={onLeave}>LEAVE</JellyButton>
+        <JellyButton variant="pill" tone="danger" centered sound="back" onClick={onLeave}>LEAVE</JellyButton>
       </div>
 
       {runners.length > 0 && (

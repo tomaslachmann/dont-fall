@@ -1,4 +1,11 @@
-import { invalidBodySkinReason, randomBearerToken } from "@dont-fall/shared";
+import {
+  invalidBindingsReason,
+  invalidBodySkinReason,
+  invalidHatReason,
+  lockedHatReason,
+  randomBearerToken,
+  type KeyBindings,
+} from "@dont-fall/shared";
 import type { ApiDb } from "../db/db.js";
 import { parseCookie } from "../http/cookies.js";
 import { ServiceError } from "../http/errors.js";
@@ -13,7 +20,9 @@ import {
   isUniqueConstraintError,
   linkDiscordToAccount,
   linkPasswordToAccount,
-  setBodySkin,
+  setBindings,
+  setCosmetics,
+  type CosmeticsPatch,
   upsertAccountFromDiscord,
   verifyEmailPassword,
   type Account,
@@ -177,21 +186,57 @@ export const whoAmI = (db: ApiDb, token: string | undefined): Account => {
 };
 
 /**
- * Equips cosmetics (M9 ticket 15) — today just the body skin, the shape
- * already a sub-resource so ticket 13's hats and colors join this same
- * endpoint rather than growing a new one per slot. Returns the updated
- * Account, so the screen refreshes in the one round trip.
+ * Equips cosmetics (M9 ticket 15, ADR 0083) — the body skin, the hat, or
+ * both, on the one sub-resource. A slot left out keeps what it had; `hat:
+ * null` takes the hat off. Every slot is checked before anything is written,
+ * so a refused hat never lands a skin sent with it. A hat above the
+ * Account's level is a 403: the id is fine, the Account can't have it yet.
+ * Returns the updated Account, so the screen refreshes in the one round
+ * trip.
  */
 export const updateCosmetics = (
   db: ApiDb,
   token: string | undefined,
-  input: { bodySkin?: unknown },
+  input: { bodySkin?: unknown; hat?: unknown },
 ): Account => {
   const account = token ? getAccountBySessionToken(db, token) : undefined;
   if (!account) throw new ServiceError(401, "not logged in");
-  const reason = invalidBodySkinReason(input.bodySkin);
+  const patch: CosmeticsPatch = {};
+  if (input.bodySkin !== undefined) {
+    const reason = invalidBodySkinReason(input.bodySkin);
+    if (reason) throw new ServiceError(400, reason);
+    patch.bodySkin = input.bodySkin as number;
+  }
+  if (input.hat !== undefined) {
+    const reason = invalidHatReason(input.hat);
+    if (reason) throw new ServiceError(400, reason);
+    const locked = lockedHatReason(input.hat as string | null, account.xp);
+    if (locked) throw new ServiceError(403, locked);
+    patch.hat = input.hat as string | null;
+  }
+  if (patch.bodySkin === undefined && patch.hat === undefined) {
+    throw new ServiceError(400, "nothing to equip: send bodySkin, hat, or both");
+  }
+  const updated = setCosmetics(db, account.id, patch);
+  if (!updated) throw new ServiceError(401, "not logged in");
+  return updated;
+};
+
+/**
+ * Stores key bindings (M9 controls) — a full-record PUT, like cosmetics.
+ * Returns the updated Account, so the screen refreshes in the one round
+ * trip.
+ */
+export const updateBindings = (
+  db: ApiDb,
+  token: string | undefined,
+  input: { bindings?: unknown },
+): Account => {
+  const account = token ? getAccountBySessionToken(db, token) : undefined;
+  if (!account) throw new ServiceError(401, "not logged in");
+  const reason = invalidBindingsReason(input.bindings);
   if (reason) throw new ServiceError(400, reason);
-  const updated = setBodySkin(db, account.id, input.bodySkin as number);
+  const updated = setBindings(db, account.id, input.bindings as KeyBindings);
   if (!updated) throw new ServiceError(401, "not logged in");
   return updated;
 };

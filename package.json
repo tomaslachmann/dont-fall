@@ -11,7 +11,9 @@
     "convert:kaykit": "tsx scripts/convert-kaykit.ts",
     "convert:traps": "tsx scripts/convert-imagetostl.ts",
     "convert:fan": "tsx scripts/convert-fan.ts",
-    "fit:gates": "tsx scripts/fit-gates.ts"
+    "fit:gates": "tsx scripts/fit-gates.ts",
+    "bench:sim": "tsx scripts/bench-simulation.ts",
+    "build:sounds": "tsx scripts/build-sounds.ts"
   },
   "devDependencies": {
     "@dimforge/rapier3d-compat": "0.20.0",

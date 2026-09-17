@@ -1,6 +1,7 @@
 import {
   byVolumePriority,
   CAPSULE_BOTTOM_OFFSET,
+  cloudFloorY,
   DASH_SPEED,
   holdsAloft,
   IDENTITY_QUAT,
@@ -30,6 +31,7 @@ import {
 import {
   createEnvironment,
   findSpinningParts,
+  fogFarPlane,
   localBounds,
   lowestDrawnY,
   lowestMovingY,
@@ -39,7 +41,7 @@ import * as THREE from "three";
 import { blendFloatStruggle, FloatLimbs } from "./floatPose.js";
 import { GrabAnimations, grabRoleOf } from "./grabAnimation.js";
 import { JUMP_CROSSFADE_SECONDS, JumpSequences, jumpPoseAt, jumpTimeline } from "./jumpSequence.js";
-import { nextModelYaw } from "./modelFacing.js";
+import { facingFromModelYaw, nextModelYaw } from "./modelFacing.js";
 import {
   actionFor,
   CHARACTER_VISUAL_HEIGHT,
@@ -51,19 +53,27 @@ import {
   type CharacterModel,
 } from "./characterModel.js";
 import {
+  armTargetLength,
   CAMERA_DISTANCE,
   CAMERA_MIN_DISTANCE,
+  CAMERA_PROBE_RADIUS,
   CAMERA_SKIN,
-  resolveArm,
+  easeArmLength,
+  pointOnArm,
   springArmPosition,
+  thickCast,
 } from "../input/camera/springArm.js";
 import { listen } from "../lib/socket/listeners.js";
 import { buildAssetVisuals, type AssetVisualPlacement } from "./assetVisuals.js";
-import { SpringSquashes, type SpringTrigger } from "./springSquash.js";
-import { BouncePresses, buildBounceSheets } from "./bounceSheets.js";
+import { SpringSquashes, springFiredBy, type SpringTrigger } from "./springSquash.js";
+import { BouncePresses, buildBounceSheets, type BounceLanding } from "./bounceSheets.js";
 import { buildAirColumns } from "./airColumns.js";
 import { buildConveyorStrips } from "./conveyorBelts.js";
 import { disposeSceneGraph } from "./disposeSceneGraph.js";
+import { warmUpStage } from "./warmUp.js";
+import { createWardrobe } from "./hats.js";
+import { createDeckFooting, createIceFooting } from "./iceFooting.js";
+import { footstepSound, Footsteps, steppingClip, type FootSurface, type SteppingClip } from "./footsteps.js";
 import { buildIceOverlays } from "./iceOverlays.js";
 import { buildMudOverlays } from "./mudOverlays.js";
 import { HitReactionPlayer } from "./hitReactionPlayer.js";
@@ -81,7 +91,19 @@ import { createRemoteCharacterPool } from "./remoteCharacterPool.js";
 import { tintHueForSkin, tintModel } from "./playerTint.js";
 import { setShadowRole } from "./shadowRoles.js";
 import { createSpeedLines } from "./speedLines.js";
+import {
+  DEFAULT_GRAPHICS_QUALITY,
+  GRAPHICS_QUALITY_SETTINGS,
+  type GraphicsSettings,
+} from "../lib/graphicsQuality.js";
 import { initialWobbleState, stepWobble } from "./wobble.js";
+import { createSoundEngine, type SoundEngine } from "../audio/engine.js";
+import { fallWhistleY } from "../audio/movementCues.js";
+import { CharacterSounds } from "../audio/characterSounds.js";
+import { SegmentSounds } from "../audio/segmentSounds.js";
+import { MachineSounds, SPRING_SETTLE_RATE } from "../audio/machineSounds.js";
+import { Ambience, environmentIdOf } from "../audio/ambience.js";
+import type { SoundBank } from "../audio/soundBank.js";
 
 /**
  * Procedural Wobble lean (ticket 07), temporarily OFF. It derives acceleration
@@ -94,6 +116,12 @@ import { initialWobbleState, stepWobble } from "./wobble.js";
 const WOBBLE_ENABLED = false;
 
 export interface StageConfig {
+  /**
+   * How the frame is drawn (ADR 0079): pixel ratio cap, composer samples,
+   * the sun's shadow map and the cloud puffs. Defaults to `high`, the look
+   * M12 shipped. Render-only, like everything here.
+   */
+  graphics?: GraphicsSettings;
   /**
    * Element the renderer's canvas is appended to. The game owns the canvas
    * for exactly as long as it runs and removes it again on `dispose`
@@ -170,6 +198,11 @@ export interface StageConfig {
    * without Volumes.
    */
   volumes?: VolumeConfig[];
+  /**
+   * The decoded sounds this Stage plays (ADR 0087). Absent, the Stage is
+   * silent and builds no audio graph at all (a browser without Web Audio, or a test).
+   */
+  sounds?: SoundBank | undefined;
 }
 
 /**
@@ -183,9 +216,29 @@ export interface StageRenderState {
   props: PropSnapshot[];
 }
 
+/** What the renderer drew in the last `render()` and holds on the GPU (M13 ticket 01). */
+export interface StageRenderStats {
+  calls: number;
+  triangles: number;
+  geometries: number;
+  textures: number;
+  programs: number;
+}
+
 export interface Stage {
   domElement: HTMLCanvasElement;
   render: () => void;
+  /**
+   * Copy `renderer.info` for the last `render()` — every pass of it, shadow
+   * map and composer included — into `into` (M13 ticket 01's overlay).
+   */
+  readRenderStats: (into: StageRenderStats) => void;
+  /**
+   * Compile every program and upload every geometry and texture now, so the
+   * Round never pays for them the first time something comes into view (M13
+   * ticket 06). Call it once before the first `render()`; see `warmUpStage`.
+   */
+  warmUp: () => void;
   /** Place the local player's Character mesh from an interpolated snapshot. Presentation only (ADR 0009). */
   applyRenderState: (state: StageRenderState) => void;
   /**
@@ -222,6 +275,14 @@ export interface Stage {
    */
   setLocalSkin: (skin: number | null) => void;
   /**
+   * Refresh equipped hats by session id (ADR 0083), off the same roster and
+   * at the same point as `setPlayerSkins`. Only a change dresses a rig, so
+   * calling this every snapshot stays free.
+   */
+  setPlayerHats: (hats: ReadonlyMap<string, string | null>) => void;
+  /** Put a hat on the local Character, or take it off for `null`. Free to repeat. */
+  setLocalHat: (hat: string | null) => void;
+  /**
    * Squash whichever Spring just fired (ADR 0069), from the Characters'
    * `launchPadEpoch`. Cosmetic and render-rate driven like every other
    * one-shot overlay; the local Character's own squash runs at prediction
@@ -236,13 +297,25 @@ export interface Stage {
    */
   applyBounceSheets: (characters: Record<string, RenderCharacter>, nowMs: number) => void;
   /**
+   * The sounds every Character makes (ADR 0087): getting around (M14 ticket
+   * 05) and fighting (ticket 06). Called once a frame after
+   * {@link applyBounceSheets}, whose landings it reads, with the same
+   * Characters. `localId` is your own: its sounds are unpanned, its fighting
+   * outranks anyone else's, and only it whistles as it falls.
+   */
+  applyCharacterSounds: (characters: Record<string, RenderCharacter>, localId: string, nowMs: number) => void;
+  /**
    * Advance every air column's swooshes and puffs to `nowMs` (ADR 0075),
    * render-rate driven like every other overlay. The swooshes face the
    * Stage's camera as it stood at its last update.
    */
   updateAirColumns: (nowMs: number) => void;
-  /** Position the camera on a collision-resolved spring arm around `target`. */
-  updateCamera: (target: Vec3, yaw: number, pitch: number) => void;
+  /**
+   * Position the camera on a collision-resolved spring arm around `target`.
+   * The arm's length eases toward what the probe allows over `deltaSeconds`
+   * rather than jumping to it (ADR 0086).
+   */
+  updateCamera: (target: Vec3, yaw: number, pitch: number, deltaSeconds: number) => void;
   /**
    * Pose every Spinner and Moving Segment (ADR 0061) at continuous simulation tick `t`
    * (fractional for smooth render-rate rotation). A Spinner's rotation is a
@@ -285,6 +358,14 @@ export interface Stage {
     grabTargetPosition: Vec3 | undefined,
     facingLocked: boolean,
   ) => void;
+  /**
+   * The local Character's `facing` — where its body is turned right now, as
+   * {@link updateCharacterAnimation} last left it (ADR 0085). What the client
+   * sends as its input's `facing`.
+   */
+  characterFacing: () => number;
+  /** This Stage's sound engine (ADR 0087), `null` when it was built without sounds. */
+  sound: SoundEngine | null;
   /**
    * Give back everything this Stage took: the canvas, its WebGL context, every
    * geometry/material/texture it uploaded, and the window resize listener
@@ -334,9 +415,14 @@ export const createStage = ({
   bounceDecks = [],
   bounceTexture = null,
   volumes = [],
+  graphics = GRAPHICS_QUALITY_SETTINGS[DEFAULT_GRAPHICS_QUALITY],
+  sounds,
 }: StageConfig): Stage => {
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // No antialiasing on the canvas itself (ADR 0079): the frame is drawn into
+  // the composer's own multisampled targets, and the canvas only ever gets
+  // their full-screen copy, so multisampling it bought nothing.
+  const renderer = new THREE.WebGLRenderer({ antialias: false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, graphics.maxPixelRatio));
   renderer.setSize(window.innerWidth, window.innerHeight);
   // Khronos PBR Neutral (ADR 0074): authored base colours pass through, only
   // values above ~0.8 roll off instead of clipping. The frame renders through
@@ -344,18 +430,40 @@ export const createStage = ({
   // whole composed frame. The Track builder sets the same one, so its preview
   // matches.
   renderer.toneMapping = THREE.NeutralToneMapping;
+  // One frame renders several passes (shadow map, composer); counted from the
+  // start of `render()` instead of per pass, so `readRenderStats` sees them all.
+  renderer.info.autoReset = false;
   mount.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
 
+  // The far plane follows the fog (M13 ticket 04): past `fog.far` there is
+  // nothing to see but fog colour, so the frustum test skips it all.
+  const farPlane = fogFarPlane(environmentPreset);
   const camera = new THREE.PerspectiveCamera(
     55,
     window.innerWidth / window.innerHeight,
     0.1,
-    300,
+    farPlane,
   );
 
-  const speedLines = createSpeedLines(renderer, scene, camera);
+  // Sound (ADR 0087): the listener rides the camera, so three.js moves it
+  // with every frame's camera matrix; the engine mixes into it.
+  const audioListener = sounds ? new THREE.AudioListener() : null;
+  const sound =
+    audioListener && sounds
+      ? createSoundEngine({
+          context: audioListener.context,
+          destination: audioListener.getInput(),
+          bank: sounds,
+          listenerPosition: () => camera.position,
+          // The listener's own gain goes once the engine has faded out (a Track swap crossfades).
+          onReleased: () => audioListener.gain.disconnect(),
+        })
+      : null;
+  if (audioListener) camera.add(audioListener);
+
+  const speedLines = createSpeedLines(renderer, scene, camera, graphics.composerSamples);
 
   const platformMaterial = new THREE.MeshStandardMaterial({ color: 0x1c2740, roughness: 0.95 });
   const collidables: THREE.Object3D[] = [];
@@ -471,6 +579,9 @@ export const createStage = ({
     const parent = sheet.movingIndex === null ? scene : movingGroups[sheet.movingIndex]!;
     parent.add(setShadowRole(sheet.object, "receiver"));
   }
+  // Where a Character wobbles for standing on ice (ADR 0082): the same decks,
+  // parented the same way, and there whether or not the sheets could be drawn.
+  const onIce = createIceFooting(iceDecks, movingSegments, (index) => (index === null ? scene : movingGroups[index]!));
 
   // Mud sheets (ADR 0067) — the same treatment: never `collidables`,
   // anisotropic-filtered, riding carriers by re-parenting.
@@ -570,15 +681,24 @@ export const createStage = ({
   // it: every still piece, and every Moving Segment wherever its Motion can
   // carry it. Props are left out, since they fall. None of the Environment
   // joins `collidables`, so the spring-arm camera never catches on the sky.
+  const lowestSegmentY = Math.min(
+    lowestDrawnY(stillTrack),
+    ...movingGroups.map((group, i) => lowestMovingY(localBounds(group), movingSegments[i]!)),
+  );
   const environment = createEnvironment(scene, renderer, environmentPreset, {
     killPlaneY,
-    lowestSegmentY: Math.min(
-      lowestDrawnY(stillTrack),
-      ...movingGroups.map((group, i) => lowestMovingY(localBounds(group), movingSegments[i]!)),
-    ),
+    lowestSegmentY,
     fog: true,
-    detail: "full",
-    shadows: true,
+    detail: graphics.cloudPuffs ? "full" : "low",
+    shadows:
+      graphics.shadows === null
+        ? false
+        : {
+            mapSize: graphics.shadows.mapSize,
+            type: graphics.shadows.filter === "soft" ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap,
+          },
+    // The cloud floor must be all sky before this far plane clips it.
+    farPlane,
   });
 
   // `character` is the runtime placement handle: its position is the capsule's
@@ -620,7 +740,65 @@ export const createStage = ({
     const volume = volumeAt(orderedVolumes, point);
     return volume !== undefined && holdsAloft(volume);
   };
-  const remotePool = createRemoteCharacterPool(scene, characterModel, { floorBelow, inUpdraft });
+  // Hats (ADR 0083): one wardrobe for every Character this Stage draws, so
+  // a hat several Players wear loads once. A hat casts a shadow like the
+  // rig it sits on.
+  const wardrobe = createWardrobe({ prepare: (hat) => setShadowRole(hat, "caster") });
+  // Footsteps (M14 ticket 04): what a foot lands on, from the same sheeted
+  // decks the Stage draws, parented the same way.
+  const deckParent = (index: number | null): THREE.Object3D => (index === null ? scene : movingGroups[index]!);
+  const onMud = createDeckFooting(mudDecks, movingSegments, deckParent);
+  const onBounce = createDeckFooting(bounceDecks, movingSegments, deckParent);
+  const footSurface = (centre: Vec3): FootSurface =>
+    onBounce(centre) ? "bounce" : onMud(centre) ? "mud" : onIce(centre) ? "ice" : "deck";
+  const footsteps = new Footsteps();
+  /** One foot down: your own unpanned, anyone else's where they stand. */
+  const playFootstep = (clip: SteppingClip, centre: Vec3, remote: boolean): void => {
+    const { slot, gain, rate } = footstepSound(clip, footSurface(centre), remote);
+    sound?.play(slot, remote ? { at: centre, gain, rate } : { gain, rate });
+  };
+  const remotePool = createRemoteCharacterPool(scene, characterModel, {
+    floorBelow,
+    inUpdraft,
+    onIce,
+    wardrobe,
+    ...(sound ? { onFootstep: (clip: SteppingClip, centre: Vec3) => playFootstep(clip, centre, true) } : {}),
+  });
+  // What Characters make heard (M14 tickets 05, 06): the same decks answer
+  // what a jump left from, and the Springs where a launch is heard.
+  const characterSounds = sound
+    ? new CharacterSounds(sound, {
+        onBounce,
+        springAt: (centre) => springFiredBy(centre, springs)?.trigger.center,
+        fallY: fallWhistleY(lowestSegmentY, killPlaneY),
+      })
+    : null;
+  // Moving pieces (M14 ticket 07), heard from their drawn shape at rest.
+  const segmentSounds = sound
+    ? new SegmentSounds(
+        sound,
+        movingSegments.map((config, i) => {
+          const bounds = localBounds(movingGroups[i]!);
+          const corners = bounds.isEmpty()
+            ? []
+            : [0, 1, 2, 3, 4, 5, 6, 7].map((c) => ({
+                x: c & 1 ? bounds.max.x : bounds.min.x,
+                y: c & 2 ? bounds.max.y : bounds.min.y,
+                z: c & 4 ? bounds.max.z : bounds.min.z,
+              }));
+          return { config, corners };
+        }),
+        spinners,
+      )
+    : null;
+  // The Environment's ambience (M14 ticket 09), its wind swelling over the cloud floor.
+  const ambience = sound
+    ? new Ambience(sound, environmentIdOf(environmentPreset), cloudFloorY(environmentPreset, killPlaneY, lowestSegmentY))
+    : null;
+  // Fans, air columns and belts (M14 ticket 08).
+  const machineSounds = sound ? new MachineSounds(sound, { volumes, conveyors, movingSegments }) : null;
+  /** This frame's bounce landings, stashed by `applyBounceSheets` for `applyCharacterSounds`, which runs after it. */
+  let bounceLandings: readonly BounceLanding[] = [];
 
   const mixer = new THREE.AnimationMixer(characterModel.scene);
   // A knockdown plays the rig's own KO and GetUp clips (ADR 0076); the
@@ -680,6 +858,9 @@ export const createStage = ({
     const hit = raycaster.intersectObjects(collidables, false)[0];
     return hit ? hit.distance : null;
   };
+  const probeArm = thickCast(castArm, CAMERA_PROBE_RADIUS);
+  /** The arm's current length; `null` until the first frame places the camera outright. */
+  let armLength: number | null = null;
 
   const stopResizing = listen(window, "resize", () => {
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -688,14 +869,28 @@ export const createStage = ({
     speedLines.resize(window.innerWidth, window.innerHeight);
   });
 
+  const render = (): void => {
+    renderer.info.reset();
+    // The camera is already placed for this frame (`updateCamera` runs first).
+    const now = performance.now();
+    spinParts(spinningParts, now);
+    environment.update(camera, now, shadowFocus);
+    speedLines.render();
+    ambience?.update(camera.position.y);
+    sound?.update();
+  };
+
   return {
     domElement: renderer.domElement,
-    render: () => {
-      // The camera is already placed for this frame (`updateCamera` runs first).
-      const now = performance.now();
-      spinParts(spinningParts, now);
-      environment.update(camera, now, shadowFocus);
-      speedLines.render();
+    render,
+    warmUp: () => warmUpStage(renderer, scene, camera, render),
+    readRenderStats: (into) => {
+      const { info } = renderer;
+      into.calls = info.render.calls;
+      into.triangles = info.render.triangles;
+      into.geometries = info.memory.geometries;
+      into.textures = info.memory.textures;
+      into.programs = info.programs?.length ?? 0;
     },
     applyRenderState: (state) => {
       const { position, motionState, velocity } = state.character;
@@ -759,10 +954,23 @@ export const createStage = ({
       // `null`, not unknown — the restore below recolors nothing.
       tintModel(character, tintHueForSkin(skin));
     },
+    setPlayerHats: (hats) => {
+      remotePool.setHats(hats);
+    },
+    setLocalHat: (hat) => {
+      // On the rig itself, which every remote rig is cloned from: the
+      // pool's first `wear` takes the copied hat off each clone.
+      wardrobe.wear(characterModel.scene, hat);
+    },
     applyBounceSheets: (characters, nowMs) => {
       if (bounceSheets.length === 0) return;
       const presses = bouncePresses.update(characters, nowMs);
       for (const sheet of bounceSheets) sheet.update(presses);
+      bounceLandings = bouncePresses.landings();
+    },
+    applyCharacterSounds: (characters, localId, nowMs) => {
+      characterSounds?.update(characters, localId, nowMs, bounceLandings);
+      bounceLandings = [];
     },
     updateAirColumns: (nowMs) => {
       if (airColumns.columns.length === 0) return;
@@ -776,16 +984,26 @@ export const createStage = ({
         // it: a 2x Spring squashes as a 2x Spring.
         if (instance) instance.scale.set(base(instance) * scale.xz, base(instance) * scale.y, base(instance) * scale.xz);
       }
+      // A Spring back at rest settles audibly (M14 ticket 08); its launch was the boing.
+      for (const segmentIndex of springSquashes.settled()) {
+        const spring = springs.find((candidate) => candidate.segmentIndex === segmentIndex);
+        if (spring) sound?.play("segment.spring_settle", { at: spring.trigger.center, rate: SPRING_SETTLE_RATE });
+      }
     },
-    updateCamera: (target, yaw, pitch) => {
+    updateCamera: (target, yaw, pitch, deltaSeconds) => {
       const desired = springArmPosition(target, yaw, pitch, CAMERA_DISTANCE);
-      const resolved = resolveArm(target, desired, castArm, CAMERA_MIN_DISTANCE, CAMERA_SKIN);
+      const wanted = armTargetLength(target, desired, probeArm, CAMERA_MIN_DISTANCE, CAMERA_SKIN);
+      armLength = armLength === null ? wanted : easeArmLength(armLength, wanted, deltaSeconds);
+      const resolved = pointOnArm(target, desired, armLength);
       camera.position.set(resolved.x, resolved.y, resolved.z);
       camera.lookAt(target.x, target.y, target.z);
       shadowFocus = target;
     },
     updateMotion: (t) => {
       poseMovingSegments(t);
+      // Heard where the listener stood last frame: the camera is placed after this.
+      segmentSounds?.update(t, camera.position);
+      machineSounds?.update(t, camera.position);
       // Marched in sim time (not wall clock), so belts pause with the sim —
       // at true belt speed, so what you see is what carries you.
       for (const strip of conveyorStrips) strip.update(t * TICK_DT);
@@ -853,6 +1071,10 @@ export const createStage = ({
         actions,
       );
 
+      // No steps to count across a knockdown. Landings are heard in
+      // `applyCharacterSounds`.
+      if (isDownMotionState(visualState)) footsteps.forget("local");
+
       // While down, the knockdown owns the whole body, and the model keeps
       // the yaw it went down with.
       if (isDownMotionState(visualState)) {
@@ -910,6 +1132,8 @@ export const createStage = ({
       const reacting = hitReactionPlayer.update(hitEpoch, hitReactEpoch, actions, LOCOMOTION_CROSSFADE_SECONDS, activeAction);
       if (reacting) {
         knockdowns.forget("local");
+        // The reaction restarts the gait it hands back to: no step to count across it.
+        footsteps.forget("local");
         activeAction = reacting;
         mixer.update(deltaSeconds);
         return;
@@ -927,12 +1151,25 @@ export const createStage = ({
       // so it must still select a locomotion clip even though moveDirection is zero.
       // `visualState` is the replicated motion state this rig is drawing —
       // `Stagger` is the Wobble (ADR 0072), whether it came from a light hit
-      // or from coming back off a Respawn.
+      // or from coming back off a Respawn. Ice wobbles too (ADR 0082). Walk or
+      // Run is the Character's own speed (ADR 0081).
       const next =
-        posed?.action ?? actionFor(selectLocomotion(moving, grounded, dashing, visualState === "Stagger"), actions);
-      // Gaits blend into each other over a long fade. The jump's pieces get a
-      // short one: at gait length, a quarter-second piece never reaches full
-      // weight.
+        posed?.action ??
+        actionFor(
+          selectLocomotion({
+            moving,
+            grounded,
+            dashing,
+            wobbling: visualState === "Stagger",
+            onIce: localCentre !== null && onIce(localCentre),
+            speed: Math.hypot(localVelocity.x, localVelocity.z),
+            walking: activeAction !== null && activeAction === actions.walk,
+          }),
+          actions,
+        );
+      // Gaits blend into each other over a long fade, keeping their step. The
+      // jump's pieces get a short one: at gait length, a quarter-second piece
+      // never reaches full weight.
       activeAction = crossfadeLocomotion(
         next,
         activeAction,
@@ -943,6 +1180,7 @@ export const createStage = ({
             : posed === knockdownPose
               ? KNOCKDOWN_CROSSFADE_SECONDS
               : LOCOMOTION_CROSSFADE_SECONDS,
+        actions,
       );
       if (posed) pinClipPose(posed);
       // A Float's overlay (ADR 0077), only ever under the jump's own pose.
@@ -950,6 +1188,13 @@ export const createStage = ({
       blendFloatStruggle(actions, floatWeight, activeAction);
       mixer.update(deltaSeconds);
       localFloatLimbs.apply(floatWeight, verticalVelocity, nowMs);
+
+      // Footsteps (M14 ticket 04): where the stepping clip puts a foot down,
+      // on the ground, not Sliding, with nothing posed over the legs.
+      const stepping =
+        posed === null && grounded && visualState !== "Sliding" && (moving || dashing) ? steppingClip(activeAction, actions) : null;
+      const feetDown = footsteps.update("local", stepping ? activeAction : null);
+      if (stepping && localCentre) for (let foot = 0; foot < feetDown; foot += 1) playFootstep(stepping, localCentre, false);
 
       character.rotation.y = nextModelYaw({
         currentYaw: character.rotation.y,
@@ -980,8 +1225,17 @@ export const createStage = ({
         speedLines.setIntensity(dashSpeed / DASH_SPEED);
       }
     },
+    characterFacing: () => facingFromModelYaw(character.rotation.y),
+    sound,
     dispose: () => {
       stopResizing();
+      // The context is three.js's and shared with the next Stage: only this
+      // Stage's own graph goes.
+      characterSounds?.dispose();
+      segmentSounds?.dispose();
+      machineSounds?.dispose();
+      sound?.dispose();
+      if (audioListener) camera.remove(audioListener);
       // Stop the mixer before the rig it animates is disposed, and drop the
       // clips it cached against that rig — the mixer keeps them keyed by root
       // object, so a second game booting with a freshly loaded model would
@@ -993,6 +1247,7 @@ export const createStage = ({
       // itself from `scene` as it's disposed, so the sweep never double-frees
       // a clone's already-released geometry/material.
       remotePool.dispose();
+      wardrobe.dispose();
       // Before the sweep too: the Environment frees its own resources and takes
       // its root out of the scene, so nothing of it is freed twice. Its baked
       // environment map hangs off `scene.environment`, where the sweep never

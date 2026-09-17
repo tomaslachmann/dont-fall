@@ -138,7 +138,7 @@ export default function BetweenRounds({
 
       <div className={s.footActions}>
         <JellyButton variant="pill" tone="glass" centered onClick={onScoreboard}>SCOREBOARD</JellyButton>
-        <JellyButton variant="pill" tone="glass" centered onClick={onLeave}>LEAVE MATCH</JellyButton>
+        <JellyButton variant="pill" tone="glass" centered sound="back" onClick={onLeave}>LEAVE MATCH</JellyButton>
       </div>
     </Stage>
   );

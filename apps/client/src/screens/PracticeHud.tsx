@@ -1,10 +1,14 @@
 import { useEffect } from "react";
 import { Button } from "@dont-fall/ui";
+import type { KeyBindings } from "@dont-fall/shared";
+import { controlsHint } from "../lib/controlsHint.js";
 import styles from "./PracticeHud.module.css";
 
 export interface PracticeHudProps {
   trackName: string;
   finished: boolean;
+  /** The live bindings — the hint bar renders from these, never constants. */
+  bindings: KeyBindings;
   onBack: () => void;
 }
 
@@ -16,7 +20,7 @@ export interface PracticeHudProps {
  * loop never runs through this; it only learns `finished` through
  * `onPracticeState`.
  */
-export function PracticeHud({ trackName, finished, onBack }: PracticeHudProps) {
+export function PracticeHud({ trackName, finished, bindings, onBack }: PracticeHudProps) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.code === "Escape") onBack();
@@ -30,7 +34,7 @@ export function PracticeHud({ trackName, finished, onBack }: PracticeHudProps) {
       <div className={styles.bar}>
         <span className={styles.mode}>FREE ROAM</span>
         <span className={styles.track}>{trackName}</span>
-        <span className={styles.hint}>WASD move · Space jump · Shift dash · F hit · G grab · click to look · Esc back</span>
+        <span className={styles.hint}>{controlsHint(bindings)} · click to look · Esc back</span>
         <Button variant="secondary" onClick={onBack}>
           Back
         </Button>

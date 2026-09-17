@@ -19,6 +19,13 @@ export interface ResolvedAccount {
    * and future unlocks must flow through untouched.
    */
   bodySkin: number | null;
+  /**
+   * The equipped hat's id (ADR 0083), from the same response. `null` for no
+   * hat, and for a payload without one. Passed through unchecked like
+   * `bodySkin`: the API checked it on write, and a client draws no hat for an
+   * id it doesn't know.
+   */
+  hat: string | null;
 }
 
 export interface AccountResolver {
@@ -35,7 +42,7 @@ export const httpAccountResolver = (apiUrl: string, fetchFn: typeof fetch = fetc
         console.error(`DON'T FALL: account resolution refused (${res.status}), connection stays anonymous`);
         return null;
       }
-      const account = (await res.json()) as { id?: unknown; bodySkin?: unknown };
+      const account = (await res.json()) as { id?: unknown; bodySkin?: unknown; hat?: unknown };
       if (typeof account.id !== "string" || account.id.length === 0) {
         console.error("DON'T FALL: account resolution malformed, connection stays anonymous");
         return null;
@@ -43,6 +50,7 @@ export const httpAccountResolver = (apiUrl: string, fetchFn: typeof fetch = fetc
       return {
         accountId: account.id,
         bodySkin: typeof account.bodySkin === "number" && Number.isFinite(account.bodySkin) ? account.bodySkin : null,
+        hat: typeof account.hat === "string" ? account.hat : null,
       };
     } catch (err) {
       console.error("DON'T FALL: account resolution unreachable, connection stays anonymous", err);

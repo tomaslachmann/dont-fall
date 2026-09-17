@@ -48,7 +48,6 @@ export interface FriendsProps {
   recent: RecentRowView[];
   /** This Account's own add-code — `null` until it loads. */
   ownCode: string | null;
-  notice: string | null;
   isLoading: boolean;
   error: string | null;
   onBack?: () => void;
@@ -62,16 +61,15 @@ export interface FriendsProps {
   onAddByCode?: (code: string) => Promise<void>;
   onAddRecent?: (accountId: string) => void;
   onRetry?: () => void;
-  onDismissNotice?: () => void;
   feel?: Feel;
 }
 
 const TABS: FriendsTab[] = ['ONLINE', 'IN A MATCH', 'OFFLINE', 'RECENT'];
 
 export default function Friends({
-  online, total, requests, friends, recent, ownCode, notice, isLoading, error,
+  online, total, requests, friends, recent, ownCode, isLoading, error,
   onBack, onInviteAll, onAccept, onDecline, onAcceptAll, onJoin, onInvite, onRemove,
-  onAddByCode, onAddRecent, onRetry, onDismissNotice, feel,
+  onAddByCode, onAddRecent, onRetry, feel,
 }: FriendsProps) {
   const [tab, setTab] = useState<FriendsTab>('ONLINE');
   const [codeOpen, setCodeOpen] = useState(false);
@@ -103,7 +101,7 @@ export default function Friends({
     <Stage background="var(--df-stage-lobby)" sheen="var(--df-sheen-menu)" feel={feel} className={s.screen}>
       <div className={s.topbar}>
         <div className={s.crumb}>
-          <button type="button" className={s.back} onClick={onBack} aria-label="Back">
+          <button type="button" className={s.back} data-ui-sound="back" onClick={onBack} aria-label="Back">
             <svg viewBox="0 0 18 18"><path d="M11 3L5 9l6 6" /></svg>
           </button>
           <span className={s.title}>FRIENDS</span>
@@ -114,15 +112,6 @@ export default function Friends({
           <JellyButton variant="pill" tone="glass" centered onClick={() => setCodeOpen((open) => !open)}>ADD BY CODE</JellyButton>
         </div>
       </div>
-
-      {notice !== null && (
-        <div className={s.notice} role="status">
-          <span>{notice}</span>
-          <button type="button" className={s.noticeDismiss} onClick={onDismissNotice} aria-label="Dismiss">
-            <CrossIcon />
-          </button>
-        </div>
-      )}
 
       {codeOpen && (
         <Panel className={s.codePanel}>

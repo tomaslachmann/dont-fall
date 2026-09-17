@@ -45,12 +45,25 @@ import { springTriggers } from "../render/springSquash.js";
 import { awaitWelcome, resolveEndpoints } from "../lib/socket/connection.js";
 import { createHud } from "../hud/hud.js";
 import { formatHudText } from "../hud/hudText.js";
-import { FreeLookCamera, KeyboardInput } from "../input/input.js";
+import { FreeLookCamera, PlayerInput } from "../input/input.js";
+import { loadBootBindings, resolveEffectiveBindings, writeStoredBindings } from "../lib/bindingsStore.js";
+import { fetchAccount } from "../lib/api/auth.js";
 import { listen } from "../lib/socket/listeners.js";
 import { startPracticeGame } from "./practice.js";
 import type { PracticeSnapshot } from "./practice.js";
 import { createTrackLoading } from "./trackLoading.js";
+import { createPerfSession } from "./perfSession.js";
+import { DEFAULT_GRAPHICS_QUALITY, GRAPHICS_QUALITY_SETTINGS, type GraphicsQuality } from "../lib/graphicsQuality.js";
 import { createStage } from "../render/scene.js";
+import { gameAudioContext } from "../audio/gameAudio.js";
+import { STAGE_SOUND_SLOTS } from "../audio/slots.js";
+import { decodedBytes, loadSoundBank } from "../audio/soundBank.js";
+import { stageSoundSlots } from "../audio/stageSounds.js";
+import { MatchCalls, type MatchResultsFrame } from "../audio/matchCalls.js";
+import { setMusicPhase } from "../audio/music.js";
+import { resumeOnFirstGesture } from "../audio/unlock.js";
+import { applyAudioVolumes, readAudioVolumes, subscribeAudioVolumes } from "../lib/audioSettings.js";
+import { browserStorage } from "../lib/perfFlag.js";
 import { NetMetrics } from "../net/netMetrics.js";
 import { PropPredictionController, graceTicksForRtt } from "../net/propPrediction.js";
 import { matchBanner } from "../hud/matchBanner.js";
@@ -164,6 +177,14 @@ export interface GameConfig {
    * `onLobbyState`/`onStandings` are never raised in practice.
    */
   onPracticeState?: (snapshot: PracticeSnapshot) => void;
+  /**
+   * Show the performance overlay (M13 ticket 01): frame-time percentiles,
+   * `renderer.info`, prediction steps and replays, and a recorded run on F8.
+   * Off, nothing is sampled.
+   */
+  perf?: boolean;
+  /** The graphics quality level to draw at (ADR 0079). Omitted, `high`. */
+  graphicsQuality?: GraphicsQuality;
   /**
    * Declared because ADR 0008 names it as half of the game's boundary
    * ("config in, `onMatchEnd`/`onExit` out"), but nothing raises it: Results
@@ -299,6 +320,8 @@ export const startGame = async (config: GameConfig): Promise<GameHandle> => {
       trackId: config.trackId,
       ...(config.host === undefined ? {} : { host: config.host }),
       ...(config.onPracticeState === undefined ? {} : { onPracticeState: config.onPracticeState }),
+      ...(config.perf ? { perf: true } : {}),
+      ...(config.graphicsQuality === undefined ? {} : { graphicsQuality: config.graphicsQuality }),
     });
   }
   const teardown = createTeardown();
@@ -311,9 +334,24 @@ export const startGame = async (config: GameConfig): Promise<GameHandle> => {
 };
 
 const boot = async (
-  { mount, host, trackId, serverPort, connection, onExit, onLobbyState, onStandings, onRunEnd, onHitTaken, onSpectate }: GameConfig,
+  {
+    mount,
+    host,
+    trackId,
+    serverPort,
+    connection,
+    perf: perfRequested,
+    graphicsQuality = DEFAULT_GRAPHICS_QUALITY,
+    onExit,
+    onLobbyState,
+    onStandings,
+    onRunEnd,
+    onHitTaken,
+    onSpectate,
+  }: GameConfig,
   teardown: Teardown,
 ): Promise<GameHandle> => {
+  const bootStartedAt = performance.now();
   const hud = createHud(mount);
   teardown.add(() => hud.dispose());
   // Borrowed socket (ADR 0056) is already open — the wait is the world
@@ -321,7 +359,17 @@ const boot = async (
   // honestly instead of claiming to connect.
   hud.setText(connection === undefined ? "DON'T FALL — M2 · connecting to server…" : "DON'T FALL — loading…");
 
-  const [, characterModel] = await Promise.all([initPhysics(), loadCharacterModel()]);
+  // Sounds decode alongside the rest of the load, never on first play (ADR 0087).
+  // What every Character makes starts now; the Track's own sounds join once it
+  // is known, and the files already decoded here are not decoded again.
+  const audioContext = gameAudioContext();
+  if (audioContext) teardown.add(resumeOnFirstGesture(audioContext, window));
+  if (connection === undefined) teardown.add(() => setMusicPhase(null));
+  const [, characterModel] = await Promise.all([
+    initPhysics(),
+    loadCharacterModel(),
+    audioContext ? loadSoundBank(audioContext, STAGE_SOUND_SLOTS) : undefined,
+  ]);
 
   // A shell-owned connection (ADR 0056) arrives with its socket already open
   // and its welcome already consumed — dial only when the game owns the
@@ -344,11 +392,11 @@ const boot = async (
 
   // Track-service reads shared with the practice session (m8.1 ticket 01)
   // — one pipe, one cache, no fork to drift.
-  const { fetchTrack, loadLibrary, loadVisualTemplates, loadIceTexture, loadMudTexture, loadBounceTexture } =
+  const { fetchTrack, loadLibrary, loadVisualTemplates, loadIceTexture, loadMudTexture, loadBounceTexture, fetchStats } =
     createTrackLoading(host);
 
   const { track, environment } = await fetchTrack(welcome.trackId, welcome.trackRevision);
-  const library = await loadLibrary();
+  const library = await loadLibrary(track);
   const {
     statics,
     staticSurfaces,
@@ -368,8 +416,13 @@ const boot = async (
     bounceDecks,
   } = resolveTrack(library, track);
 
+  const sounds = audioContext
+    ? await loadSoundBank(audioContext, stageSoundSlots({ movingSegments, spinners, volumes, conveyors, launchPads, environment }))
+    : undefined;
+  const graphics = GRAPHICS_QUALITY_SETTINGS[graphicsQuality];
   let stage = createStage({
     mount,
+    graphics,
     statics,
     checkpoints,
     finishZones,
@@ -379,7 +432,7 @@ const boot = async (
     spinners,
     props,
     characterModel,
-    assetTemplates: await loadVisualTemplates(),
+    assetTemplates: await loadVisualTemplates(track),
     assetPlacements: assetPlacements(track, library),
     springs: springTriggers(launchPads, launchPadOwners),
     movingSegments,
@@ -391,13 +444,55 @@ const boot = async (
     bounceDecks,
     bounceTexture: await loadBounceTexture(),
     volumes,
+    sounds,
   });
   // These two close over the `let stage`/`let localSim` below and are
   // registered exactly once — a live Lobby Track pick (M4 ticket 07)
   // reassigns those bindings rather than rebuilding this teardown, so the
   // single registration keeps disposing whatever they currently point at.
   teardown.add(() => stage.dispose());
-  const keyboard = new KeyboardInput();
+  // Volumes (ADR 0087): this device's, then every change from Settings, live.
+  // Read from `stage` when heard, so a live Track swap is followed.
+  let audioVolumes = readAudioVolumes(browserStorage());
+  applyAudioVolumes(stage.sound, audioVolumes);
+  teardown.add(
+    subscribeAudioVolumes((volumes) => {
+      audioVolumes = volumes;
+      applyAudioVolumes(stage.sound, volumes);
+    }, browserStorage()),
+  );
+  // First-sight compiles and uploads happen now, behind the load, not in the
+  // Round's first metres (M13 ticket 06).
+  stage.warmUp();
+  // The performance overlay (M13 ticket 01), only when asked for. `stage` and
+  // `loadedTrackId` are read when used, so a live Track swap is followed.
+  const perf = perfRequested
+    ? createPerfSession({
+        mount,
+        mode: "match",
+        bootStartedAt,
+        stage: () => stage,
+        trackId: () => loadedTrackId,
+        fetchStats,
+        audio: () => {
+          const sound = stage.sound;
+          return sound && audioContext ? { ...sound.stats(), decodedBytes: decodedBytes(audioContext) } : null;
+        },
+      })
+    : null;
+  if (perf) teardown.add(() => perf.dispose());
+  // Controls (M9): boot bindings immediately — no boot wait — then the
+  // Account's own record when it resolves, applied live.
+  let keyBindings = loadBootBindings();
+  const keyboard = new PlayerInput(window, keyBindings);
+  void fetchAccount()
+    .then((account) => {
+      keyBindings = resolveEffectiveBindings(account);
+      keyboard.setBindings(keyBindings);
+      // Refresh the offline mirror while we're here.
+      if (account?.bindings) writeStoredBindings(account.id, account.bindings);
+    })
+    .catch(() => {});
   teardown.add(() => keyboard.dispose());
   let look = new FreeLookCamera(stage.domElement);
   // Start looking along the Start's forward (ADR 0068).
@@ -472,6 +567,17 @@ const boot = async (
    */
   let phase: MatchPhase = "LOBBY";
   /**
+   * The Match's voice and jingles (M14 ticket 10): for the whole game, not a
+   * Stage, so a Track reload replays nothing. The Countdown's end is on the
+   * server's clock, from the latest COUNTDOWN snapshot; the Results are how
+   * the Match stood on the latest RESULTS one.
+   */
+  const matchCalls = new MatchCalls();
+  let countdownEndsAtServerMs: number | null = null;
+  /** The phase this game last handed the music, when it owns its own socket (M14 ticket 11). */
+  let musicPhase: MatchPhase | null = null;
+  let resultsCall: MatchResultsFrame | null = null;
+  /**
    * Who this client follows in Spectator Mode (M7 ticket 07) — the client's
    * own choice, never sent anywhere. Reset the moment spectating ends, so no
    * stale target survives into the next Round.
@@ -511,6 +617,8 @@ const boot = async (
   let playerNames: Record<string, string> = {};
   /** Latest Lobby roster, id → equipped body skin (M9 ticket 15) — tints every rig, local one included. */
   let playerSkins: Record<string, number | null> = {};
+  /** Equipped hats by session id (ADR 0083), off the same roster as `playerSkins`. */
+  let playerHats: Record<string, string | null> = {};
   /**
    * Every nickname ever seen this session, id → nickname, never cleared
    * (M7 ticket 06/08) — `playerNames` only knows who is connected *right
@@ -572,14 +680,19 @@ const boot = async (
    * and re-seeded around.
    */
   const loadTrack = async (trackId: string, trackRevision: number, spawn: Vec3): Promise<void> => {
+    const loadStartedAt = performance.now();
     const { track: nextTrack, environment: nextEnvironment } = await fetchTrack(trackId, trackRevision);
-    const nextLibrary = await loadLibrary();
+    const nextLibrary = await loadLibrary(nextTrack);
     const resolved = resolveTrack(nextLibrary, nextTrack);
+    const nextSounds = audioContext
+      ? await loadSoundBank(audioContext, stageSoundSlots({ ...resolved, environment: nextEnvironment }))
+      : undefined;
 
     look.dispose();
     stage.dispose();
     stage = createStage({
       mount,
+      graphics,
       statics: resolved.statics,
       checkpoints: resolved.checkpoints,
       finishZones: resolved.finishZones,
@@ -588,10 +701,11 @@ const boot = async (
       spinners: resolved.spinners,
       props: resolved.props,
       characterModel,
-      // Templates are session-cached (never refetched here); the disposed
-      // stage already freed its own clones with its scene-graph sweep, so
-      // the new stage clones afresh from the same templates.
-      assetTemplates: await loadVisualTemplates(),
+      // Templates are session-cached per id: only Assets this Track adds are
+      // fetched (memory-footprint ticket 01). The disposed stage already
+      // freed its own clones with its scene-graph sweep, so the new stage
+      // clones afresh from the same templates.
+      assetTemplates: await loadVisualTemplates(nextTrack),
       assetPlacements: assetPlacements(nextTrack, nextLibrary),
       springs: springTriggers(resolved.launchPads, resolved.launchPadOwners),
       movingSegments: resolved.movingSegments,
@@ -603,7 +717,10 @@ const boot = async (
       bounceDecks: resolved.bounceDecks,
       bounceTexture: await loadBounceTexture(),
       volumes: resolved.volumes,
+      // Decoded files are shared with the old bank: only this Track's new sounds are fetched.
+      sounds: nextSounds,
     });
+    applyAudioVolumes(stage.sound, audioVolumes);
     look = new FreeLookCamera(stage.domElement);
     look.yaw = trackSpawnYaw(nextTrack) ?? look.yaw;
 
@@ -635,6 +752,10 @@ const boot = async (
 
     loadedTrackId = trackId;
     loadedTrackRevision = trackRevision;
+    // Before the frame loop draws the new Stage, like at boot (M13 ticket 06).
+    // It blocks for a moment, which a Track pick (Lobby only) can afford.
+    stage.warmUp();
+    perf?.trackLoaded(performance.now() - loadStartedAt);
   };
 
   // `awaitWelcome` above already consumed the one-time `welcome` — a Match
@@ -671,7 +792,26 @@ const boot = async (
           wasEliminated = false;
           lastHitEpochs = null;
         }
+        // A game that dialed its own socket (a `?track=` playtest) has no Lobby
+        // route to tell the music its phase (M14 ticket 11), so it tells it itself;
+        // on teardown the app's own music, the Lobby's playlist, comes back.
+        if (connection === undefined && message.phase !== musicPhase) {
+          musicPhase = message.phase;
+          setMusicPhase(message.phase);
+        }
         phase = message.phase;
+        countdownEndsAtServerMs = message.phase === "COUNTDOWN" ? message.serverTimeMs + message.countdownMsLeft : null;
+        if (message.phase === "RESULTS") {
+          const winners = message.roundsRemaining ? [] : matchWinner(message.roundResults);
+          resultsCall = {
+            matchOver: !message.roundsRemaining,
+            won: winners.some((winner) => winner.id === myId),
+            soleWinner: winners.length === 1,
+            finalRoundNext: message.roundsRemaining && message.roundResults.length === message.lobby.matchLength - 1,
+          };
+        } else {
+          resultsCall = null;
+        }
         // The server's own resolved RoundRules (M5 ticket 02, ADR 0041) —
         // adopted every snapshot, same cadence as `phase`, so this client's
         // own prediction runs against the identical record the server does
@@ -680,6 +820,7 @@ const boot = async (
         localSim.syncRoundRules(message.roundRules);
         playerNames = Object.fromEntries(message.lobby.players.map((player) => [player.id, player.nickname]));
         playerSkins = Object.fromEntries(message.lobby.players.map((player) => [player.id, player.bodySkin]));
+        playerHats = Object.fromEntries(message.lobby.players.map((player) => [player.id, player.hat]));
         lastRoundIsSurvival = message.roundRules.fallBehavior === "eliminate";
         // Ticket 14: your run ended mid-Round — the verdict's facts, raised
         // once, off this exact snapshot. Outside RUNNING the edges re-sync
@@ -813,6 +954,7 @@ const boot = async (
           // obstacle sits exactly where it's drawn and advances smoothly
           // between snapshots rather than jumping once per snapshot (which,
           // for a Prop you're pushing, read as a per-snapshot sawtooth / lag).
+          const reconcileStartedAt = performance.now();
           const result = predictionLoop.reconcile(
             character,
             message.state.tick,
@@ -820,6 +962,7 @@ const boot = async (
             propPrediction,
             message.phase,
           );
+          perf?.reconcile(performance.now() - reconcileStartedAt, result);
           if (result.positionError !== null) netMetrics.recordCorrection(result.positionError);
         }
       }
@@ -899,10 +1042,11 @@ const boot = async (
       dashHeld: keyboard.dashHeld(),
       hitHeld: keyboard.hitHeld(),
       grabHeld: keyboard.grabHeld(),
-      // M6, ADR 0045: the plain angle the camera already resolved to, not the
-      // camera itself — the simulation stays exactly as camera-agnostic as
-      // moveDirection already keeps it (ADR 0009).
-      facing: look.yaw,
+      // ADR 0085: where the body is turned, not where the camera looks — so
+      // every other client draws this Character the way this player sees it,
+      // and Hit and Grab aim where it is turned. Still a plain angle, never
+      // the camera or the model itself (ADR 0009).
+      facing: stage.characterFacing(),
     };
 
     // World this client doesn't predict — Props and every other player's
@@ -975,7 +1119,9 @@ const boot = async (
     // ticket 01) — this call sends real input over the wire even while
     // locked, same as the server always has; only whether it moves the
     // Character is decided, identically, on both sides.
-    predictionLoop.step(sampledInput, elapsedMs + leadStepMs, sendInput, phase);
+    const simStartedAt = performance.now();
+    const simSteps = predictionLoop.step(sampledInput, elapsedMs + leadStepMs, sendInput, phase);
+    const simMs = performance.now() - simStartedAt;
 
     const snapshot = localSim.snapshot();
 
@@ -1064,6 +1210,9 @@ const boot = async (
     // wears its skin, and the local model follows the own row's bind.
     stage.setPlayerSkins(new Map(Object.entries(playerSkins)));
     stage.setLocalSkin(playerSkins[myId] ?? null);
+    // Hats the same way (ADR 0083).
+    stage.setPlayerHats(new Map(Object.entries(playerHats)));
+    stage.setLocalHat(playerHats[myId] ?? null);
     stage.applyRemoteCharacters(remoteCharacters, Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000, myId, visualCharacter.position);
     // The local Character's own Epoch comes from the prediction (ADR 0069):
     // its Spring squashes on the tick it fires, a round trip before the
@@ -1072,6 +1221,22 @@ const boot = async (
     // The same cast for the bounce sheets (ADR 0070): they answer everyone
     // standing on them, not only the Player looking at them.
     stage.applyBounceSheets({ ...remoteCharacters, [myId]: visualCharacter }, now);
+    // Characters are heard (M14 tickets 05, 06) from the same Characters,
+    // after the bounce sheets, whose landings are thumps. While down, your own
+    // Character is heard from its prediction, not the server's copy drawn
+    // then: that copy lags the counters the prediction already raised, and
+    // switching between the two would sound a Spring or a Respawn twice.
+    // What only the server resolves (a Hit landing on you, a hold) comes from
+    // its latest snapshot, the one the prediction was just reconciled to, so
+    // a Hit and the Stagger it forces are heard in order.
+    const latestOwn = latestServerSnapshot?.characters[myId];
+    const heardOwn: RenderCharacter = {
+      ...(localDown ? render.characters[myId]! : visualCharacter),
+      hitReactEpoch: latestOwn?.hitReactEpoch ?? 0,
+      grabbingId: latestOwn?.grabbingId ?? null,
+      heldByGrabberId: latestOwn?.heldByGrabberId ?? null,
+    };
+    stage.applyCharacterSounds({ ...remoteCharacters, [myId]: heardOwn }, myId, now);
     // Air columns (ADR 0075) — the flow every Volume on the Track promises, streamed every frame.
     stage.updateAirColumns(now);
     // Cosmetic only, not a second lock: the sim itself already refused to
@@ -1234,7 +1399,7 @@ const boot = async (
         onSpectate(null);
       }
     }
-    stage.updateCamera(cameraTarget, look.yaw, look.pitch);
+    stage.updateCamera(cameraTarget, look.yaw, look.pitch, Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000);
 
     // The Qualification banner (M4 ticket 02). Shown the instant the local
     // prediction says we're in the zone — that's the same Tick the input lock
@@ -1266,6 +1431,19 @@ const boot = async (
     );
     const qualified = c.finishTick !== null;
     const placement = latestServerSnapshot ? qualificationPlacement(latestServerSnapshot.characters, myId) : null;
+    // The Match speaks (M14 ticket 10), on the ui bus, beside the banner it matches.
+    for (const call of matchCalls.update({
+      phase,
+      serverNowMs: timeSync.ready ? now + timeSync.serverClockOffsetMs : null,
+      countdownEndsAtMs: countdownEndsAtServerMs,
+      timeLeftMs,
+      checkpointIndex: c.checkpointIndex,
+      qualified,
+      spectating,
+      results: resultsCall,
+    })) {
+      stage.sound?.play(call);
+    }
     netMetrics.rttMs = timeSync.rttMs;
     netMetrics.clockOffsetMs = timeSync.serverClockOffsetMs;
     netMetrics.snapshotAgeMs = now - lastSnapshotArrivedAt;
@@ -1299,10 +1477,13 @@ const boot = async (
         hitCooldownMs: c.hitCooldownMs,
         hitChargeMs: c.hitChargeMs,
         netMetricsText: netMetrics.format(),
+        bindings: keyBindings,
       }),
     );
 
+    const renderStartedAt = performance.now();
     stage.render();
+    perf?.frame(now, elapsedMs, simMs, simSteps, performance.now() - renderStartedAt, cameraTarget);
     hud.setLockPromptVisible(!look.locked);
 
     frameHandle = requestAnimationFrame(frame);

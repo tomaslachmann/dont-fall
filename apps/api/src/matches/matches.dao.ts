@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { PersistedMatchResult } from "@dont-fall/shared";
 import type { ApiDb } from "../db/db.js";
-import { matchResults } from "../db/schema.js";
+import { matchParticipants, matchResults } from "../db/schema.js";
 
 /**
  * Persists one finished Match's results (ADR 0059) — first write wins. A
@@ -20,4 +20,26 @@ export const saveMatchResult = (db: ApiDb, result: PersistedMatchResult): void =
 export const getMatchResult = (db: ApiDb, matchId: string): PersistedMatchResult | undefined => {
   const row = db.select().from(matchResults).where(eq(matchResults.matchId, matchId)).get();
   return row?.data;
+}
+
+export interface MatchParticipantRow {
+  matchId: string;
+  accountId: string;
+  placement: number;
+  score: number;
+  falls: number;
+  endedAtMs: number;
+}
+
+/**
+ * Indexes one finished Match's authed standings for the career reads —
+ * written by the same save that stores `match_results`, first write wins on
+ * both, so a retried save is a no-op here exactly as it is there.
+ */
+export const insertMatchParticipants = (db: ApiDb, rows: readonly MatchParticipantRow[]): void => {
+  if (rows.length === 0) return;
+  db.insert(matchParticipants)
+    .values([...rows])
+    .onConflictDoNothing({ target: [matchParticipants.matchId, matchParticipants.accountId] })
+    .run();
 };

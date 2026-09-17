@@ -8,6 +8,7 @@ import { CharacterSelectRoute } from "./screens/CharacterSelectRoute.js";
 import { DiscoverRoute } from "./screens/DiscoverRoute.js";
 import { FriendsRoute } from "./screens/FriendsRoute.js";
 import MainMenu from "./screens/MainMenu";
+import { CreditsRoute } from "./screens/CreditsRoute.js";
 import { MatchResultsRoute } from "./screens/MatchResultsRoute";
 import NotFound from "./screens/NotFound";
 import { RewardsRoute } from "./screens/RewardsRoute";
@@ -80,6 +81,7 @@ export function App() {
         <Route path="/rewards" element={<RewardsRoute />} />
         <Route path="/profile" element={<ProfileRoute />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/credits" element={<CreditsRoute />} />
       </Route>
     </Routes>
   );

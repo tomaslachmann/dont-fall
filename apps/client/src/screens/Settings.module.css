@@ -132,3 +132,35 @@
     justify-content: space-between;
     align-items: center;
 }
+
+/* CONTROLS tab: one chip per bound control, `+` to add, `×` to unbind. */
+.chips { display: flex; align-items: center; gap: var(--df-space-3); flex-wrap: wrap; justify-content: flex-end; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--df-space-2);
+  padding: var(--df-space-3) var(--df-space-4);
+  border-radius: var(--df-radius-chip);
+  background: var(--df-color-surface-1);
+  box-shadow: 0 var(--df-bevel-1) 0 var(--df-color-shadow);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-mono);
+}
+.chipCapturing { background: var(--df-color-ink); color: var(--df-color-on-brand); }
+.chipLabel { font: inherit; color: inherit; }
+.chipLabel:hover { text-decoration: underline; }
+.chipRemove { font: inherit; color: var(--df-color-ink-45); }
+.chipRemove:hover { color: var(--df-color-danger); }
+.chipAdd {
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 2.6);
+  aspect-ratio: 1;
+  border-radius: var(--df-radius-chip);
+  background: #F2EDFC;
+  font: var(--df-weight-label) var(--df-text-xs) / 1 var(--df-font-ui);
+}
+.chipAdd:hover { background: var(--df-color-surface-2); }
+.conflictSub {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1.4 var(--df-font-ui);
+  color: var(--df-color-danger);
+}

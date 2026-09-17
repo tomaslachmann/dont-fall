@@ -189,6 +189,10 @@ const applyMat4 = (m: number[], p: Vec3): Vec3 => ({
   z: m[2]! * p.x + m[6]! * p.y + m[10]! * p.z + m[14]!,
 });
 
+/** The determinant of a column-major transform's 3×3 part — negative when it mirrors. */
+const det3 = (m: number[]): number =>
+  m[0]! * (m[5]! * m[10]! - m[6]! * m[9]!) + m[1]! * (m[6]! * m[8]! - m[4]! * m[10]!) + m[2]! * (m[4]! * m[9]! - m[5]! * m[8]!);
+
 const indexByteSize = (componentType: number): number => {
   if (componentType === UBYTE) return 1;
   if (componentType === USHORT) return 2;
@@ -362,6 +366,16 @@ export const readAssetModel = (bytes: Uint8Array): AssetModel => {
           for (let i = 0; i < positions.length - base; i += 1) indices.push(base + i);
         } else {
           for (const index of readIndices(prim.indices, name, positions.length)) indices.push(index);
+        }
+      }
+      // glTF: a node whose transform mirrors (negative determinant) has its
+      // triangles wound clockwise. Baked, they must come out counter-clockwise
+      // like every other node's, or an ORIENTED collider faces inward.
+      if (det3(world) < 0) {
+        for (let t = 0; t + 2 < indices.length; t += 3) {
+          const second = indices[t + 1]!;
+          indices[t + 1] = indices[t + 2]!;
+          indices[t + 2] = second;
         }
       }
       target.push({ positions, indices, ...(surfaceRaw !== undefined ? { surface: surfaceRaw } : {}) });

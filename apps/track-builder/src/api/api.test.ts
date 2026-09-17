@@ -39,6 +39,20 @@ describe("saveTrack", () => {
     );
   });
 
+  it("carries the capture's Thumbnail with the publish, and omits the key without one", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "abc" }), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await saveTrack("http://x", "my track", SAMPLE, DEFAULTS, "day", "data:image/jpeg;base64,aGVsbG8=");
+    await saveTrack("http://x", "bare", SAMPLE, DEFAULTS, "day");
+
+    const bodies = (fetchMock.mock.calls as unknown as [string, RequestInit][]).map(([, init]) =>
+      JSON.parse(String(init.body)),
+    );
+    expect(bodies[0]).toMatchObject({ thumbnail: "data:image/jpeg;base64,aGVsbG8=" });
+    expect(bodies[1]).not.toHaveProperty("thumbnail");
+  });
+
   it("throws on a non-ok response", async () => {
     vi.stubGlobal(
       "fetch",

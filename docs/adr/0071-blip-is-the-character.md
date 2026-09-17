@@ -183,6 +183,13 @@ Scope settled with the user (2026-09-16): use everything the rig can do.
   nine are emotes, `Win_*`, `Sulk_*` and `Shrug_*`, each an in → hold → out
   sequence, left unbound here: they belong to the Screens, which will wire
   them separately.
+- The rig is now `BLIP_Animated_v7.glb` (2026-09-17): `Walk` and `Run` share
+  one stride, and there is a new `Sprint`. **ADR 0081** makes the Run the
+  ordinary gait and the Sprint the Dash. **ADR 0082** adds ice to what
+  plays `Wobble`/`Wobble_Walk`.
+- The served file is now the cosmetics pack's export of that same rig
+  (`BLIP_Character_Cosmetics_v1.glb`, 2026-09-17): identical nodes and clips,
+  plus a `Hat_Tuck` morph on the body. **ADR 0083** wears hats with it.
 
 ## Still to do, deliberately
 
