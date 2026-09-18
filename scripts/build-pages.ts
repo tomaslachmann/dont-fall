@@ -5,7 +5,7 @@
  * every push to `main` and deploys `site/`.
  *
  * Neither build knows where the server is. A player's link carries it
- * (`?server=https://…`), which is what `pnpm online` prints. Set
+ * (`?server=https://…`), which is what `pnpm run online` prints. Set
  * `PAGES_SERVER_URL` to bake a default in for a server with a fixed address.
  *
  * Usage:  pnpm build:pages

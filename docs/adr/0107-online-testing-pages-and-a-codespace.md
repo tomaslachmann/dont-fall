@@ -49,7 +49,7 @@ email and password.**
     hand) and deploys them with the official Pages actions.
   - `.devcontainer/` makes a Codespace install the workspace and start the
     server on every start.
-  - `pnpm online` starts the API, publishes any authored Track the Codespace's
+  - `pnpm run online` starts the API, publishes any authored Track the Codespace's
     database lacks, makes port 8081 public, and prints the link to send.
 - **Email and password only.** Discord OAuth needs a registered redirect URL.
   A Codespace's address holds only while that Codespace exists, and the user
@@ -65,7 +65,7 @@ email and password.**
   `?server=` mechanism works for it unchanged if it is wanted later.
 - **An always-free VM (Oracle Cloud).** It is always on and has a fixed
   address, but it needs a card to register and more setup. It stays
-  available: the API image and `pnpm online --public <url>` already fit it.
+  available: the API image and `pnpm run online --public <url>` already fit it.
 
 ## Consequences
 

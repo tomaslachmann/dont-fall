@@ -24,8 +24,11 @@ GitHub Codespace, because Pages serves files and nothing else.
 2. In its terminal, run:
 
    ```bash
-   pnpm online
+   pnpm run online
    ```
+
+   Always with `run`: a bare `pnpm online` can be taken for `pnpm exec` and
+   fail with `Command "online" not found`.
 
    It prints the link to send: the game, with the server's address on it
    (`?server=https://…`). If it says it could not make port 8081 public, open
@@ -39,5 +42,5 @@ the Codespace is deleted.
 Any server with a public address works the same way:
 
 ```bash
-pnpm online --public https://your.server.example
+pnpm run online --public https://your.server.example
 ```

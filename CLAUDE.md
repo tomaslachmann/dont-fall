@@ -442,7 +442,7 @@ Tracks so their pictures reach the API.
 **Online testing, built, first deploy pending** — **ADR 0107**, the user's ask on 2026-09-18 (no free
 hosting found; GitHub Pages, with an integration). Pages serves files only, so the game and the Track
 builder go there (`pnpm build:pages` → `site/`, `.github/workflows/pages.yml` on every push to `main`)
-and the server runs in a GitHub Codespace (`.devcontainer/`, `pnpm online` prints the link). A page
+and the server runs in a GitHub Codespace (`.devcontainer/`, `pnpm run online` prints the link). A page
 learns its server from `?server=<origin>` (remembered in `localStorage`, shared by game and builder),
 else `VITE_SERVER_URL`, else the local fixed ports; the API proxies each Lobby's socket at
 `/match/<port>` (only for live Lobby ports), and every public-file URL and the router read Vite's

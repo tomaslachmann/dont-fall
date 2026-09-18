@@ -4,15 +4,16 @@
  * The game is on GitHub Pages; this is the other half. In a Codespace
  * everything is worked out: the public address of port 8081, the Pages URL of
  * this repo, and making the port public. `.devcontainer/` runs this on every
- * start, and running it again in a terminal just prints the link.
+ * start, and running it again in a terminal just prints the link. Always
+ * `pnpm run online`: a bare `pnpm online` can be taken for `pnpm exec`.
  *
  * It starts the API unless one already answers, publishes every authored Track
  * the database lacks (`publish:tracks --missing`), and stays in the foreground
  * for as long as the API it started runs.
  *
- * Usage:  pnpm online                                  (in a Codespace)
- *         pnpm online --public https://my.server.example --port 8081
- *         pnpm online --pages https://someone.github.io/dont-fall/
+ * Usage:  pnpm run online                              (in a Codespace)
+ *         pnpm run online --public https://my.server.example --port 8081
+ *         pnpm run online --pages https://someone.github.io/dont-fall/
  */
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -96,7 +97,7 @@ if (await healthy()) {
   }
 }
 
-execFileSync("pnpm", ["-s", "publish:tracks", "--api", local, "--missing"], { cwd: repo, stdio: "inherit" });
+execFileSync("pnpm", ["-s", "run", "publish:tracks", "--api", local, "--missing"], { cwd: repo, stdio: "inherit" });
 
 if (codespace) {
   try {

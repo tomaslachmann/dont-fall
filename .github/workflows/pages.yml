@@ -1,7 +1,7 @@
 # The game and the Track builder on GitHub Pages (ADR 0107): built on every
 # push to main (or by hand from the Actions tab) and deployed with the
 # official Pages actions. The server is not here — Pages serves files only —
-# it runs in a Codespace (`.devcontainer/`, `pnpm online`), and a player's
+# it runs in a Codespace (`.devcontainer/`, `pnpm run online`), and a player's
 # link carries its address (`?server=https://…`).
 #
 # One-time setup: Settings → Pages → Build and deployment → Source: GitHub Actions.
