@@ -1,0 +1,11 @@
+# Every image installs its own dependencies (apps/api/Dockerfile, apps/web/Dockerfile).
+**/node_modules
+.pnpm-store
+.git
+**/dist
+site
+**/data
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.claude

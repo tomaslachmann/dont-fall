@@ -38,6 +38,13 @@ describe("resolveEndpoints", () => {
     expect(endpoints.matchServerUrl).toBe("wss://x-8081.app.github.dev/match/51003?track=t1");
   });
 
+  it("keeps a base path — the Docker web image's /api — in front of both (ADR 0108)", () => {
+    const endpoints = resolveEndpoints("localhost", { matchServerPort: 51003 }, "http://localhost:8088/api");
+
+    expect(endpoints.apiUrl).toBe("http://localhost:8088/api");
+    expect(endpoints.matchServerUrl).toBe("ws://localhost:8088/api/match/51003");
+  });
+
   it("points every backend at the host serving the page", () => {
     const endpoints = resolveEndpoints("example.test");
 

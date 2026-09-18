@@ -22,12 +22,19 @@ export const parseMatchSocketPath = (url: string): { port: number; search: strin
   return { port, search: match[2] ?? "" };
 };
 
-/** An `http(s)` URL reduced to its origin, or `undefined` for anything else. */
-export const parseServerOrigin = (raw: string | null | undefined): string | undefined => {
+/**
+ * An `http(s)` URL reduced to the base every API path is appended to — its
+ * origin, plus its path when it has one (`https://host/api`), never a trailing
+ * slash — or `undefined` for anything else. A path alone (`/api`, ADR 0108)
+ * is read against `relativeTo`, the page's own origin, and refused without it.
+ */
+export const parseServerOrigin = (raw: string | null | undefined, relativeTo?: string): string | undefined => {
   if (!raw) return undefined;
+  if (raw.startsWith("/") && relativeTo === undefined) return undefined;
   try {
-    const url = new URL(raw);
-    return url.protocol === "https:" || url.protocol === "http:" ? url.origin : undefined;
+    const url = new URL(raw, relativeTo);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
   } catch {
     return undefined;
   }
@@ -45,15 +52,20 @@ export const pickServerOrigin = ({
   query,
   stored,
   buildDefault,
+  pageOrigin,
 }: {
   /** The `server` query parameter, `null` when the URL has none. */
   query: string | null;
   stored: string | null;
+  /** The build's `VITE_SERVER_URL`: a URL, or a path on the page's own origin (`/api`, ADR 0108). */
   buildDefault: string | undefined;
+  /** The page's own origin, which a path-only build default is read against. */
+  pageOrigin?: string;
 }): { origin: string | undefined; store?: string | null } => {
+  const built = parseServerOrigin(buildDefault, pageOrigin);
   if (query !== null) {
     const origin = parseServerOrigin(query);
-    return { origin: origin ?? parseServerOrigin(buildDefault), store: origin ?? null };
+    return { origin: origin ?? built, store: origin ?? null };
   }
-  return { origin: parseServerOrigin(stored) ?? parseServerOrigin(buildDefault) };
+  return { origin: parseServerOrigin(stored) ?? built };
 };

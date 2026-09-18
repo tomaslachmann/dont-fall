@@ -12,6 +12,12 @@ import { createUiSoundPlayer, installUiSounds } from "./audio/uiSounds.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { createApiQueryClient } from "./lib/api/query.js";
 import { routerBasename } from "./lib/publicUrl.js";
+import { serverOrigin } from "./lib/serverOrigin.js";
+
+// Remember a `?server=` before anything can navigate it away (ADR 0107): signed
+// out, the auth gate redirects to /auth, dropping the query before any API call
+// has read it — and every request after would go to this page's own host.
+serverOrigin();
 
 const mount = document.getElementById("game")!;
 

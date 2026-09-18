@@ -35,10 +35,11 @@ export interface EndpointOptions {
 }
 
 export const resolveEndpoints = (host: string, options: EndpointOptions = {}, origin: string | undefined = serverOrigin()): Endpoints => {
-  // Online (ADR 0107): everything is one origin, and the API carries a
-  // Lobby's socket at `/match/<port>` — the Lobby's own port is not public.
+  // Online (ADR 0107/0108): everything behind one base (`https://host` or
+  // `https://host/api`), and the API carries a Lobby's socket at
+  // `/match/<port>` under it — the Lobby's own port is not public.
   if (origin !== undefined) {
-    const socket = new URL(matchSocketPath(options.matchServerPort ?? DEFAULT_SERVER_PORT), origin);
+    const socket = new URL(`${origin}${matchSocketPath(options.matchServerPort ?? DEFAULT_SERVER_PORT)}`);
     socket.protocol = socket.protocol === "https:" ? "wss:" : "ws:";
     if (options.trackId) socket.searchParams.set("track", options.trackId);
     return { matchServerUrl: socket.toString(), apiUrl: origin };

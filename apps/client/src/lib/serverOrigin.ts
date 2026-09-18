@@ -20,7 +20,12 @@ export const serverOrigin = (): string | undefined => {
   } catch {
     // No storage here (a test, a locked-down browser): only the URL and the build decide.
   }
-  const { origin, store } = pickServerOrigin({ query, stored, buildDefault: import.meta.env.VITE_SERVER_URL });
+  const { origin, store } = pickServerOrigin({
+    query,
+    stored,
+    buildDefault: import.meta.env.VITE_SERVER_URL,
+    ...(typeof location === "undefined" ? {} : { pageOrigin: location.origin }),
+  });
   if (store !== undefined) {
     try {
       if (store === null) localStorage.removeItem(STORAGE_KEY);

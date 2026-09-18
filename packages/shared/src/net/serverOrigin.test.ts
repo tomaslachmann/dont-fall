@@ -17,11 +17,19 @@ describe("the Match socket path (ADR 0107)", () => {
 });
 
 describe("pickServerOrigin (ADR 0107)", () => {
-  it("takes a ?server= and remembers its origin", () => {
-    expect(pickServerOrigin({ query: "https://x-8081.app.github.dev/some/path", stored: null, buildDefault: undefined })).toEqual({
+  it("takes a ?server= and remembers it, path and all, without a trailing slash", () => {
+    expect(pickServerOrigin({ query: "https://x-8081.app.github.dev/", stored: null, buildDefault: undefined })).toEqual({
       origin: "https://x-8081.app.github.dev",
       store: "https://x-8081.app.github.dev",
     });
+    expect(pickServerOrigin({ query: "https://host.example/api/", stored: null, buildDefault: undefined }).origin).toBe("https://host.example/api");
+  });
+
+  it("reads a path-only build default on the page's own origin — the Docker web image's /api (ADR 0108)", () => {
+    expect(pickServerOrigin({ query: null, stored: null, buildDefault: "/api", pageOrigin: "https://x-8088.app.github.dev" })).toEqual({
+      origin: "https://x-8088.app.github.dev/api",
+    });
+    expect(pickServerOrigin({ query: null, stored: null, buildDefault: "/api" })).toEqual({ origin: undefined });
   });
 
   it("falls back to what was remembered, then the build's default, then nothing", () => {
