@@ -1,4 +1,4 @@
-import { around, at, flatDisc, heightOf, onTop, slide, spin, withStartAt, type Extra, type TrackColor } from "./authoring.js";
+import { around, at, flatDisc, heightOf, onTop, orbit, slide, spin, withStartAt, type Extra, type TrackColor } from "./authoring.js";
 import type { Segment, Track } from "./Track.js";
 
 /**
@@ -6,12 +6,13 @@ import type { Segment, Track } from "./Track.js";
  * spokes out to each one and by an outer bridge between every neighbouring
  * pair, so the floor is a wheel with a great deal of sky in it.
  *
- * Every join is guarded: a bar turns on each spoke and a wall slides along
- * each outer bridge, which means crossing is something you time rather than
- * something you do. The rings are made of different stuff (one ice, one mud,
- * one inflatable, each with two spiked wheels; the plain ones with a bar
- * turning through the middle), so where you are standing decides how well a
- * Bump goes for you.
+ * Every join is guarded: a low bar turns on each spoke and a wall slides along
+ * each outer bridge, which means crossing is something you time (or jump)
+ * rather than something you do. The rings are made of different stuff (one
+ * ice, one mud, one inflatable, each with two spiked wheels; the plain ones
+ * with a low bar sweeping them end to end), so where you are standing decides
+ * how well a Bump goes for you. The hub is the one floor nothing sweeps: it is
+ * where everyone starts and what everyone fights to get back to.
  *
  * Nothing is placed inside anything else (the user, 2026-09-18: overlapping
  * pieces fight in the render). Every bridge ends exactly at the rims it joins,
@@ -79,13 +80,13 @@ const spokes: Segment[] = spokeSpots.map(({ x, s, angle }, i) =>
 );
 
 /**
- * A bar turning on every spoke: six metres on a three-metre bridge, so it
- * sweeps the whole crossing, and only 1.5 m tall, so it can be jumped if you
- * are willing to be in the air over a bridge while someone else is on it.
+ * A bar turning on every spoke: four metres on a three-metre bridge, so it
+ * sweeps all of the crossing but a metre at either end, and a metre tall, so
+ * it can be jumped (the jump apexes at about 1.3 m, ADR 0092) if you are
+ * willing to be in the air over a bridge while someone else is on it.
  */
 const spokeBars: Segment[] = spokeSpots.map(({ x, s }, i) =>
   at(`kaykit_barrier_4x1x1_${i % 2 === 0 ? "red" : "blue"}`, x, SKY_DECK_TOP + SKY_RIDE, s, {
-    scale: 1.5,
     motion: spin((i % 2 === 0 ? 1 : -1) * (1.3 + i * 0.12)),
   }),
 );
@@ -117,10 +118,21 @@ const outerWalls: Segment[] = bridgeSpots.map(({ x, s, angle }, i) =>
   }),
 );
 
-/** A bar turning through the middle of each plain ring: eight metres, so only a two-metre band at the rim is never swept. */
+/**
+ * Two bars end to end across each plain ring, turning together about its
+ * middle: eight metres of sweep, so only a two-metre band at the rim is never
+ * swept, but each only a metre tall, so the ring is a jumping game rather than
+ * a place to be cleared off. Each lies along world X with its pivot back at
+ * the ring's centre, 10 cm apart where they meet.
+ */
+const RING_BAR_OFFSET = 2.05;
 const ringBars: Segment[] = rings.flatMap(({ x, s }, i) =>
   hasBar(i)
-    ? [at(`kaykit_barrier_4x1x1_${i % 4 === 0 ? "yellow" : "green"}`, x, SKY_DECK_TOP + SKY_RIDE, s, { scale: 2, motion: spin((i % 4 === 0 ? -1 : 1) * (1 + i * 0.1)) })]
+    ? [-1, 1].map((side) =>
+        at(`kaykit_barrier_4x1x1_${i % 4 === 0 ? "yellow" : "green"}`, x + side * RING_BAR_OFFSET, SKY_DECK_TOP + SKY_RIDE, s, {
+          motion: orbit((i % 4 === 0 ? -1 : 1) * (1 + i * 0.1), { x: -side * RING_BAR_OFFSET, z: 0 }),
+        }),
+      )
     : [],
 );
 

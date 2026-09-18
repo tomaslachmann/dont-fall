@@ -195,10 +195,14 @@ Segments, ~770 m, six minutes) is about things that turn: carousels you ride acr
 hop between, bars that sweep the deck you are standing on, and three forks. **Slip Stream**
 (`slip-stream`, sunset, 319 Segments, ~790 m) is about Surfaces: belts with you, against you and
 across you, ice, mud, inflatable decks, Springs, fans and launch gaps, also three forks. **Cog
-Arena** (`cog-arena`, night, 61) is a cog: a hub with six teeth on its rim (the Start, ice, mud,
-bounce and two belts outward), a bar through the middle, two orbiting the hub's ring, pistons and
-spiked wheels on the teeth, and lower outcrops in the notches. **Sky Rings** (`sky-rings`, sunset,
-129) is a wheel of seven rings joined by guarded spokes and outer bridges. Both arenas were rebuilt
+Arena** (`cog-arena`, night, 103) is a machine on three levels so a shove is the start of a
+comeback: the cog (a hub with a tall bar through the middle and two jumpable sweepers on its band,
+eight teeth: the Start, ice, mud, bounce, two belts into spiked wheels, two plain, five pistons),
+eight inflatable ledges in the notches 1.5 m down that bounce you back up, and a rim of 24 planks
+2.5 m down with two low bars running round it. **Sky Rings** (`sky-rings`, sunset, 132) is a wheel of
+seven rings joined by spokes and outer bridges, every bar on them jumpable, the hub the one floor
+nothing sweeps. The walks prove the loops: off a tooth onto the rim, up a ledge, back on the hub;
+over a spoke's bar and a ring's. Both arenas were rebuilt
 on 2026-09-18 so no piece sits inside another (**ADR 0106**, `track/trackOverlaps.ts`, held to zero
 by `survivalArenas.test.ts`); the races are not yet (53, 42 and the base race 8 overlapping pairs).
 
@@ -434,6 +438,16 @@ authored Tracks carry their own Thumbnails (`assets/<id>.jpg`, rendered from cod
 `pnpm render:thumbnails` through the builder's dev-only `thumbnail.html`, sent by
 `pnpm publish:tracks`). **Waiting on the user:** the look of every wait, and republishing the four
 Tracks so their pictures reach the API.
+
+**Online testing, built, first deploy pending** — **ADR 0107**, the user's ask on 2026-09-18 (no free
+hosting found; GitHub Pages, with an integration). Pages serves files only, so the game and the Track
+builder go there (`pnpm build:pages` → `site/`, `.github/workflows/pages.yml` on every push to `main`)
+and the server runs in a GitHub Codespace (`.devcontainer/`, `pnpm online` prints the link). A page
+learns its server from `?server=<origin>` (remembered in `localStorage`, shared by game and builder),
+else `VITE_SERVER_URL`, else the local fixed ports; the API proxies each Lobby's socket at
+`/match/<port>` (only for live Lobby ports), and every public-file URL and the router read Vite's
+`BASE_URL`. Email and password only online. **Waiting on the user:** Settings → Pages → Source: GitHub
+Actions, creating the Codespace, and the first real session (see `README.md`).
 
 **One seat per Account, done on tests** — signing in on a second tab takes the seat and closes the
 first, with a reason the Screen shows (**ADR 0090**, the user's call on 2026-09-17). Found while

@@ -1,4 +1,5 @@
 import { SOUND_SLOTS, type SoundSlot } from "./slots.js";
+import { publicUrl } from "../lib/publicUrl.js";
 
 /** What decoding needs from an `AudioContext` — a structural slice, so tests can stand one in. */
 export interface DecodingContext {
@@ -11,7 +12,7 @@ export interface SoundBank {
   buffers(slot: SoundSlot): readonly AudioBuffer[];
 }
 
-export const SOUNDS_BASE_URL = "/sounds/";
+export const SOUNDS_BASE_URL = publicUrl("sounds/");
 
 const fetchBytes = async (url: string): Promise<ArrayBuffer> => {
   const response = await fetch(url);

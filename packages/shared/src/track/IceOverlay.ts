@@ -8,13 +8,6 @@ import type { Module } from "./Module.js";
 export const ICE_SURFACE_ID = "ice";
 
 /**
- * The served texture file both renderers' ice sheets share (repo `assets/`,
- * API `/assets/`) — ambientCG Ice 003's Color map, CC0; see the sidecar
- * `assets/ice_surface.txt` for provenance.
- */
-export const ICE_TEXTURE_FILE = "ice_surface.jpg";
-
-/**
  * Why `value` is not a storable Segment ice attachment, or `undefined` when
  * it is — exactly `true` (detaching removes the key, mirroring the belt).
  * The API's publish validation reports this reason in its 400 (a Revision
@@ -29,30 +22,10 @@ export const invalidIceReason = (value: unknown): string | undefined =>
 export const isSegmentIce = (value: unknown): value is true => invalidIceReason(value) === undefined;
 
 /**
- * World units one texture tile spans across the deck — both renderers
- * repeat the seamless map on this pitch, so a sheet reads identically in
- * the game and the builder. 1K pixels over 2 units: crisp underfoot, never
- * inspected up close.
- */
-export const ICE_TILE_WORLD = 2;
-
-/**
- * Sheet opacity — the deck's own art stays visible through the ice, like a
- * frozen film over it rather than a replacement floor.
- */
-export const ICE_OVERLAY_OPACITY = 0.65;
-
-/**
- * Lift above the deck top: below the conveyor chevrons' own lift, so a
- * belt running on ice still marches visibly above the sheet.
- */
-export const ICE_OVERLAY_LIFT = 0.01;
-
-/**
- * One resolved ice sheet for the renderers (ADR 0066) — physics needs
- * nothing of this (it reads the Surface off the ground collider), but ice
- * with no look is a trap, not a mechanic, so both the game scene and the
- * builder viewport sheet the deck in ice.
+ * One resolved ice deck for the renderers (ADR 0066; drawn as ADR 0107's
+ * slab) — physics needs nothing of this (it reads the Surface off the
+ * ground collider), but ice with no look is a trap, not a mechanic, so both
+ * the game scene and the builder viewport stand a slab on the deck.
  */
 export interface IceDeck {
   /** Which Segment wears this sheet — the game client re-parents it under a Moving Segment's own group. */

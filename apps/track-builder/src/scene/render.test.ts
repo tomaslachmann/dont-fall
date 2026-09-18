@@ -1,7 +1,6 @@
 import {
   chevronPose,
   CONVEYOR_SPEEDS,
-  ICE_OVERLAY_OPACITY,
   stripLayout,
   TICK_DT,
   type DeckPlan,
@@ -15,6 +14,7 @@ import {
   addBounceOverlay,
   addConveyorBelt,
   addIceOverlay,
+  icePlacementOf,
   addMudOverlay,
   buildSegmentGroup,
   disposeGroup,
@@ -121,7 +121,8 @@ describe("removing a Segment (the builder's allocate-then-free discipline)", () 
     const parent = new THREE.Group();
     const segment: Segment = { moduleId: "deck", position: { x: 0, y: 0, z: 0 }, rotation: 0, ice: true };
     const group = buildSegmentGroup(DECKS, segment)!;
-    addIceOverlay(group, segment, DECKS.deck, undefined, new THREE.Texture(), 1, undefined);
+    const self = icePlacementOf(segment, DECKS.deck!, undefined, undefined);
+    addIceOverlay(group, segment, DECKS.deck!, undefined, self, self ? [self] : []);
     parent.add(group);
     const spies = spyOnMeshResources(group);
     expect(spies.length).toBeGreaterThan(0);
@@ -228,70 +229,46 @@ describe("addConveyorBelt (ADR 0064)", () => {
   });
 });
 
-describe("addIceOverlay (ADR 0066)", () => {
+describe("addIceOverlay (ADR 0066, drawn per ADR 0107)", () => {
   const ice = () => deckModule("ice");
   const deck = () => deckModule();
-  const texture = (): THREE.Texture => new THREE.Texture();
   const plain: Segment = { moduleId: "deck", position: { x: 0, y: 0, z: 0 }, rotation: 0 };
-
-  it("sheets nothing when the Segment runs no ice and the Module isn't icy, or the texture hasn't loaded", () => {
+  const placed = (segment: Segment, module: Module, plan?: DeckPlan): { node: THREE.Group; built: THREE.Group | undefined } => {
     const node = new THREE.Group();
-    expect(addIceOverlay(node, plain, deck(), deckTemplate(), texture(), 1, undefined)).toBeUndefined();
-    expect(addIceOverlay(node, plain, ice(), deckTemplate(), undefined, 1, undefined)).toBeUndefined();
+    const self = icePlacementOf(segment, module, deckTemplate(), plan);
+    return { node, built: addIceOverlay(node, segment, module, deckTemplate(), self, self ? [self] : []) };
+  };
+  const bodyBox = (built: THREE.Group): THREE.Box3 => {
+    built.updateWorldMatrix(true, true);
+    return new THREE.Box3().setFromObject(built.getObjectByName("ice-body")!);
+  };
+
+  it("builds nothing when the Segment runs no ice and the Module isn't icy", () => {
+    const { node, built } = placed(plain, deck());
+    expect(built).toBeUndefined();
     expect(node.children).toHaveLength(0);
   });
 
-  it("sheets attached ice on any Module — the attachment, not the Module, is the mechanism", () => {
-    const node = new THREE.Group();
-    const mesh = addIceOverlay(node, { ...plain, ice: true }, deck(), deckTemplate(), texture(), 1, undefined)!;
-    expect(mesh).toBeDefined();
-    expect(node.children).toHaveLength(1);
-    expect(mesh.position.y).toBeCloseTo(0.31, 10);
+  it("lays attached ice on any Module, on its deck top — the attachment, not the Module, is the mechanism", () => {
+    const { node, built } = placed({ ...plain, ice: true }, deck());
+    expect(node.children).toEqual([built]);
+    const box = bodyBox(built!);
+    // On the 0.3 deck top, a slab with real thickness — never a decal.
+    expect(box.min.y).toBeGreaterThanOrEqual(0.3);
+    expect(box.max.y - 0.3).toBeGreaterThan(0.05);
+    // Footprint-sized, and never past it.
+    expect(box.max.x - box.min.x).toBeCloseTo(8, 5);
+    expect(box.max.z - box.min.z).toBeCloseTo(6, 5);
   });
 
-  it("sheets the icy deck top in local space — flat, footprint-sized, a decal's lift", () => {
-    const node = new THREE.Group();
-    const mesh = addIceOverlay(node, plain, ice(), deckTemplate(), texture(), 1, undefined)!;
-    expect(mesh).toBeDefined();
-    expect(node.children).toHaveLength(1);
-
-    // The ice deck top: board centre y −0.2 + half-height 0.5 = +0.3, plus the sheet's lift.
-    expect(mesh.position.x).toBeCloseTo(0, 10);
-    expect(mesh.position.y).toBeCloseTo(0.31, 10);
-    expect(mesh.position.z).toBeCloseTo(0, 10);
-    mesh.geometry.computeBoundingBox();
-    const box = mesh.geometry.boundingBox!;
-    expect(box.max.x - box.min.x).toBeCloseTo(8, 10); // footprint halfX 4
-    expect(box.max.z - box.min.z).toBeCloseTo(6, 10); // footprint halfZ 3
-    expect(box.max.y - box.min.y).toBeCloseTo(0, 10); // flat
-  });
-
-  it("lays the shared texture translucent — tiled by deck size, never stretched to fit", () => {
-    const node = new THREE.Group();
-    const master = texture();
-    const mesh = addIceOverlay(node, plain, ice(), deckTemplate(), master, 1, undefined)!;
-    const material = mesh.material as THREE.MeshStandardMaterial;
-
-    expect(material.transparent).toBe(true);
-    expect(material.opacity).toBeCloseTo(ICE_OVERLAY_OPACITY, 10);
-    expect(material.polygonOffset).toBe(true);
-    expect(material.map).not.toBe(master);
-    expect(material.map!.wrapS).toBe(THREE.RepeatWrapping);
-    expect(material.map!.wrapT).toBe(THREE.RepeatWrapping);
-    // 8×6 deck on a 2-unit tile: 4×3 repeats.
-    expect(material.map!.repeat.x).toBeCloseTo(4, 10);
-    expect(material.map!.repeat.y).toBeCloseTo(3, 10);
-  });
-
-  it("cuts the sheet to a passed plan (ADR 0096) — the triangle, not the footprint rectangle", () => {
-    const node = new THREE.Group();
-    const mesh = addIceOverlay(node, plain, ice(), deckTemplate(), texture(), 1, TRIANGLE_PLAN)!;
-    const position = mesh.geometry.getAttribute("position") as THREE.BufferAttribute;
-    expect(position.count).toBe(3);
-    mesh.geometry.computeBoundingBox();
-    const box = mesh.geometry.boundingBox!;
-    expect(box.max.x - box.min.x).toBeCloseTo(4, 10);
-    expect(box.max.z - box.min.z).toBeCloseTo(3, 10);
+  it("cuts the slab to a passed plan (ADR 0096) — a triangle, not the footprint", () => {
+    const { built } = placed(plain, ice(), TRIANGLE_PLAN);
+    const box = bodyBox(built!);
+    // The triangle is 4 × 3 inside an 8 × 6 footprint: the ice follows the
+    // triangle, grown out a little over what the plan reads as its bevel —
+    // the mud's own coverage rule.
+    expect(box.max.x - box.min.x).toBeLessThan(6);
+    expect(box.max.z - box.min.z).toBeLessThan(4.5);
   });
 });
 

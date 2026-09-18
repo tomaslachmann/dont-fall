@@ -9,3 +9,4 @@ apps/track-service/data/
 *.sqlite-shm
 .pnpm-store/
 .claude
+site/

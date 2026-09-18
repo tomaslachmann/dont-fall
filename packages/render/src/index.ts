@@ -17,3 +17,7 @@ export type { MudMass } from "./mud/mudMesh.js";
 export { motionCarry, mudOutline } from "./mud/mudShape.js";
 export type { MudDeckPlacement, MudEdge } from "./mud/mudShape.js";
 export { MUD_SEAT_LIFT } from "./mud/mudLook.js";
+export { buildIceSlab, disposeIceSlab, glintIce, iceDetailTexture } from "./ice/iceMesh.js";
+export type { IceSlab } from "./ice/iceMesh.js";
+export { iceGlintPose, iceGlintSites } from "./ice/iceShape.js";
+export { ICE_SEAT_LIFT } from "./ice/iceLook.js";

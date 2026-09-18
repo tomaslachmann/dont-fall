@@ -4,7 +4,6 @@
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as THREE from "three";
 import { DEFAULT_ENVIRONMENT_ID, type Track } from "@dont-fall/shared";
 import { createTrackLoading } from "./trackLoading.js";
 
@@ -42,48 +41,6 @@ describe("fetchTrack's Environment (ADR 0074)", () => {
   });
 });
 
-describe("loadIceTexture (ADR 0066)", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-  });
-
-  it("fetches the served texture once per session through the shared bytes pipe", async () => {
-    const seen: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
-      seen.push(url);
-      return { ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as Response;
-    });
-    const bitmap = {} as ImageBitmap;
-    const decode = vi.fn(async () => bitmap);
-    vi.stubGlobal("createImageBitmap", decode);
-    const { loadIceTexture } = createTrackLoading("example.test");
-
-    const first = await loadIceTexture();
-    const second = await loadIceTexture();
-
-    expect(seen).toEqual(["http://example.test:8081/assets/ice_surface.jpg"]);
-    expect(first).toBe(second); // session-cached, like the templates
-    expect(decode).toHaveBeenCalledTimes(1);
-    expect(first).toBeInstanceOf(THREE.Texture);
-    expect((first as THREE.Texture).image).toBe(bitmap);
-  });
-
-  it("degrades to null with a dev warning when the texture cannot load — a cosmetic never bricks boot", async () => {
-    vi.stubGlobal("fetch", async () => {
-      throw new Error("GET answered 404");
-    });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { loadIceTexture } = createTrackLoading("example.test");
-
-    await expect(loadIceTexture()).resolves.toBeNull();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("ice overlay unavailable"));
-    // ... and the null is cached too — a missing texture warns once, not per reload.
-    await loadIceTexture();
-    expect(warn).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe("fetchStats (M13 ticket 01)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -92,7 +49,7 @@ describe("fetchStats (M13 ticket 01)", () => {
 
   it("counts each downloaded file once, with its bytes, and nothing that failed", async () => {
     vi.stubGlobal("fetch", async (url: string) =>
-      url.endsWith("bounce_surface.jpg")
+      url.endsWith("does_not_exist.jpg")
         ? ({ ok: false, status: 404 } as Response)
         : ({ ok: true, arrayBuffer: async () => new Uint8Array(5).buffer } as Response),
     );
@@ -101,8 +58,7 @@ describe("fetchStats (M13 ticket 01)", () => {
     const loading = createTrackLoading("example.test");
     expect(loading.fetchStats()).toEqual({ files: 0, bytes: 0 });
 
-    await loading.loadIceTexture();
-    await loading.loadIceTexture();
+    await loading.loadBounceTexture();
     await loading.loadBounceTexture();
 
     expect(loading.fetchStats()).toEqual({ files: 1, bytes: 5 });

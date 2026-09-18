@@ -1,4 +1,4 @@
-import { createEnvironment, findSpinningParts, simmerMud, spinParts, type Environment, type MudDeckPlacement } from "@dont-fall/render";
+import { createEnvironment, findSpinningParts, glintIce, simmerMud, spinParts, type Environment, type MudDeckPlacement } from "@dont-fall/render";
 import {
   cloudFloorY,
   DEFAULT_KILL_PLANE_Y,
@@ -35,6 +35,7 @@ import {
   addBounceOverlay,
   addIceOverlay,
   addMudOverlay,
+  icePlacementOf,
   mudPlacementOf,
   applyMotionAt,
   applySegmentTransform,
@@ -62,7 +63,6 @@ export type { SegmentTransform };
  * appears on the Track, in which case it is never fetched at all).
  */
 export interface SurfaceTextures {
-  ice?: THREE.Texture | undefined;
   bounce?: THREE.Texture | undefined;
 }
 
@@ -229,7 +229,7 @@ export interface TrackViewport {
   /**
    * Puts the orbit camera at `position`, looking at `target` — a framing written
    * down rather than dragged into place: an authored Track's Thumbnail
-   * (ADR 0105, `thumbnail.html`). The orbit controls keep working from there.
+   * (ADR 0107, `thumbnail.html`). The orbit controls keep working from there.
    */
   setView: (view: { position: Vec3; target: Vec3; fov?: number }) => void;
   /**
@@ -677,12 +677,16 @@ export const createTrackViewport = (
       // Every mud deck first: a deck's mud runs on across a seam into a
       // neighbour, so each one is built knowing all the others (ADR 0103).
       const mudPlacements = new Map<number, MudDeckPlacement>();
+      const icePlacements = new Map<number, MudDeckPlacement>();
       nextTrack.forEach((segment, index) => {
         const module = nextModules[segment.moduleId];
         const placement = module && mudPlacementOf(segment, module, assetTemplates[segment.moduleId], deckPlans[segment.moduleId]);
         if (placement) mudPlacements.set(index, placement);
+        const ice = module && icePlacementOf(segment, module, assetTemplates[segment.moduleId], deckPlans[segment.moduleId]);
+        if (ice) icePlacements.set(index, ice);
       });
       const allMud = [...mudPlacements.values()];
+      const allIce = [...icePlacements.values()];
       nextTrack.forEach((segment, index) => {
         const group = buildSegmentGroup(nextModules, segment, assetTemplates);
         if (!group) return;
@@ -703,19 +707,9 @@ export const createTrackViewport = (
             belt(motionTick);
             belts.push(belt);
           }
-          // An icy deck's sheet (ADR 0066) — same Motion-node parenting as
-          // the belt, so it follows a carrier too. Nothing when the Segment
-          // runs no ice or the texture hasn't loaded; the engine re-syncs on
-          // arrival.
-          addIceOverlay(
-            motionNode,
-            segment,
-            module,
-            assetTemplates[segment.moduleId],
-            surfaceTextures.ice,
-            renderer.capabilities.getMaxAnisotropy(),
-            deckPlans[segment.moduleId],
-          );
+          // An icy deck's slab (ADR 0066, drawn per ADR 0107) — same
+          // Motion-node parenting as the belt, so it follows a carrier too.
+          addIceOverlay(motionNode, segment, module, assetTemplates[segment.moduleId], icePlacements.get(index), allIce);
           // A muddy deck's mass (ADR 0067/0103) — same parenting as the ice
           // sheet above; still, since nobody wades through the preview.
           addMudOverlay(motionNode, segment, module, assetTemplates[segment.moduleId], mudPlacements.get(index), allMud);
@@ -1035,6 +1029,7 @@ export const createTrackViewport = (
       spinParts(findSpinningParts(trackGroup), now);
       // And the mud bubbles (ADR 0103), on the same wall clock.
       simmerMud(trackGroup, now / 1000);
+      glintIce(trackGroup, now / 1000);
       environment?.drawn.update(camera, now, orbitControls.target);
       renderer.render(scene, camera);
     },

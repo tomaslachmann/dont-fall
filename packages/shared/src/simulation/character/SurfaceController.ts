@@ -119,6 +119,8 @@ export class SurfaceController {
    * anything ever calls {@link apply}.
    */
   surfaceGrip = 1;
+  /** The floor underfoot refuses a Dash (`SurfaceConfig.noDash`: ice, mud, bounce). */
+  surfaceNoDash = false;
   /**
    * This tick's belt flow, if the ground collider runs one (ADR 0064) — set
    * from outside by `RapierSimulation` alongside {@link surfaceGrip}, from
@@ -213,6 +215,8 @@ export class SurfaceController {
    * Character is.
    */
   apply(ground: GroundContext, grounded: boolean): void {
+    // A Dash only ever starts grounded, so the floor underfoot is the one that decides.
+    this.surfaceNoDash = ground.surface.noDash === true;
     if (grounded) {
       this.surfaceTopSpeedMultiplier = ground.surface.topSpeedMultiplier;
       this.surfaceGrip = ground.surface.grip;
@@ -479,6 +483,7 @@ export class SurfaceController {
     this.currentGroundNormal = sliding ? { x: 0, y: WALKABLE_NORMAL_MIN_Y - 0.01, z: 0 } : undefined;
     this.surfaceTopSpeedMultiplier = 1;
     this.surfaceGrip = 1;
+    this.surfaceNoDash = false;
     this.surfaceBounce = undefined;
     // ADR 0102: nor may the replay's first tick take the Character's feet on
     // a Surface it may no longer be on — the safest reading is the default

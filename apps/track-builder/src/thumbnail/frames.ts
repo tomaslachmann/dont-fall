@@ -21,6 +21,6 @@ export interface ThumbnailFrame {
 export const THUMBNAIL_FRAMES: Record<string, ThumbnailFrame> = {
   "spin-cycle": { position: { x: 12, y: 13, z: -58 }, target: { x: 0, y: 0, z: -100 }, tick: 45 },
   "slip-stream": { position: { x: 10, y: 12, z: -22 }, target: { x: 0, y: 3, z: -80 }, tick: 45 },
-  "cog-arena": { position: { x: 21, y: 16, z: 23 }, target: { x: 0, y: -1, z: 0 }, tick: 45 },
+  "cog-arena": { position: { x: 25, y: 18, z: 27 }, target: { x: 0, y: -0.5, z: 0 }, tick: 45 },
   "sky-rings": { position: { x: 34, y: 26, z: 36 }, target: { x: 0, y: -2, z: 0 }, tick: 45 },
 };

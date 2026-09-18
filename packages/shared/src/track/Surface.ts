@@ -50,6 +50,12 @@ export type SurfaceId = string;
  * multipliers on the same pipeline, not two special cases.
  */
 export interface SurfaceConfig {
+  /**
+   * No Dash starts while standing on it (the user, 2026-09-18: "Dash must not
+   * turn on on any Surface like ice, mud and so on"). A burst already running
+   * carries on across it; only the press is refused.
+   */
+  noDash?: true;
   /** Multiplies WALK_SPEED while standing on this Surface. 1 = unchanged. */
   topSpeedMultiplier: number;
   /**
@@ -191,6 +197,7 @@ export const DEFAULT_SURFACE: SurfaceId = "default";
 export const SURFACES: Record<SurfaceId, SurfaceConfig> = {
   [DEFAULT_SURFACE]: { topSpeedMultiplier: 1, grip: 1 },
   mud: {
+    noDash: true,
     topSpeedMultiplier: MUD_TOP_SPEED_MULTIPLIER,
     grip: 1,
     jumpMultiplier: MUD_JUMP_MULTIPLIER,
@@ -203,13 +210,14 @@ export const SURFACES: Record<SurfaceId, SurfaceConfig> = {
     },
   },
   ice: {
+    noDash: true,
     topSpeedMultiplier: ICE_TOP_SPEED_MULTIPLIER,
     grip: 0.001,
     jumpMultiplier: ICE_JUMP_MULTIPLIER,
     landingKnockdown: { minSpeed: ICE_LANDING_KNOCKDOWN_MIN_SPEED, chance: ICE_LANDING_KNOCKDOWN_CHANCE },
     crashKnockdown: { minSpeed: ICE_CRASH_MIN_SPEED },
   },
-  bounce: { topSpeedMultiplier: 1, grip: 1, jumpMultiplier: BOUNCE_JUMP_MULTIPLIER, bounce: { restitution: 0.85, minSpeed: 6 } },
+  bounce: { noDash: true, topSpeedMultiplier: 1, grip: 1, jumpMultiplier: BOUNCE_JUMP_MULTIPLIER, bounce: { restitution: 0.85, minSpeed: 6 } },
 };
 
 /**

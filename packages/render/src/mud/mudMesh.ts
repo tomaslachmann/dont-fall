@@ -91,9 +91,10 @@ const clipToEdge = (polygon: Point[], p: Point, q: Point, sign: number): Point[]
  * clipped against every region triangle they overlap. The outline stays the
  * deck's own (a quarter disc stays round, a hole stays open) while the inside
  * is evenly dense enough to carry lumps — which a round Asset's own top face,
- * a fan of long thin slivers, is not.
+ * a fan of long thin slivers, is not. Exported for the ice (ADR 0107), whose
+ * slab is cut from the same cloth.
  */
-const gridCutToRegion = (
+export const gridCutToRegion = (
   region: [Point, Point, Point][],
   halfX: number,
   halfZ: number,

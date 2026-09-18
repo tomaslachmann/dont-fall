@@ -11,6 +11,7 @@ import { startAppMusic } from "./audio/music.js";
 import { createUiSoundPlayer, installUiSounds } from "./audio/uiSounds.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { createApiQueryClient } from "./lib/api/query.js";
+import { routerBasename } from "./lib/publicUrl.js";
 
 const mount = document.getElementById("game")!;
 
@@ -29,7 +30,7 @@ createRoot(mount).render(
   <StrictMode>
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
+        <BrowserRouter basename={routerBasename()}>
           <App />
         </BrowserRouter>
       </QueryClientProvider>

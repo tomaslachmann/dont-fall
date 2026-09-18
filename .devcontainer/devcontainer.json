@@ -1,0 +1,17 @@
+// The online server (ADR 0107): the game is on GitHub Pages, this Codespace
+// runs its API. Creating it installs the workspace; every start (including
+// waking from sleep) runs `pnpm online`, which starts the API, makes port
+// 8081 public and logs the link to send to /tmp/dont-fall-online.log.
+// `pnpm online` in a terminal prints the link again.
+{
+  "name": "DON'T FALL — online server",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22-bookworm",
+  "hostRequirements": { "cpus": 2 },
+  "containerEnv": { "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0" },
+  "postCreateCommand": "sudo corepack enable && pnpm install --frozen-lockfile",
+  "postStartCommand": "nohup pnpm online > /tmp/dont-fall-online.log 2>&1 &",
+  "forwardPorts": [8081],
+  "portsAttributes": {
+    "8081": { "label": "DON'T FALL API", "onAutoForward": "silent" }
+  }
+}

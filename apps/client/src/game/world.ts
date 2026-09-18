@@ -85,7 +85,6 @@ export const buildWorld = async (deps: WorldDeps, ref: TrackRef, spawn: Vec3): P
     movingSegments: resolved.movingSegments,
     conveyors: resolved.conveyors,
     iceDecks: resolved.iceDecks,
-    iceTexture: await deps.loading.loadIceTexture(),
     mudDecks: resolved.mudDecks,
     bounceDecks: resolved.bounceDecks,
     bounceTexture: await deps.loading.loadBounceTexture(),

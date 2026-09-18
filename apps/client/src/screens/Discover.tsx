@@ -70,7 +70,12 @@ export interface DiscoverProps {
    * Track is "current."
    */
   selectedId?: string;
-  /** Card click — and the featured band's TRY IT. Pick mode selects into the Lobby, browse mode practices. */
+  /**
+   * Card click — and, in browse mode only, the featured band's TRY IT. Pick
+   * mode selects into the Lobby, browse mode practices. From the Lobby there
+   * is nothing to try (the user, 2026-09-18): picking a Track is the Lobby's
+   * business, and Practice would leave it.
+   */
   onSelect: (trackId: string) => void;
   onBack?: () => void;
   feel?: Feel;
@@ -99,6 +104,7 @@ export default function Discover({ tracks, isLoading, error, onRetry, selectedId
   const [filter, setFilter] = useState<DiscoverFilter>('TRENDING');
   const visible = error === null && !isLoading ? filterDiscoverTracks(tracks, filter) : [];
   const featured = error === null && !isLoading ? featuredTrack(tracks) : null;
+  const picking = selectedId !== undefined;
 
   return (
     <Stage background="var(--df-stage-lobby)" feel={feel} className={s.screen}>
@@ -193,7 +199,7 @@ export default function Discover({ tracks, isLoading, error, onRetry, selectedId
             <span className={s.featuredKicker}>TODAY’S FEATURED CHAOS</span>
             <span className={s.featuredTitle}>{featured.name ?? UNTITLED_TRACK_NAME}</span>
           </span>
-          <JellyButton variant="tile" centered onClick={() => onSelect(featured.id)}>TRY IT</JellyButton>
+          {!picking && <JellyButton variant="tile" centered onClick={() => onSelect(featured.id)}>TRY IT</JellyButton>}
         </div>
       )}
     </Stage>

@@ -3,9 +3,6 @@ import {
   chevronPose,
   CONVEYOR_SPEEDS,
   conveyorWorldVelocity,
-  ICE_OVERLAY_LIFT,
-  ICE_OVERLAY_OPACITY,
-  ICE_TILE_WORLD,
   moduleHasBounceSurface,
   moduleHasIceSurface,
   BOUNCE_OVERLAY_LIFT,
@@ -30,7 +27,9 @@ import {
 } from "@dont-fall/shared";
 import * as THREE from "three";
 import {
+  ICE_SEAT_LIFT,
   MUD_SEAT_LIFT,
+  buildIceSlab,
   buildMudMass,
   deckRectGeometry,
   deckSheetGeometry,
@@ -147,57 +146,45 @@ export const addConveyorBelt = (
 };
 
 /**
- * An icy Segment's sheet (ADR 0066) — the same translucent texture the game
- * scene lays (`iceOverlays.ts`), built here in the Segment's own local
- * frame so it rides placement, scale and Motion with the rest of the
- * group's content. Parent under the Motion node, never the outer group.
- * Sheets attached ice as well as module-authored ice (the retired Module
- * keeps rendering); returns `undefined` when neither applies or the
- * texture hasn't loaded yet (the engine re-syncs when it lands).
+ * Where an icy Segment's deck is in the world (ADR 0066/0105), and how it
+ * moves — the ice twin of {@link mudPlacementOf}, so ice runs on across a
+ * seam into a neighbouring icy deck exactly as mud does. `undefined` when
+ * the Segment runs no ice.
+ */
+export const icePlacementOf = (
+  segment: Segment,
+  module: Module,
+  template: THREE.Object3D | undefined,
+  plan: DeckPlan | undefined,
+): MudDeckPlacement | undefined => {
+  if (segment.ice !== true && !moduleHasIceSurface(module)) return undefined;
+  return deckPlacementOf(segment, module, template, plan);
+};
+
+/**
+ * An icy Segment's slab (ADR 0066, drawn per ADR 0107) — the same opaque
+ * pastel slab the game scene lays (`iceOverlays.ts`), from the same
+ * `@dont-fall/render` builder, set into the Segment's own local frame so it
+ * rides placement, scale and Motion with the rest of the group's content.
+ * Parent under the Motion node, never the outer group. The slab is built in
+ * metres, so it undoes the group's scale, like the mud.
  */
 export const addIceOverlay = (
   motionNode: THREE.Group,
   segment: Segment,
   module: Module,
   template: THREE.Object3D | undefined,
-  texture: THREE.Texture | undefined,
-  maxAnisotropy = 1,
-  plan: DeckPlan | undefined,
-): THREE.Mesh | undefined => {
-  if (!texture || (segment.ice !== true && !moduleHasIceSurface(module))) return undefined;
-  const { center, halfExtents } = module.footprint.bounds;
-
-  // Fresh geometry/material per sheet (not shared): `disposeGroup` frees a
-  // discarded group mesh-by-mesh, and this file's own rule is fresh
-  // allocations everywhere for exactly that reason. The clone shares the
-  // image but repeats for this deck's own size.
-  const sheet = tileDeckTexture(texture, {
-    tileWorld: ICE_TILE_WORLD,
-    width: halfExtents.x * 2,
-    depth: halfExtents.z * 2,
-    maxAnisotropy,
-  });
-  const material = new THREE.MeshStandardMaterial({
-    map: sheet,
-    transparent: true,
-    opacity: ICE_OVERLAY_OPACITY,
-    roughness: 0.4,
-    metalness: 0,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
-  });
-  // Cut to the deck's own shape when it has one (ADR 0096) — the plan the
-  // engine cached from the asset's own bytes, cut by the same shared reader
-  // the game scene cuts its sheet from, so the two never disagree about
-  // where ice stops. A missing plan keeps the footprint rectangle.
-  const geometry = plan
-    ? deckSheetGeometry(plan, halfExtents.x, halfExtents.z)
-    : deckRectGeometry(halfExtents.x * 2, halfExtents.z * 2);
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.set(center.x, deckTopLocal(module, template) + ICE_OVERLAY_LIFT, center.z);
-  motionNode.add(mesh);
-  return mesh;
+  self: MudDeckPlacement | undefined,
+  all: readonly MudDeckPlacement[],
+): THREE.Group | undefined => {
+  if (!self) return undefined;
+  const scale = segmentScale(segment);
+  const { center } = module.footprint.bounds;
+  const { object } = buildIceSlab(self, all);
+  object.position.set(center.x, deckTopLocal(module, template) + ICE_SEAT_LIFT / scale, center.z);
+  object.scale.setScalar(1 / scale);
+  motionNode.add(object);
+  return object;
 };
 
 /**
@@ -265,6 +252,16 @@ export const mudPlacementOf = (
   plan: DeckPlan | undefined,
 ): MudDeckPlacement | undefined => {
   if (segment.mud !== true && !moduleHasMudSurface(module)) return undefined;
+  return deckPlacementOf(segment, module, template, plan);
+};
+
+/** The deck-and-carry half {@link mudPlacementOf} and {@link icePlacementOf} share — only the gate differs. */
+const deckPlacementOf = (
+  segment: Segment,
+  module: Module,
+  template: THREE.Object3D | undefined,
+  plan: DeckPlan | undefined,
+): MudDeckPlacement => {
   const scale = segmentScale(segment);
   const orientation = segmentOrientation(segment);
   const { center, halfExtents } = module.footprint.bounds;

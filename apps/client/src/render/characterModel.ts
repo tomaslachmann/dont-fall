@@ -5,6 +5,7 @@ export const CHARACTER_VISUAL_HEIGHT = 2 * CAPSULE_BOTTOM_OFFSET + 0.35;
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import type { LocomotionState } from "./locomotionAnimation.js";
+import { publicUrl } from "../lib/publicUrl.js";
 
 /**
  * BLIP — the game's Character (ADR 0071), `apps/client/public/models/BLIP.glb`.
@@ -27,7 +28,7 @@ import type { LocomotionState } from "./locomotionAnimation.js";
  * It replaced MushroomKing (Quaternius, CC0), which was a stand-in with five
  * usable clips and no pelvis in its rig.
  */
-const MODEL_URL = "/models/BLIP.glb";
+const MODEL_URL = publicUrl("models/BLIP.glb");
 
 /**
  * How far the rig's own forward is from the game's (radians) — **zero for

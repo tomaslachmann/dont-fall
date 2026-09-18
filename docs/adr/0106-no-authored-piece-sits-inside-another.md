@@ -43,17 +43,36 @@ its Motion takes it.** `track/trackOverlaps.ts` measures this, and
   collision boxes run proud of the mesh too, and at scale that fit reached the
   deck.
 
-The arenas were rebuilt to this rule, keeping what each is about:
+The arenas were rebuilt to this rule. After a first pass left Cog Arena
+under the "100+ Segments everywhere" brief, the user asked for both to be
+redone properly: pretty, sensible for Survival and fun (2026-09-18).
 
-- **Cog Arena** is now a cog: a round hub with six square teeth butted
-  against its rim. The teeth are the Start, ice, mud, bounce and two belts
-  running outward. One bar turns through the middle, and two bars orbit the
-  hub's outer ring on a radius the first never reaches. Pistons on three teeth
-  and spiked wheels on the two belts stay clear of both. There are six lower
-  outcrops in the notches, each with a bumper.
-- **Sky Rings** keeps its wheel. The spokes and bridges now run from rim to
-  rim. The plain rings get a bar through the middle, and the ice, mud and
-  bounce rings get two spiked wheels and a bumper instead of both.
+- **Cog Arena** is a machine on three levels, so a shove is the start of a
+  comeback and not only the end of a Round:
+  - **The cog.** A round hub, with a tall bar through the middle that is
+    never jumped and two metre-tall sweepers on its outer band that always can
+    be (Jump Club's game). Around it, eight square teeth butted against its
+    rim: the Start, ice, mud, bounce, two belts running outward into spiked
+    wheels, and two plain ones. Pistons stand on five of them.
+  - **The ledges.** Eight inflatable outcrops in the notches, 1.5 m down.
+    Landing on one bounces you back toward the cog.
+  - **The rim.** A ring of 24 planks, 2.5 m down, with two low bars running
+    round it. It catches a Player thrown off a tooth's tip, and from anywhere
+    on it a ledge is one jump up.
+
+  Its Start tooth is the one place nothing moves, and so the place everyone
+  fights over. That makes 103 Segments.
+- **Sky Rings** keeps its wheel, now 132 Segments. The spokes and bridges run
+  from rim to rim. Every bar on a spoke or a plain ring is a metre tall and can
+  be jumped: the old 1.5 m ones could not be since ADR 0092's jump, whatever
+  their comment said. The plain rings' single tall bar became two low halves
+  end to end. The ice, mud and bounce rings get two spiked wheels and a bumper
+  instead of a bar. The hub is the one floor nothing sweeps.
+
+`survivalArenas.test.ts` also walks the loops that make them play, with every
+Motion stopped. For Cog Arena: off a tooth's tip onto the rim, up a ledge and
+back onto the hub. For Sky Rings: over a spoke's bar and a ring's pair. It
+also holds both arenas to 100 Segments or more.
 
 ## Considered options
 
@@ -68,9 +87,10 @@ The arenas were rebuilt to this rule, keeping what each is about:
 
 ## Consequences
 
-- Cog Arena dropped from 122 Segments to 61, most of the old count being
-  petals of eight quarters each, sunk into the hub. It is under the "100+
-  everywhere" brief the four Tracks were written to.
+- A bounce ledge hands you back up without being asked: landing on one
+  rebounds you (ADR 0094), and the walk reached the hub from a ledge with no
+  jump pressed at all. That is the design, and it also means the ledges throw
+  people around. Whether it is fun or too much is the user's live check.
 - The races are not held to the rule yet: Spin Cycle has 53 overlapping pairs,
   Slip Stream 42 and the base race 8 (10, 33 and 8 of them between still
   pieces). The same test can hold them once they are reworked.

@@ -116,14 +116,14 @@ export const COYOTE_TICKS = msToTicks(COYOTE_MS);
  * into a wall lands exactly as hard as it always did" true without a second
  * edit — see their own comments.
  */
-export const DASH_SPEED = 12;
+export const DASH_SPEED = 9;
 
 /**
  * How long the dash burst lasts (ms) — tripled from 1000 on 2026-09-17 (ADR
  * 0092). The Dash stopped being a move you spam and became a resource you
  * spend: one long committed burst, rationed by {@link DASH_COOLDOWN_MS}.
  */
-export const DASH_DURATION_MS = 3000;
+export const DASH_DURATION_MS = 2500;
 
 /**
  * How long the dash takes to build up to {@link DASH_SPEED} (ms) — the

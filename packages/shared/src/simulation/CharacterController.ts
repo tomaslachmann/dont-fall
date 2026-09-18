@@ -620,7 +620,7 @@ export class CharacterController {
     // definition: "the grabber cannot run while holding."
     const dashBurst = this.movement.beginDash(
       move,
-      fullControl && this.movement.dashPressed && this.movement.grounded && notGrabbing,
+      fullControl && this.movement.dashPressed && this.movement.grounded && notGrabbing && !this.surface.surfaceNoDash,
       slides,
     );
     // M6.1: Dash locks Hit and Grab out entirely while a burst is playing —

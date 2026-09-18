@@ -16,7 +16,9 @@
     "bench:sim": "tsx scripts/bench-simulation.ts",
     "publish:tracks": "tsx scripts/publish-tracks.ts",
     "render:thumbnails": "tsx apps/track-builder/scripts/render-thumbnails.ts",
-    "build:sounds": "tsx scripts/build-sounds.ts"
+    "build:sounds": "tsx scripts/build-sounds.ts",
+    "build:pages": "tsx scripts/build-pages.ts",
+    "online": "tsx scripts/online.ts"
   },
   "devDependencies": {
     "@dimforge/rapier3d-compat": "0.20.0",

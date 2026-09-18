@@ -97,7 +97,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     audioContext ? loadSoundBank(audioContext, STAGE_SOUND_SLOTS) : undefined,
   ]);
 
-  const { fetchTrack, loadLibrary, loadVisualTemplates, loadIceTexture, loadBounceTexture } =
+  const { fetchTrack, loadLibrary, loadVisualTemplates, loadBounceTexture } =
     createTrackLoading(config.host);
   const { track, name, environment } = await fetchTrack(config.trackId);
   const trackName = name ?? config.trackId;
@@ -125,7 +125,6 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     movingSegments: resolved.movingSegments,
     conveyors: resolved.conveyors,
     iceDecks: resolved.iceDecks,
-    iceTexture: await loadIceTexture(),
     mudDecks: resolved.mudDecks,
     bounceTexture: await loadBounceTexture(),
     volumes: resolved.volumes,

@@ -1,4 +1,5 @@
-import { DEFAULT_API_PORT, DEFAULT_SERVER_PORT, type ServerMessage, type WelcomeMessage } from "@dont-fall/shared";
+import { DEFAULT_API_PORT, DEFAULT_SERVER_PORT, matchSocketPath, type ServerMessage, type WelcomeMessage } from "@dont-fall/shared";
+import { serverOrigin } from "../serverOrigin.js";
 import { listen, type ListenerTarget } from "./listeners.js";
 
 /** Where this client's backends live — all derived from the host serving the page. */
@@ -33,7 +34,15 @@ export interface EndpointOptions {
   matchServerPort?: number;
 }
 
-export const resolveEndpoints = (host: string, options: EndpointOptions = {}): Endpoints => {
+export const resolveEndpoints = (host: string, options: EndpointOptions = {}, origin: string | undefined = serverOrigin()): Endpoints => {
+  // Online (ADR 0107): everything is one origin, and the API carries a
+  // Lobby's socket at `/match/<port>` — the Lobby's own port is not public.
+  if (origin !== undefined) {
+    const socket = new URL(matchSocketPath(options.matchServerPort ?? DEFAULT_SERVER_PORT), origin);
+    socket.protocol = socket.protocol === "https:" ? "wss:" : "ws:";
+    if (options.trackId) socket.searchParams.set("track", options.trackId);
+    return { matchServerUrl: socket.toString(), apiUrl: origin };
+  }
   const matchServerUrl = new URL(`ws://${host}:${options.matchServerPort ?? DEFAULT_SERVER_PORT}`);
   if (options.trackId) matchServerUrl.searchParams.set("track", options.trackId);
   return {

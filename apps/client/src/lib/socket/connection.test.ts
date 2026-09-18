@@ -31,6 +31,13 @@ const welcome: WelcomeMessage = {
 };
 
 describe("resolveEndpoints", () => {
+  it("puts everything on one origin online, a Lobby's socket through /match/<port> (ADR 0107)", () => {
+    const endpoints = resolveEndpoints("tomaslachmann.github.io", { matchServerPort: 51003, trackId: "t1" }, "https://x-8081.app.github.dev");
+
+    expect(endpoints.apiUrl).toBe("https://x-8081.app.github.dev");
+    expect(endpoints.matchServerUrl).toBe("wss://x-8081.app.github.dev/match/51003?track=t1");
+  });
+
   it("points every backend at the host serving the page", () => {
     const endpoints = resolveEndpoints("example.test");
 

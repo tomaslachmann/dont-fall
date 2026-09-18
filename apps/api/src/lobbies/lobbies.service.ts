@@ -124,6 +124,11 @@ export class LobbiesService {
     return entry;
   }
 
+  /** Whether a live Lobby's Match server listens on `port` — the only ports the socket proxy dials (ADR 0107). */
+  isLobbyPort(port: number): boolean {
+    return this.registry.all().some((entry) => entry.port === port);
+  }
+
   async closeLobby(id: string): Promise<void> {
     const server = this.servers.get(id);
     this.servers.delete(id);

@@ -158,6 +158,14 @@ describe("Discover", () => {
     expect(onSelect).toHaveBeenCalledWith("t1");
   });
 
+  it("has no TRY IT from the Lobby — the featured band still names the Track, nothing launches Practice", () => {
+    const onSelect = vi.fn();
+    renderDiscover({ selectedId: "t2", onSelect });
+
+    expect(screen.getByText("TODAY’S FEATURED CHAOS")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "TRY IT" })).not.toBeInTheDocument();
+  });
+
   it("badges the picked Track CURRENT in pick mode", () => {
     renderDiscover({ selectedId: "t2" });
 

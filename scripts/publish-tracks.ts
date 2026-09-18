@@ -14,6 +14,7 @@
  * Usage:  pnpm publish:tracks
  *         pnpm publish:tracks --api http://localhost:8081
  *         pnpm publish:tracks --only spin-cycle
+ *         pnpm publish:tracks --missing     (only Tracks the API lacks — `pnpm online`)
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -29,6 +30,8 @@ const argValue = (name: string): string | undefined => {
 
 const api = argValue("api") ?? `http://localhost:${DEFAULT_API_PORT}`;
 const only = argValue("only");
+/** Leave a Track the API already has alone: a fresh server gets them all, a running one gets no new Revisions. */
+const missingOnly = process.argv.includes("--missing");
 const wanted = only === undefined ? AUTHORED_TRACKS : AUTHORED_TRACKS.filter((authored) => authored.id === only);
 if (wanted.length === 0) {
   console.error(`no authored Track with id "${only}" — have ${AUTHORED_TRACKS.map((a) => a.id).join(", ")}`);
@@ -37,6 +40,10 @@ if (wanted.length === 0) {
 
 let failed = 0;
 for (const authored of wanted) {
+  if (missingOnly && (await fetch(`${api}/tracks/${encodeURIComponent(authored.id)}`)).ok) {
+    console.log(`${authored.id}: already there`);
+    continue;
+  }
   // Its picture rides with it (ADR 0105), as the base race's does; a Track
   // whose file was never rendered publishes without one.
   const { thumbnailFile, ...fields } = authored;

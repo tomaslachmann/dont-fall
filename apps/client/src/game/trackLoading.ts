@@ -11,7 +11,6 @@ import {
 import type * as THREE from "three";
 import { resolveEndpoints } from "../lib/socket/connection.js";
 import { parseAssetVisual } from "../render/assetVisuals.js";
-import { loadIceTexture } from "../render/iceOverlays.js";
 import { loadBounceTexture } from "../render/bounceSheets.js";
 
 /**
@@ -47,13 +46,6 @@ export interface TrackLoading {
   loadLibrary: (track: Track) => Promise<Record<string, Module>>;
   /** Visual templates for the Assets `track` places, cached per id beside the library (M8 ticket 03). */
   loadVisualTemplates: (track: Track) => Promise<Record<string, THREE.Group>>;
-  /**
-   * The shared ice texture (ADR 0066), session-cached like the templates —
-   * or null when it cannot be loaded (an older API, a failed fetch/decode).
-   * A cosmetic must never brick boot, so the failure degrades to untextured
-   * ice (a dev warning, never an error) instead of rejecting.
-   */
-  loadIceTexture: () => Promise<THREE.Texture | null>;
   /** The shared bounce sheet texture, cached per session; `null` when it could not be loaded (ADR 0070). */
   loadBounceTexture: () => Promise<THREE.Texture | null>;
   /** How many asset files this session downloaded, and their decoded bytes (M13 ticket 01). */
@@ -153,19 +145,6 @@ export const createTrackLoading = (host: string | undefined): TrackLoading => {
     return Object.fromEntries(ids.map((id, i) => [id, loaded[i]!]));
   };
 
-  let iceTexture: THREE.Texture | null | undefined;
-  const loadIceTextureCached = async (): Promise<THREE.Texture | null> => {
-    if (iceTexture === undefined) {
-      try {
-        iceTexture = await loadIceTexture(download, assetsBaseUrl);
-      } catch (err) {
-        console.warn(`DON'T FALL: ice overlay unavailable: ${(err as Error).message}`);
-        iceTexture = null;
-      }
-    }
-    return iceTexture;
-  };
-
   let bounceTexture: THREE.Texture | null | undefined;
   const loadBounceTextureCached = async (): Promise<THREE.Texture | null> => {
     if (bounceTexture === undefined) {
@@ -183,7 +162,6 @@ export const createTrackLoading = (host: string | undefined): TrackLoading => {
     fetchTrack,
     loadLibrary,
     loadVisualTemplates,
-    loadIceTexture: loadIceTextureCached,
     loadBounceTexture: loadBounceTextureCached,
     fetchStats: () => ({ ...fetched }),
   };

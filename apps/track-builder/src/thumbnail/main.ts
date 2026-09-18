@@ -3,7 +3,6 @@ import {
   BOUNCE_TEXTURE_FILE,
   DEFAULT_ENVIRONMENT_ID,
   ENVIRONMENT_PRESETS,
-  ICE_TEXTURE_FILE,
 } from "@dont-fall/shared";
 import { loadDeckTexture } from "@dont-fall/render";
 import { builderLibrary, loadAssetVisuals } from "../assets/assets.js";
@@ -51,9 +50,8 @@ const draw = async (): Promise<void> => {
   if (!frame) throw new Error(`no THUMBNAIL_FRAMES entry for "${authored.id}"`);
 
   const moduleIds = [...new Set(authored.track.map((segment) => segment.moduleId))];
-  const [parsed, ice, bounce] = await Promise.all([
+  const [parsed, bounce] = await Promise.all([
     loadAssetVisuals(fetchBytes, assets, moduleIds),
-    loadDeckTexture(fetchBytes, assets, ICE_TEXTURE_FILE),
     loadDeckTexture(fetchBytes, assets, BOUNCE_TEXTURE_FILE),
   ]);
   const templates = Object.fromEntries(Object.entries(parsed).map(([moduleId, asset]) => [moduleId, asset.template]));
@@ -61,7 +59,7 @@ const draw = async (): Promise<void> => {
 
   const viewport = createTrackViewport(document.getElementById("view")!, () => {});
   viewport.setEnvironment(ENVIRONMENT_PRESETS[authored.environment ?? DEFAULT_ENVIRONMENT_ID]);
-  viewport.setTrack(builderLibrary(), authored.track, templates, { ice, bounce }, deckPlans);
+  viewport.setTrack(builderLibrary(), authored.track, templates, { bounce }, deckPlans);
   viewport.setCourseVisible(false);
   viewport.setMotionTime(frame.tick ?? 0);
   viewport.setView(frame);

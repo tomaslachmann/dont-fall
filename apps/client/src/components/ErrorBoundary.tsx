@@ -46,7 +46,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   };
 
   private readonly goHome = (): void => {
-    window.location.assign("/");
+    window.location.assign(import.meta.env.BASE_URL);
   };
 
   override render(): ReactNode {

@@ -101,15 +101,12 @@ export interface StageConfig {
    */
   conveyors?: ConveyorBelt[];
   /**
-   * Ice-surfaced decks to sheet (ADR 0066) — one translucent textured sheet
-   * per deck (`iceOverlays.ts`), parented under the Moving Segment's own
-   * group when the sheet rides one. Drawn only when `iceTexture` is set: a
-   * missing texture (an older API, a failed fetch) sheets nothing rather
-   * than bricking boot over a cosmetic. Empty on Tracks without ice.
+   * Ice-surfaced decks (ADR 0066, drawn per ADR 0107) — one opaque pastel
+   * slab per deck (`iceOverlays.ts`), parented under the Moving Segment's own
+   * group when the slab rides one, built from geometry and a generated
+   * detail texture alone. Empty on Tracks without ice.
    */
   iceDecks?: IceDeck[];
-  /** The shared ice texture, or null when it could not be loaded (see `iceDecks`). */
-  iceTexture?: THREE.Texture | null;
   /**
    * Mud-surfaced decks (ADR 0067/0103) — one lumpy mass per deck
    * (`mudOverlays.ts`), same parenting as the ice sheets above, built from
@@ -329,7 +326,6 @@ export const createStage = ({
   movingSegments = [],
   conveyors = [],
   iceDecks = [],
-  iceTexture = null,
   mudDecks = [],
   bounceDecks = [],
   bounceTexture = null,
@@ -396,7 +392,6 @@ export const createStage = ({
     movingSegments,
     conveyors,
     iceDecks,
-    iceTexture,
     mudDecks,
     bounceDecks,
     bounceTexture,

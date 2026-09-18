@@ -9,7 +9,7 @@ import { loadAssetLibrary } from "./assetModules.js";
 import { invalidTrackCourseReason, startSegmentIndex } from "./Course.js";
 import { MAX_PLAYERS } from "../tuning/match.js";
 import { initPhysics } from "../simulation/RapierSimulation.js";
-import { standOn } from "./walkTrack.js";
+import { standOn, walkTrack, type Waypoint } from "./walkTrack.js";
 import { findOverlaps } from "./trackOverlaps.js";
 import { COG_ARENA_TRACK } from "./cogArena.js";
 import { SKY_RINGS_TRACK } from "./skyRings.js";
@@ -42,6 +42,11 @@ describe.each(ARENAS)("%s", (_name, track) => {
     expect(resolved.finishZones).toHaveLength(0);
   });
 
+  /** The brief the four authored Tracks were written to (2026-09-18): a hundred Segments or more, everywhere. */
+  it("has a hundred Segments or more", () => {
+    expect(track.length).toBeGreaterThanOrEqual(100);
+  });
+
   /**
    * No piece sits inside another, at rest or anywhere its Motion takes it
    * (the user, 2026-09-18): two decks overlapping fight over every pixel of
@@ -64,5 +69,51 @@ describe.each(ARENAS)("%s", (_name, track) => {
     const outcome = standOn(library, track, MAX_PLAYERS, 4);
     expect(outcome.falls, `positions: ${JSON.stringify(outcome.positions)}`).toBe(0);
     expect(outcome.grounded).toBe(MAX_PLAYERS);
+  });
+});
+
+/** A waypoint `radius` metres out from the middle, `degrees` round from straight ahead. */
+const polar = (radius: number, degrees: number, extra: Partial<Waypoint> = {}): Waypoint => ({
+  x: radius * Math.sin((degrees * Math.PI) / 180),
+  s: radius * Math.cos((degrees * Math.PI) / 180),
+  radius: 0.5,
+  ...extra,
+});
+
+describe("Cog Arena's levels", () => {
+  /**
+   * The whole point of the three levels, walked with every Motion stopped:
+   * off the Start tooth's tip, the rim catches you; from the rim a ledge is
+   * one jump up; and the ledge's rebound puts you back on the hub.
+   */
+  it("catches a Player off a tooth's tip on the rim, and brings them back to the hub by the ledges", () => {
+    const outcome = walkTrack(library, COG_ARENA_TRACK, [
+      polar(16.6, 0, { radius: 0.8 }), // off the tip, onto the rim
+      polar(16.6, 22.5), // round the rim, under a ledge
+      polar(16.1, 22.5, { jump: true, radius: 0.4 }), // up onto the ledge
+      polar(12.2, 22.5, { jump: true, radius: 0.4 }), // the rebound
+      polar(6, 22.5, { radius: 1 }), // back on the hub
+    ], { maxSeconds: 60 });
+
+    expect(outcome.stuckAt).toBeUndefined();
+    expect(outcome.reached).toBe(5);
+    expect(outcome.fallCount).toBe(0);
+  });
+});
+
+describe("Sky Rings' bars", () => {
+  /** A spoke's bar and a plain ring's pair, stopped across the way: every one is a jump, not a wall. */
+  it("can all be jumped: off the hub, over the spoke's bar, over the ring's", () => {
+    const outcome = walkTrack(library, SKY_RINGS_TRACK, [
+      polar(8, 0, { radius: 0.8 }),
+      polar(10.4, 0, { jump: true, radius: 0.4 }), // the spoke's bar stands across it at 12
+      polar(14, 0, { radius: 0.8 }),
+      polar(19.3, 0, { jump: true, radius: 0.4 }), // the ring's bars stand across it at 21
+      polar(23.5, 0, { radius: 0.8 }),
+    ], { maxSeconds: 60 });
+
+    expect(outcome.stuckAt).toBeUndefined();
+    expect(outcome.reached).toBe(5);
+    expect(outcome.fallCount).toBe(0);
   });
 });

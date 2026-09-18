@@ -239,6 +239,28 @@ describe("RapierSimulation — Surfaces (ticket 01, ADR 0036): the ground collid
   });
 });
 
+describe("RapierSimulation — no Dash on a Surface (2026-09-18)", () => {
+  const FLOOR_BOX: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 10, y: 0.5, z: 30 } };
+  const pressDash = (surface: string): boolean => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 10 },
+      statics: [FLOOR_BOX],
+      staticSurfaces: [surface],
+    });
+    tick(sim, 0.5); // settle, and let the one-tick Surface lag catch up
+    sim.tick({ [DEFAULT_CHARACTER_ID]: input({ ...NORTH, dashHeld: true }) });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
+    return sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.dashing;
+  };
+
+  it("refuses the press on ice, mud and an inflatable, and takes it on plain floor", () => {
+    expect(pressDash(DEFAULT_SURFACE)).toBe(true);
+    expect(pressDash("ice")).toBe(false);
+    expect(pressDash("mud")).toBe(false);
+    expect(pressDash("bounce")).toBe(false);
+  });
+});
+
 describe("RapierSimulation — ice (ticket 06, ADR 0035/0036): grip multiplies both acceleration and drag, top speed untouched", () => {
   const ICE_FLOOR: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 10, y: 0.5, z: 30 } };
 

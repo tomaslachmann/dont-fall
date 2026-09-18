@@ -6,7 +6,6 @@ import {
   LAUNCH_HEIGHT_MIN,
 } from "@dont-fall/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as THREE from "three";
 import { assetTabModuleIds } from "./assets/assets.js";
 import { createBuilderEngine, type BuilderEngine } from "./engine.js";
 import { MOVE_STEP_FINE } from "./track/trackEdit.js";
@@ -845,63 +844,6 @@ describe("deck Surface", () => {
     engine.setSegmentSurface(undefined);
     expect(engine.track[0]!.ice).toBeUndefined();
     expect(engine.track[0]!.mud).toBeUndefined();
-  });
-});
-
-describe("ice texture (ADR 0066)", () => {
-  it("loads lazily on the first sync with ice and hands the texture to the viewport", async () => {
-    const seen: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
-      seen.push(url);
-      return { ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as Response;
-    });
-    engine.attachViewport(document.createElement("div"));
-    engine.placeModule(DECK);
-    engine.setSegmentSurface("ice");
-    await flush();
-
-    expect(seen).toEqual(["http://localhost:8081/assets/ice_surface.jpg"]);
-    const lastSetTrack = vi.mocked(viewport.setTrack).mock.calls.at(-1)!;
-    expect((lastSetTrack[3] as { ice?: unknown }).ice).toBeInstanceOf(THREE.Texture);
-    expect((lastSetTrack[3] as { mud?: unknown }).mud).toBeUndefined();
-
-    // Settled: further syncs reuse it without refetching.
-    vi.mocked(viewport.setTrack).mockClear();
-    engine.placeModule(DECK);
-    await flush();
-    expect(seen).toHaveLength(1);
-    expect((vi.mocked(viewport.setTrack).mock.calls.at(-1)![3] as { ice?: unknown }).ice).toBeInstanceOf(THREE.Texture);
-  });
-
-  it("never fetches for a surface-free Track", async () => {
-    const fetchMock = vi.mocked(globalThis.fetch);
-    engine.attachViewport(document.createElement("div"));
-    engine.placeModule(DECK);
-    await flush();
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(vi.mocked(viewport.setTrack).mock.calls.at(-1)![3]).toEqual({});
-  });
-
-  it("warns and retries on the next sync when the load fails — a cosmetic never crashes the builder", async () => {
-    let fail = true;
-    vi.stubGlobal("fetch", async () => {
-      if (fail) throw new Error("GET answered 500");
-      return { ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as Response;
-    });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    engine.attachViewport(document.createElement("div"));
-    engine.placeModule(DECK);
-    engine.setSegmentSurface("ice");
-    await flush();
-
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("ice overlay unavailable"));
-    expect((vi.mocked(viewport.setTrack).mock.calls.at(-1)![3] as { ice?: unknown }).ice).toBeUndefined();
-
-    fail = false;
-    engine.placeModule(DECK);
-    await flush();
-    expect((vi.mocked(viewport.setTrack).mock.calls.at(-1)![3] as { ice?: unknown }).ice).toBeInstanceOf(THREE.Texture);
   });
 });
 

@@ -18,6 +18,7 @@ import { syncSeedTrack } from "./tracks/tracks.dao.js";
 import { registerTrackRoutes } from "./tracks/tracks.controller.js";
 import { LobbiesService, type LobbiesDeps } from "./lobbies/lobbies.service.js";
 import { registerLobbyRoutes } from "./lobbies/lobbies.controller.js";
+import { proxyMatchSockets } from "./lobbies/matchSocketProxy.js";
 import { registerSettingsRoutes } from "./settings/settings.controller.js";
 import { registerCareerRoutes } from "./career/career.controller.js";
 import { registerMatchesRoutes } from "./matches/matches.controller.js";
@@ -126,6 +127,8 @@ export const buildApp = async (options: BuildAppOptions = {}): Promise<FastifyIn
   app.addHook("onClose", async () => {
     await lobbies.close();
   });
+  // A Lobby's socket through this address (ADR 0107): online there is only the one.
+  app.server.on("upgrade", proxyMatchSockets((port) => lobbies.isLobbyPort(port)));
 
   app.get("/health", async () => ({ ok: true }));
   registerTrackRoutes(app, db, options.serviceToken);

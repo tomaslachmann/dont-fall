@@ -39,7 +39,6 @@ export type TrackVisualsConfig = Required<
     | "movingSegments"
     | "conveyors"
     | "iceDecks"
-    | "iceTexture"
     | "mudDecks"
     | "bounceDecks"
     | "bounceTexture"
@@ -121,7 +120,6 @@ export const buildTrackVisuals = (
     movingSegments,
     conveyors,
     iceDecks,
-    iceTexture,
     mudDecks,
     bounceDecks,
     bounceTexture,
@@ -232,11 +230,10 @@ export const buildTrackVisuals = (
   const conveyorStrips = buildConveyorStrips(conveyors, movingSegments);
   for (const strip of conveyorStrips) deckParent(strip.movingIndex).add(setShadowRole(strip.object, "receiver"));
 
-  // Ice sheets (ADR 0066) — same parenting as the strips above, never
-  // `collidables` for the same reason. Anisotropic-filtered at the
-  // renderer's own cap: decks are viewed at grazing angles, where a
-  // nearest-mipped sheet would shimmer.
-  const iceSheets = iceTexture ? buildIceOverlays(iceDecks, movingSegments, iceTexture, maxAnisotropy) : [];
+  // Ice slabs (ADR 0066, drawn per ADR 0107) — same parenting as the strips
+  // above, never `collidables` for the same reason. Built from geometry and a
+  // generated detail texture alone, so like the mud it is always drawn.
+  const iceSheets = buildIceOverlays(iceDecks, movingSegments);
   for (const sheet of iceSheets) deckParent(sheet.movingIndex).add(setShadowRole(sheet.object, "receiver"));
   // Where a Character wobbles for standing on ice (ADR 0082): the same decks,
   // parented the same way, and there whether or not the sheets could be drawn.
@@ -378,8 +375,9 @@ export const buildTrackVisuals = (
       // Marched in sim time (not wall clock), so belts pause with the sim —
       // at true belt speed, so what you see is what carries you.
       for (const strip of conveyorStrips) strip.update(t * TICK_DT);
-      // Feet sink into the mud on the same clock.
+      // Feet sink into the mud on the same clock, and the ice sparkles on it.
       for (const sheet of mudSheets) sheet.update(t * TICK_DT, centres);
+      for (const sheet of iceSheets) sheet.update(t * TICK_DT);
       // Recomputed immediately, same reason as the Props.
       for (let i = 0; i < spinnerMeshes.length; i += 1) {
         const config = spinners[i]!;

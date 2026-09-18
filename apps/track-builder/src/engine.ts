@@ -1,11 +1,9 @@
 import {
   BOUNCE_TEXTURE_FILE,
-  ICE_TEXTURE_FILE,
   DEFAULT_ENVIRONMENT_ID,
   ENVIRONMENT_PRESETS,
   hasMotion,
   resolveEnvironmentId,
-  moduleHasIceSurface,
   moduleHasBounceSurface,
   segmentScale,
   SURFACE_ATTACHMENTS,
@@ -72,6 +70,7 @@ import {
 } from "./track/trackEdit.js";
 import { TrackHistory } from "./track/trackHistory.js";
 import { courseOf, motionLockReason, type CourseSummary } from "./lib/course.js";
+import { clientAppUrl, serverOrigin } from "./lib/serverOrigin.js";
 import {
   createModulePreview,
   createTrackViewport,
@@ -340,7 +339,7 @@ export const createBuilderEngine = (opts?: {
     viewport?.setImpactTintVisible(tintVisible);
     viewport?.setCourseVisible(true);
   };
-  let apiUrl = DEFAULT_API_URL;
+  let apiUrl = serverOrigin() ?? DEFAULT_API_URL;
   let recentAssets: string[] = [];
   let lastFrameAt: number | undefined;
   let rafHandle = 0;
@@ -379,51 +378,15 @@ export const createBuilderEngine = (opts?: {
       viewport.retransformSegments(history.track);
       return;
     }
-    ensureIceTexture();
     ensureBounceTexture();
     viewport.setTrack(
       library,
       history.track,
       templates,
       {
-        ice: iceTexture ?? undefined,
         bounce: bounceTexture ?? undefined,
       },
       deckPlans,
-    );
-  };
-
-  /**
-   * The shared ice texture (ADR 0066), loaded lazily on the first sync
-   * whose Track sheets a deck — an ice-free session never fetches it. One
-   * in flight at most; landing re-syncs so the sheets appear, while a
-   * failure warns and retries on the next full sync (edits are user-paced,
-   * so no backoff is needed for a cosmetic).
-   */
-  let iceTexture: THREE.Texture | null = null;
-  let iceLoading = false;
-  const ensureIceTexture = (): void => {
-    if (!viewport || iceTexture || iceLoading) return;
-    if (
-      !history.track.some((segment) => {
-        if (segment.ice === true) return true;
-        const module = library[segment.moduleId];
-        return module !== undefined && moduleHasIceSurface(module);
-      })
-    ) {
-      return;
-    }
-    iceLoading = true;
-    void loadDeckTexture(fetchAssetBytes, `${apiUrl}/assets`, ICE_TEXTURE_FILE).then(
-      (loaded) => {
-        iceLoading = false;
-        iceTexture = loaded;
-        syncTrackView(false);
-      },
-      (err: unknown) => {
-        iceLoading = false;
-        console.warn(`DON'T FALL: ice overlay unavailable: ${(err as Error).message}`);
-      },
     );
   };
 
@@ -607,15 +570,13 @@ export const createBuilderEngine = (opts?: {
       viewport.setGizmoMode(gizmoMode);
       viewport.setImpactTintVisible(tintVisible);
       syncEnvironmentView();
-      ensureIceTexture();
-      ensureBounceTexture();
+        ensureBounceTexture();
       viewport.setTrack(
         library,
         history.track,
         templates,
         {
-          ice: iceTexture ?? undefined,
-          bounce: bounceTexture ?? undefined,
+            bounce: bounceTexture ?? undefined,
         },
         deckPlans,
       );
@@ -1108,10 +1069,10 @@ export const createBuilderEngine = (opts?: {
       notify();
       try {
         const { id } = await publishPlaytestTrack(apiUrl, history.track, defaults, environment);
-        // 5173 is apps/client's own fixed dev port — a local-dev-only detail.
-        // `/play?track=&freeroam=1`: straight into a free-roam session, no Lobby.
-        const host = globalThis.location?.hostname ?? "localhost";
-        globalThis.window?.open(`http://${host}:5173/play?track=${encodeURIComponent(id)}&freeroam=1`, "_blank");
+        // The game beside this builder (its dev port locally, the Pages path
+        // online, ADR 0107). `/play?track=&freeroam=1`: straight into a
+        // free-roam session, no Lobby.
+        globalThis.window?.open(`${clientAppUrl()}play?track=${encodeURIComponent(id)}&freeroam=1`, "_blank");
         setStatus(`free-roam opened in a new tab (Track "${id}")`, "ok");
       } catch (err) {
         setStatus(`playtest failed: ${(err as Error).message}`, "error");
