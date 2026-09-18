@@ -1,6 +1,6 @@
 import { mulQuat, IDENTITY_QUAT } from "../math/quat.js";
 import { addVec3, lengthVec3, rotateVec3ByQuat, scaleVec3, subVec3, type Quat, type Vec3 } from "../math/vec3.js";
-import { TICK_DT } from "../tuning.js";
+import { TICK_DT } from "../tuning/clock.js";
 
 /**
  * How a Swing or Slide travels between its two ends (ADR 0061). Each leg of

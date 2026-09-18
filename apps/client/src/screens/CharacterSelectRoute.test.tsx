@@ -16,8 +16,9 @@ const ACCOUNT = {
   avatarUrl: null,
   xp: 0,
   coins: 0,
-  bodySkin: 2,
-  hat: null,
+  color: 2,
+  skin: null as string | null,
+  hat: null as string | null,
 };
 
 const renderAt = (entry: string) => {
@@ -44,7 +45,7 @@ describe("CharacterSelectRoute", () => {
   beforeEach(() => {
     clearFlashes();
     localStorage.setItem("df_auth_token", "tok");
-    let saved = { bodySkin: ACCOUNT.bodySkin, hat: ACCOUNT.hat };
+    let saved = { color: ACCOUNT.color, skin: ACCOUNT.skin, hat: ACCOUNT.hat };
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
@@ -65,30 +66,30 @@ describe("CharacterSelectRoute", () => {
     globalThis.fetch = realFetch;
   });
 
-  it("loads the equipped skin off the Account and pre-selects it", async () => {
+  it("loads the equipped color off the Account and pre-selects it", async () => {
     renderAt("/character");
 
-    expect(await screen.findByText("SKIN 3")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Skin 3" })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByText("COLOUR 3")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Colour 3" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("SAVE persists the pick and the equipped panel follows", async () => {
     renderAt("/character");
-    await screen.findByText("SKIN 3");
+    await screen.findByText("COLOUR 3");
 
-    fireEvent.click(screen.getByRole("button", { name: "Skin 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Colour 1" }));
     fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
 
-    await waitFor(() => expect(screen.getByText("SKIN 1")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("COLOUR 1")).toBeInTheDocument());
     expect(globalThis.fetch).toHaveBeenCalledWith(
       expect.stringContaining("/auth/me/cosmetics"),
-      expect.objectContaining({ method: "PUT", body: JSON.stringify({ bodySkin: 0 }) }),
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ color: 0 }) }),
     );
   });
 
-  it("SAVE persists the factory base and the panel reads BASE, not SKIN 8", async () => {
+  it("SAVE persists the factory base and the panel reads BASE, not COLOUR 8", async () => {
     renderAt("/character");
-    await screen.findByText("SKIN 3");
+    await screen.findByText("COLOUR 3");
 
     fireEvent.click(screen.getByRole("button", { name: "Base" }));
     fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
@@ -96,13 +97,13 @@ describe("CharacterSelectRoute", () => {
     await waitFor(() => expect(screen.getByText("BASE")).toBeInTheDocument());
     expect(globalThis.fetch).toHaveBeenCalledWith(
       expect.stringContaining("/auth/me/cosmetics"),
-      expect.objectContaining({ method: "PUT", body: JSON.stringify({ bodySkin: 7 }) }),
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ color: 7 }) }),
     );
   });
 
   it("back returns to the menu", async () => {
     renderAt("/character");
-    await screen.findByText("SKIN 3");
+    await screen.findByText("COLOUR 3");
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByText("home")).toBeInTheDocument();
@@ -110,7 +111,7 @@ describe("CharacterSelectRoute", () => {
 
   it("OPEN SHOP flashes the shop isn't here yet — it has no screen", async () => {
     renderAt("/character");
-    await screen.findByText("SKIN 3");
+    await screen.findByText("COLOUR 3");
 
     fireEvent.click(screen.getByRole("button", { name: "OPEN SHOP" }));
 
@@ -130,17 +131,17 @@ describe("CharacterSelectRoute", () => {
       }),
     );
     renderAt("/character");
-    await screen.findByText("SKIN 3");
+    await screen.findByText("COLOUR 3");
 
-    fireEvent.click(screen.getByRole("button", { name: "Skin 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Colour 1" }));
     fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Couldn't save your bean"));
-    expect(screen.getByText("SKIN 3")).toBeInTheDocument();
+    expect(screen.getByText("COLOUR 3")).toBeInTheDocument();
 
-    // An error flash is sticky: picking another skin must not clear it —
+    // An error flash is sticky: picking another color must not clear it —
     // only an explicit dismiss does.
-    fireEvent.click(screen.getByRole("button", { name: "Skin 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Colour 2" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Couldn't save your bean");
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("alert")).toBeNull();
@@ -149,7 +150,7 @@ describe("CharacterSelectRoute", () => {
   describe("hats (ADR 0083)", () => {
     const openHats = async () => {
       renderAt("/character");
-      await screen.findByText("SKIN 3");
+      await screen.findByText("COLOUR 3");
       fireEvent.click(screen.getByRole("tab", { name: "HAT" }));
     };
 
@@ -162,17 +163,17 @@ describe("CharacterSelectRoute", () => {
       expect(screen.getByText("LV 9")).toBeInTheDocument();
     });
 
-    it("SAVE puts the picked hat on with the skin, and the equipped panel names it", async () => {
+    it("SAVE puts the picked hat on with the color, and the equipped panel names it", async () => {
       xp = xpLevelStart(20);
       await openHats();
 
       fireEvent.click(await screen.findByRole("button", { name: "CROWN" }));
       fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
 
-      await waitFor(() => expect(screen.getByText("SKIN 3 · CROWN")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("COLOUR 3 · CROWN")).toBeInTheDocument());
       expect(globalThis.fetch).toHaveBeenCalledWith(
         expect.stringContaining("/auth/me/cosmetics"),
-        expect.objectContaining({ method: "PUT", body: JSON.stringify({ bodySkin: 2, hat: "crown" }) }),
+        expect.objectContaining({ method: "PUT", body: JSON.stringify({ color: 2, hat: "crown" }) }),
       );
       expect(screen.getByRole("button", { name: "CROWN" })).toHaveAttribute("aria-pressed", "true");
     });
@@ -182,29 +183,80 @@ describe("CharacterSelectRoute", () => {
       await openHats();
       fireEvent.click(await screen.findByRole("button", { name: "TRAFFIC CONE" }));
       fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
-      expect(await screen.findByText("SKIN 3 · TRAFFIC CONE")).toBeInTheDocument();
+      expect(await screen.findByText("COLOUR 3 · TRAFFIC CONE")).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole("button", { name: "No hat" }));
       fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
 
-      await waitFor(() => expect(screen.getByText("SKIN 3")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("COLOUR 3")).toBeInTheDocument());
       expect(globalThis.fetch).toHaveBeenCalledWith(
         expect.stringContaining("/auth/me/cosmetics"),
-        expect.objectContaining({ body: JSON.stringify({ bodySkin: 2, hat: null }) }),
+        expect.objectContaining({ body: JSON.stringify({ color: 2, hat: null }) }),
       );
     });
 
-    it("a skin-only change leaves the hat out of the save", async () => {
+    it("a color-only change leaves the hat out of the save", async () => {
       renderAt("/character");
-      await screen.findByText("SKIN 3");
+      await screen.findByText("COLOUR 3");
 
-      fireEvent.click(screen.getByRole("button", { name: "Skin 5" }));
+      fireEvent.click(screen.getByRole("button", { name: "Colour 5" }));
       fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
 
-      await waitFor(() => expect(screen.getByText("SKIN 5")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("COLOUR 5")).toBeInTheDocument());
       expect(globalThis.fetch).toHaveBeenCalledWith(
         expect.stringContaining("/auth/me/cosmetics"),
-        expect.objectContaining({ body: JSON.stringify({ bodySkin: 4 }) }),
+        expect.objectContaining({ body: JSON.stringify({ color: 4 }) }),
+      );
+    });
+  });
+
+  describe("skins (ADR 0091)", () => {
+    const openSkins = async () => {
+      renderAt("/character");
+      await screen.findByText("COLOUR 3");
+      fireEvent.click(screen.getByRole("tab", { name: "SKIN" }));
+    };
+
+    it("unlocks tiles off the Account's own level, like hats", async () => {
+      xp = xpLevelStart(6);
+      await openSkins();
+
+      expect(await screen.findByRole("button", { name: "TIGER" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "SUNSET STRIPES" })).toBeNull();
+      expect(screen.getByText("LV 8")).toBeInTheDocument();
+    });
+
+    it("SAVE paints the picked skin on, and the equipped panel names it instead of the color", async () => {
+      xp = xpLevelStart(6);
+      await openSkins();
+
+      fireEvent.click(await screen.findByRole("button", { name: "TIGER" }));
+      fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
+
+      // The skin is the whole body: the color underneath is no longer drawn,
+      // so it is no longer what the panel calls the bean (ADR 0091).
+      await waitFor(() => expect(screen.getByText("TIGER")).toBeInTheDocument());
+      expect(screen.queryByText("COLOUR 3")).toBeNull();
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/auth/me/cosmetics"),
+        expect.objectContaining({ method: "PUT", body: JSON.stringify({ color: 2, skin: "tiger" }) }),
+      );
+    });
+
+    it("SAVE takes the skin off for NONE, and the color shows again", async () => {
+      xp = xpLevelStart(6);
+      await openSkins();
+      fireEvent.click(await screen.findByRole("button", { name: "TIGER" }));
+      fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
+      await screen.findByText("TIGER");
+
+      fireEvent.click(screen.getByRole("button", { name: "No skin" }));
+      fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
+
+      await waitFor(() => expect(screen.getByText("COLOUR 3")).toBeInTheDocument());
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/auth/me/cosmetics"),
+        expect.objectContaining({ body: JSON.stringify({ color: 2, skin: null }) }),
       );
     });
   });

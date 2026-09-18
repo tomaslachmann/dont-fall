@@ -20,7 +20,16 @@ describe("selectLocomotion", () => {
     expect(selectLocomotion(at({}))).toBe("run");
   });
 
-  it("runs through mud, up the steepest walkable slope included — however it got there", () => {
+  // ADR 0081 had mud running everywhere, including up the steepest walkable
+  // slope, on the arithmetic of a 0.5 multiplier. ADR 0094 cut mud to 0.4 to
+  // make it the harshest floor in the game, which moves that corner: flat mud
+  // still runs, and mud up a 35° slope is now slow enough to trudge — which is
+  // what the penalty should look like.
+  it("runs on flat mud, and trudges up the steepest walkable slope of it", () => {
+    const flatMud = WALK_SPEED * SURFACES.mud!.topSpeedMultiplier;
+    expect(selectLocomotion(at({ speed: flatMud }))).toBe("run");
+    expect(selectLocomotion(at({ speed: flatMud, walking: true }))).toBe("run");
+
     // Uphill along +Z: the ground's normal leans back toward −Z.
     const steepest = WALKABLE_SLOPE_MAX_ANGLE;
     const uphill = slopeSpeedMultiplier(
@@ -28,10 +37,12 @@ describe("selectLocomotion", () => {
       { x: 0, y: Math.cos(steepest), z: -Math.sin(steepest) },
     );
     expect(uphill).toBeLessThan(1);
-    const mudUphill = WALK_SPEED * SURFACES.mud!.topSpeedMultiplier * uphill;
-    // Running into it, and from a standstill, where the first frame walks.
+    const mudUphill = flatMud * uphill;
+    // Already running, it keeps the run — the hysteresis gap is what stops a
+    // Character flickering between clips as the slope steepens under it.
     expect(selectLocomotion(at({ speed: mudUphill }))).toBe("run");
-    expect(selectLocomotion(at({ speed: mudUphill, walking: true }))).toBe("run");
+    // From a standstill it never gets going: the walking threshold decides.
+    expect(selectLocomotion(at({ speed: mudUphill, walking: true }))).toBe("walk");
   });
 
   it("walks only at the slow end — the first steps on ice, or pushing against a wall", () => {

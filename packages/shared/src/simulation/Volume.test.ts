@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GRAVITY_Y } from "../tuning.js";
+import { GRAVITY_Y } from "../tuning/character.js";
 import { byVolumePriority, holdsAloft, volumeAt, type VolumeConfig } from "./Volume.js";
 
 const volume = (overrides: Partial<VolumeConfig> = {}): VolumeConfig => ({

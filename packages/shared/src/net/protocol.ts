@@ -298,17 +298,6 @@ export interface ReclaimMessage {
 }
 
 /**
- * Client → server: sets this connection's own nickname (M4 ticket 07). Any
- * connected Player may send this at any time — a nickname is cosmetic, never
- * a start gate. The server trims/caps it ({@link NICKNAME_MAX_LENGTH}); an
- * empty result is left as whatever it was.
- */
-export interface SetNicknameMessage {
-  type: "setNickname";
-  nickname: string;
-}
-
-/**
  * Client → server, once per connection, right after open (M9 ticket 11 phase
  * 2b): binds this connection to the Account behind the session token — the
  * same opaque Bearer [REDACTED] the API's own routes verify. Optional and idempotent:
@@ -444,7 +433,6 @@ export type ClientMessage =
   | PingMessage
   | ReclaimMessage
   | AuthMessage
-  | SetNicknameMessage
   | SetReadyMessage
   | SelectTrackMessage
   | SetRoundTypeMessage

@@ -14,7 +14,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, xp: 0, coins: 0, bodySkin: 0, hat: null, bindings: null };
+const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, role: "player", xp: 0, coins: 0, color: 0, skin: null, hat: null, bindings: null };
 
 function Harness() {
   const { status, account, recheck } = useAccount();

@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  BASE_BODY_SKIN_ID,
-  BODY_SKIN_COUNT,
-  BODY_SKIN_HUES,
-  bodySkinHue,
-  DEFAULT_BODY_SKIN,
+  BASE_BODY_COLOR_ID,
+  BODY_COLOR_COUNT,
+  BODY_COLOR_HUES,
+  bodyColorHue,
+  DEFAULT_BODY_COLOR,
   HATS,
   hatById,
   hatsUnlockedBetween,
-  invalidBodySkinReason,
+  invalidBodyColorReason,
   invalidHatReason,
   isHatUnlocked,
   lockedHatReason,
@@ -17,34 +17,34 @@ import { levelForXp, xpLevelStart } from "./economy.js";
 
 describe("body skins (M9 ticket 15)", () => {
   it("accepts every owned skin — an int in range", () => {
-    for (let id = 0; id < BODY_SKIN_COUNT; id += 1) {
-      expect(invalidBodySkinReason(id)).toBeUndefined();
+    for (let id = 0; id < BODY_COLOR_COUNT; id += 1) {
+      expect(invalidBodyColorReason(id)).toBeUndefined();
     }
   });
 
   it("refuses out-of-range skins and nonsense with a reason naming the fix", () => {
-    for (const id of [BODY_SKIN_COUNT, BODY_SKIN_COUNT + 3, -1, 1.5, "0", null, undefined, {}]) {
-      expect(invalidBodySkinReason(id)).toMatch(/bodySkin must be an integer/);
+    for (const id of [BODY_COLOR_COUNT, BODY_COLOR_COUNT + 3, -1, 1.5, "0", null, undefined, {}]) {
+      expect(invalidBodyColorReason(id)).toMatch(/color must be an integer/);
     }
   });
 
   it("maps every tinted skin to a hue — the renderer never looks one up missing", () => {
-    expect(BODY_SKIN_HUES).toHaveLength(BODY_SKIN_COUNT - 1);
-    for (const hue of BODY_SKIN_HUES) {
+    expect(BODY_COLOR_HUES).toHaveLength(BODY_COLOR_COUNT - 1);
+    for (const hue of BODY_COLOR_HUES) {
       expect(hue).toBeGreaterThanOrEqual(0);
       expect(hue).toBeLessThan(360);
     }
-    expect(DEFAULT_BODY_SKIN).toBeGreaterThanOrEqual(0);
-    expect(DEFAULT_BODY_SKIN).toBeLessThan(BODY_SKIN_COUNT);
+    expect(DEFAULT_BODY_COLOR).toBeGreaterThanOrEqual(0);
+    expect(DEFAULT_BODY_COLOR).toBeLessThan(BODY_COLOR_COUNT);
   });
 
   it("resolves hues tri-state: a hue per tint, null for base, undefined for junk", () => {
-    for (let id = 0; id < BODY_SKIN_HUES.length; id += 1) {
-      expect(bodySkinHue(id)).toBe(BODY_SKIN_HUES[id]);
+    for (let id = 0; id < BODY_COLOR_HUES.length; id += 1) {
+      expect(bodyColorHue(id)).toBe(BODY_COLOR_HUES[id]);
     }
-    expect(bodySkinHue(BASE_BODY_SKIN_ID)).toBeNull();
-    for (const junk of [null, BODY_SKIN_COUNT, -1, 1.5, Number.NaN]) {
-      expect(bodySkinHue(junk)).toBeUndefined();
+    expect(bodyColorHue(BASE_BODY_COLOR_ID)).toBeNull();
+    for (const junk of [null, BODY_COLOR_COUNT, -1, 1.5, Number.NaN]) {
+      expect(bodyColorHue(junk)).toBeUndefined();
     }
   });
 });

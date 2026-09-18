@@ -32,6 +32,7 @@ import { httpMatchResultsNotifier, type MatchResultsNotifier } from "./matchResu
 import { httpTrackPlayRecorder, type TrackPlayRecorder } from "./trackPlays.js";
 import { httpPersonalBestRecorder, type PersonalBestRecorder } from "./personalBests.js";
 import { drawRound, type RoundSlotPick } from "./roundDraw.js";
+import type { ServerRuntimeConfig } from "../server/config.js";
 import type { FetchedTrack } from "../track/trackSource.js";
 
 /** One Round's fully-resolved plan (M7 ticket 05) — what {@link MatchRuntime.matchStructure} holds per slot. */
@@ -40,45 +41,18 @@ export interface MatchStructureEntry {
   roundType: RoundType;
 }
 
-/** Everything `startServer`'s config resolved to, fixed for the life of the process. */
-export interface MatchConfig {
+/**
+ * Everything `startServer`'s config resolved to, fixed for the life of the
+ * process ({@link ServerRuntimeConfig}), plus the three things the boot itself
+ * makes rather than reads.
+ */
+export interface MatchConfig extends ServerRuntimeConfig {
   /**
    * This Match's own id (ticket 14) — a boot UUID. Rides every snapshot so
    * the API (betting pools keyed by `(matchId, round)`) and every client
    * share one stable name for the Match.
    */
   matchId: string;
-  trackServiceUrl: string;
-  trackFetchRetryOptions: { maxWaitMs?: number; retryDelayMs?: number; attemptTimeoutMs?: number };
-  countdownMs: number;
-  roundEndMs: number;
-  /** Ceiling on how long Standings waits for every connected Player to confirm Ready (M7 ticket 10, ADR 0051) before advancing anyway. */
-  standingsReadyTimeoutMs: number;
-  playersToStart: number;
-  /** How many connections this server accepts before refusing the next one outright (grilling session, 2026-09). */
-  maxPlayers: number;
-  timeLimitMsOverride?: number | undefined;
-  /**
-   * Force this Match's `RoundRules.survivorTarget` over whatever Track it
-   * loads (M5 ticket 05) — the same kind of Match-level override
-   * `timeLimitMsOverride` is, over the same kind of Track default.
-   *
-   * There is deliberately no `fallBehaviorOverride` beside it any more
-   * (ticket 07): that one was never a Track default to override, it was the
-   * Round type standing in for a Lobby that couldn't pick one yet. The Lobby
-   * picks now ({@link MatchRuntime.setRoundType}), so the stand-in is gone
-   * rather than left as a second way to decide the same thing.
-   */
-  survivorTargetOverride?: number | undefined;
-  /**
-   * Force this Match's own length over {@link DEFAULT_MATCH_LENGTH} (M7
-   * ticket 04, ADR 0049) — test-only, like `timeLimitMsOverride`: a test
-   * that wants to sit through a whole multi-Round Match, or pin one down to
-   * a single Round to keep testing pre-M7 single-Round behaviour, shouldn't
-   * have to wait out three real Rounds either way. Ticket 05 gives the
-   * Lobby a real, non-test-only way to set this.
-   */
-  matchLengthOverride?: number | undefined;
   /**
    * Measurement only (M13 ticket 02): handed to every simulation this Match
    * builds, so the tick log can split a tick into Rapier's own phases. Set
@@ -256,14 +230,16 @@ export class MatchRuntime {
    */
   matchAccountIds = new Map<string, string>();
   /**
-   * Every racer's equipped body skin, kept for the results save — the
-   * podium wears these. Accumulated exactly like `matchNicknames` above:
-   * read off the live lobby row at each finished Round (or the drop record
-   * when the row is already gone), since a dropped Player's row is gone by
-   * Match end. Anonymous seats are simply absent, never null — the podium
-   * defaults them.
+   * Every racer's equipped body color, kept for the results save — the
+   * podium wears these under no skin. Accumulated exactly like
+   * `matchNicknames` above: read off the live lobby row at each finished
+   * Round (or the drop record when the row is already gone), since a
+   * dropped Player's row is gone by Match end. Anonymous seats are simply
+   * absent, never null — the podium defaults them.
    */
-  matchBodySkins = new Map<string, number>();
+  matchColors = new Map<string, number>();
+  /** Every racer's equipped skin (ADR 0091), kept the same way for the same podium. No skin, no entry. */
+  matchSkins = new Map<string, string>();
   /** Every racer's equipped hat (ADR 0083), kept the same way for the same podium. No hat, no entry. */
   matchHats = new Map<string, string>();
   /**
@@ -532,8 +508,20 @@ export class MatchRuntime {
    * no reconnection built yet (ADR 0024), are never coming back this Match.
    */
   canContinueMatch(): boolean {
-    return this.roundsRemaining() && this.sockets.size >= this.config.playersToStart;
+    return !this.matchAbandoned && this.roundsRemaining() && this.sockets.size >= this.config.playersToStart;
   }
+
+  /**
+   * A Round ended with every racer gone (all rows DNF — found live
+   * 2026-09-18: both tabs refreshed mid-Round leave only spectator seats
+   * behind). Such a Round is no result (`rows: []` is exactly what the API's
+   * validation refuses), and a Match whose racers all left has nobody to
+   * keep running Rounds for — so it makes RESULTS terminal through
+   * {@link canContinueMatch}, the same level-not-edge reading that gate
+   * already has. Cleared by {@link resetToFreshLobby} with the rest of the
+   * Match-scoped state.
+   */
+  matchAbandoned = false;
 
   /**
    * Whether every currently connected Player has confirmed Ready on the
@@ -818,13 +806,15 @@ export class MatchRuntime {
     this.roundTrackIds = [];
     this.matchNicknames.clear();
     this.matchAccountIds.clear();
-    this.matchBodySkins.clear();
+    this.matchColors.clear();
+    this.matchSkins.clear();
     this.matchHats.clear();
     this.totalFalls = {};
     this.resultsSavedMatchId = null;
     this.resultsSavedAtMs = null;
     this.savingResults = false;
     this.lastSaveAttemptTick = null;
+    this.matchAbandoned = false;
     this.closeRequested = false;
     this.pendingRoundPicks.clear();
     this.matchStructure = [];

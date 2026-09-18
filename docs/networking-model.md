@@ -20,14 +20,14 @@ research (`docs/research/m2-prediction-reconciliation-loop.md`) → ADR 0026 (lo
 correction = the same decaying render offset; retire the `0.2` threshold; gentle LEAD
 drain) — **ticket 12, done.** `RECONCILE_POSITION_ERROR` is gone from the codebase;
 `RECONCILE_POSITION_EPSILON` / `RECONCILE_HARDSNAP_M` / `CAPSULE_ERR_HALFLIFE_MS`
-replace it (`packages/shared/src/tuning.ts`), the shared decay helper lives at
+replace it (`packages/shared/src/tuning/netcode.ts`), the shared decay helper lives at
 `packages/shared/src/state/errorOffset.ts`, and `main.ts` wires the capsule offset +
 gentle LEAD drain.
 
 ADR 0021's forward note → **ADR 0027 / ticket 13, done.** The server applies
 `input[serverTick]` instead of FIFO next-in-queue (`apps/server/src/index.ts`); the client
 seeds `predictionTick` into the server's own tick space once, sized from measured RTT
-(`INITIAL_LEAD_TICKS_MIN`/`_MAX`, `packages/shared/src/tuning.ts`); validated by
+(`INITIAL_LEAD_TICKS_MIN`/`_MAX`, `packages/shared/src/tuning/netcode.ts`); validated by
 `apps/server/src/tickAddressedInput.integration.test.ts` — a real `startServer` process
 against a real, timer-driven client, the integration test the headless harness couldn't
 provide. The systematic ~0.2 u bias is removed at the source, not just hidden — ADR 0026's

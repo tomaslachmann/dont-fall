@@ -295,52 +295,52 @@ describe("PUT /auth/me/cosmetics (M9 ticket 15)", () => {
   it("equips a free skin and returns the updated Account in the one round trip", async () => {
     const { token } = (await signup()).json() as { token: string };
 
-    const res = await save(token, { bodySkin: 2 });
+    const res = await save(token, { color: 2 });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ bodySkin: 2, displayName: "Wobbleton" });
+    expect(res.json()).toMatchObject({ color: 2, displayName: "Wobbleton" });
     const me = await app.inject({ method: "GET", url: "/auth/me", headers: { authorization: `Bearer ${token}` } });
-    expect(me.json()).toMatchObject({ bodySkin: 2 });
+    expect(me.json()).toMatchObject({ color: 2 });
   });
 
   it("equips the factory base like any skin — id 7 is a choice, not an error", async () => {
     const { token } = (await signup()).json() as { token: string };
 
-    const res = await save(token, { bodySkin: 7 });
+    const res = await save(token, { color: 7 });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toMatchObject({ bodySkin: 7 });
+    expect(res.json()).toMatchObject({ color: 7 });
   });
 
   it("refuses an out-of-range skin with a reason naming the fix", async () => {
     const { token } = (await signup()).json() as { token: string };
 
-    const res = await save(token, { bodySkin: 8 });
+    const res = await save(token, { color: 8 });
 
     expect(res.statusCode).toBe(400);
-    expect(JSON.stringify(res.json())).toMatch(/bodySkin must be an integer/);
+    expect(JSON.stringify(res.json())).toMatch(/color must be an integer/);
     const me = await app.inject({ method: "GET", url: "/auth/me", headers: { authorization: `Bearer ${token}` } });
-    expect(me.json()).toMatchObject({ bodySkin: 0 });
+    expect(me.json()).toMatchObject({ color: 0 });
   });
 
   it("refuses nonsense bodies the same way — missing, fractional, wrong type", async () => {
     const { token } = (await signup()).json() as { token: string };
 
-    for (const body of [{}, { bodySkin: 1.5 }, { bodySkin: "1" }, { bodySkin: -1 }]) {
+    for (const body of [{}, { color: 1.5 }, { color: "1" }, { color: -1 }]) {
       expect((await save(token, body)).statusCode).toBe(400);
     }
   });
 
   it("401s without a session — cosmetics need a logged-in Account", async () => {
-    expect((await save(undefined, { bodySkin: 1 })).statusCode).toBe(401);
-    expect((await save("dead-token", { bodySkin: 1 })).statusCode).toBe(401);
+    expect((await save(undefined, { color: 1 })).statusCode).toBe(401);
+    expect((await save("dead-token", { color: 1 })).statusCode).toBe(401);
     expect((await save(undefined, { hat: null })).statusCode).toBe(401);
   });
 
   describe("hats (ADR 0083)", () => {
     const me = async (token: string) =>
       (await app.inject({ method: "GET", url: "/auth/me", headers: { authorization: `Bearer ${token}` } })).json() as {
-        bodySkin: number;
+        color: number;
         hat: string | null;
       };
     /** Levels the Account up the way the economy would: its stored XP. */
@@ -367,31 +367,31 @@ describe("PUT /auth/me/cosmetics (M9 ticket 15)", () => {
 
     it("wears a hat once the level is reached, keeping the skin, and takes it off again", async () => {
       const { token } = (await signup()).json() as { token: string };
-      await save(token, { bodySkin: 3 });
+      await save(token, { color: 3 });
       reachLevel(SIGNUP.displayName, 2);
 
       const res = await save(token, { hat: "cone" });
 
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toMatchObject({ hat: "cone", bodySkin: 3 });
-      expect(await me(token)).toMatchObject({ hat: "cone", bodySkin: 3 });
+      expect(res.json()).toMatchObject({ hat: "cone", color: 3 });
+      expect(await me(token)).toMatchObject({ hat: "cone", color: 3 });
 
-      expect((await save(token, { hat: null })).json()).toMatchObject({ hat: null, bodySkin: 3 });
+      expect((await save(token, { hat: null })).json()).toMatchObject({ hat: null, color: 3 });
     });
 
     it("saves a skin and a hat in one request", async () => {
       const { token } = (await signup()).json() as { token: string };
       reachLevel(SIGNUP.displayName, 30);
 
-      expect((await save(token, { bodySkin: 6, hat: "ufo" })).json()).toMatchObject({ bodySkin: 6, hat: "ufo" });
+      expect((await save(token, { color: 6, skin: null, hat: "ufo" })).json()).toMatchObject({ color: 6, skin: null, hat: "ufo" });
     });
 
     it("lands nothing when the hat is refused — not even the skin sent with it", async () => {
       const { token } = (await signup()).json() as { token: string };
 
-      expect((await save(token, { bodySkin: 4, hat: "crown" })).statusCode).toBe(403);
-      expect((await save(token, { bodySkin: 4, hat: "top-hat" })).statusCode).toBe(400);
-      expect(await me(token)).toMatchObject({ bodySkin: 0, hat: null });
+      expect((await save(token, { color: 4, skin: null, hat: "crown" })).statusCode).toBe(403);
+      expect((await save(token, { color: 4, skin: null, hat: "top-hat" })).statusCode).toBe(400);
+      expect(await me(token)).toMatchObject({ color: 0, skin: null, hat: null });
     });
 
     it("refuses anything that isn't a hat id, with a reason listing the hats", async () => {

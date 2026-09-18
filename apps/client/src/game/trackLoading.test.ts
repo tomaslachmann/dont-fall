@@ -84,47 +84,6 @@ describe("loadIceTexture (ADR 0066)", () => {
   });
 });
 
-describe("loadMudTexture (ADR 0067)", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-  });
-
-  it("fetches the served texture once per session through the shared bytes pipe", async () => {
-    const seen: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
-      seen.push(url);
-      return { ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as Response;
-    });
-    const bitmap = {} as ImageBitmap;
-    const decode = vi.fn(async () => bitmap);
-    vi.stubGlobal("createImageBitmap", decode);
-    const { loadMudTexture } = createTrackLoading("example.test");
-
-    const first = await loadMudTexture();
-    const second = await loadMudTexture();
-
-    expect(seen).toEqual(["http://example.test:8081/assets/mud_surface.jpg"]);
-    expect(first).toBe(second); // session-cached, like the templates
-    expect(decode).toHaveBeenCalledTimes(1);
-    expect(first).toBeInstanceOf(THREE.Texture);
-    expect((first as THREE.Texture).image).toBe(bitmap);
-  });
-
-  it("degrades to null with a dev warning when the texture cannot load — a cosmetic never bricks boot", async () => {
-    vi.stubGlobal("fetch", async () => {
-      throw new Error("GET answered 404");
-    });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { loadMudTexture } = createTrackLoading("example.test");
-
-    await expect(loadMudTexture()).resolves.toBeNull();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("mud overlay unavailable"));
-    await loadMudTexture();
-    expect(warn).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe("fetchStats (M13 ticket 01)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -133,7 +92,7 @@ describe("fetchStats (M13 ticket 01)", () => {
 
   it("counts each downloaded file once, with its bytes, and nothing that failed", async () => {
     vi.stubGlobal("fetch", async (url: string) =>
-      url.endsWith("mud_surface.jpg")
+      url.endsWith("bounce_surface.jpg")
         ? ({ ok: false, status: 404 } as Response)
         : ({ ok: true, arrayBuffer: async () => new Uint8Array(5).buffer } as Response),
     );
@@ -144,7 +103,7 @@ describe("fetchStats (M13 ticket 01)", () => {
 
     await loading.loadIceTexture();
     await loading.loadIceTexture();
-    await loading.loadMudTexture();
+    await loading.loadBounceTexture();
 
     expect(loading.fetchStats()).toEqual({ files: 1, bytes: 5 });
   });

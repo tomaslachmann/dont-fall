@@ -73,11 +73,4 @@ describe("readAssetFile", () => {
     expect(Buffer.from(read.bytes)).toEqual(expected);
     expect(read.contentType).toBe("image/jpeg");
   });
-
-  it("reads the real mud texture byte-for-byte through the default dir (ADR 0067)", async () => {
-    const expected = readFileSync(join(defaultAssetsDir(), "mud_surface.jpg"));
-    const read = await readAssetFile(defaultAssetsDir(), "mud_surface.jpg");
-    expect(Buffer.from(read.bytes)).toEqual(expected);
-    expect(read.contentType).toBe("image/jpeg");
-  });
 });

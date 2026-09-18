@@ -52,7 +52,7 @@ export function RewardsRoute() {
   }, [matchId, rounds, throwAsync]);
 
   if (matchId === undefined || rounds.length === 0) return <Navigate to="/" replace />;
-  if (claim === null) return <LoadingScreen label="Counting your beans…" />;
+  if (claim === null) return <LoadingScreen label="COUNTING YOUR BEANS…" />;
 
   const fractions = xpBarFractions(claim.xpBefore, claim.gainedXp);
   const unlocked = hatsUnlockedBetween(claim.xpBefore, claim.xpAfter).at(-1);
@@ -65,7 +65,8 @@ export function RewardsRoute() {
   };
   return (
     <Rewards
-      skin={account?.bodySkin ?? null}
+      color={account?.color ?? null}
+      skin={account?.skin ?? null}
       hat={account?.hat ?? null}
       unlock={unlocked?.name}
       unlockIcon={unlocked && hatIconUrl(unlocked.id)}

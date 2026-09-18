@@ -7,7 +7,7 @@ import {
   type Module,
   type RoundType,
 } from "@dont-fall/shared";
-import { fetchTrack, type FetchedTrack } from "../track/trackSource.js";
+import { fetchTrack, type FetchedTrack, type TrackFetchRetryOptions } from "../track/trackSource.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -26,7 +26,7 @@ export interface RoundSlotPick {
 /** What {@link drawRound} needs from the runtime — a narrow slice, not the whole `MatchRuntime`, so this stays testable without a live server. */
 export interface DrawContext {
   trackServiceUrl: string;
-  trackFetchRetryOptions: { maxWaitMs?: number; retryDelayMs?: number; attemptTimeoutMs?: number };
+  trackFetchRetryOptions: TrackFetchRetryOptions;
   /** Track ids already used this Match — mutated in place as Rounds are drawn (ticket 05: "not drawn twice until the pool is exhausted"). */
   usedTrackIds: Set<string>;
   /**

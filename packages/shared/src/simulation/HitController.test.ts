@@ -1,15 +1,7 @@
 import { describe, expect, it } from "vitest";
-import {
-  HIT_CHARGE_IMPACT_BONUS,
-  HIT_CHARGE_MAX_MS,
-  HIT_CHARGE_MAX_TICKS,
-  HIT_COOLDOWN_MS,
-  HIT_IMPACT_MAGNITUDE,
-  HIT_IMPACT_MAX,
-  IMPACT_RAGDOLL_MIN,
-  IMPACT_STAGGER_MIN,
-  TICK_MS,
-} from "../tuning.js";
+import { TICK_MS } from "../tuning/clock.js";
+import { HIT_CHARGE_IMPACT_BONUS, HIT_CHARGE_MAX_MS, HIT_CHARGE_MAX_TICKS, HIT_COOLDOWN_MS, HIT_IMPACT_MAGNITUDE, HIT_IMPACT_MAX } from "../tuning/fight.js";
+import { IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN } from "../tuning/knockdown.js";
 import { HitController, hitImpactMagnitude } from "./HitController.js";
 
 describe("HitController (M6 ticket 03; hold-to-charge added M6.1)", () => {

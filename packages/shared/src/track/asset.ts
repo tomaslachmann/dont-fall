@@ -1,6 +1,6 @@
 import type { Box } from "../math/box.js";
 import type { Quat, Vec3 } from "../math/vec3.js";
-import { ASSET_FOOTPRINT_EPSILON, ASSET_VISUAL_WARN } from "../tuning.js";
+import { ASSET_FOOTPRINT_EPSILON, ASSET_VISUAL_WARN } from "../tuning/authoring.js";
 import { SURFACES, type SurfaceId } from "./Surface.js";
 
 /**
@@ -70,11 +70,6 @@ type GltfJson = {
   images?: { uri?: string; mimeType?: string; bufferView?: number }[];
 };
 
-/** The JSON-chunk fields the twin tests probe without parsing triangles. */
-export interface GlbJsonProbe {
-  images?: { uri?: string; mimeType?: string; bufferView?: number }[];
-  nodes?: { mesh?: number; extras?: { role?: unknown } }[];
-}
 
 type GltfNode = {
   name?: string;
@@ -255,8 +250,6 @@ const splitGlb = (bytes: Uint8Array): { json: GltfJson; bin: Uint8Array | null }
  * globals and can never parse those in Node. Same chunk walk as the
  * reader — one implementation, two callers.
  */
-export const readGlbJson = (bytes: Uint8Array): GlbJsonProbe => splitGlb(bytes).json;
-
 export const readAssetModel = (bytes: Uint8Array): AssetModel => {
   const { json, bin } = splitGlb(bytes);
 

@@ -1,6 +1,7 @@
 import { CAPSULE_BOTTOM_OFFSET, isDownMotionState, type RenderCharacter, type Vec3 } from "@dont-fall/shared";
 import * as THREE from "three";
 import { clone as cloneRig } from "three/addons/utils/SkeletonUtils.js";
+import { carriedFlail, restCarriedHang, type CarriedHang } from "./carriedFlail.js";
 import { blendFloatStruggle, FloatLimbs } from "./floatPose.js";
 import { GrabAnimations, grabRoleOf } from "./grabAnimation.js";
 import { JUMP_CROSSFADE_SECONDS, JumpSequences, jumpPoseAt, jumpTimeline, type JumpTimeline } from "./jumpSequence.js";
@@ -26,7 +27,8 @@ import type { Wardrobe } from "./hats.js";
 import type { IceFootingQuery } from "./iceFooting.js";
 import { Footsteps, steppingClip, type SteppingClip } from "./footsteps.js";
 import { selectLocomotion } from "./locomotionAnimation.js";
-import { tintHueForSkin, tintModel } from "./playerTint.js";
+import { tintHueForColor } from "./playerTint.js";
+import { createSkinCloset, type SkinCloset } from "./skins.js";
 
 /**
  * Above this horizontal speed (units/s), a remote Character reads as
@@ -51,8 +53,6 @@ interface RemoteRig {
   /** Where this rig's jump pieces sit end to end (ADR 0071) — `null` if it has none. */
   jumpTimeline: JumpTimeline | null;
   /** Looked up once — this rig's own arm bones, for Grab's arm-reach pose (M6.1). */
-  /** The hue this rig currently wears — `setSkins` re-tints only on change (re-tinting clones every material). */
-  appliedHue: number | null;
 }
 
 /**
@@ -100,14 +100,20 @@ export interface RemoteCharacterPool {
    */
   apply: (characters: Record<string, RenderCharacter>, deltaSeconds: number, localId: string, localPosition: Vec3) => void;
   /**
-   * Refresh equipped skins by session id (M9 ticket 15) — the stage calls
-   * this off every snapshot's lobby roster, before `apply`, so a rig built
-   * this frame already wears its skin. Rigs standing since before their
-   * seat's `auth` resolved (built in the default skin) re-tint to the
-   * arriving skin; everything else keeps its hue (a re-tint clones every
-   * material, so unchanged rigs are never touched).
+   * Refresh equipped body colors by session id (M9 ticket 15) — the stage
+   * calls this off every snapshot's lobby roster, before `apply`, so a rig
+   * built this frame already wears its color. Rigs standing since before
+   * their seat's `auth` resolved (built in the default color) re-tint to the
+   * arriving one; everything else keeps its look (restyling clones every
+   * material, so unchanged rigs are never touched — the closet's guard).
    */
-  setSkins: (next: ReadonlyMap<string, number | null>) => void;
+  setColors: (next: ReadonlyMap<string, number | null>) => void;
+  /**
+   * Refresh equipped skins by session id (ADR 0091), off the same roster as
+   * `setColors` and before `apply` for the same reason. A skin paints over
+   * the color; `null` reveals it again.
+   */
+  setSkins: (next: ReadonlyMap<string, string | null>) => void;
   /**
    * Refresh equipped hats by session id (ADR 0083), off the same roster as
    * `setSkins` and before `apply` for the same reason. A rig is only
@@ -128,6 +134,13 @@ export interface RemotePoolWorld {
   onIce?: IceFootingQuery;
   /** Puts each rig's hat on (ADR 0083). Without one, nobody wears a hat. */
   wardrobe?: Wardrobe;
+  /**
+   * Dresses each rig's body (ADR 0091). The Stage shares its own, so the
+   * local Character and every remote rig draw from one texture cache;
+   * without one the pool keeps a closet of its own and frees it on
+   * `dispose`.
+   */
+  closet?: SkinCloset;
   /** A rig's foot came down in `clip`, the Character's capsule centre at `centre` (M14 ticket 04). Without one, nobody is heard stepping. */
   onFootstep?: (clip: SteppingClip, centre: Vec3) => void;
 }
@@ -135,13 +148,22 @@ export interface RemotePoolWorld {
 export const createRemoteCharacterPool = (
   scene: THREE.Scene,
   characterModel: CharacterModel,
-  { floorBelow = () => null, inUpdraft = () => false, onIce = () => false, wardrobe, onFootstep }: RemotePoolWorld = {},
+  { floorBelow = () => null, inUpdraft = () => false, onIce = () => false, wardrobe, closet, onFootstep }: RemotePoolWorld = {},
 ): RemoteCharacterPool => {
   const rigs = new Map<string, RemoteRig>();
-  /** Equipped skins by session id (M9 ticket 15) — the stage refreshes this off every snapshot's lobby roster. */
-  const skins = new Map<string, number | null>();
+  /** Equipped body colors by session id (M9 ticket 15) — the stage refreshes this off every snapshot's lobby roster. */
+  const colors = new Map<string, number | null>();
+  /** Equipped skins by session id (ADR 0091), refreshed the same way. */
+  const skins = new Map<string, string | null>();
   /** Equipped hats by session id (ADR 0083), refreshed the same way. */
   const hats = new Map<string, string | null>();
+  // Only a closet this pool made is this pool's to free.
+  const ownCloset = closet ?? createSkinCloset();
+  const ownsCloset = closet === undefined;
+
+  /** Dresses `root`'s body in the look seat `id` should be wearing. Cheap to repeat — the closet drops no-ops. */
+  const dressBody = (id: string, root: THREE.Object3D): void =>
+    ownCloset.wear(root, skins.get(id) ?? null, tintHueForColor(colors.get(id) ?? null));
 
   /** Takes a rig's hat off before its materials are freed: a worn hat's belong to the wardrobe. */
   const retire = (rig: RemoteRig): void => {
@@ -154,6 +176,8 @@ export const createRemoteCharacterPool = (
   const jumpSequences = new JumpSequences();
   const footsteps = new Footsteps();
   const knockdowns = new Knockdowns();
+  /** The damped hang of every carried body (ADR 0104's drawn hold) — see `carriedFlail`. */
+  const carriedHangs = new Map<string, CarriedHang>();
 
   const buildRig = (id: string): RemoteRig => {
     // `cloneRig` copies the source root's own transform too — by the time any
@@ -162,8 +186,9 @@ export const createRemoteCharacterPool = (
     // every clone inherits that same scale/feet-offset for free, with no
     // separate bounds computation needed here.
     const root = cloneRig(characterModel.scene);
-    const appliedHue = tintHueForSkin(skins.get(id) ?? null);
-    tintModel(root, appliedHue);
+    // Even with no skin of its own: the clone copied whatever the local
+    // Character's body wears, and this writes this seat's own look over it.
+    dressBody(id, root);
     // Even with no hat of its own: the clone copied whatever the local
     // Character wears, and this takes that copy off.
     wardrobe?.wear(root, hats.get(id) ?? null);
@@ -183,7 +208,6 @@ export const createRemoteCharacterPool = (
       floatLimbs: new FloatLimbs(root),
       hitReactionPlayer: new HitReactionPlayer(),
       jumpTimeline: jumpTimeline(actions),
-      appliedHue,
     };
   };
 
@@ -200,6 +224,7 @@ export const createRemoteCharacterPool = (
       grabEpoch,
       grabbingId,
       heldByGrabberId,
+      heldPhase,
     } = rc;
     const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
     const moving = horizontalSpeed > MOVING_SPEED_THRESHOLD;
@@ -228,6 +253,14 @@ export const createRemoteCharacterPool = (
       rig.hitReactionPlayer.stop(rig.actions);
       // Getting up is not the end of whatever jump it went down in.
       jumpSequences.forget(id);
+      // A grabber that went down mid-hold (dizzy) plays no release tail after
+      // its get-up, and a body released into this knockdown hangs no more.
+      grabAnimations.forget(id);
+      carriedHangs.delete(id);
+      // The knockdown keeps the yaw it went down with, never a carry's tilt:
+      // the KO clips animate the fall from an upright root.
+      rig.root.rotation.x = 0;
+      rig.root.rotation.z = 0;
       blendFloatStruggle(rig.actions, 0, rig.activeAction);
       // Standing where the Character is, on the floor under it or with the
       // body in the air, and keeping the yaw it went down with. A rig that
@@ -262,8 +295,17 @@ export const createRemoteCharacterPool = (
         )
       : null;
     // A Grab owns the body, exactly as it does locally (ADR 0071) — a hold in
-    // either role, or the reach of an attempt that caught nobody.
-    const grabPose = grabAnimations.pose(id, grabRoleOf(grabbingId, heldByGrabberId), grabEpoch, grounded, nowMs, rig.actions);
+    // either role, or the reach of an attempt that caught nobody. A held body
+    // kicks, or hangs Limp (ADR 0104).
+    const grabPose = grabAnimations.pose(
+      id,
+      grabRoleOf(grabbingId, heldByGrabberId),
+      grabEpoch,
+      grounded,
+      nowMs,
+      rig.actions,
+      heldPhase === "limp",
+    );
 
     // M6 ticket 03: Punch/HitReact take priority over ordinary locomotion
     // while playing — mirrors `scene.ts`'s own local handling exactly.
@@ -273,7 +315,7 @@ export const createRemoteCharacterPool = (
       footsteps.forget(id);
       rig.activeAction = reacting;
       rig.mixer.update(deltaSeconds);
-      rig.root.rotation.y = Math.PI + MODEL_YAW_OFFSET - facing;
+      rig.root.rotation.set(0, Math.PI + MODEL_YAW_OFFSET - facing, 0);
       return;
     }
 
@@ -332,20 +374,36 @@ export const createRemoteCharacterPool = (
     // overwrites every frame — so a remote rig cannot pick the rig's forward
     // correction up from the clone the way the local Character does (ADR
     // 0071). Miss it and every other Player runs backwards.
-    rig.root.rotation.y = Math.PI + MODEL_YAW_OFFSET - facing;
-
+    const modelYaw = Math.PI + MODEL_YAW_OFFSET - facing;
+    if (heldByGrabberId !== null && motionState === "Held") {
+      // Carried: the body hangs from the grip and streams with the carry's
+      // speed (ADR 0104's drawn hold) — placement and tilt from `carriedFlail`.
+      let hang = carriedHangs.get(id);
+      if (!hang) {
+        hang = restCarriedHang();
+        carriedHangs.set(id, hang);
+      }
+      const placed = carriedFlail(hang, { centre: position, facing, velocity }, modelYaw, CAPSULE_BOTTOM_OFFSET, deltaSeconds);
+      rig.root.position.copy(placed.feet);
+      rig.root.quaternion.copy(placed.quaternion);
+    } else {
+      // Full set, not just `.y`: a body fresh out of a carry still holds the
+      // hang's tilt on x/z, and yaw-only writes would keep it forever.
+      carriedHangs.delete(id);
+      rig.root.rotation.set(0, modelYaw, 0);
+    }
   };
 
   return {
+    setColors: (next) => {
+      colors.clear();
+      for (const [id, color] of next) colors.set(id, color);
+      for (const [id, rig] of rigs) dressBody(id, rig.root);
+    },
     setSkins: (next) => {
       skins.clear();
       for (const [id, skin] of next) skins.set(id, skin);
-      for (const [id, rig] of rigs) {
-        const hue = tintHueForSkin(skins.get(id) ?? null);
-        if (hue === rig.appliedHue) continue;
-        tintModel(rig.root, hue);
-        rig.appliedHue = hue;
-      }
+      for (const [id, rig] of rigs) dressBody(id, rig.root);
     },
     setHats: (next) => {
       hats.clear();
@@ -370,6 +428,7 @@ export const createRemoteCharacterPool = (
         // back (a reconnect) would otherwise resume a hold or a jump that
         // belonged to the Character before it left.
         grabAnimations.forget(id);
+        carriedHangs.delete(id);
         jumpSequences.forget(id);
         knockdowns.forget(id);
         footsteps.forget(id);
@@ -378,7 +437,9 @@ export const createRemoteCharacterPool = (
     dispose: () => {
       for (const rig of rigs.values()) retire(rig);
       rigs.clear();
+      if (ownsCloset) ownCloset.dispose();
       grabAnimations.reset();
+      carriedHangs.clear();
       jumpSequences.reset();
       knockdowns.reset();
     },

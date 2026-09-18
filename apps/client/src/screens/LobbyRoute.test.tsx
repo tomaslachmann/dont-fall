@@ -40,7 +40,7 @@ const lobby = (phase: LobbySnapshot["phase"]): LobbySnapshot =>
     phase,
     matchOver: null,
     hostId: "me",
-    players: [{ id: "me", nickname: "Player", ready: false, joinOrder: 0, accountId: null, bodySkin: null, hat: null }],
+    players: [{ id: "me", nickname: "Player", ready: false, joinOrder: 0, accountId: null, color: null, skin: null, hat: null }],
     trackId: "t1",
     loaded: [],
     trackRevision: 1,
@@ -57,7 +57,6 @@ const lobby = (phase: LobbySnapshot["phase"]): LobbySnapshot =>
 const connection = { socket: {}, welcome: { playerId: "me" } } as unknown as LobbyConnection;
 
 const actions = {
-  setNickname: vi.fn(),
   setReady: vi.fn(),
   selectTrack: vi.fn(),
   setRoundType: vi.fn(),
@@ -87,7 +86,7 @@ const renderAtLobby = (entry = "/lobby?port=51234") =>
 
 describe("LobbyRoute", () => {
   it("sends a port-less visit back to /play — there is no Lobby to connect to", async () => {
-    useLobbyConnection.mockReturnValue({ connection: null, lobby: null, actions, error: null, closed: false });
+    useLobbyConnection.mockReturnValue({ connection: null, lobby: null, actions, error: null, closed: null });
 
     renderAtLobby("/lobby");
 
@@ -96,16 +95,16 @@ describe("LobbyRoute", () => {
   });
 
   it("shows a connecting state before the first snapshot — no game boots for a wait", async () => {
-    useLobbyConnection.mockReturnValue({ connection: null, lobby: null, actions, error: null, closed: false });
+    useLobbyConnection.mockReturnValue({ connection: null, lobby: null, actions, error: null, closed: null });
 
     renderAtLobby();
 
-    expect(await screen.findByText("Connecting to the Lobby…")).toBeInTheDocument();
+    expect(await screen.findByText("CONNECTING TO THE LOBBY…")).toBeInTheDocument();
     expect(screen.queryByText("Game canvas")).not.toBeInTheDocument();
   });
 
   it("renders the Lobby Screen on its own once in LOBBY — still no game behind it", async () => {
-    useLobbyConnection.mockReturnValue({ connection, lobby: lobby("LOBBY"), actions, error: null, closed: false });
+    useLobbyConnection.mockReturnValue({ connection, lobby: lobby("LOBBY"), actions, error: null, closed: null });
 
     renderAtLobby();
 
@@ -115,8 +114,8 @@ describe("LobbyRoute", () => {
 
   it("wires the Screen's controls to the connection's actions", async () => {
     const ready = lobby("LOBBY");
-    ready.players = [{ id: "me", nickname: "Player", ready: true, joinOrder: 0, accountId: null, bodySkin: null, hat: null }];
-    useLobbyConnection.mockReturnValue({ connection, lobby: ready, actions, error: null, closed: false });
+    ready.players = [{ id: "me", nickname: "Player", ready: true, joinOrder: 0, accountId: null, color: null, skin: null, hat: null }];
+    useLobbyConnection.mockReturnValue({ connection, lobby: ready, actions, error: null, closed: null });
 
     renderAtLobby();
 
@@ -132,7 +131,7 @@ describe("LobbyRoute", () => {
       lobby: lobby("COUNTDOWN"),
       actions,
       error: null,
-      closed: false,
+      closed: null,
     });
 
     renderAtLobby();
@@ -149,7 +148,7 @@ describe("LobbyRoute", () => {
       lobby: null,
       actions,
       error: new Error("server unreachable"),
-      closed: false,
+      closed: null,
     });
 
     renderAtLobby();
@@ -164,13 +163,13 @@ describe("LobbyRoute", () => {
       lobby: null,
       actions,
       error: new Error("server unreachable"),
-      closed: false,
+      closed: null,
     });
 
     renderAtLobby();
     await screen.findByText("CONNECTION LOST");
 
-    useLobbyConnection.mockReturnValue({ connection, lobby: lobby("LOBBY"), actions, error: null, closed: false });
+    useLobbyConnection.mockReturnValue({ connection, lobby: lobby("LOBBY"), actions, error: null, closed: null });
     const callsBeforeRetry = useLobbyConnection.mock.calls.length;
     fireEvent.click(screen.getByRole("button", { name: "TRY AGAIN" }));
 
@@ -180,7 +179,13 @@ describe("LobbyRoute", () => {
   });
 
   it("a dropped socket lands on the same screen, MAIN MENU boots home", async () => {
-    useLobbyConnection.mockReturnValue({ connection, lobby: lobby("LOBBY"), actions, error: null, closed: true });
+    useLobbyConnection.mockReturnValue({
+      connection,
+      lobby: lobby("LOBBY"),
+      actions,
+      error: null,
+      closed: { code: 1006, reason: "" },
+    });
     const assign = vi.fn();
     Object.defineProperty(window, "location", { value: { assign }, writable: true });
 
@@ -190,5 +195,19 @@ describe("LobbyRoute", () => {
     expect(screen.getByText("The connection dropped.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "MAIN MENU" }));
     expect(assign).toHaveBeenCalledWith("/");
+  });
+
+  it("shows the server's own reason when it gave one — a seat taken over elsewhere (ADR 0090)", async () => {
+    useLobbyConnection.mockReturnValue({
+      connection,
+      lobby: lobby("LOBBY"),
+      actions,
+      error: null,
+      closed: { code: 4004, reason: "this account joined the Match somewhere else" },
+    });
+
+    renderAtLobby();
+
+    expect(await screen.findByText("this account joined the Match somewhere else")).toBeInTheDocument();
   });
 });

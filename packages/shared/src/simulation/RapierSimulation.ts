@@ -4,41 +4,26 @@ import { conjugateQuat, IDENTITY_QUAT } from "../math/quat.js";
 import { addVec3, dotVec3, lengthVec3, normalizeVec3, rotateVec3ByQuat, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
 import { phaseLocksInput, phaseNeedsPhysicsStep, type MatchPhase } from "../match/MatchPhase.js";
 import { DEFAULT_ROUND_RULES, type RoundRules } from "../match/RoundRules.js";
-import { characterSnapshot, type CharacterSnapshot, type RagdollCause, type ReconcileBase, type SimState } from "../state/SimState.js";
-import {
-  BUMP_IMPULSE_SCALE,
-  CAPSULE_BOTTOM_OFFSET,
-  GROUND_SNAP_DISTANCE,
-  BUMP_LIFT_RATIO,
-  DEFAULT_KILL_PLANE_Y,
-  GRAB_FACING_COS_MIN,
-  GRAB_HOLD_MAX_TICKS,
-  GRAB_RANGE,
-  GRAB_SPEED_MULTIPLIER,
-  GRAB_STRUGGLE_DOT_MIN,
-  GRAB_STRUGGLE_FREE_TICKS,
-  GRAVITY_Y,
-  MOVING_SEGMENT_LIFT_RATIO,
-  SPIKED_IMPACT_MAGNITUDE,
-  SPIKED_LIFT_RATIO,
-  SURFACE_GROUND_NORMAL_MIN_Y,
-  TICK_DT,
-  HIT_FACING_COS_MIN,
-  HIT_LIFT_RATIO,
-  HIT_RANGE,
-  WALK_SPEED,
-} from "../tuning.js";
+import { characterSnapshot, type CharacterSnapshot, type HeldPhase, type RagdollCause, type ReconcileBase, type SimState } from "../state/SimState.js";
+import { CAPSULE_BOTTOM_OFFSET, GROUND_SNAP_DISTANCE, GRAVITY_Y, SURFACE_GROUND_NORMAL_MIN_Y } from "../tuning/character.js";
+import { TICK_DT } from "../tuning/clock.js";
+import { BUMP_IMPULSE_SCALE, BUMP_LIFT_RATIO, HIT_FACING_COS_MIN, HIT_LIFT_RATIO, HIT_RANGE } from "../tuning/fight.js";
+import { DEFAULT_KILL_PLANE_Y, MOVING_SEGMENT_LIFT_RATIO, SPIKED_IMPACT_MAGNITUDE, SPIKED_LIFT_RATIO } from "../tuning/world.js";
 import { DEFAULT_SURFACE, surfaceConfig, type SurfaceId } from "../track/Surface.js";
 import { passesThroughGate } from "../track/Gate.js";
-import type { StaticTrimesh } from "../track/Track.js";
-import { CharacterController, type CollisionListener, type Ride } from "./CharacterController.js";
+import type { StaticTrimesh } from "../track/resolveTrack.js";
+import { CharacterController, type CollisionListener } from "./CharacterController.js";
+import type { HoldRole } from "./character/InteractionController.js";
+import type { Ride } from "./character/MovementController.js";
+import { GrabHolds } from "./GrabHolds.js";
 import { hitImpactMagnitude } from "./HitController.js";
-import { isDownMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
+import { isDownMotionState, isPlayerDrivenMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import type { FinishZone } from "./FinishZone.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
 import type { LaunchPadConfig } from "./LaunchPad.js";
 import { MirrorCharacter } from "./MirrorCharacter.js";
+import { slipRoll } from "./slipRoll.js";
 import {
   MovingSegment,
   movingSegmentImpactMagnitude,
@@ -104,26 +89,6 @@ interface CharacterProgress {
    * as `eliminated` itself.
    */
   eliminatedTick: number | null;
-}
-
-/** One in-progress Grab hold (M6 ticket 04) — see `RapierSimulation`'s own `activeGrabs`. */
-interface ActiveGrab {
-  heldId: string;
-  /** Ticks remaining before the hold auto-releases (`GRAB_HOLD_MAX_TICKS`), decremented every tick. */
-  holdTicksLeft: number;
-  /** Consecutive ticks the held Character has been actively moving away from the grabber — released once it reaches `GRAB_STRUGGLE_FREE_TICKS`; resets to 0 the instant it isn't. */
-  struggleTicks: number;
-  /**
-   * Both participants' own replicated facing, captured once the instant the
-   * hold starts and re-applied every tick for its whole duration (M6.1, live
-   * feedback) — not recomputed toward each other as they move: whatever each
-   * was already facing when the hold began (already within their own
-   * targeting cone, so already roughly right) is what "held" looks like for
-   * its entire length, the same way a real grip wouldn't spin either
-   * Character's own body to track the other.
-   */
-  grabberFacing: number;
-  heldFacing: number;
 }
 
 export interface SimulationConfig {
@@ -272,7 +237,7 @@ let initPromise: Promise<void> | null = null;
  * under the body, where nothing is left — the way the body itself is sweeping.
  * `undefined` when there is no sideways way out at all (a straight crush).
  */
-export const pushDirection = (normal: Vec3, segmentVelocity: Vec3, grounded: boolean): Vec3 | undefined => {
+const pushDirection = (normal: Vec3, segmentVelocity: Vec3, grounded: boolean): Vec3 | undefined => {
   if (!grounded || normal.y >= 0) return normal;
   const sideways = vec3(normal.x, 0, normal.z);
   if (lengthVec3(sideways) >= PRESSED_SIDEWAYS_MIN) return normalizeVec3(sideways);
@@ -287,7 +252,7 @@ const PRESSED_SIDEWAYS_MIN = 0.3;
  * The Impact of touching a Spiked Asset (ADR 0061), along the contact normal
  * (pointing from the spikes toward the Character) with a lift that clears them.
  */
-export const spikedKnockback = (normal: Vec3): Vec3 =>
+const spikedKnockback = (normal: Vec3): Vec3 =>
   scaleVec3(normalizeVec3(vec3(normal.x, Math.max(normal.y, 0) + SPIKED_LIFT_RATIO, normal.z)), SPIKED_IMPACT_MAGNITUDE);
 
 /** Load the Rapier WASM module. Idempotent; await once before constructing a simulation. */
@@ -345,18 +310,23 @@ export class RapierSimulation {
   private readonly propIndexByHandle = new Map<number, number>();
   /** Capsule collider handle → Character ID, so a Character-to-Character contact can find the Character it hit (ticket 04 — Bump). */
   private readonly characterIdByHandle = new Map<number, string>();
+  /** Every Grab hold in progress, and everything a hold does to the pair in it (ADR 0101) — see {@link GrabHolds}. */
+  private readonly holds = new GrabHolds({
+    character: (id) => this.characters.get(id),
+    ids: () => this.characters.keys(),
+    eliminated: (id) => this.progress.get(id)?.eliminated ?? true,
+    effectiveInput: (id, inputs, matchLocked) => this.effectiveInput(id, inputs, matchLocked),
+    nearestInCone: (fromId, fromPos, facing, range, facingCosMin, exclude) =>
+      this.findNearestInCone(fromId, fromPos, facing, range, facingCosMin, exclude),
+    tick: () => this.tickCount,
+    roll: (id) => slipRoll(id, this.tickCount),
+  });
   /**
-   * Every Grab hold currently in progress (M6 ticket 04), keyed by the
-   * grabber's own id — a Character can only ever be the grabber in one hold
-   * at a time, and the linear scan resolving/updating this each tick is
-   * trivially cheap at ADR 0011's up-to-12-player scale. The relationship
-   * itself (who's grabbing whom, the hold's own remaining duration, how long
-   * the held Character has been actively struggling) lives here rather than
-   * on either `CharacterController`, since it's inherently cross-Character
-   * state neither side can resolve alone — exactly the same reasoning Hit's
-   * own targeting already established (ticket 03).
+   * Client-only (ADR 0104): the hold the server last said the local Character
+   * is in, if any — see {@link syncOwnHold}. Empty on the server, which has
+   * {@link holds} instead.
    */
-  private readonly activeGrabs = new Map<string, ActiveGrab>();
+  private readonly ownHolds = new Map<string, { role: HoldRole; phase: HeldPhase | null }>();
   /**
    * Static collider handle → Surface id (ticket 01, ADR 0036) — the one
    * piece of plumbing the whole Surface path needed: without this, reading
@@ -486,8 +456,12 @@ export class RapierSimulation {
 
     this.props = (config.props ?? []).map((c) => new Prop(this.world, c));
     this.props.forEach((prop, i) => {
-      this.propByHandle.set(prop.collider.handle, prop);
-      this.propIndexByHandle.set(prop.collider.handle, i);
+      // An Asset Prop collides as several parts (ADR 0095); a shove landing on
+      // any of them has to find the same Prop.
+      for (const collider of prop.colliders) {
+        this.propByHandle.set(collider.handle, prop);
+        this.propIndexByHandle.set(collider.handle, i);
+      }
     });
 
     if (config.withDefaultCharacter ?? true) {
@@ -771,7 +745,16 @@ export class RapierSimulation {
     const striker = this.characters.get(strikerId);
     if (!striker) return;
     const strikerPos = striker.position;
-    const bestId = this.findNearestInCone(strikerId, strikerPos, striker.facing, HIT_RANGE, HIT_FACING_COS_MIN, () => false);
+    // ADR 0104: never a Held Character — it takes no Impact — so a swing at a
+    // pair lands on the grabber behind it.
+    const bestId = this.findNearestInCone(
+      strikerId,
+      strikerPos,
+      striker.facing,
+      HIT_RANGE,
+      HIT_FACING_COS_MIN,
+      (id) => this.characters.get(id)!.motionState === "Held",
+    );
     if (bestId === undefined) return;
 
     const target = this.characters.get(bestId)!;
@@ -782,188 +765,6 @@ export class RapierSimulation {
     target.cancelDash();
   }
 
-  /** Whether `id` is currently part of any Grab hold, as either the grabber or the one held (M6 ticket 04). */
-  private isGrabEngaged(id: string): boolean {
-    if (this.activeGrabs.has(id)) return true;
-    for (const grab of this.activeGrabs.values()) if (grab.heldId === id) return true;
-    return false;
-  }
-
-  /**
-   * Grab, initiation half (M6 ticket 04): latches onto the nearest OTHER
-   * Character within {@link GRAB_RANGE} and within {@link GRAB_FACING_COS_MIN}
-   * of the grabber's own facing — identical targeting shape to Hit, via the
-   * same {@link findNearestInCone}, excluding anyone already part of another
-   * hold (a Character can only ever be grabbing or held by one Character at
-   * a time). The hold itself is then maintained tick over tick by
-   * {@link updateGrabs}. Cancels the HELD Character's own in-progress Dash
-   * the instant the hold starts (Grab's hold doesn't "connect" again on
-   * later ticks, so there is nothing to re-cancel there); the grabber's own
-   * Dash is never cancelled here because it can never be in progress — Dash
-   * gates Grab out entirely too, same as Hit (M6.1).
-   */
-  private resolveGrabInitiation(grabberId: string): void {
-    const grabber = this.characters.get(grabberId);
-    if (!grabber || this.isGrabEngaged(grabberId)) return;
-    const heldId = this.findNearestInCone(
-      grabberId,
-      grabber.position,
-      grabber.facing,
-      GRAB_RANGE,
-      GRAB_FACING_COS_MIN,
-      // Code review: unlike Hit (which reuses Bump's own "flailing an
-      // already-down target is fine" precedent), latching onto a
-      // Ragdoll/GettingUp Character makes no sense and only ever lasts one
-      // phantom tick before `updateGrabs`'s own down-check ends it — wasting
-      // the grabber's Dash-cancel and cooldown for nothing.
-      (id) => this.isGrabEngaged(id) || isDownMotionState(this.characters.get(id)!.motionState),
-    );
-    if (heldId === undefined) return;
-
-    const held = this.characters.get(heldId)!;
-    // M6.1: freeze each participant's own facing right here, at the moment
-    // the hold starts — see `ActiveGrab.grabberFacing`'s own doc comment.
-    this.activeGrabs.set(grabberId, {
-      heldId,
-      holdTicksLeft: GRAB_HOLD_MAX_TICKS,
-      struggleTicks: 0,
-      grabberFacing: grabber.facing,
-      heldFacing: held.facing,
-    });
-    held.cancelDash();
-  }
-
-  /**
-   * Grab, maintenance half (M6 ticket 04) — called once per tick, after
-   * every Character's post-step Surface/Volume resolution has already reset
-   * every Character to `setGrabSpeedMultiplier(1)` (the same "not engaged
-   * until proven otherwise" default `activeVolume` gets). For every hold
-   * still in progress: counts down the auto-release timer, checks whether
-   * the held Character is actively struggling free this tick (their own
-   * `moveDirection` input pointing mostly away from the grabber — already
-   * world-space per ADR 0009, no extra rotation needed), releases the hold
-   * (ending it either way starts the grabber's own cooldown, per
-   * `GrabController.release`'s own "however it ended" contract), and — for
-   * every hold that's still active — re-applies {@link GRAB_SPEED_MULTIPLIER}
-   * to both participants, overriding the default reset. M6.1 (live
-   * feedback, revised twice): re-applies each participant's own facing,
-   * frozen at hold-start (`ActiveGrab.grabberFacing`/`heldFacing`), and
-   * makes the hold a genuinely *rigid* connection — both move at the same
-   * shared velocity, the sum of each one's own wish-velocity (their own
-   * `moveDirection`, at the same `GRAB_SPEED_MULTIPLIER`-scaled speed
-   * ordinary walking already uses) — so a Character that plants and inputs
-   * nothing gets dragged exactly as fast as the other one pulls, a real tug
-   * rather than an independent slow-down on each side.
-   */
-  private updateGrabs(inputs: Record<string, SimInputs>, matchLocked: boolean): void {
-    for (const [grabberId, grab] of this.activeGrabs) {
-      const grabber = this.characters.get(grabberId);
-      const held = this.characters.get(grab.heldId);
-      // Either participant disappearing (disconnect) or going down (Ragdoll,
-      // eliminated) ends the hold outright — there is no sensible "held while
-      // ragdolling" state, and `resetMovementControllers` already dropped
-      // this Character's own view of being engaged the instant it happened.
-      if (!grabber || !held || isDownMotionState(grabber.motionState) || isDownMotionState(held.motionState)) {
-        this.activeGrabs.delete(grabberId);
-        grabber?.registerGrabReleased();
-        continue;
-      }
-
-      // Code review: must judge the SAME input the held Character's own
-      // movement this tick was actually driven by — the raw `inputs[id]`
-      // could be a real, non-idle press that a phase lock or `finishTick`
-      // already overrode to idle for the sim itself, which `effectiveInput`
-      // (shared with `beginTick`'s own substitution) accounts for.
-      const heldInput = this.effectiveInput(grab.heldId, inputs, matchLocked);
-      const awayFromGrabber = normalizeVec3(
-        vec3(held.position.x - grabber.position.x, 0, held.position.z - grabber.position.z),
-      );
-      const struggling =
-        lengthVec3(heldInput.moveDirection) > 0 &&
-        dotVec3(normalizeVec3(heldInput.moveDirection), awayFromGrabber) >= GRAB_STRUGGLE_DOT_MIN;
-      grab.struggleTicks = struggling ? grab.struggleTicks + 1 : 0;
-
-      grab.holdTicksLeft -= 1;
-      const brokeFree = grab.struggleTicks >= GRAB_STRUGGLE_FREE_TICKS;
-      const timedOut = grab.holdTicksLeft <= 0;
-      if (brokeFree || timedOut) {
-        this.activeGrabs.delete(grabberId);
-        grabber.registerGrabReleased();
-        continue;
-      }
-
-      grabber.setGrabbingId(grab.heldId);
-      held.setHeldByGrabberId(grabberId);
-
-      // M6.1: re-apply each participant's own facing, frozen the instant
-      // the hold started (`resolveGrabInitiation`) — never recomputed
-      // toward each other as they move. Every OTHER client's remote-rig
-      // rendering, and this Character's own local screen alike, need to see
-      // the frozen value: `heldByGrabberId`/`grabbingId` together tell a
-      // client "this Character's own facing is locked right now," which is
-      // what lets the local render stop steering it from movement input.
-      grabber.setFacing(grab.grabberFacing);
-      held.setFacing(grab.heldFacing);
-    }
-  }
-
-  /**
-   * The movement half of a hold, resolved BEFORE this tick's `beginTick`
-   * (M6.1) — unlike {@link updateGrabs}, which runs post-step because
-   * everything it decides (a release, `grabbingId`, the frozen facing) is
-   * read from *this* tick's snapshot rather than driven into this tick's
-   * movement.
-   *
-   * The split exists because `beginCapsuleTick` consumes the tether wish and
-   * the speed multiplier at the very top of the tick. Setting them at the
-   * bottom meant a held pair moved on the *previous* tick's inputs — one
-   * tick (33 ms) behind every ungrabbed Character, stacked on top of the
-   * tick a hold already takes to engage. Two tests written for this method's
-   * own contract ("dragged exactly as fast as the other pulls") failed on
-   * exactly that off-by-one.
-   *
-   * A rigid connection, not two independently-slowed Characters: both end up
-   * moving at the SAME shared velocity, the sum of each one's own wish
-   * (their own `moveDirection`, at the same {@link GRAB_SPEED_MULTIPLIER}-
-   * scaled speed ordinary walking already uses). A Character that inputs
-   * nothing contributes zero and is simply dragged along at exactly the
-   * other's own speed; two pulling the same way add together (a real
-   * consequence of "sum," not an average — CONTEXT.md doesn't ask for one
-   * side to always win).
-   *
-   * Only ever touches a hold that was already active coming into this tick.
-   * One started this very tick is registered later, by
-   * `resolveGrabInitiation`, and so first pulls on the next tick — the same
-   * one-tick engage latency Bump and Hit already have.
-   */
-  private applyGrabTether(inputs: Record<string, SimInputs>, matchLocked: boolean): void {
-    const wishFor = (moveDirection: Vec3): Vec3 => {
-      const dir = normalizeVec3(moveDirection);
-      return lengthVec3(dir) > 0 ? scaleVec3(dir, WALK_SPEED * GRAB_SPEED_MULTIPLIER) : vec3();
-    };
-
-    for (const [grabberId, grab] of this.activeGrabs) {
-      const grabber = this.characters.get(grabberId);
-      const held = this.characters.get(grab.heldId);
-      // A hold `updateGrabs` will end at the bottom of this tick still pulls
-      // through it — the same last tick of contact it has always had.
-      if (!grabber || !held) continue;
-
-      grabber.setGrabSpeedMultiplier(GRAB_SPEED_MULTIPLIER);
-      held.setGrabSpeedMultiplier(GRAB_SPEED_MULTIPLIER);
-
-      // The same `effectiveInput` substitution `beginTick` itself is about to
-      // make — never the raw `inputs[id]`, which a phase lock or a finished
-      // Round may have already overridden to idle for the sim.
-      const tetherWish = addVec3(
-        wishFor(this.effectiveInput(grabberId, inputs, matchLocked).moveDirection),
-        wishFor(this.effectiveInput(grab.heldId, inputs, matchLocked).moveDirection),
-      );
-      grabber.setGrabTetherWish(tetherWish);
-      held.setGrabTetherWish(tetherWish);
-    }
-  }
-
   /** Remove a Character from the Match and free its Rapier bodies (ticket 01). */
   removeCharacter(id: string): void {
     const character = this.characters.get(id);
@@ -972,23 +773,7 @@ export class RapierSimulation {
     this.characters.delete(id);
     this.progress.delete(id);
     this.tickStart.delete(id);
-    // M6 ticket 04: a disconnect mid-hold ends it immediately rather than
-    // waiting for the next `updateGrabs` pass to notice the dangling id —
-    // `updateGrabs` would self-heal it regardless, but there is no reason to
-    // leave a stale entry referencing a Character that no longer exists even
-    // for one extra tick.
-    this.activeGrabs.delete(id);
-    for (const [grabberId, grab] of this.activeGrabs) {
-      if (grab.heldId !== id) continue;
-      // Code review: the grabber is still connected here (only the HELD
-      // party just disconnected) — `GrabController.release`'s own "however
-      // it ended" contract means their cooldown must still start, exactly
-      // like every other release path already does. A direct `delete` here
-      // with no `registerGrabReleased` call would have let them grab again
-      // immediately, for free.
-      this.characters.get(grabberId)?.registerGrabReleased();
-      this.activeGrabs.delete(grabberId);
-    }
+    this.holds.drop(id);
   }
 
   /**
@@ -1134,6 +919,21 @@ export class RapierSimulation {
   }
 
   /**
+   * Client-only (ADR 0104): the hold the server's latest snapshot says `id` —
+   * the local Character — is in, read off its own row. No hold is ever
+   * resolved in a client's world (the other end of it is a mirror, not a
+   * Character), so without this the grabber's own prediction would walk at
+   * full pace and turn at full speed while the server carried, and the held
+   * Character's would never Struggle. Applied before every tick, replays
+   * included, until a snapshot says otherwise.
+   */
+  syncOwnHold(id: string, row: Pick<CharacterSnapshot, "grabbingId" | "heldByGrabberId" | "heldPhase">): void {
+    if (row.grabbingId !== null) this.ownHolds.set(id, { role: "grabbing", phase: null });
+    else if (row.heldByGrabberId !== null) this.ownHolds.set(id, { role: "held", phase: row.heldPhase });
+    else this.ownHolds.delete(id);
+  }
+
+  /**
    * Adopt the server's own resolved `RoundRules` (M5 ticket 02, ADR 0041) —
    * the client's own guess at construction time (before any snapshot has
    * arrived) can only be the Track's bare default; the server may have
@@ -1204,6 +1004,23 @@ export class RapierSimulation {
    */
   tick(inputs: Record<string, SimInputs>, phase: MatchPhase = "RUNNING"): void {
     if (this.disposed) throw new Error("RapierSimulation: tick() on a disposed simulation");
+    // A phase whose world does not step freezes the Characters with it
+    // (found live 2026-09-18, amending the 2026-09 grilling session's
+    // `world.step()` gate below): this method used to run every Character's
+    // `beginTick` in every phase while the skipped step never applied the
+    // sweep's queued translation — so the body never moved, never landed,
+    // and gravity kept integrating into `velocity.y`, −22 u/s per second of
+    // Lobby. The Countdown's first sweep then moved whole metres in one
+    // tick and, depending on exactly how much a given Lobby wait had
+    // accumulated, either clamped on the start deck or put the capsule
+    // INSIDE it — every Player, authoritatively, "sometimes". Frozen means
+    // frozen: nothing below runs, and COUNTDOWN drops everyone their 0.35
+    // spawn hover afresh. Only `tickCount` still advances — freezing it too
+    // is exactly the tick-epoch bug class M5 ticket 08 found live.
+    if (!phaseNeedsPhysicsStep(phase)) {
+      this.tickCount += 1;
+      return;
+    }
     // Queue each Spinner's rotation for the tick about to run — it must be
     // queued before `world.step()` applies it, the same way each Character's
     // own `setNextKinematicTranslation` works.
@@ -1236,18 +1053,17 @@ export class RapierSimulation {
     // shove it and it can't shove anybody. The cost per tick is exactly what
     // ADR 0042 asks for: an iteration and a branch, not a controller sweep.
     const matchLocked = phaseLocksInput(phase);
-    // M6.1: a hold's movement must be resolved from THIS tick's inputs before
-    // `beginTick` consumes it — see `applyGrabTether`'s own doc comment for
-    // why this half is here and the rest of `updateGrabs` stays post-step.
-    // "Not engaged until proven otherwise" every tick, exactly like the
+    // ADR 0104: both ends of every hold are told so before `beginTick` reads
+    // it — the grabber walks loaded and Spins, the held one Struggles. "Not
+    // engaged until proven otherwise" every tick, exactly like the
     // Surface/Volume defaults below.
     for (const [id, character] of this.characters) {
       if (this.progress.get(id)!.eliminated) continue;
-      character.setGrabSpeedMultiplier(1);
-      character.setGrabTetherWish(undefined);
+      character.clearHold();
       character.setRide(this.rideFor(character));
     }
-    this.applyGrabTether(inputs, matchLocked);
+    this.holds.assertBeforeStep();
+    for (const [id, hold] of this.ownHolds) this.characters.get(id)?.holdAs(hold.role, hold.phase);
     const clock = this.profileClock;
     const holdStarted = clock ? clock() : 0;
     for (const segment of this.movingSegments) segment.holdForSweeps();
@@ -1279,15 +1095,13 @@ export class RapierSimulation {
       // M6 ticket 04: same pre-step timing, same reason — a grab's own
       // `cancelDash` calls on both participants must land before anyone's
       // post-step bookkeeping runs this tick.
-      if (character.grabFiredThisTick) this.resolveGrabInitiation(id);
+      if (character.grabFiredThisTick) this.holds.resolveGrabInitiation(id);
     }
     // Grilling session, 2026-09: `world.step()` — the expensive part, Rapier's
-    // own collision/contact solve — only runs for COUNTDOWN/RUNNING
-    // (`phaseNeedsPhysicsStep`). `tickCount` still advances unconditionally
-    // below regardless: freezing it too, instead of just the physics step,
-    // is exactly the tick-epoch bug class M5 ticket 08 found live (see that
-    // predicate's own doc comment).
-    if (phaseNeedsPhysicsStep(phase)) this.world.step();
+    // own collision/contact solve. A phase that doesn't need it never reaches
+    // this line at all (the whole-tick freeze at the top of this method), so
+    // by here it always runs.
+    this.world.step();
     this.tickCount += 1;
 
     // Each Character must finish moving — including any queued respawn —
@@ -1315,22 +1129,25 @@ export class RapierSimulation {
       // lag `grounded` itself already has relative to jump/landing.
       const groundHandle = character.groundColliderHandle;
       const surfaceId = groundHandle !== undefined ? this.staticSurfaceByHandle.get(groundHandle) : undefined;
-      const surface = surfaceConfig(surfaceId);
-      character.setSurfaceTopSpeedMultiplier(surface.topSpeedMultiplier);
-      character.setSurfaceGrip(surface.grip);
-      character.setSurfaceBounce(surface.bounce);
-      // ADR 0064: the same ground contact's belt, same one-tick lag — still
-      // floor (or mid-air) reads as no belt at all.
-      character.setConveyorVelocity(
-        groundHandle !== undefined ? this.staticConveyorByHandle.get(groundHandle) : undefined,
-      );
-      // M3.7 ticket 04, ADR 0036: same one-tick lag as Surface above — this
-      // tick's now-updated position decides the Volume that pushes *next*
-      // tick. `this.volumes` is pre-sorted highest-priority-first, so the
-      // first containing entry found is the one that wins outright (never
-      // summed).
+      // M3.7 ticket 04, ADR 0036: this tick's now-updated position decides the
+      // Volume that pushes *next* tick, the same one-tick lag as the Surface.
+      // `this.volumes` is pre-sorted highest-priority-first, so the first
+      // containing entry wins outright (never summed).
       const volume = volumeAt(this.volumes, character.position);
-      character.setActiveVolume(volume ? { force: volume.force, maxInducedSpeed: volume.maxInducedSpeed } : undefined);
+      character.applyGroundContext({
+        surface: surfaceConfig(surfaceId),
+        // ADR 0064: the same ground contact's belt — still floor, or mid-air,
+        // reads as no belt at all.
+        conveyor: groundHandle !== undefined ? this.staticConveyorByHandle.get(groundHandle) : undefined,
+        volume: volume ? { force: volume.force, maxInducedSpeed: volume.maxInducedSpeed } : undefined,
+        // The slip draw is made here because this is what knows both the
+        // Character's id and the Tick. `syncTick` realigns `tickCount` to the
+        // server's before every replay (ticket 05), precisely so tick-derived
+        // pure functions match across prediction — the same guarantee Motion
+        // phase already relies on, and the whole reason this chance can be
+        // predicted instead of corrected.
+        slipRoll: slipRoll(id, this.tickCount),
+      });
       // M6.1: who (if anyone) this Character is currently grabbing, for the
       // renderer's own arm-reach pose — same "not engaged until proven
       // otherwise" default as the speed multiplier above; re-applied within
@@ -1339,10 +1156,19 @@ export class RapierSimulation {
       // very tick, since `resolveGrabInitiation` already ran pre-step).
       character.setGrabbingId(null);
       // M6.1: the reverse of grabbingId — same default-reset treatment.
-      character.setHeldByGrabberId(null);
+      character.reportHeld(null);
     }
     if (clock) this.lastPhaseMs.characterUpdatesMs = clock() - updatesStarted;
-    this.updateGrabs(inputs, matchLocked);
+    this.holds.updateGrabs(inputs, matchLocked);
+    // A hold can change a motion state after the loop above has stamped them
+    // (ADR 0104: a Hurl, a Limp body put down, a Struggle won), and the phase
+    // it starts has to be stamped on the Tick it started, like every other.
+    for (const [id, character] of this.characters) {
+      const progress = this.progress.get(id)!;
+      if (progress.eliminated || character.motionState === progress.lastMotionState) continue;
+      progress.phaseStartTick = this.tickCount;
+      progress.lastMotionState = character.motionState;
+    }
 
     // Client-only (ADR 0012 / 0016, ticket 06): every Prop is pinned to the
     // authoritative snapshot pose for this tick — a solid obstacle for the
@@ -1505,7 +1331,9 @@ export class RapierSimulation {
    */
   private updateLaunchPad(id: string): void {
     const character = this.character(id);
-    if (isDownMotionState(character.motionState)) return;
+    // ADR 0104: nor while Held — a carried body would bank the launch for the
+    // first tick it was its own again.
+    if (!isPlayerDrivenMotionState(character.motionState)) return;
     const progress = this.progress.get(id)!;
     const touched = this.findTriggerIndex(this.launchPads, character.position);
     if (touched !== undefined && touched !== progress.touchedLaunchPadIndex) {

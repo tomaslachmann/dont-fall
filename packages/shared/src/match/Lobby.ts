@@ -20,16 +20,24 @@ export interface LobbyPlayer {
    */
   accountId: string | null;
   /**
-   * The body's equipped skin (M9 ticket 15) — bound from the same `/auth/me`
-   * response as `accountId`, so no second round trip. `null` while
-   * anonymous: clients dress those seats in the default skin.
+   * The body's equipped color (M9 ticket 15) — bound from the same
+   * `/auth/me` response as `accountId`, so no second round trip. `null`
+   * while anonymous: clients dress those seats in the default color.
    * Rides the already-every-snapshot lobby roster, so late joiners and
    * slow `auth` resolutions learn it with no extra handshake.
+   *
+   * Only shows on a bean wearing no `skin` — see shared's `cosmetics.ts`.
    */
-  bodySkin: number | null;
+  color: number | null;
+  /**
+   * The equipped skin's id (ADR 0091), bound from the same `/auth/me`
+   * response as `color` and riding the roster the same way. `null` for no
+   * skin — the bean then wears its `color` — and while anonymous.
+   */
+  skin: string | null;
   /**
    * The equipped hat's id (ADR 0083), bound from the same `/auth/me`
-   * response as `bodySkin` and riding the roster the same way. `null` for no
+   * response as `color` and riding the roster the same way. `null` for no
    * hat, and while anonymous.
    */
   hat: string | null;

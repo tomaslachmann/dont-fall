@@ -1,45 +1,41 @@
 import { describe, expect, it } from "vitest";
 import { pitchQuat } from "../math/quat.js";
 import { lengthVec3, rotateVec3ByQuat, type Vec3 } from "../math/vec3.js";
-import {
-  MOVE_ACCEL_FACTOR,
-  MOVE_FRICTION_FACTOR,
-  MOVE_VELOCITY_CAP,
-  SLOPE_SPEED_ANGLE_FACTOR,
-  TICK_DT,
-  WALKABLE_SLOPE_MAX_ANGLE,
-} from "../tuning.js";
+import { TICK_DT } from "../tuning/clock.js";
+import { MOVE_ACCEL_FACTOR, MOVE_FRICTION_FACTOR, MOVE_VELOCITY_CAP, SLOPE_SPEED_ANGLE_FACTOR, WALKABLE_SLOPE_MAX_ANGLE } from "../tuning/movement.js";
 import { accelerateVelocity, applyVolumeForce, dashEnvelope, slopeSpeedMultiplier } from "./movementVerbs.js";
 
 describe("dashEnvelope", () => {
   const duration = 10;
   const rampOut = 2;
+  /** The pre-ADR-0092 shape: build across the whole burst, no plateau. */
+  const nitro = (elapsed: number, d = duration, out = rampOut) => dashEnvelope(elapsed, d, d - out, out);
 
   it("is zero at and outside the burst boundaries", () => {
-    expect(dashEnvelope(0, duration, rampOut)).toBe(0);
-    expect(dashEnvelope(duration, duration, rampOut)).toBe(0);
-    expect(dashEnvelope(-1, duration, rampOut)).toBe(0);
-    expect(dashEnvelope(duration + 3, duration, rampOut)).toBe(0);
+    expect(nitro(0)).toBe(0);
+    expect(nitro(duration)).toBe(0);
+    expect(nitro(-1)).toBe(0);
+    expect(nitro(duration + 3)).toBe(0);
   });
 
-  it("builds continuously toward full speed — never plateaus before the release", () => {
+  it("builds continuously toward full speed when the ramp fills the burst — never plateaus before the release", () => {
     // A "nitro" build: strictly increasing all the way through the build phase,
     // not an early ramp settling into a flat middle.
-    const samples = [1, 2, 3, 4, 5, 6, 7].map((t) => dashEnvelope(t, duration, rampOut));
+    const samples = [1, 2, 3, 4, 5, 6, 7].map((t) => nitro(t));
     for (let i = 1; i < samples.length; i += 1) {
       expect(samples[i]).toBeGreaterThan(samples[i - 1]!);
     }
   });
 
   it("reaches full speed right where the release phase begins", () => {
-    expect(dashEnvelope(duration - rampOut, duration, rampOut)).toBe(1);
+    expect(nitro(duration - rampOut)).toBe(1);
   });
 
   it("releases smoothly back to zero over the final rampOut window", () => {
     const releaseStart = duration - rampOut;
-    const a = dashEnvelope(releaseStart + 0.5, duration, rampOut);
-    const b = dashEnvelope(releaseStart + 1, duration, rampOut);
-    const c = dashEnvelope(releaseStart + 1.5, duration, rampOut);
+    const a = nitro(releaseStart + 0.5);
+    const b = nitro(releaseStart + 1);
+    const c = nitro(releaseStart + 1.5);
     expect(a).toBeLessThan(1);
     expect(a).toBeGreaterThan(b);
     expect(b).toBeGreaterThan(c);
@@ -48,14 +44,33 @@ describe("dashEnvelope", () => {
 
   it("is not symmetric — mirroring around the midpoint no longer matches (unlike the old ramp-plateau-ramp shape)", () => {
     const t = 3;
-    expect(dashEnvelope(t, duration, rampOut)).not.toBeCloseTo(dashEnvelope(duration - t, duration, rampOut), 1);
+    expect(nitro(t)).not.toBeCloseTo(nitro(duration - t), 1);
   });
 
   it("falls back to a pure release (no build) when rampOut covers the whole burst", () => {
     // duration 6, rampOut clamped to 6: envelope is just the release curve throughout.
-    const long = dashEnvelope(1, 6, 10);
-    const short = dashEnvelope(1, 6, 6);
+    const long = dashEnvelope(1, 6, 0, 10);
+    const short = dashEnvelope(1, 6, 0, 6);
     expect(long).toBeCloseTo(short, 10);
+  });
+
+  it("holds full speed between the ramp and the release (ADR 0092's three-second burst)", () => {
+    // The whole point of the ramp-in: a burst longer than its build spends the
+    // middle AT full speed, not still accelerating toward it.
+    const ramp = 3;
+    expect(dashEnvelope(ramp, duration, ramp, rampOut)).toBe(1);
+    expect(dashEnvelope(5, duration, ramp, rampOut)).toBe(1);
+    expect(dashEnvelope(duration - rampOut - 0.001, duration, ramp, rampOut)).toBe(1);
+    // …and is still building before it.
+    expect(dashEnvelope(1, duration, ramp, rampOut)).toBeLessThan(1);
+    expect(dashEnvelope(2, duration, ramp, rampOut)).toBeGreaterThan(dashEnvelope(1, duration, ramp, rampOut));
+  });
+
+  it("clamps a ramp that would overrun the release rather than losing the release", () => {
+    // rampIn 20 on a 10-tick burst: the build is cut back to where the release
+    // starts, so full speed is still reached and still eased out.
+    expect(dashEnvelope(duration - rampOut, duration, 20, rampOut)).toBe(1);
+    expect(dashEnvelope(duration - 0.5, duration, 20, rampOut)).toBeLessThan(1);
   });
 });
 

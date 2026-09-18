@@ -1,9 +1,8 @@
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { Screen } from "@dont-fall/ui";
 import { parseAuthCallbackFragment } from "../lib/api/auth.js";
 import { setStoredToken } from "../lib/api/base.js";
-import styles from "./AuthCallbackScreen.module.css";
+import { LoadingScreen } from "./LoadingScreen.js";
 
 /**
  * `/auth/callback` — where the API's Discord OAuth callback redirects
@@ -36,11 +35,5 @@ export function AuthCallbackScreen() {
     navigate(error ? `/auth?error=${encodeURIComponent(error)}` : "/auth", { replace: true });
   }, [location.hash, navigate]);
 
-  return (
-    <Screen>
-      <div className={styles.wait} role="status">
-        Signing you in…
-      </div>
-    </Screen>
-  );
+  return <LoadingScreen label="SIGNING YOU IN…" />;
 }

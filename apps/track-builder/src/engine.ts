@@ -1,19 +1,23 @@
 import {
+  BOUNCE_TEXTURE_FILE,
+  ICE_TEXTURE_FILE,
   DEFAULT_ENVIRONMENT_ID,
   ENVIRONMENT_PRESETS,
   hasMotion,
   resolveEnvironmentId,
   moduleHasIceSurface,
   moduleHasBounceSurface,
-  moduleHasMudSurface,
   segmentScale,
+  SURFACE_ATTACHMENTS,
   TICK_RATE_HZ,
   type AssetCategory,
   type Box,
+  type DeckPlan,
   type EnvironmentId,
   type Module,
   type SegmentConveyor,
   type SegmentMotion,
+  type SurfaceAttachmentKey,
   type Track,
   type TrackListing,
   type TrackRoundDefaults,
@@ -34,9 +38,7 @@ import {
   loadAssetVisuals,
   loadAssetVisualsProgressive,
 } from "./assets/assets.js";
-import { loadIceTexture } from "./assets/iceTexture.js";
-import { loadMudTexture } from "./assets/mudTexture.js";
-import { loadBounceTexture } from "./assets/bounceTexture.js";
+import { loadDeckTexture } from "@dont-fall/render";
 import { createMotionPanel, type MotionPanel } from "./motion/motionPanel.js";
 import { PreviewScheduler, type PreviewSlot } from "./scene/previewScheduler.js";
 import { templateParts } from "./scene/render.js";
@@ -57,16 +59,12 @@ import {
   LAUNCH_HEIGHT_STEP_FINE,
   compactCheckpoints,
   setCheckpointRespawn,
+  setSegmentAttachment,
   setSegmentCheckpoint,
-  setSegmentConveyor,
-  setSegmentIce,
   setSegmentLaunch,
-  setSegmentMotion,
   setSegmentStart,
   stepCheckpointOrder,
   worldToSegmentLocal,
-  setSegmentMud,
-  setSegmentBounce,
   setSegmentScale,
   setSegmentTransforms,
   type RotateAxis,
@@ -203,16 +201,15 @@ export interface BuilderEngine {
   stepScale: (direction: 1 | -1, fine: boolean) => void;
   /** Attach (`conveyor` set) or detach (`undefined`) a belt on the primary Segment (ADR 0064). */
   setSegmentConveyor: (conveyor: SegmentConveyor | undefined) => void;
-  /** Attach (`true`) or detach (`undefined`) ice on the primary Segment (ADR 0066). */
-  setSegmentIce: (ice: boolean | undefined) => void;
-  /** Attach (`true`) or detach (`undefined`) mud on the primary Segment (ADR 0067). */
-  setSegmentMud: (mud: boolean | undefined) => void;
   /**
-   * The primary Segment's deck Surface — one of them, or none. Ice and mud are
-   * mutually exclusive (ADR 0067: publish refuses the pair), so the swap is one
-   * undoable edit rather than a detach the author could stop halfway.
+   * The primary Segment's deck Surface — one of them, or none. They are
+   * mutually exclusive (one deck, one Surface: publish refuses a pair), so the
+   * swap is one undoable edit rather than a detach the author could stop
+   * halfway.
    */
-  setSegmentSurface: (surface: "ice" | "mud" | "bounce" | undefined) => void;
+  setSegmentSurface: (surface: SurfaceAttachmentKey | undefined) => void;
+  /** Make the primary Segment a Prop, or leave its Asset where it stands (ADR 0095). */
+  setSegmentProp: (prop: boolean) => void;
   /**
    * Set (or clear, `undefined`) how high the primary Spring Segment throws
    * (ADR 0069). Clearing returns it to its Asset's own default — a Spring is
@@ -308,6 +305,8 @@ export const createBuilderEngine = (opts?: {
   let assetsLoading = false;
   let assetsLoaded = false;
   let templates: Record<string, THREE.Group> = {};
+  /** One deck plan per settled asset file (ADR 0096) — cached beside its template, which settled from the same bytes. */
+  let deckPlans: Record<string, DeckPlan | undefined> = {};
   const assetErrors = new Map<string, string>();
   let browseState: BrowsePanelState = "ready";
   let browseTracks: TrackListing[] = [];
@@ -381,13 +380,17 @@ export const createBuilderEngine = (opts?: {
       return;
     }
     ensureIceTexture();
-    ensureMudTexture();
     ensureBounceTexture();
-    viewport.setTrack(library, history.track, templates, {
-      ice: iceTexture ?? undefined,
-      mud: mudTexture ?? undefined,
-      bounce: bounceTexture ?? undefined,
-    });
+    viewport.setTrack(
+      library,
+      history.track,
+      templates,
+      {
+        ice: iceTexture ?? undefined,
+        bounce: bounceTexture ?? undefined,
+      },
+      deckPlans,
+    );
   };
 
   /**
@@ -411,7 +414,7 @@ export const createBuilderEngine = (opts?: {
       return;
     }
     iceLoading = true;
-    void loadIceTexture(fetchAssetBytes, `${apiUrl}/assets`).then(
+    void loadDeckTexture(fetchAssetBytes, `${apiUrl}/assets`, ICE_TEXTURE_FILE).then(
       (loaded) => {
         iceLoading = false;
         iceTexture = loaded;
@@ -441,7 +444,7 @@ export const createBuilderEngine = (opts?: {
       return;
     }
     bounceLoading = true;
-    void loadBounceTexture(fetchAssetBytes, `${apiUrl}/assets`).then(
+    void loadDeckTexture(fetchAssetBytes, `${apiUrl}/assets`, BOUNCE_TEXTURE_FILE).then(
       (loaded) => {
         bounceLoading = false;
         bounceTexture = loaded;
@@ -450,38 +453,6 @@ export const createBuilderEngine = (opts?: {
       (err: unknown) => {
         bounceLoading = false;
         console.warn(`DON'T FALL: bounce sheet unavailable: ${(err as Error).message}`);
-      },
-    );
-  };
-
-  /**
-   * The shared mud texture (ADR 0067) — the same lazy contract as the ice
-   * texture above: fetched only for Tracks that sheet mud, re-syncing on
-   * arrival, warning and retrying on failure.
-   */
-  let mudTexture: THREE.Texture | null = null;
-  let mudLoading = false;
-  const ensureMudTexture = (): void => {
-    if (!viewport || mudTexture || mudLoading) return;
-    if (
-      !history.track.some((segment) => {
-        if (segment.mud === true) return true;
-        const module = library[segment.moduleId];
-        return module !== undefined && moduleHasMudSurface(module);
-      })
-    ) {
-      return;
-    }
-    mudLoading = true;
-    void loadMudTexture(fetchAssetBytes, `${apiUrl}/assets`).then(
-      (loaded) => {
-        mudLoading = false;
-        mudTexture = loaded;
-        syncTrackView(false);
-      },
-      (err: unknown) => {
-        mudLoading = false;
-        console.warn(`DON'T FALL: mud overlay unavailable: ${(err as Error).message}`);
       },
     );
   };
@@ -637,13 +608,17 @@ export const createBuilderEngine = (opts?: {
       viewport.setImpactTintVisible(tintVisible);
       syncEnvironmentView();
       ensureIceTexture();
-      ensureMudTexture();
       ensureBounceTexture();
-      viewport.setTrack(library, history.track, templates, {
-        ice: iceTexture ?? undefined,
-        mud: mudTexture ?? undefined,
-        bounce: bounceTexture ?? undefined,
-      });
+      viewport.setTrack(
+        library,
+        history.track,
+        templates,
+        {
+          ice: iceTexture ?? undefined,
+          bounce: bounceTexture ?? undefined,
+        },
+        deckPlans,
+      );
       syncSelectionView();
     },
     detachViewport: () => {
@@ -669,7 +644,7 @@ export const createBuilderEngine = (opts?: {
             return;
           }
           // Transform-only: a Motion poses a Segment around where it rests, never re-chains it.
-          applyEdit(setSegmentMotion(history.track, index, motion), index, true);
+          applyEdit(setSegmentAttachment(history.track, index, "motion", motion), index, true);
         },
         (apply) => {
           pivotPick = apply;
@@ -846,30 +821,32 @@ export const createBuilderEngine = (opts?: {
       if (index === undefined) return;
       // Full rebuild (never the transform-only fast path): attaching a belt
       // adds the strip visual, detaching removes it.
-      applyEdit(setSegmentConveyor(history.track, index, conveyor), index);
-    },
-    setSegmentIce: (ice) => {
-      const index = primary();
-      if (index === undefined) return;
-      // Full rebuild (never the transform-only fast path): attaching ice
-      // adds the sheet visual, detaching removes it.
-      applyEdit(setSegmentIce(history.track, index, ice), index);
-    },
-    setSegmentMud: (mud) => {
-      const index = primary();
-      if (index === undefined) return;
-      // Full rebuild (never the transform-only fast path): attaching mud
-      // adds the sheet visual, detaching removes it.
-      applyEdit(setSegmentMud(history.track, index, mud), index);
+      applyEdit(setSegmentAttachment(history.track, index, "conveyor", conveyor), index);
     },
     setSegmentSurface: (surface) => {
       const index = primary();
       if (index === undefined) return;
-      // All three annotations in one edit: picking ice off mud must not leave
-      // a Segment carrying both, not even for one undo step.
-      const iced = setSegmentIce(history.track, index, surface === "ice" ? true : undefined);
-      const mudded = setSegmentMud(iced, index, surface === "mud" ? true : undefined);
-      applyEdit(setSegmentBounce(mudded, index, surface === "bounce" ? true : undefined), index);
+      // Every Surface Attachment in one edit, and a full rebuild (the sheet
+      // visual comes and goes): picking ice off mud must not leave a Segment
+      // carrying both, not even for one undo step.
+      let next = history.track;
+      for (const { key } of SURFACE_ATTACHMENTS) {
+        next = setSegmentAttachment(next, index, key, surface === key ? true : undefined);
+      }
+      applyEdit(next, index);
+    },
+    setSegmentProp: (prop) => {
+      const index = primary();
+      if (index === undefined) return;
+      // A Prop is a body physics owns, so it is not a deck: the deck and the
+      // belt go in the same edit, never leaving a Segment carrying both, not
+      // even for one undo step (the Surface picker's own rule).
+      let next = setSegmentAttachment(history.track, index, "prop", prop ? true : undefined);
+      if (prop) {
+        for (const { key } of SURFACE_ATTACHMENTS) next = setSegmentAttachment(next, index, key, undefined);
+        next = setSegmentAttachment(next, index, "conveyor", undefined);
+      }
+      applyEdit(next, index);
     },
     setSegmentLaunch: (height) => {
       const index = primary();
@@ -1155,6 +1132,7 @@ export const createBuilderEngine = (opts?: {
       void loadAssetVisualsProgressive(fetchBytes, `${apiUrl}/assets`, assetTabModuleIds(), (moduleId, result) => {
         if (result.ok) {
           templates = { ...templates, [moduleId]: result.template };
+          deckPlans = { ...deckPlans, [moduleId]: result.plan };
           assetErrors.delete(moduleId);
         } else {
           assetErrors.set(moduleId, result.error.message);
@@ -1194,7 +1172,8 @@ export const createBuilderEngine = (opts?: {
       };
       void loadAssetVisuals(fetchBytes, `${apiUrl}/assets`, [moduleId]).then(
         (loaded) => {
-          templates = { ...templates, ...loaded };
+          templates = { ...templates, [moduleId]: loaded[moduleId]!.template };
+          deckPlans = { ...deckPlans, [moduleId]: loaded[moduleId]!.plan };
           syncTrackView(false);
           syncSelectionView();
           notify();

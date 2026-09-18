@@ -125,7 +125,7 @@ const startPlaza: Section = ({ s, top }) => ({
  * Each wall is a 2 m block, so a row is six slots at x = −5 … 5; `doors`
  * names the open ones.
  */
-export const DOOR_RUSH_SLOTS = [-5, -3, -1, 1, 3, 5];
+const DOOR_RUSH_SLOTS = [-5, -3, -1, 1, 3, 5];
 export const DOOR_RUSH_ROWS: { ds: number; doors: number[] }[] = [
   { ds: 7, doors: [-3, 3] },
   { ds: 19, doors: [-5, 1] },
@@ -149,7 +149,7 @@ const doorRush: Section = ({ s, top }) => {
  * staggered along the lane so the circles cover its centre line without the
  * bars ever meeting. Low enough to jump; each deck faster.
  */
-export const SWEEPER_STAGGER = 2.8;
+const SWEEPER_STAGGER = 2.8;
 export const SWEEPER_SPEEDS = [1.5, 1.9, 2.3, 2.7];
 const sweepers: Section = ({ s, top }) => {
   const BAR = "kaykit_barrier_4x1x1";
@@ -183,7 +183,7 @@ const checkpointStop =
  * The wrecking-ball bridge: a 6 m bridge under four balls swinging across it
  * in a wave, each hung from a gantry.
  */
-export const WRECKING_BALL_DS = [8, 18, 28, 38];
+const WRECKING_BALL_DS = [8, 18, 28, 38];
 const wreckingBalls: Section = ({ s, top }) => {
   const bridge = Array.from({ length: 8 }, (_, i) =>
     onTop(`kaykit_platform_4x4x1_${i % 2 === 0 ? "blue" : "green"}`, 0, top, s + 3 + i * 6, { scale: 1.5 }),
@@ -281,7 +281,7 @@ const spinningSquares: Section = ({ s, top }) => {
  * standing capsule is still inside a flush pad's trigger. Fans are sunk a
  * metre so their air starts low: jump beside one and it carries you up.
  */
-export const CLIMB_STEP = 6;
+const CLIMB_STEP = 6;
 export const CLIMB_PAD_DS = 9.5;
 export const CLIMB_FAN_DS = 29;
 const climb =
@@ -365,8 +365,8 @@ const beltClimb: Section = ({ s, top }) => {
  * pick up speed; the edges don't forgive. Each bumper is (x, metres along
  * its deck from the deck's top centre).
  */
-export const ICE_PITCH = -0.14;
-export const ICE_BUMPERS: [number, number][][] = [
+const ICE_PITCH = -0.14;
+const ICE_BUMPERS: [number, number][][] = [
   [
     [-2.5, -1.5],
     [3.5, 3],
@@ -399,7 +399,7 @@ const iceSlide: Section = ({ s, top }) => {
  * (0, 1.25, 1.65); pitched −90° it hangs head-down from the hub, and a
  * quarter-turn yaw swings it across the lane about the hub's axle.
  */
-export const HAMMER_DS = [6, 17, 28, 39, 50];
+const HAMMER_DS = [6, 17, 28, 39, 50];
 const hammerAlley: Section = ({ s, top }) => {
   const HAMMER = "trap_hammerbig";
   const hub = { x: 0, y: 1.25, z: 1.65 };

@@ -8,6 +8,13 @@ import {
   type TrackRoundDefaults,
 } from "@dont-fall/shared";
 
+/** How hard a Track fetch tries before giving up (ticket 12). Every field defaults to its shared constant, so `{}` means "production". */
+export interface TrackFetchRetryOptions {
+  maxWaitMs?: number;
+  retryDelayMs?: number;
+  attemptTimeoutMs?: number;
+}
+
 export interface FetchedTrack extends TrackRoundDefaults {
   id: string;
   revision: number;
@@ -46,7 +53,7 @@ export const fetchTrack = async (
     retryDelayMs = TRACK_FETCH_RETRY_DELAY_MS,
     attemptTimeoutMs = TRACK_FETCH_ATTEMPT_TIMEOUT_MS,
     trackId,
-  }: { maxWaitMs?: number; retryDelayMs?: number; attemptTimeoutMs?: number; trackId?: string } = {},
+  }: TrackFetchRetryOptions & { trackId?: string } = {},
 ): Promise<FetchedTrack> => {
   const path = trackId !== undefined ? `/tracks/${encodeURIComponent(trackId)}` : "/tracks/any";
   const deadline = Date.now() + maxWaitMs;

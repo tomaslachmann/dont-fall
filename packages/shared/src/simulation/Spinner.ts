@@ -1,7 +1,8 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { yawQuat } from "../math/quat.js";
 import { addVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
-import { SPINNER_KNOCKBACK_LIFT, SPINNER_KNOCKBACK_SCALE, TICK_DT } from "../tuning.js";
+import { TICK_DT } from "../tuning/clock.js";
+import { SPINNER_KNOCKBACK_LIFT, SPINNER_KNOCKBACK_SCALE } from "../tuning/world.js";
 import { OBSTACLE_GROUPS } from "./collisionGroups.js";
 
 export interface SpinnerConfig {

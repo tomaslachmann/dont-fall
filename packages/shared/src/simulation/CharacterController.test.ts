@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { lengthVec3, vec3 } from "../math/vec3.js";
-import { IMPACT_RAGDOLL_MIN, WALL_IMPACT_MIN_SPEED, WALL_IMPACT_SCALE } from "../tuning.js";
+import { IMPACT_RAGDOLL_MIN, WALL_IMPACT_MIN_SPEED, WALL_IMPACT_SCALE } from "../tuning/knockdown.js";
 import { wallImpactKnockback } from "./CharacterController.js";
 
 describe("wallImpactKnockback", () => {

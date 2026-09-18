@@ -1,5 +1,6 @@
 import {
   addVec3,
+  ATTACHMENT_KEYS,
   conjugateQuat,
   IDENTITY_QUAT,
   orientBox,
@@ -11,7 +12,9 @@ import {
   segmentScale,
   subVec3,
   type AssetCategory,
+  type AttachmentKey,
   type Module,
+  type Segment,
   type Track,
   type Vec3,
 } from "@dont-fall/shared";
@@ -26,11 +29,8 @@ import {
   removeLast,
   rotateSegment,
   segmentOverlapsAnyOther,
+  setSegmentAttachment,
   setSegmentTransform,
-  setSegmentConveyor,
-  setSegmentIce,
-  setSegmentMotion,
-  setSegmentMud,
   setSegmentScale,
   setSegmentTransforms,
   snapDragPosition,
@@ -801,15 +801,15 @@ describe("a Segment's Motion through every edit (M11 ticket 06)", () => {
 
   it("sets and clears a Motion without moving anything", () => {
     const track = chain();
-    const moving = setSegmentMotion(track, 1, SLIDE);
+    const moving = setSegmentAttachment(track, 1, "motion", SLIDE);
 
     expect(moving[1]!.motion).toEqual(SLIDE);
     expect(moving.map((s) => s.position)).toEqual(track.map((s) => s.position));
-    expect(setSegmentMotion(moving, 1, undefined)[1]!.motion).toBeUndefined();
+    expect(setSegmentAttachment(moving, 1, "motion", undefined)[1]!.motion).toBeUndefined();
   });
 
   it("survives its chained Segment being re-placed by an edit upstream", () => {
-    const moving = setSegmentMotion(chain(), 2, SLIDE);
+    const moving = setSegmentAttachment(chain(), 2, "motion", SLIDE);
     const rotated = rotateSegment(moving, MODULES, 1, Math.PI / 2);
     const nudged = moveSegment(moving, MODULES, 0, { x: 1, y: 0, z: 0 });
 
@@ -819,7 +819,7 @@ describe("a Segment's Motion through every edit (M11 ticket 06)", () => {
   });
 
   it("is copied by Duplicate — a row of identical hammers", () => {
-    const moving = setSegmentMotion(chain(), 1, SLIDE);
+    const moving = setSegmentAttachment(chain(), 1, "motion", SLIDE);
 
     expect(duplicateSegment(moving, MODULES, 1)[2]!.motion).toEqual(SLIDE);
   });
@@ -835,23 +835,23 @@ describe("a Segment's Conveyor (ADR 0064)", () => {
 
   it("attaches and detaches a belt without moving anything", () => {
     const track = chain();
-    const belted = setSegmentConveyor(track, 1, BELT);
+    const belted = setSegmentAttachment(track, 1, "conveyor", BELT);
 
     expect(belted[1]!.conveyor).toEqual(BELT);
     expect(belted.map((s) => s.position)).toEqual(track.map((s) => s.position));
     expect(belted[0]).not.toHaveProperty("conveyor");
-    expect(setSegmentConveyor(belted, 1, undefined)[1]).not.toHaveProperty("conveyor");
+    expect(setSegmentAttachment(belted, 1, "conveyor", undefined)[1]).not.toHaveProperty("conveyor");
   });
 
   it("survives re-chains and is copied by Duplicate, like a Motion", () => {
-    const belted = setSegmentConveyor(chain(), 2, BELT);
+    const belted = setSegmentAttachment(chain(), 2, "conveyor", BELT);
 
     expect(rotateSegment(belted, MODULES, 1, Math.PI / 2)[2]!.conveyor).toEqual(BELT);
-    expect(duplicateSegment(setSegmentConveyor(chain(), 1, BELT), MODULES, 1)[2]!.conveyor).toEqual(BELT);
+    expect(duplicateSegment(setSegmentAttachment(chain(), 1, "conveyor", BELT), MODULES, 1)[2]!.conveyor).toEqual(BELT);
   });
 
   it("throws on an out-of-range index", () => {
-    expect(() => setSegmentConveyor(chain(), 9, BELT)).toThrow(/index 9 is out of range/);
+    expect(() => setSegmentAttachment(chain(), 9, "conveyor", BELT)).toThrow(/index 9 is out of range/);
   });
 });
 
@@ -864,23 +864,23 @@ describe("a Segment's ice (ADR 0066)", () => {
 
   it("attaches and detaches ice without moving anything", () => {
     const track = chain();
-    const iced = setSegmentIce(track, 1, true);
+    const iced = setSegmentAttachment(track, 1, "ice", true);
 
     expect(iced[1]!.ice).toBe(true);
     expect(iced.map((s) => s.position)).toEqual(track.map((s) => s.position));
     expect(iced[0]).not.toHaveProperty("ice");
-    expect(setSegmentIce(iced, 1, undefined)[1]).not.toHaveProperty("ice");
+    expect(setSegmentAttachment(iced, 1, "ice", undefined)[1]).not.toHaveProperty("ice");
   });
 
   it("survives re-chains and is copied by Duplicate, like a belt", () => {
-    const iced = setSegmentIce(chain(), 2, true);
+    const iced = setSegmentAttachment(chain(), 2, "ice", true);
 
     expect(rotateSegment(iced, MODULES, 1, Math.PI / 2)[2]!.ice).toBe(true);
-    expect(duplicateSegment(setSegmentIce(chain(), 1, true), MODULES, 1)[2]!.ice).toBe(true);
+    expect(duplicateSegment(setSegmentAttachment(chain(), 1, "ice", true), MODULES, 1)[2]!.ice).toBe(true);
   });
 
   it("throws on an out-of-range index", () => {
-    expect(() => setSegmentIce(chain(), 9, true)).toThrow(/index 9 is out of range/);
+    expect(() => setSegmentAttachment(chain(), 9, "ice", true)).toThrow(/index 9 is out of range/);
   });
 });
 
@@ -893,23 +893,58 @@ describe("a Segment's mud (ADR 0067)", () => {
 
   it("attaches and detaches mud without moving anything", () => {
     const track = chain();
-    const muddied = setSegmentMud(track, 1, true);
+    const muddied = setSegmentAttachment(track, 1, "mud", true);
 
     expect(muddied[1]!.mud).toBe(true);
     expect(muddied.map((s) => s.position)).toEqual(track.map((s) => s.position));
     expect(muddied[0]).not.toHaveProperty("mud");
-    expect(setSegmentMud(muddied, 1, undefined)[1]).not.toHaveProperty("mud");
+    expect(setSegmentAttachment(muddied, 1, "mud", undefined)[1]).not.toHaveProperty("mud");
   });
 
   it("survives re-chains and is copied by Duplicate, like a belt", () => {
-    const muddied = setSegmentMud(chain(), 2, true);
+    const muddied = setSegmentAttachment(chain(), 2, "mud", true);
 
     expect(rotateSegment(muddied, MODULES, 1, Math.PI / 2)[2]!.mud).toBe(true);
-    expect(duplicateSegment(setSegmentMud(chain(), 1, true), MODULES, 1)[2]!.mud).toBe(true);
+    expect(duplicateSegment(setSegmentAttachment(chain(), 1, "mud", true), MODULES, 1)[2]!.mud).toBe(true);
   });
 
   it("throws on an out-of-range index", () => {
-    expect(() => setSegmentMud(chain(), 9, true)).toThrow(/index 9 is out of range/);
+    expect(() => setSegmentAttachment(chain(), 9, "mud", true)).toThrow(/index 9 is out of range/);
+  });
+});
+
+describe("every Attachment through a re-chain and a Duplicate (ADR 0099)", () => {
+  // Over every Attachment, so a new one does not compile until it is sampled here.
+  const SAMPLES: { [K in AttachmentKey]-?: NonNullable<Segment[K]> } = {
+    motion: { slide: { offset: { x: 0, y: 2, z: 0 }, period: 3, easing: "easeInOut" } },
+    conveyor: { preset: "fast", angle: 1.2 },
+    ice: true,
+    mud: true,
+    bounce: true,
+    launch: { height: 6 },
+    prop: true,
+    start: true,
+    checkpoint: { order: 1 },
+  };
+  const carrying = (key: AttachmentKey): Track => {
+    let track = appendModule([], "start", MODULES);
+    track = appendModule(track, "bridge", MODULES);
+    track = appendModule(track, "gap", MODULES);
+    return track.map((segment, i) => (i === 2 ? { ...segment, [key]: SAMPLES[key] } : segment));
+  };
+
+  // bounce, launch and prop were each dropped by the first of these until the
+  // re-chain read the registry instead of its own list.
+  it.each(ATTACHMENT_KEYS)("keeps %s when its chained Segment is re-placed", (key) => {
+    const track = carrying(key);
+    expect(rotateSegment(track, MODULES, 1, Math.PI / 2)[2]![key], "rotated upstream").toEqual(SAMPLES[key]);
+    expect(moveSegment(track, MODULES, 0, { x: 1, y: 0, z: 0 })[2]![key], "moved upstream").toEqual(SAMPLES[key]);
+    expect(setSegmentScale(track, MODULES, 2, 2)[2]![key], "scaled").toEqual(SAMPLES[key]);
+    expect(moveSegment(track, MODULES, 2, { x: 1, y: 0, z: 0 })[2]![key], "moved").toEqual(SAMPLES[key]);
+  });
+
+  it.each(ATTACHMENT_KEYS.filter((key) => key !== "start" && key !== "checkpoint"))("copies %s with Duplicate", (key) => {
+    expect(duplicateSegment(carrying(key), MODULES, 2)[3]![key]).toEqual(SAMPLES[key]);
   });
 });
 

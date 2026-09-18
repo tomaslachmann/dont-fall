@@ -8,6 +8,7 @@ const row = (overrides: Partial<TrackListing> & { id: string }): TrackListing =>
   name: null,
   authorId: "a1",
   createdAt: 1_000,
+  revision: 1,
   plays: 0,
   hasFinishZone: false, hasThumbnail: false,
   ...overrides,
@@ -204,7 +205,8 @@ describe("Discover", () => {
 
     // Decorative (`alt=""`), so read off the DOM, not the accessible tree.
     const shot = screen.getByRole("button", { name: /shot/i });
-    expect(shot.querySelector("img")?.getAttribute("src")).toBe("http://localhost:8081/tracks/shot/thumbnail");
+    // Pinned to the listed Revision (ADR 0105) — the URL sign-in preloaded.
+    expect(shot.querySelector("img")?.getAttribute("src")).toBe("http://localhost:8081/tracks/shot/thumbnail?revision=1");
 
     const bare = screen.getByRole("button", { name: /bare/i });
     expect(bare.querySelector("img")).toBeNull();

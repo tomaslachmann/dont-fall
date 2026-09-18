@@ -34,11 +34,19 @@ export interface PersistedMatchResult {
    */
   accountIds: Record<string, string>;
   /**
-   * `playerId` → equipped body skin at Match end — what the MatchOver
-   * podium wears. Sparse like `accountIds`: absent key, default skin.
-   * Rows persisted before skins carry no such map; readers default `{}`.
+   * `playerId` → equipped body color at Match end — what the MatchOver
+   * podium wears under no skin. Sparse like `accountIds`: absent key,
+   * default color. Rows persisted before colors carry no such map; readers
+   * default `{}`.
    */
-  bodySkins: Record<string, number>;
+  colors: Record<string, number>;
+  /**
+   * `playerId` → equipped skin id at Match end (ADR 0091) — what the podium
+   * bean is actually painted with when it has one. Sparse: absent key, no
+   * skin, and the bean falls back to its `colors` entry. Rows persisted
+   * before skins carry no such map; readers default `{}`.
+   */
+  skins: Record<string, string>;
   /**
    * `playerId` → equipped hat id at Match end (ADR 0083) — the podium wears
    * these too. Sparse: absent key, no hat. Rows persisted before hats carry

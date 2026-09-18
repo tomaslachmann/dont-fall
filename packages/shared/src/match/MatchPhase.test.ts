@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { COUNTDOWN_TICKS, ROUND_END_TICKS, TICK_RATE_HZ, msToTicks } from "../tuning.js";
+import { TICK_RATE_HZ, msToTicks } from "../tuning/clock.js";
+import { COUNTDOWN_TICKS, ROUND_END_TICKS } from "../tuning/match.js";
 import {
   advanceMatchPhase,
   countdownMsLeft,

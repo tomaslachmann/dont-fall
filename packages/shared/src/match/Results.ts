@@ -45,12 +45,14 @@ export interface DnfEntry {
    */
   accountId: string | null;
   /**
-   * Their equipped body skin (M9 ticket 15) — captured at drop for the same
-   * reason, so a dropped racer's podium bean still wears their color.
+   * Their equipped body color (M9 ticket 15) — captured at drop for the
+   * same reason, so a dropped racer's podium bean still wears their color.
    * `null` for a seat with none.
    */
-  bodySkin: number | null;
-  /** Their equipped hat (ADR 0083), captured at drop like `bodySkin`. `null` for none. */
+  color: number | null;
+  /** Their equipped skin (ADR 0091), captured at drop like `color`. `null` for none — the bean wears its `color`. */
+  skin: string | null;
+  /** Their equipped hat (ADR 0083), captured at drop like `color`. `null` for none. */
   hat: string | null;
 }
 

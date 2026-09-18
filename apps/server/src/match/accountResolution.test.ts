@@ -9,10 +9,10 @@ describe("httpAccountResolver", () => {
   it("resolves a session token to its Account id via the API's own /auth/me", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "acc-1", displayName: "Wobble", bodySkin: 2, hat: "crown" }) });
+      .mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "acc-1", displayName: "Wobble", color: 2, skin: null, hat: "crown" }) });
     const resolver = httpAccountResolver("http://api:9999", fetchMock as unknown as typeof fetch);
 
-    await expect(resolver.resolveAccount("tok-abc")).resolves.toEqual({ accountId: "acc-1", bodySkin: 2, hat: "crown" });
+    await expect(resolver.resolveAccount("tok-abc")).resolves.toEqual({ accountId: "acc-1", displayName: "Wobble", color: 2, skin: null, hat: "crown" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]![0]).toBe("http://api:9999/auth/me");
     expect(fetchMock.mock.calls[0]![1]).toMatchObject({
@@ -51,9 +51,9 @@ describe("httpAccountResolver", () => {
   it("a payload without a skin or hat still binds the id — the seat falls back to its id-hue tint, bareheaded", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "acc-1", bodySkin: "gold", hat: 7 }) });
+      .mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "acc-1", color: "gold", hat: 7 }) });
     const resolver = httpAccountResolver("http://api:9999", fetchMock as unknown as typeof fetch);
 
-    await expect(resolver.resolveAccount("tok-abc")).resolves.toEqual({ accountId: "acc-1", bodySkin: null, hat: null });
+    await expect(resolver.resolveAccount("tok-abc")).resolves.toEqual({ accountId: "acc-1", displayName: null, color: null, skin: null, hat: null });
   });
 });

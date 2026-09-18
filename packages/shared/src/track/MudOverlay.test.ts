@@ -4,15 +4,6 @@ import {
   invalidMudReason,
   isSegmentMud,
   moduleHasMudSurface,
-  mudRipplePose,
-  mudSloshOffset,
-  MUD_RIPPLE_LIFETIME_SECONDS,
-  MUD_RIPPLE_MAX_RADIUS,
-  MUD_RIPPLE_MIN_RADIUS,
-  MUD_RIPPLE_OPACITY,
-  MUD_SLOSH_AMPLITUDE_UV,
-  MUD_SLOSH_PERIOD_U_SECONDS,
-  MUD_SLOSH_PERIOD_V_SECONDS,
   MUD_SURFACE_ID,
 } from "./MudOverlay.js";
 
@@ -78,39 +69,3 @@ describe("invalidMudReason / isSegmentMud (ADR 0067)", () => {
   });
 });
 
-describe("mudSloshOffset (living mud)", () => {
-  it("stays within the amplitude on both axes", () => {
-    for (let t = 0; t < 20; t += 0.37) {
-      const { u, v } = mudSloshOffset(t, 1.1);
-      expect(Math.abs(u)).toBeLessThanOrEqual(MUD_SLOSH_AMPLITUDE_UV);
-      expect(Math.abs(v)).toBeLessThanOrEqual(MUD_SLOSH_AMPLITUDE_UV);
-    }
-  });
-
-  it("repeats per axis on its own period", () => {
-    const a = mudSloshOffset(1.7, 0.4);
-    expect(mudSloshOffset(1.7 + MUD_SLOSH_PERIOD_U_SECONDS, 0.4).u).toBeCloseTo(a.u, 10);
-    expect(mudSloshOffset(1.7 + MUD_SLOSH_PERIOD_V_SECONDS, 0.4).v).toBeCloseTo(a.v, 10);
-  });
-
-  it("shifts with the phase — neighbouring sheets never breathe in sync", () => {
-    expect(mudSloshOffset(0, 0).u).toBeCloseTo(0, 10);
-    expect(mudSloshOffset(0, Math.PI / 2).u).toBeCloseTo(MUD_SLOSH_AMPLITUDE_UV, 10);
-  });
-});
-
-describe("mudRipplePose (living mud)", () => {
-  it("is born small and opaque, dies large and gone", () => {
-    expect(mudRipplePose(0)).toEqual({ radius: MUD_RIPPLE_MIN_RADIUS, opacity: MUD_RIPPLE_OPACITY });
-    const mid = mudRipplePose(MUD_RIPPLE_LIFETIME_SECONDS / 2)!;
-    expect(mid.radius).toBeCloseTo((MUD_RIPPLE_MIN_RADIUS + MUD_RIPPLE_MAX_RADIUS) / 2, 10);
-    expect(mid.opacity).toBeCloseTo(MUD_RIPPLE_OPACITY / 2, 10);
-    expect(mudRipplePose(MUD_RIPPLE_LIFETIME_SECONDS)).toBeNull();
-  });
-
-  it("retires nonsense ages — the pool slot frees instead of drawing garbage", () => {
-    expect(mudRipplePose(-0.1)).toBeNull();
-    expect(mudRipplePose(Number.NaN)).toBeNull();
-    expect(mudRipplePose(MUD_RIPPLE_LIFETIME_SECONDS + 1)).toBeNull();
-  });
-});

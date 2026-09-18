@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { BASE_BODY_SKIN_ID, HATS } from '@dont-fall/shared';
+import { BASE_BODY_COLOR_ID, HATS, SKINS } from '@dont-fall/shared';
 import { hatIconUrl } from '../lib/hatAssets.js';
+import { skinIconUrl } from '../lib/skinAssets.js';
 import Stage from '../ui/Stage';
 import Panel from '../ui/Panel';
 import JellyButton from '../ui/JellyButton';
@@ -8,16 +9,16 @@ import type { Feel } from '../tokens';
 import { Turntable } from './Turntable';
 import s from './CharacterSelect.module.css';
 
-export type CosmeticTab = 'BODY' | 'PATTERN' | 'HAT' | 'EMOTES';
+export type CosmeticTab = 'COLOR' | 'SKIN' | 'HAT' | 'EMOTES';
 
-const TABS: CosmeticTab[] = ['BODY', 'PATTERN', 'HAT', 'EMOTES'];
+const TABS: CosmeticTab[] = ['COLOR', 'SKIN', 'HAT', 'EMOTES'];
 
 /**
- * Owned skins as stripe pairs — stands in for the real cosmetic art. In
- * `bodySkin` id order, base (`BASE_BODY_SKIN_ID`) last: its stripes are
- * BLIP's own authored cream, the one swatch that shows a real color.
+ * The body colors as stripe pairs — the flat tint a bean wears when it has
+ * no skin on. In `color` id order, base (`BASE_BODY_COLOR_ID`) last: its
+ * stripes are BLIP's own authored cream.
  */
-const SKINS: Array<[string, string]> = [
+const COLORS: Array<[string, string]> = [
   ['#FFB4DC', '#FF8AC6'],
   ['#7FE3FF', '#3FC4FF'],
   ['#B6F5A0', '#7FE07F'],
@@ -34,13 +35,16 @@ export interface CharacterSelectProps {
   onSave?: () => void;
   onShop?: () => void;
   feel?: Feel;
-  /** Controlled pick — the Route owns it (it must survive the async account load and reach SAVE). */
-  selected: number;
-  onSelect?: (index: number) => void;
-  /** Controlled hat pick (ADR 0083), owned by the Route like the skin — `null` for none. */
+  /** Controlled body-color pick — the Route owns it (it must survive the async account load and reach SAVE). */
+  color: number;
+  onSelectColor?: (index: number) => void;
+  /** Controlled skin pick (ADR 0091), owned by the Route like the color — `null` for none, which shows the color. */
+  skin?: string | null;
+  onSelectSkin?: (skin: string | null) => void;
+  /** Controlled hat pick (ADR 0083), owned by the Route the same way — `null` for none. */
   hat?: string | null;
   onSelectHat?: (hat: string | null) => void;
-  /** The Account's level: a hat above it shows locked, with the level it needs. */
+  /** The Account's level: a skin or hat above it shows locked, with the level it needs. */
   level?: number;
 }
 
@@ -51,11 +55,45 @@ const LockIcon = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="3" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
 );
 
+/**
+ * One unlockable cosmetic's tile: its own icon, pressable when the Account
+ * has the level for it and greyed under a lock when it doesn't. Hats and
+ * skins are the same tile because they are the same shape of thing — an id,
+ * a name, a level and an icon (ADR 0083, 0091).
+ */
+interface IconTileProps {
+  name: string;
+  iconUrl: string;
+  unlockLevel: number;
+  level: number;
+  selected: boolean;
+  onSelect: () => void;
+}
+
+const IconTile = ({ name, iconUrl, unlockLevel, level, selected, onSelect }: IconTileProps) =>
+  level >= unlockLevel ? (
+    <button
+      type="button"
+      aria-label={name}
+      aria-pressed={selected}
+      onClick={onSelect}
+      className={[s.swatch, s.iconTile, selected && s.selected].filter(Boolean).join(' ')}
+    >
+      <img src={iconUrl} alt="" className={s.tileIcon} draggable={false} />
+    </button>
+  ) : (
+    <span title={`${name} unlocks at level ${unlockLevel}`} className={[s.swatch, s.iconTile, s.tileLocked].join(' ')}>
+      <img src={iconUrl} alt="" className={s.tileIcon} draggable={false} />
+      <LockIcon />
+      <span className={s.lockLabel}>LV {unlockLevel}</span>
+    </span>
+  );
+
 export default function CharacterSelect({
-  equipped = 'BUBBLEGUM BEAN', onBack, onSave, onShop, feel, selected, onSelect,
-  hat = null, onSelectHat, level = 1,
+  equipped = 'BUBBLEGUM BEAN', onBack, onSave, onShop, feel, color, onSelectColor,
+  skin = null, onSelectSkin, hat = null, onSelectHat, level = 1,
 }: CharacterSelectProps) {
-  const [tab, setTab] = useState<CosmeticTab>('BODY');
+  const [tab, setTab] = useState<CosmeticTab>('COLOR');
   // Turntable one-shots — counters, not booleans, so a second click re-fires.
   const [spinToken, setSpinToken] = useState(0);
   const [emoteToken, setEmoteToken] = useState(0);
@@ -70,7 +108,7 @@ export default function CharacterSelect({
       </div>
 
       <div className={s.turntable}>
-        <Turntable skin={selected} hat={hat} spinToken={spinToken} emoteToken={emoteToken} />
+        <Turntable color={color} skin={skin} hat={hat} spinToken={spinToken} emoteToken={emoteToken} />
         <span className={s.shadow} />
         <div className={s.turnActions}>
           <JellyButton variant="pill" tone="glass" centered onClick={() => setSpinToken((t) => t + 1)}>ROTATE</JellyButton>
@@ -80,10 +118,17 @@ export default function CharacterSelect({
             tone="glass"
             centered
             onClick={() => {
-              // A different skin every time — re-rolling the current pick would look dead.
-              let next = Math.floor(Math.random() * SKINS.length);
-              if (next === selected) next = (next + 1) % SKINS.length;
-              onSelect?.(next);
+              // Re-rolls whichever tab you're on, and never the current pick:
+              // a randomise that changed nothing would look dead.
+              if (tab === 'SKIN') {
+                const unlocked = SKINS.filter((def) => level >= def.unlockLevel && def.id !== skin);
+                // Nothing unlocked but what's already on: taking it off is still a change.
+                onSelectSkin?.(unlocked.length > 0 ? unlocked[Math.floor(Math.random() * unlocked.length)]!.id : null);
+                return;
+              }
+              let next = Math.floor(Math.random() * COLORS.length);
+              if (next === color) next = (next + 1) % COLORS.length;
+              onSelectColor?.(next);
             }}
           >RANDOMISE</JellyButton>
         </div>
@@ -111,41 +156,51 @@ export default function CharacterSelect({
                 aria-label="No hat"
                 aria-pressed={hat === null}
                 onClick={() => onSelectHat?.(null)}
-                className={[s.swatch, s.hatTile, hat === null && s.selected].filter(Boolean).join(' ')}
+                className={[s.swatch, s.iconTile, hat === null && s.selected].filter(Boolean).join(' ')}
               >NONE</button>
-              {HATS.map((def) => level >= def.unlockLevel ? (
-                <button
+              {HATS.map((def) => (
+                <IconTile
                   key={def.id}
-                  type="button"
-                  aria-label={def.name}
-                  aria-pressed={hat === def.id}
-                  onClick={() => onSelectHat?.(def.id)}
-                  className={[s.swatch, s.hatTile, hat === def.id && s.selected].filter(Boolean).join(' ')}
-                >
-                  <img src={hatIconUrl(def.id)} alt="" className={s.hatIcon} draggable={false} />
-                </button>
-              ) : (
-                <span
+                  name={def.name}
+                  iconUrl={hatIconUrl(def.id)}
+                  unlockLevel={def.unlockLevel}
+                  level={level}
+                  selected={hat === def.id}
+                  onSelect={() => onSelectHat?.(def.id)}
+                />
+              ))}
+            </>
+          ) : tab === 'SKIN' ? (
+            <>
+              <button
+                type="button"
+                aria-label="No skin"
+                aria-pressed={skin === null}
+                onClick={() => onSelectSkin?.(null)}
+                className={[s.swatch, s.iconTile, skin === null && s.selected].filter(Boolean).join(' ')}
+              >NONE</button>
+              {SKINS.map((def) => (
+                <IconTile
                   key={def.id}
-                  title={`${def.name} unlocks at level ${def.unlockLevel}`}
-                  className={[s.swatch, s.hatTile, s.hatLocked].join(' ')}
-                >
-                  <img src={hatIconUrl(def.id)} alt="" className={s.hatIcon} draggable={false} />
-                  <LockIcon />
-                  <span className={s.lockLabel}>LV {def.unlockLevel}</span>
-                </span>
+                  name={def.name}
+                  iconUrl={skinIconUrl(def.id)}
+                  unlockLevel={def.unlockLevel}
+                  level={level}
+                  selected={skin === def.id}
+                  onSelect={() => onSelectSkin?.(def.id)}
+                />
               ))}
             </>
           ) : (
           <>
-          {SKINS.map((pair, i) => (
+          {COLORS.map((pair, i) => (
             <button
               key={i}
               type="button"
-              aria-label={i === BASE_BODY_SKIN_ID ? 'Base' : `Skin ${i + 1}`}
-              aria-pressed={i === selected}
-              onClick={() => onSelect?.(i)}
-              className={[s.swatch, i === selected && s.selected].filter(Boolean).join(' ')}
+              aria-label={i === BASE_BODY_COLOR_ID ? 'Base' : `Colour ${i + 1}`}
+              aria-pressed={i === color}
+              onClick={() => onSelectColor?.(i)}
+              className={[s.swatch, i === color && s.selected].filter(Boolean).join(' ')}
               style={{ background: stripe(pair) }}
             />
           ))}

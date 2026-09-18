@@ -22,8 +22,10 @@ export interface ProfileStat {
 
 export interface ProfileProps {
   name?: string;
-  /** Whose card this is — the render wears their skin, or the default while unknown. */
-  skin?: number | null;
+  /** Whose card this is — the render wears their color, or the default while unknown. Shows under no `skin`. */
+  color?: number | null;
+  /** And their skin (ADR 0091), or none — which is what shows the `color`. */
+  skin?: string | null;
   /** And their hat (ADR 0083), or none. */
   hat?: string | null;
   level?: number;
@@ -57,7 +59,7 @@ const LockIcon = () => (
 );
 
 export default function Profile({
-  name = 'BEAN', skin = null, hat = null, level = 1, season, xp = 0, xpTarget = 1000,
+  name = 'BEAN', color = null, skin = null, hat = null, level = 1, season, xp = 0, xpTarget = 1000,
   stats = null, badges = null, badgeNames = [], matches = null, failed = false,
   onBack, onShare, onEditBean, onSeeAll, seeAllLabel = 'SEE ALL', feel,
 }: ProfileProps) {
@@ -84,6 +86,7 @@ export default function Profile({
 
       <Panel className={s.card}>
         <CharacterPreview
+          color={color}
           skin={skin}
           hat={hat}
           animation={WIN_SEQUENCE}

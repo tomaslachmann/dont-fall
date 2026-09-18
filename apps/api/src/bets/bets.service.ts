@@ -1,7 +1,7 @@
 import { parimutuelOdds, settlePayouts } from "@dont-fall/shared";
 import type { ApiDb } from "../db/db.js";
 import { ServiceError } from "../http/errors.js";
-import { creditAccountEarnings, getAccountEarnings, spendCoins } from "../auth/accounts.dao.js";
+import { creditAccountEarnings, spendCoins } from "../auth/accounts.dao.js";
 import {
   countBettors,
   getBetRound,
@@ -182,10 +182,4 @@ export const settleBettingRound = (
     markSettled(db, settle.matchId, settle.round, [...winners], nowMs);
   }
   return { matchId: settle.matchId, round: settle.round, settled: true, payouts };
-};
-
-export const getAccountCoins = (db: ApiDb, accountId: string): number => {
-  const earnings = getAccountEarnings(db, accountId);
-  if (!earnings) throw new ServiceError(401, "not logged in");
-  return earnings.coins;
 };

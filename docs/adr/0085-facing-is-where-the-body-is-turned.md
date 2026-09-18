@@ -1,5 +1,9 @@
 # 0085 — Facing is where the body is turned
 
+> **Amended by ADR 0104 (2026-09-18):** a Grab hold no longer freezes the
+> grabber's facing — it turns at a reduced rate the server also enforces, and a
+> Spin drives it. The held Character faces its grabber.
+
 ## Context
 
 Two things the user raised on 2026-09-17:

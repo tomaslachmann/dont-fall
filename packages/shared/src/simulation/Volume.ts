@@ -1,6 +1,6 @@
 import { pointInOrientedBox, type OrientedBox } from "../math/box.js";
 import type { Vec3 } from "../math/vec3.js";
-import { GRAVITY_Y } from "../tuning.js";
+import { GRAVITY_Y } from "../tuning/character.js";
 
 /**
  * A Volume (CONTEXT.md): a region of space that applies a continuous force

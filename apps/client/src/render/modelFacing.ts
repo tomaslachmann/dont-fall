@@ -1,18 +1,4 @@
-import type { Vec3 } from "@dont-fall/shared";
-
-/**
- * How quickly the Character's body closes on the direction it runs (1/s):
- * every second it covers all but e^−rate of the turn still left, so a turn
- * slows into a soft stop instead of halting on the spot (user call,
- * 2026-09-17: the old constant-speed turn read as jerky under WASD). Since
- * ADR 0085 this is also how fast the Character's aim turns. With
- * {@link FACING_TURN_SPEED_MAX}, a quarter turn comes within 10° in about
- * 0.2 s and turning around takes about 0.3 s.
- */
-export const FACING_TURN_RATE = 12;
-
-/** The fastest the body ever turns (rad/s), so turning around takes visibly longer than a quarter turn. */
-export const FACING_TURN_SPEED_MAX = 12;
+import { FACING_TURN_RATE, FACING_TURN_SPEED_MAX, type Vec3 } from "@dont-fall/shared";
 
 export interface ModelYawInput {
   /** The model's current cosmetic yaw (radians). */
@@ -21,23 +7,17 @@ export interface ModelYawInput {
   moveDirection: Vec3;
   deltaSeconds: number;
   /**
-   * True while this Character is involved in a Grab hold, as EITHER role —
-   * grabbing someone (`grabbingId`) or being grabbed (`heldByGrabberId`).
+   * How fast the body turns, as a share of its usual rate (ADR 0104): 1, or
+   * `GRAB_TURN_SPEED_MULTIPLIER` while carrying someone — the same slower
+   * turn the step clamps a grabber's replicated facing to, so the facing this
+   * client sends is one the server accepts as it is.
    *
-   * A hold freezes the rendered model outright (M6.1, live feedback): a held
-   * pair walks sideways and backwards with no visual rotation at all, rather
-   * than the model swinging to face wherever it happens to be walking. Two
-   * reasons, both visual. The rig has no Grab clip, so the hold reads
-   * entirely through `armReach.ts` aiming the upper arms at the other
-   * Character — and a model free to turn drags that reach around with it,
-   * ending up with the arms coming out through its own back the moment it
-   * turns away from whoever it is holding. And the pair is rigidly tethered
-   * (`RapierSimulation.updateGrabs`), so backing off is a normal thing to do
-   * mid-hold; it used to spin the model a full 180°. The server freezes the
-   * replicated `facing` for the same span, so every OTHER client's rig stays
-   * put too.
+   * Replaces M6.1's `facingLocked`, which froze the body outright for the
+   * length of a hold, in either role: the grabber has to turn now to aim, and
+   * a held body is not turned by its own client at all but pinned to its
+   * grabber (`modelYawFromFacing`, by the caller).
    */
-  facingLocked: boolean;
+  turnScale: number;
 }
 
 /** Wraps an angle into (−π, π] so a turn always takes the shortest arc. */
@@ -46,21 +26,20 @@ const wrapAngle = (angle: number): number =>
 
 /**
  * The Character model's yaw for this frame (M6.1) — extracted from
- * `scene.ts` as a pure rule so the Grab-hold lock has somewhere to be tested
- * without a WebGL context. Since ADR 0085 it is also the Character's
- * `facing`, through {@link facingFromModelYaw}.
+ * `scene.ts` as a pure rule so it has somewhere to be tested without a WebGL
+ * context. Since ADR 0085 it is also the Character's `facing`, through
+ * {@link facingFromModelYaw}.
  *
  * Eases toward `moveDirection` at {@link FACING_TURN_RATE}, never faster than
- * {@link FACING_TURN_SPEED_MAX} and never past it, and holds still whenever
- * there is no direction to turn toward — or whenever a hold has
- * {@link ModelYawInput.facingLocked | locked the facing}.
+ * {@link FACING_TURN_SPEED_MAX} and never past it — both scaled by
+ * {@link ModelYawInput.turnScale} — and holds still whenever there is no
+ * direction to turn toward.
  */
-export const nextModelYaw = ({ currentYaw, moveDirection, deltaSeconds, facingLocked }: ModelYawInput): number => {
-  if (facingLocked) return currentYaw;
+export const nextModelYaw = ({ currentYaw, moveDirection, deltaSeconds, turnScale }: ModelYawInput): number => {
   if (moveDirection.x === 0 && moveDirection.z === 0) return currentYaw;
   const delta = wrapAngle(Math.atan2(moveDirection.x, moveDirection.z) - currentYaw);
-  const eased = delta * (1 - Math.exp(-FACING_TURN_RATE * deltaSeconds));
-  const maxStep = FACING_TURN_SPEED_MAX * deltaSeconds;
+  const eased = delta * (1 - Math.exp(-FACING_TURN_RATE * turnScale * deltaSeconds));
+  const maxStep = FACING_TURN_SPEED_MAX * turnScale * deltaSeconds;
   return currentYaw + Math.max(-maxStep, Math.min(maxStep, eased));
 };
 
@@ -72,3 +51,43 @@ export const nextModelYaw = ({ currentYaw, moveDirection, deltaSeconds, facingLo
  * where it is turned.
  */
 export const facingFromModelYaw = (modelYaw: number): number => -wrapAngle(modelYaw - Math.PI);
+
+/**
+ * The model yaw of a body whose `facing` is given — the inverse of
+ * {@link facingFromModelYaw}. For a body the sim turns rather than its own
+ * client (ADR 0104): one that is Held, or Spinning someone.
+ */
+export const modelYawFromFacing = (facing: number): number => wrapAngle(Math.PI - facing);
+
+/**
+ * The yaw rate (rad/s) a pinned body turned at this frame — measured off the
+ * drawn yaw itself, so it is exactly the speed the Spin was seen at, whatever
+ * interpolation produced it. Zero when the frame took no time.
+ */
+export const measuredYawRate = (yaw: number, previousYaw: number, deltaSeconds: number): number =>
+  deltaSeconds > 0 ? wrapAngle(yaw - previousYaw) / deltaSeconds : 0;
+
+/** How long (s) the released Spin's momentum takes to fall to 1/e — the follow-through's feel. */
+export const SPIN_MOMENTUM_TAU = 0.18;
+/** Below this yaw rate (rad/s) the follow-through is over and steering alone turns the body. */
+export const SPIN_MOMENTUM_REST = 0.5;
+
+/**
+ * One frame of the Spin's follow-through (ADR 0104's drawn hold): a grabber
+ * that lets go at full whirl keeps turning, bleeding the turn off
+ * exponentially instead of freezing mid-frame — the sim stops its facing
+ * dead, and since the drawn yaw IS the facing the client sends (ADR 0085),
+ * this spin-down is also what the server and everyone else sees. Returns the
+ * momentum left for next frame; the caller advances its yaw by
+ * `momentum * deltaSeconds` first. Never seeded above
+ * {@link FACING_TURN_SPEED_MAX}, so the facing this sends stays one the
+ * server's clamp accepts as it is.
+ */
+export const decayedSpinMomentum = (momentum: number, deltaSeconds: number): number => {
+  const next = momentum * Math.exp(-deltaSeconds / SPIN_MOMENTUM_TAU);
+  return Math.abs(next) < SPIN_MOMENTUM_REST ? 0 : next;
+};
+
+/** Clamp a follow-through seed to what the server's facing clamp accepts. */
+export const clampSpinMomentum = (rate: number): number =>
+  Math.max(-FACING_TURN_SPEED_MAX, Math.min(FACING_TURN_SPEED_MAX, rate));

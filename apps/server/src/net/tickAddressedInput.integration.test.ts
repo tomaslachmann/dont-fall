@@ -338,6 +338,10 @@ class FaithfulClient {
       finishTick: null, // this harness's Track has no Finish Zone
       eliminated: false,
       eliminatedTick: null,
+      escapeProgress: 0,
+      lastWiggleYaw: null,
+      spinMs: 0,
+      facing: 0,
     });
     this.sim.syncTick(serverTick);
     const replayed = this.sim.replayLocalCharacter(

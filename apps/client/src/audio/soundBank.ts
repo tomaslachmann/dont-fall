@@ -89,5 +89,3 @@ export const loadSoundBank = async (
   return { buffers: (slot) => bySlot.get(slot) ?? [] };
 };
 
-/** A bank with nothing in it: every slot silent. What a browser without Web Audio gets. */
-export const EMPTY_SOUND_BANK: SoundBank = { buffers: () => [] };

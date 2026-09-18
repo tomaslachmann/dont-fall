@@ -1,5 +1,5 @@
 import { integer, primaryKey, real, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
-import type { LobbyRef, PersistedMatchResult } from "@dont-fall/shared";
+import { DEFAULT_ACCOUNT_ROLE, type LobbyRef, type PersistedMatchResult } from "@dont-fall/shared";
 
 /**
  * A Track (CONTEXT.md) is small and self-contained — an ordered list of
@@ -76,6 +76,12 @@ export const accounts = sqliteTable("accounts", {
   displayName: text("display_name").notNull(),
   avatarUrl: text("avatar_url"),
   /**
+   * This Account's role (shared's `AccountRole`) — `"player"` for everyone,
+   * `"admin"` reserved for future administration tooling. No writer yet:
+   * every Account is created a player (and pre-roles rows backfill to it).
+   */
+  role: text("role").notNull().default(DEFAULT_ACCOUNT_ROLE),
+  /**
    * This Account's friend code (M9 ticket 12) — the 6-char readable string
    * ADD BY CODE resolves. Nullable: generated lazily on first read, so
    * pre-Friends Accounts need no backfill.
@@ -86,11 +92,19 @@ export const accounts = sqliteTable("accounts", {
   xp: integer("xp").notNull().default(0),
   coins: integer("coins").notNull().default(0),
   /**
-   * The body's equipped skin id (M9 ticket 15) — a small int into shared's
-   * `BODY_SKIN_HUES`, validated on write. Default bean for everyone until
-   * they pick (and for every pre-skins Account via the backfill).
+   * The body's equipped color id (M9 ticket 15) — a small int into shared's
+   * `BODY_COLOR_HUES`, validated on write. Default bean for everyone until
+   * they pick (and for every pre-colors Account via the backfill). Shows
+   * only while `skin` is NULL (ADR 0091).
    */
-  bodySkin: integer("body_skin").notNull().default(0),
+  color: integer("color").notNull().default(0),
+  /**
+   * The equipped skin's id (ADR 0091) — one of shared's `SKINS`, validated
+   * (and checked against the Account's level) on write, exactly like `hat`.
+   * NULL for no skin, which is where every Account starts and what makes
+   * `color` the bean's look, so there is nothing to backfill.
+   */
+  skin: text("skin"),
   /**
    * The equipped hat's id (ADR 0083) — one of shared's `HATS`, validated
    * (and checked against the Account's level) on write. NULL for no hat,

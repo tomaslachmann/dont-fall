@@ -3,7 +3,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Module } from "./Module.js";
-import { resolveTrack, trackSpawn, type Track } from "./Track.js";
+import { resolveTrack } from "./resolveTrack.js";
+import { trackSpawn, type Track } from "./Track.js";
 import { ASSET_PLACEMENT_MODULES, assetFileName, loadAssetLibrary } from "./assetModules.js";
 import {
   BASE_RACE_SECTION_STARTS,
@@ -19,7 +20,8 @@ import {
   SWEEPER_SPEEDS,
 } from "./baseRace.js";
 import { invalidTrackCourseReason, startSegmentIndex } from "./Course.js";
-import { MAX_TIME_LIMIT_MS, TICK_RATE_HZ } from "../tuning.js";
+import { TICK_RATE_HZ } from "../tuning/clock.js";
+import { MAX_TIME_LIMIT_MS } from "../tuning/match.js";
 import { DEFAULT_CHARACTER_ID, RapierSimulation, initPhysics } from "../simulation/RapierSimulation.js";
 import { IDLE_INPUTS } from "../simulation/SimInputs.js";
 

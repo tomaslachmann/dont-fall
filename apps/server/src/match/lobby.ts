@@ -8,8 +8,17 @@ import {
   type ClientMessage,
   type RoundType,
 } from "@dont-fall/shared";
+import { truncateForCloseReason } from "../net/wire.js";
 import { fetchTrack, type FetchedTrack } from "../track/trackSource.js";
 import type { MatchRuntime } from "./matchRuntime.js";
+
+/**
+ * The close code a seat gets when the same Account signs in again somewhere
+ * else (ADR 0090) — its own, so the client can tell "you opened this Match
+ * twice" apart from a server that is full (4003) or a Track that would not
+ * load (4002).
+ */
+export const SEAT_TAKEN_OVER_CLOSE_CODE = 4004;
 
 /**
  * The Lobby's own messages (M4 ticket 07, ADR 0040) — nickname, Ready, Track
@@ -39,22 +48,29 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
     void rt.accounts.resolveAccount(token).then((resolved) => {
       if (resolved === null) return;
       const player = rt.lobbyPlayers.get(id);
-      if (player) {
-        player.accountId = resolved.accountId;
-        player.bodySkin = resolved.bodySkin;
-        player.hat = resolved.hat;
+      if (!player) return;
+      player.accountId = resolved.accountId;
+      // ADR 0097: the roster takes the Account's own name. Nothing else ever
+      // names a seat — a Player has had no nickname of their own to type
+      // since ADR 0052 made signing in mandatory.
+      if (resolved.displayName !== null) player.nickname = resolved.displayName.trim().slice(0, NICKNAME_MAX_LENGTH);
+      player.color = resolved.color;
+      player.skin = resolved.skin;
+      player.hat = resolved.hat;
+      // One seat per Account in a Match (ADR 0090): the newest sign-in keeps
+      // it, and whatever this Account was already sitting on is closed. Its
+      // own `'close'` handler does the rest — the seat, the Character and
+      // (mid-Round) the DNF are the ordinary disconnect's business, not this
+      // one's. Deliberately the *older* socket that goes: whoever just signed
+      // in is the one at the keyboard.
+      for (const [otherId, other] of rt.lobbyPlayers) {
+        if (otherId === id || other.accountId !== resolved.accountId) continue;
+        rt.sockets
+          .get(otherId)
+          ?.close(SEAT_TAKEN_OVER_CLOSE_CODE, truncateForCloseReason("this account joined the Match somewhere else"));
       }
+      rt.snapshotDirty = true;
     });
-    return true;
-  }
-
-  if (message.type === "setNickname" && typeof message.nickname === "string") {
-    // A nickname is cosmetic, never a start gate — any connected Player
-    // may send this at any time, in any phase. An empty result after
-    // trimming leaves the existing nickname alone rather than blanking it.
-    const trimmed = message.nickname.trim().slice(0, NICKNAME_MAX_LENGTH);
-    const player = rt.lobbyPlayers.get(id);
-    if (player && trimmed.length > 0) player.nickname = trimmed;
     return true;
   }
 

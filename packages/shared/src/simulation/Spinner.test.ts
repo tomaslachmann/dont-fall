@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { lengthVec3, vec3 } from "../math/vec3.js";
-import { SPINNER_KNOCKBACK_LIFT, SPINNER_KNOCKBACK_SCALE } from "../tuning.js";
+import { SPINNER_KNOCKBACK_LIFT, SPINNER_KNOCKBACK_SCALE } from "../tuning/world.js";
 import { spinnerAngleAt, spinnerKnockback, type SpinnerConfig } from "./Spinner.js";
 
 describe("spinnerKnockback", () => {

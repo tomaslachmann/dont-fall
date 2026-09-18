@@ -15,7 +15,7 @@ const ACCOUNT = {
   avatarUrl: null,
   xp: 1240,
   coins: 55,
-  bodySkin: 3,
+  color: 3,
 };
 
 const row = (matchId: string, placement: number, trackNames: string[], minutesAgo: number) => ({

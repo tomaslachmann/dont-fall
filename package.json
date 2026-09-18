@@ -10,9 +10,12 @@
     "check:assets": "tsx scripts/check-assets.ts",
     "convert:kaykit": "tsx scripts/convert-kaykit.ts",
     "convert:traps": "tsx scripts/convert-imagetostl.ts",
+    "convert:quarters": "tsx scripts/convert-quarters.ts",
     "convert:fan": "tsx scripts/convert-fan.ts",
     "fit:gates": "tsx scripts/fit-gates.ts",
     "bench:sim": "tsx scripts/bench-simulation.ts",
+    "publish:tracks": "tsx scripts/publish-tracks.ts",
+    "render:thumbnails": "tsx apps/track-builder/scripts/render-thumbnails.ts",
     "build:sounds": "tsx scripts/build-sounds.ts"
   },
   "devDependencies": {

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>DON'T FALL — authored Track thumbnail</title>
+    <style>
+      html, body { margin: 0; background: #000; }
+      #view { width: 1280px; height: 720px; }
+    </style>
+  </head>
+  <body>
+    <!-- Dev-only (ADR 0105): not a build input. `pnpm render:thumbnails` opens it once per authored Track. -->
+    <div id="view"></div>
+    <script type="module" src="/src/thumbnail/main.ts"></script>
+  </body>
+</html>

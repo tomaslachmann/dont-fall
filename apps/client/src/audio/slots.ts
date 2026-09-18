@@ -87,6 +87,12 @@ export const SOUND_SLOTS = {
   // No files of their own: a hold's grip is a quiet slap, a Bump a soft body thud (ticket 06).
   "character.grip": effect(variants("character/hit_land", 5), { gain: 0.45, priority: 4, pitchJitter: 0.08 }),
   "character.bump": effect(variants("character/land", 5), { gain: 0.6, priority: 3, pitchJitter: 0.1 }),
+  // A hold's, stand-ins too (ADR 0104): no files were sourced for it, and each
+  // of these is an existing sound pitched away from what it usually means.
+  "character.escape": effect(variants("character/jump", 5), { gain: 0.7, priority: 4, pitchJitter: 0.05 }),
+  "character.limp": effect(variants("character/knockdown", 5), { gain: 0.5, priority: 4 }),
+  "character.spin": effect(variants("segment/spin_pass", 1), { gain: 0.8, priority: 5, maxDistance: 35 }),
+  "character.hurl": effect(variants("character/hit_swing", 2), { priority: 6, maxDistance: 45 }),
 
   "surface.mud": effect(variants("surface/mud", 4), { gain: 0.5, priority: 1, maxDistance: 22, pitchJitter: 0.1 }),
   "surface.ice": effect(variants("surface/ice", 5), { gain: 0.45, priority: 1, maxDistance: 22, pitchJitter: 0.1 }),
@@ -160,6 +166,10 @@ export const STAGE_SOUND_SLOTS: readonly SoundSlot[] = [
   "character.grab",
   "character.grip",
   "character.bump",
+  "character.escape",
+  "character.limp",
+  "character.spin",
+  "character.hurl",
   "character.knockdown",
   "character.knockdown_hard",
   "character.getup",

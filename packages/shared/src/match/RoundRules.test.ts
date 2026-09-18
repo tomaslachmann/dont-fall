@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_SURVIVOR_TARGET, DEFAULT_TIME_LIMIT_MS } from "../tuning.js";
+import { DEFAULT_SURVIVOR_TARGET, DEFAULT_TIME_LIMIT_MS } from "../tuning/match.js";
 import { DEFAULT_ROUND_RULES, resolveRoundRules, type RoundRules } from "./RoundRules.js";
 
 const trackDefaults = (

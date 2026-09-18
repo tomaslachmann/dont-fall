@@ -53,7 +53,8 @@ export interface SaveRuntime {
   roundTrackIds: string[];
   matchNicknames: Map<string, string>;
   matchAccountIds: Map<string, string>;
-  matchBodySkins: Map<string, number>;
+  matchColors: Map<string, number>;
+  matchSkins: Map<string, string>;
   matchHats: Map<string, string>;
   totalFalls: Record<string, number>;
   matchResults: MatchRuntime["matchResults"];
@@ -68,6 +69,17 @@ export interface SaveRuntime {
  */
 export const saveMatchResultIfDue = (rt: SaveRuntime, thisTick: number): void => {
   if (rt.savingResults) return;
+  // A Match with not one played Round has nothing to persist — and a
+  // `results: []` the API would rightly refuse (found live 2026-09-18 as an
+  // endless 400 retry that also kept the server open, since the terminal
+  // close waits for a successful save). Mark it saved so `matchOver` raises
+  // and the close proceeds; the results page's fetch 404s, which is the
+  // truth: no results exist.
+  if (rt.roundResults.length === 0) {
+    rt.resultsSavedMatchId = rt.config.matchId;
+    rt.resultsSavedAtMs = Date.now();
+    return;
+  }
   if (rt.lastSaveAttemptTick !== null && thisTick - rt.lastSaveAttemptTick < SAVE_RETRY_TICKS) return;
   rt.savingResults = true;
   rt.lastSaveAttemptTick = thisTick;
@@ -77,7 +89,8 @@ export const saveMatchResultIfDue = (rt: SaveRuntime, thisTick: number): void =>
     roundTrackIds: [...rt.roundTrackIds],
     nicknames: Object.fromEntries(rt.matchNicknames),
     accountIds: Object.fromEntries(rt.matchAccountIds),
-    bodySkins: Object.fromEntries(rt.matchBodySkins),
+    colors: Object.fromEntries(rt.matchColors),
+    skins: Object.fromEntries(rt.matchSkins),
     hats: Object.fromEntries(rt.matchHats),
     totalFalls: { ...rt.totalFalls },
     endedAtMs: Date.now(),
@@ -238,25 +251,43 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
       if (nextMatch.phase === "RESULTS" && rt.match.phase === "ROUND_END") {
         precomputedState = rt.simulation.snapshot();
         const finished = buildRoundResult(precomputedState.characters, [...rt.lobbyPlayers.values()], rt.dnf);
-        rt.roundResults.push(finished);
-        // Parallel to `roundResults` above: this Round's Track id, read off
-        // the world it was actually raced on (`rt.fetched` still points at
-        // this Round — the next Round's draw assigns it later). The career
-        // history names its rows from this; the API resolves display names.
-        rt.roundTrackIds.push(rt.fetched.id);
+        // This Round's number for betting — the pool it opened as
+        // (`finishedRounds + 1`), whether or not the Round below turns out
+        // to have been played at all.
+        const roundNumber = rt.roundResults.length + 1;
+        // A Round every racer left mid-run (all rows DNF — found live
+        // 2026-09-18) is not a result: persisting its `rows: []` is exactly
+        // what the API's own validation refuses, which left the terminal
+        // save retrying a 400 forever and the server open for good. It is
+        // not counted, and it ends the Match (`matchAbandoned`): whoever was
+        // racing is gone, and whatever earlier Rounds were actually played
+        // still save through the terminal branch below.
+        const played = finished.rows.length > 0;
+        if (played) {
+          rt.roundResults.push(finished);
+          // Parallel to `roundResults` above: this Round's Track id, read off
+          // the world it was actually raced on (`rt.fetched` still points at
+          // this Round — the next Round's draw assigns it later). The career
+          // history names its rows from this; the API resolves display names.
+          rt.roundTrackIds.push(rt.fetched.id);
+        } else {
+          rt.matchAbandoned = true;
+        }
         // Ticket 14: the Round's winners settle its betting pool — placement
-        // 1 takes it, ties share it. Fire-and-forget: a down API strands the
-        // settlement in the server log, never the Match (the notifier swallows).
+        // 1 takes it, ties share it; an abandoned Round settles with no
+        // winners rather than leaving its pool open. Fire-and-forget: a down
+        // API strands the settlement in the server log, never the Match (the
+        // notifier swallows).
         void rt.betting.settleRound({
           matchId: rt.config.matchId,
-          round: rt.roundResults.length,
+          round: roundNumber,
           winnerIds: roundWinners(finished),
         });
         // ADR 0088: a Race Round's authed finishers report their run times
         // for Personal Bests — exact, from Ticks, and only in a Race (a
         // Survival Round stamps `finishTick` on every survivor at its end,
         // which is not a run). `roundStartTick` is still this Round's here.
-        if (!isSurvival) {
+        if (played && !isSurvival) {
           const runs = Object.entries(precomputedState.characters).flatMap(([id, character]) => {
             if (character.finishTick === null) return [];
             const accountId = rt.lobbyPlayers.get(id)?.accountId ?? rt.dnf.find((d) => d.id === id)?.accountId;
@@ -274,8 +305,10 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
         // who drops later has no row left to read at Match end. A second
         // `buildResults` next to `buildRoundResult`'s own above (pure and
         // cheap): nicknames and falls are display data, not score, so they
-        // stay out of `RoundResult` itself.
-        const detailed = buildResults(precomputedState.characters, [...rt.lobbyPlayers.values()], rt.dnf);
+        // stay out of `RoundResult` itself. An abandoned Round has only DNF
+        // rows, which this loop skips anyway — `played` just keeps the two
+        // reads consistent.
+        const detailed = played ? buildResults(precomputedState.characters, [...rt.lobbyPlayers.values()], rt.dnf) : [];
         for (const row of detailed) {
           if (row.dnf) continue;
           rt.matchNicknames.set(row.id, row.nickname);
@@ -284,9 +317,11 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
           // row is already gone), never off the display projection above.
           const accountId = rt.lobbyPlayers.get(row.id)?.accountId ?? rt.dnf.find((d) => d.id === row.id)?.accountId;
           if (accountId) rt.matchAccountIds.set(row.id, accountId);
-          // The equipped skin, from the same two places — the podium wears these.
-          const bodySkin = rt.lobbyPlayers.get(row.id)?.bodySkin ?? rt.dnf.find((d) => d.id === row.id)?.bodySkin;
-          if (typeof bodySkin === "number") rt.matchBodySkins.set(row.id, bodySkin);
+          // The equipped cosmetics, from the same two places — the podium wears these.
+          const color = rt.lobbyPlayers.get(row.id)?.color ?? rt.dnf.find((d) => d.id === row.id)?.color;
+          if (typeof color === "number") rt.matchColors.set(row.id, color);
+          const skin = rt.lobbyPlayers.get(row.id)?.skin ?? rt.dnf.find((d) => d.id === row.id)?.skin;
+          if (skin) rt.matchSkins.set(row.id, skin);
           const hat = rt.lobbyPlayers.get(row.id)?.hat ?? rt.dnf.find((d) => d.id === row.id)?.hat;
           if (hat) rt.matchHats.set(row.id, hat);
           rt.totalFalls[row.id] = (rt.totalFalls[row.id] ?? 0) + row.fallCount;

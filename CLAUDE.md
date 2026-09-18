@@ -188,6 +188,171 @@ id `base-race`, five-minute clock), a Fall Guys-style course of ten obstacle sec
 Checkpoints, proven walkable end to end by `baseRace.test.ts`. Whether its moving obstacles' timing
 plays fair is the user's live check.
 
+**Four authored Tracks, done on tests** — two Races and two Survival arenas, written as data beside
+the seed (`packages/shared/src/track/`, the user's ask on 2026-09-18: two of each, Fall Guys-style,
+branched, 100+ Segments everywhere and 300+ on a Race). **Spin Cycle** (`spin-cycle`, day, 393
+Segments, ~770 m, six minutes) is about things that turn: carousels you ride across, turntables you
+hop between, bars that sweep the deck you are standing on, and three forks. **Slip Stream**
+(`slip-stream`, sunset, 319 Segments, ~790 m) is about Surfaces: belts with you, against you and
+across you, ice, mud, inflatable decks, Springs, fans and launch gaps, also three forks. **Cog
+Arena** (`cog-arena`, night, 61) is a cog: a hub with six teeth on its rim (the Start, ice, mud,
+bounce and two belts outward), a bar through the middle, two orbiting the hub's ring, pistons and
+spiked wheels on the teeth, and lower outcrops in the notches. **Sky Rings** (`sky-rings`, sunset,
+129) is a wheel of seven rings joined by guarded spokes and outer bridges. Both arenas were rebuilt
+on 2026-09-18 so no piece sits inside another (**ADR 0106**, `track/trackOverlaps.ts`, held to zero
+by `survivalArenas.test.ts`); the races are not yet (53, 42 and the base race 8 overlapping pairs).
+
+They are **not** boot seeds — ADR 0078 leaves exactly one of those. `pnpm publish:tracks` publishes
+them to a running API the ordinary way (a new Revision per run, ADR 0032), so editing one in the
+builder is a real edit that nothing undoes. Placement helpers they share live in
+`track/authoring.ts`; `baseRace.ts` was deliberately left alone, being the one Track the API
+re-syncs on boot. The rest-pose rule every obstacle obeys: with its Motion stopped the course is
+still walkable, so a bar that sweeps a deck is never centred on it. `walkTrack.ts` is the shared
+scripted playtest — each Race is walked end to end three times, once per set of arms, so every arm
+is proven; each arena spawns a full lobby and holds it through a Countdown. **Waiting on the user:**
+everything a walk cannot judge — whether the obstacles' *timing* is fair, whether the forks trade
+fairly, and how all four look.
+
+**What playing them found, done on tests** — three fixes from the user's first run of those
+Tracks (2026-09-18), each measured against the real simulation before anything was changed:
+- **ADR 0094, every Surface costs or gives something.** Mud is now the harshest floor in the game
+  (`0.4` top speed, `0.7` jump), ice gets the milder speed penalty its `grip` alone never gave
+  (`0.8`, amending ADR 0035/0036's "slick Surfaces never touch top speed"), and a bounce deck is
+  the only Surface above 1 (`1.35`, roughly doubling a jump). A jump taken on a bounce deck now
+  takes the greater of the jump and the deck's own rebound — before, the take-off ran first and the
+  rebound branch never did, so arriving hard and jumping was *worse* than arriving hard and
+  standing there.
+- **ADR 0095, an Asset can be a Prop.** `segment.prop === true` turns a placed Asset into the
+  dynamic body `Prop` has been since M1 — it collides as its authored solid parts (ADR 0065), its
+  mass follows its own size, and the client draws it from the replicated pose exactly as it draws a
+  Moving Segment. Authored in the builder's SURFACE panel as BODY · PLACED / PROP. Used by every
+  cone and both arenas' rim bumpers; the base race is untouched.
+- **ADR 0096, a Surface sheet is cut to its deck.** Ice, mud and bounce read the Asset's own top
+  face (`deckPlanOf`) instead of the footprint rectangle, so a round deck stops wearing a square of
+  ice and a holed deck keeps its hole. Six call sites — three in the game scene, three in the
+  builder — now share two geometry builders in `packages/render`.
+
+**Waiting on the user:** whether the four Surface numbers play right, whether a shoved cone is fun
+(and whether the arenas still have bumpers after three minutes), and how the cut sheets look — no
+shader here has ever been rasterised in this repo.
+
+**The subtraction pass, done** — the user's call on 2026-09-18, after a measured audit
+(`docs/research/codebase-audit-2026-09.md`): every god file the M5 audit named has roughly doubled
+since, so before splitting anything, take things away. Tickets 1–3 of that audit's backlog: **605
+lines added, 2376 deleted** across 31 files, every suite green.
+
+Gone: `apps/client/prototypes/` (a 1692-line fan-airflow spike nothing imported); `ui/Vignette.tsx`
+and its stylesheet (the reaction-overlay vocabulary, unused by the app — M9 ticket 01, still open, is
+what would have wired it); 14 dead exports and the two things only they read; the Track builder's
+three duplicate texture loaders. `setNickname` is gone end to end (**ADR 0097**): the client had been
+round-tripping the Account's own display name back to a server that authenticates it, so
+`resolveAccount` now reads it off the same `/auth/me` it already called. 55 values un-exported —
+narrowed from the scan's 144 by two rules kept deliberately: a **type** in an exported signature is
+part of the API whether or not its name is imported, and a coherent documented vocabulary stays whole.
+Six `load*Texture` implementations became one `loadDeckTexture`, six clone-and-repeat blocks one
+`tileDeckTexture`, three `flatPlane` copies one `deckRectGeometry` — all in `packages/render`, which
+is where the builder's own comment said they belonged once such a package existed.
+
+Checked and kept on purpose: `ReclaimMessage` is a designed placeholder (ADR 0024, reconnection is
+on the roadmap), and per-module feel constants stay exported — that is the working agreement, not
+drift.
+
+**The god files, split** — the user's call on 2026-09-18, with their own comments on the audit
+naming what each file should become (**ADR 0098**). Three bootstraps that decided the order of
+things *and* did all of them now say only the order:
+
+| File | Before | After | Where the rest went |
+|---|---|---|---|
+| `apps/server/src/matchServer.ts` | 589 | 119 | `server/{config,ports,statusHttp,connections,seats,perf}.ts` |
+| `apps/client/src/game/index.ts` | 1533 | 313 | `game/{types,world,session,serverMessages,frameLoop}.ts` |
+| `CharacterController.beginCapsuleTick` | 350 | 37 | nine private methods beside it |
+
+`startServer`, `startGame` and `beginCapsuleTick` keep their exact signatures, and ADR 0008's
+client boundary (`GameConfig` in, `GameHandle` out) is untouched — it was already right. A
+connection's role is a `Seat` (`take`/`release`) rather than three `if`s; the eight per-tick Surface
+setters are one `applyGroundContext`; four hand-written JSON dedupe caches are one `ChangeGate`.
+
+**What the split found, which the scan could not**: a **Grab you could use once per life** —
+`grabEngaged` was pushed true by a hold and cleared by nothing but a knockdown, while the two
+values reset beside it every tick were, so every later press read as "let go" and did not even play
+the reach (fixed, with a regression test); a client Track swap that left the frame loop rendering an
+already-disposed Stage (it builds before it disposes now); twenty unused imports and five dead
+locals left behind when M13 ticket 01's `?perf=1` overlay was deleted — none of which the
+subtraction pass could have found, since its scan read *exported* symbols. **`noUnusedLocals` is
+on** now (28 cleared repo-wide to turn it on), so that class of drift cannot come back.
+
+**A Segment's Attachments are one registry** — audit ticket 7 (**ADR 0099**). `Segment` is its
+placement plus `SegmentAttachments` (Motion, Conveyor, ice/mud/bounce, a Spring's height, Prop,
+Start, Checkpoint — **Attachment** is new in `CONTEXT.md`), each described once in
+`track/Attachment.ts` by a mapped type the compiler holds complete. Publish validation, the
+builder's setter, the re-chain, Duplicate and both conflict rules read it instead of keeping their
+own lists. It found the re-chain's list had stopped at six: **bounce, a Spring's height and a Prop
+were dropped** from any Socket-chained Segment the moment anything re-placed it, including scaling
+it — fixed, with a test over every registry key.
+
+**`resolveTrack` is a per-Segment visitor** — audit ticket 5, in its own `track/resolveTrack.ts`
+(`Track.ts` 957 → 524). Each Segment is placed once, with its `SegmentBody` (`still` / `moving` /
+`prop` — the question six scattered guards and a hand copy in the client used to ask), and seven
+named families read it in a fixed order that keeps every shared output array's order. Its output
+for twelve Tracks is byte-identical before and after; the one deliberate change is that a belt on a
+Prop (refused at publish) no longer draws a strip.
+
+**`tuning.ts` is `tuning/`, by domain** — audit ticket 8, the user's layout (2026-09-18): feel in
+`clock`, `character`, `movement`, `surfaces`, `knockdown`, `fight`, `world`; configuration in
+`netcode`, `match`, `economy`, `authoring`, `hud`. Inside `packages/shared` code imports the file it
+means; `@dont-fall/shared` still exports all 181 through `tuning/index.ts`, so no app import moved.
+All 181 values proven identical before and after.
+
+**`createStage` says the order, not the work** — audit ticket 9, an extension of ADR 0098. `scene.ts`
+1303 → 602; the Track's visuals, the local Character (with its 205-line animation state machine),
+the Stage's sounds and the camera's spring arm are `render/stage/*.ts`. No suite here can
+rasterise, so it was proven instead: a scratch harness built real Stages headlessly and hashed the
+whole scene graph, camera and audio over 170 scripted frames on four Tracks — identical before and
+after.
+
+**A Character is four parts and an order** — audit ticket 10, **ADR 0101**, the last of the backlog.
+`CharacterController` (1838 → 632) keeps its public API and says only the order of a tick; the work
+is `simulation/character/{Movement,Surface,Interaction,Ragdoll}Controller.ts` over a shared `Capsule`.
+What a motion state does is a row in `MOTION_MODES`; the cross-Character half of Grab is
+`GrabHolds`, out of `RapierSimulation`. Shaped by what the user plans next — a random slip on mud,
+ice knocking you down on a crash at any speed, a reworked Grab — each of which now has one place
+to go (the ADR says where). Proven bit-identical by a scratch harness over six Tracks; comments
+moved verbatim, the user's call.
+
+**Ice crashes and mud slips, done on tests** — **ADR 0102**, the user's ask on 2026-09-18, with the
+numbers they picked. On **ice**, running into *anything* at 1 u/s or more knocks you down, other
+Characters included (the one run into still takes only its ordinary Bump). A crash counts on
+arrival: before the fix, ice's grip let velocity build up against a wall, and a Character pressing
+into a rail went down without moving, so a touch too slow to count now removes the velocity into it.
+A crash into a Character is asked of the world (`crashIntoCharacters`), because Rapier's controller
+stopped 3 of 50 capsule-on-capsule run-ups without reporting the contact. In **mud**, a Slip can
+happen three ways: 3% per second of running above half mud pace, a coin flip on any turn sharper than
+120°, and a hard landing, as on ice. All three come from the same predicted `slipRoll`. The walker
+slipped twice on Slip Stream's mudflat and still finished. **Waiting on the user:** how all of it
+plays, especially rails and bumpers on ice.
+
+**Mud is a heaped, bubbling mass, done on tests** — **ADR 0103**, the user's look on 2026-09-18
+("fall guys style, hrudkovité, bublat místo kaluží, bez zaoblených okrajů"). The mass in
+`packages/render/src/mud/` covers the piece out over its bevel so neighbours join. It is cut square
+where it stops, with a side that reaches down to where the 45° bevel meets the piece. The top is
+heaped into clods on a world grid, and bubbles swell, pop and leave a sinking ring in place of the
+puddles. The game drives the bubbles on sim time, the builder on its wall clock (`simmerMud`).
+**Waiting on the user:** every number in `mudLook.ts`, since no shader here has been rasterised.
+
+**Grab becomes a wrestle, done on tests** — **ADR 0104**, settled with the user in a question round on
+2026-09-18. A caught Character is `Held` (a new motion state): lifted at arm's length, its input
+dead except the **Struggle** (wiggling A/D fills an escape meter within a window). Losing it leaves
+it **Limp** for the grabber's carry window, with no get-up clock, then a fresh Ragdoll on release.
+The grabber walks and turns slower, can only carry, **Spin** (hold Hit) and **Hurl** (release,
+aimed along the tangent and pulled toward where it steers), and gets dizzy if it overspins. A swung
+or hurled body knocks others down, and **Grab immunity** stops chaining. There are HUDs for both
+sides (the `Grabbed.tsx` mock over the live game; a bottom-centre panel for the grabber). It
+supersedes ADR 0093's full-speed drag. Tickets 01–07 in `.scratch/grab-wrestle/issues/`, all done on
+tests; the ADR's "As built" says what building it settled (`isPlayerDrivenMotionState`,
+`syncOwnHold`, a Held body taking no Impact, `carriedPose`, the Hurl speeds measured). **Waiting on the
+user:** everything live — the numbers, A/D wiggling, the Limp pose (the `KO_B` clip held), both panels
+over a real Round, and the stand-in sounds.
+
 **M13 planned, the next goal** — Smooth on a weaker PC (`docs/milestones/M13.md`, research in
 `docs/research/gameplay-performance-culling-and-asset-loading.md`, **ADR 0079**). Settled with the
 user on 2026-09-17:
@@ -257,6 +422,24 @@ simulated another (Characters standing inside scenery, never falling), and every
 drew the previous Round's Track. The boot now follows the snapshot, and a Track mismatch reloads in any
 phase (`apps/client/src/game/roundTrack.ts`).
 
+**Every Track is known before a loader shows it, done on tests** — **ADR 0105**, the user's ask on
+2026-09-18 ("blank screens Loading Track… — nothing from our design"). Signing in holds on until the
+Track listing and every Thumbnail have loaded (`useTrackArt`, `lib/trackArt.ts`), and Thumbnail URLs
+are pinned to the listed `revision`. `<GameCanvas>` names the Round's Track from the route's own
+Lobby snapshot before the game has raised one. Every wait is composed from the mocks' pieces: the
+Round loader (the screenshot as the Stage's field, `ROUND n OF m`, the name, the mode, what it waits
+on) and the plain wait (the menu's Stage, the Logo, a status chip), replacing the old kit's
+`Screen`. The Lobby's Round thumbs and BetweenRounds' next-up card show the real picture. The four
+authored Tracks carry their own Thumbnails (`assets/<id>.jpg`, rendered from code-written cameras by
+`pnpm render:thumbnails` through the builder's dev-only `thumbnail.html`, sent by
+`pnpm publish:tracks`). **Waiting on the user:** the look of every wait, and republishing the four
+Tracks so their pictures reach the API.
+
+**One seat per Account, done on tests** — signing in on a second tab takes the seat and closes the
+first, with a reason the Screen shows (**ADR 0090**, the user's call on 2026-09-17). Found while
+playtesting: two tabs on one Account used to take two seats, two sets of Score, and one
+`match_participants` row between them.
+
 **Round HUD wired, done on tests** — `RaceHUD` and `SurvivalHud` over the live Round (**ADR 0088**, settled
 with the user on 2026-09-17), replacing the debug text block, which is deleted. What the mocks showed and
 the game lacked is built, not hidden: a live Race placement and Checkpoint Splits computed by the server
@@ -264,6 +447,45 @@ the game lacked is built, not hidden: a live Race placement and Checkpoint Split
 Track (the server reports each Race Round's finished runs to the API's `personal_bests`; the client reads
 `GET /tracks/:id/personal-best`), who is right behind you, and a Survival danger warning read off real
 state. **Waiting on the user:** the visual check of both HUDs over a live Round.
+
+**Twelve BLIP skins, done on tests** — the body is real art now (**ADR 0091**, the user's call on
+2026-09-17). `BLIP_Skins_v1_Pack` brought twelve authored 2048² body textures and a re-export of the
+rig (`BLIP_Character_Skins_v1.glb`, now served as `BLIP.glb`) that is the cosmetics-pack rig plus a
+UV channel and a textured body material — same nodes, joints, `Hat_Tuck` and 51 clips, verified
+against the GLB's own JSON chunk. The old texture-less rig cannot wear any of it. The placeholder
+hue tint kept its meaning and lost the word it was borrowing: `bodySkin` is now `color` everywhere
+(column renamed in place, `skin` arrives NULL), and a bean wears a Skin **or** a Colour, never a
+blend. A skin is a hat for the body — the same Account column, the same level gate on
+`PUT /auth/me/cosmetics`, the same Lobby roster, the same podium map, its own Character Select tab
+(COLOR / SKIN / HAT / EMOTES). One writer owns the body material, `render/skins.ts`'s `SkinCloset`,
+because two would race. **Waiting on the user:** every visual check — the twelve skins on the real
+rig, in a Round and on the Screens.
+
+**Jump, Dash and ice retuned, done on tests** — (**ADR 0092**, settled with the user on 2026-09-17
+after playing the base race: "dash a jump mají feel jako cheating"). The jump apexes at ~1.3 m
+instead of ~2.3 m; the Dash became a resource rather than a move — a 3 s burst, once every 15 s, at
+12 u/s instead of 15 — and both Round HUDs grew a recharge meter bottom-right, since a 15 s wait a
+Player can only discover by pressing the button is a worse move than a 1.5 s one. `dashEnvelope`
+grew a ramp-in so a 3× longer burst *holds* full speed instead of spending three seconds
+accelerating. Ice gained two per-Surface knobs in the shape `bounce` already established: a weak
+take-off (`jumpMultiplier`) and a landing that may put you down (`landingKnockdown`, above 11 u/s, a
+50% chance drawn deterministically per `(Character, Tick)` by `slipRoll` — `Math.random()` would
+make every coin flip a mispredicted correction). `baseRace.test.ts` still walks the course, so the
+seed stays completable. **Waiting on the user:** whether all three numbers actually play right.
+
+**Hit, knockdown and Grab, done on tests** — (**ADR 0093**, the user's call on 2026-09-17 after playing
+Survival). Nothing in the game let a Player actually put someone over the arena's edge: a Hit that
+staggered moved nobody (the impulse was only ever consumed by `beginRagdoll`), a knockdown reached
+only the ragdoll's chest and so travelled almost nowhere, and a Grab crawled at a tenth of walking
+pace with no way to let go. Now a Hit shoves (a decaying knockback contributor, since the ADR 0035
+pipeline erases anything written straight into `velocity`), a knockdown *another Player* caused
+throws the whole body, and a Grab drags at full speed, latches onto a knocked-down Character and
+releases on a second press. Two narrowings were found by failing tests, not foreseen: only a Hit
+shoves (a Bump applies an Impact every tick of contact, so shoving on the first touch pushed the
+target out of the harder contact that was coming — a Dash stopped knocking anyone down), and only
+Hit/Bump throw (throwing on every cause made the base race uncompletable — its spinning squares threw
+the walker off). **Waiting on the user:** how it all plays, and whether a three-second drag is too
+long to be on the receiving end of.
 
 **Also open: M9** — Design screens reconciliation (`.scratch/m9-design-screens-reconciliation/issues/`).
 A new design-screens drop (`apps/client/src/test_components/`) turned out to assume six systems
@@ -358,7 +580,8 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 - Read `CONTEXT.md` before naming anything. If you need a term it lacks, propose
   adding it rather than inventing a synonym.
 - Tuning values (jump height, dash cooldown, fall threshold, etc.) live as named
-  constants in `packages/shared`, not scattered magic numbers.
+  constants in `packages/shared/src/tuning/`, in the file for their domain — not
+  scattered magic numbers.
 - Keep `CONTEXT.md` a glossary only — no implementation detail, no decisions.
   Decisions go in `docs/adr/`.
 - When a change is hard to reverse, surprising without context, and the result of

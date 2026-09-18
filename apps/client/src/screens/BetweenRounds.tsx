@@ -7,6 +7,7 @@ import type { Skin } from '../ui/Avatar';
 import Chip from '../ui/Chip';
 import ReadySwitch from '../ui/ReadySwitch';
 import type { Feel } from '../tokens';
+import { TRACK_ART_LAYER, trackArtStyle } from '../lib/trackArt.js';
 import s from './BetweenRounds.module.css';
 
 export interface StandingRow {
@@ -30,6 +31,8 @@ export interface BetweenRoundsProps {
   nextNote?: string;
   /** Next Round's type chip (RACE/SURVIVAL) — absent while the pick is unrevealed, like the track itself. */
   nextMode?: string;
+  /** The next Track's screenshot (ADR 0085, 0105) — absent while unrevealed or when it has none; the stripes stay. */
+  nextThumbnail?: string;
   autoStart?: string;
   /** How many Players have confirmed Ready (the tally's numerator). */
   readyCount?: number;
@@ -52,7 +55,7 @@ const STANDINGS: StandingRow[] = [
 export default function BetweenRounds({
   round = 2, rounds = 3, justPlayed = 'JELLY GAUNTLET · SURVIVAL',
   standings = STANDINGS, nextTrack = 'THE BIG WOBBLE',
-  nextNote = 'Final round pays double. 25 points behind is nothing.', nextMode,
+  nextNote = 'Final round pays double. 25 points behind is nothing.', nextMode, nextThumbnail,
   autoStart = '0:14', readyCount = 0, onScoreboard, onLeave, onReady, feel,
 }: BetweenRoundsProps) {
   const [ready, setReady] = useState(false);
@@ -110,10 +113,14 @@ export default function BetweenRounds({
 
       <div className={s.next}>
         <span className={s.nextKicker}>NEXT UP · ROUND {round + 1}</span>
+        {/* The screenshot over the design's stripes: a picture that fails to load leaves the stripes. */}
         <span
           className={s.nextThumb}
-          style={{ background: 'repeating-linear-gradient(115deg,#FFC9E4 0 calc(var(--df-u) * .95),#FFB4DC calc(var(--df-u) * .95) calc(var(--df-u) * 1.9))' }}
-        >EXISTING TRACK<br />THUMBNAIL</span>
+          style={{
+            ...trackArtStyle(nextThumbnail),
+            background: `${TRACK_ART_LAYER}, repeating-linear-gradient(115deg,#FFC9E4 0 calc(var(--df-u) * .95),#FFB4DC calc(var(--df-u) * .95) calc(var(--df-u) * 1.9))`,
+          }}
+        >{nextThumbnail ? null : <>EXISTING TRACK<br />THUMBNAIL</>}</span>
         <span className={s.nextName}>{nextTrack}</span>
         {nextMode && (
         <span className={s.nextTags}>

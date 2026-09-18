@@ -12,7 +12,6 @@ import type * as THREE from "three";
 import { resolveEndpoints } from "../lib/socket/connection.js";
 import { parseAssetVisual } from "../render/assetVisuals.js";
 import { loadIceTexture } from "../render/iceOverlays.js";
-import { loadMudTexture } from "../render/mudOverlays.js";
 import { loadBounceTexture } from "../render/bounceSheets.js";
 
 /**
@@ -55,11 +54,6 @@ export interface TrackLoading {
    * ice (a dev warning, never an error) instead of rejecting.
    */
   loadIceTexture: () => Promise<THREE.Texture | null>;
-  /**
-   * The shared mud texture (ADR 0067) — the same session-cached,
-   * degrade-to-null contract as the ice texture above.
-   */
-  loadMudTexture: () => Promise<THREE.Texture | null>;
   /** The shared bounce sheet texture, cached per session; `null` when it could not be loaded (ADR 0070). */
   loadBounceTexture: () => Promise<THREE.Texture | null>;
   /** How many asset files this session downloaded, and their decoded bytes (M13 ticket 01). */
@@ -172,19 +166,6 @@ export const createTrackLoading = (host: string | undefined): TrackLoading => {
     return iceTexture;
   };
 
-  let mudTexture: THREE.Texture | null | undefined;
-  const loadMudTextureCached = async (): Promise<THREE.Texture | null> => {
-    if (mudTexture === undefined) {
-      try {
-        mudTexture = await loadMudTexture(download, assetsBaseUrl);
-      } catch (err) {
-        console.warn(`DON'T FALL: mud overlay unavailable: ${(err as Error).message}`);
-        mudTexture = null;
-      }
-    }
-    return mudTexture;
-  };
-
   let bounceTexture: THREE.Texture | null | undefined;
   const loadBounceTextureCached = async (): Promise<THREE.Texture | null> => {
     if (bounceTexture === undefined) {
@@ -203,7 +184,6 @@ export const createTrackLoading = (host: string | undefined): TrackLoading => {
     loadLibrary,
     loadVisualTemplates,
     loadIceTexture: loadIceTextureCached,
-    loadMudTexture: loadMudTextureCached,
     loadBounceTexture: loadBounceTextureCached,
     fetchStats: () => ({ ...fetched }),
   };

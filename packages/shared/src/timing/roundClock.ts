@@ -1,4 +1,4 @@
-import { TICK_MS } from "../tuning.js";
+import { TICK_MS } from "../tuning/clock.js";
 
 /**
  * How much of a Round's Time Limit is left after `ticksElapsed` Ticks

@@ -27,7 +27,6 @@ const silentActions = (): CharacterActions => ({
   getUp: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
   death: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
   grabReach: null,
-  grabPull: null,
   grabHold: null,
   grabDropOut: null,
   struggleHeld: null,

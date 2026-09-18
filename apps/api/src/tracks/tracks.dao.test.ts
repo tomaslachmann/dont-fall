@@ -440,6 +440,13 @@ describe("a Revision's Thumbnail (ADR 0085)", () => {
     expect(listTracks(db, MODULE_LIBRARY).find((t) => t.id === id)).toMatchObject({ hasThumbnail: true });
   });
 
+  it("names the latest Revision on the listing, so a client can pin the picture's URL (ADR 0105)", () => {
+    saveTrack(db, { id: "pinned", track: SAMPLE_TRACK, thumbnail: THUMB });
+    saveTrack(db, { id: "pinned", track: SAMPLE_TRACK, thumbnail: THUMB });
+
+    expect(listTracks(db, MODULE_LIBRARY).find((t) => t.id === "pinned")).toMatchObject({ revision: 2 });
+  });
+
   it("migrates a table from before the column — old rows read thumbnail-less and keep everything", () => {
     const legacyPath = join(dir, "pre-thumbnail.sqlite");
     const legacy = new Database(legacyPath);

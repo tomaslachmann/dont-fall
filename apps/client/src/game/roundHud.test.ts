@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { CRITICAL_TIME_LEFT_MS, HUD_THREAT_RADIUS_M, type RoundRules } from "@dont-fall/shared";
+import {
+  CRITICAL_TIME_LEFT_MS,
+  DASH_COOLDOWN_MS,
+  DEFAULT_BINDINGS,
+  GRAB_STRUGGLE_WINDOW_TICKS,
+  HUD_THREAT_RADIUS_M,
+  SPIN_OVERSPIN_MS,
+  SPIN_WINDUP_MS,
+  type RoundRules,
+} from "@dont-fall/shared";
 import { buildRoundHud, type HudCharacter, type RoundHudInput } from "./roundHud.js";
 
 const RACE: RoundRules = { timeLimitMs: 300_000, fallBehavior: "respawn", survivorTarget: 1 };
@@ -11,6 +20,12 @@ const character = (overrides: Partial<HudCharacter> = {}): HudCharacter => ({
   finishTick: null,
   eliminated: false,
   eliminatedTick: null,
+  dashCooldownMs: 0,
+  grabbingId: null,
+  heldByGrabberId: null,
+  heldPhase: null,
+  holdEndsTick: null,
+  escapeProgress: 0,
   ...overrides,
 });
 
@@ -23,6 +38,9 @@ const input = (overrides: Partial<RoundHudInput> = {}): RoundHudInput => ({
   liveRace: null,
   checkpoints: 7,
   nicknameOf: (id) => id.toUpperCase(),
+  tick: 1000,
+  predicted: { escapeProgress: 0, spinMs: 0 },
+  bindings: DEFAULT_BINDINGS,
   ...overrides,
 });
 
@@ -114,5 +132,86 @@ describe("buildRoundHud", () => {
       });
       expect(hud).toMatchObject({ remaining: 2, alive: ["a", "b"], youAlive: false, lastOut: "ME" });
     });
+  });
+
+  describe("the Dash meter (ADR 0092)", () => {
+    it("reads your own recharge, on both Round types", () => {
+      const halfway = { me: character({ dashCooldownMs: DASH_COOLDOWN_MS / 2 }) };
+      expect(buildRoundHud(input({ characters: halfway }))).toMatchObject({ kind: "race", dashCharge: 0.5 });
+      expect(buildRoundHud(input({ roundRules: SURVIVAL, characters: halfway }))).toMatchObject({
+        kind: "survival",
+        dashCharge: 0.5,
+      });
+    });
+
+    it("rounds the bar to twentieths, so a fifteen-second wait raises React twenty times and not 450", () => {
+      // 1/3 of the way through the cooldown — two neighbouring milliseconds
+      // must land on the same drawn value, or the JSON dedupe never dedupes.
+      const at = (ms: number) => buildRoundHud(input({ characters: { me: character({ dashCooldownMs: ms }) } }))!;
+      expect(at(DASH_COOLDOWN_MS / 3).dashCharge).toBe(at(DASH_COOLDOWN_MS / 3 + 1).dashCharge);
+      expect(at(DASH_COOLDOWN_MS / 3).dashCharge).toBe(0.65);
+    });
+
+    it("says ready only when the cooldown is actually spent — never off the rounded bar", () => {
+      // A hair of cooldown left rounds the bar up to a full 1, and must still
+      // not promise a Dash the simulation would refuse.
+      const nearly = buildRoundHud(input({ characters: { me: character({ dashCooldownMs: 1 }) } }))!;
+      expect(nearly.dashCharge).toBe(1);
+      expect(nearly.dashReady).toBe(false);
+      expect(buildRoundHud(input({ characters: { me: character({ dashCooldownMs: 0 }) } }))!.dashReady).toBe(true);
+    });
+  });
+});
+
+describe("buildRoundHud — a hold (ADR 0104)", () => {
+  it("is no hold at all while nobody holds anybody", () => {
+    expect(buildRoundHud(input())!.hold).toBeNull();
+  });
+
+  it("tells the one held who has it, the meter from its own prediction, and the keys it has bound", () => {
+    const hud = buildRoundHud(
+      input({
+        characters: {
+          me: character({ heldByGrabberId: "floppo", heldPhase: "struggle", holdEndsTick: 1000 + GRAB_STRUGGLE_WINDOW_TICKS / 2, escapeProgress: 0.1 }),
+          floppo: character({ grabbingId: "me" }),
+        },
+        predicted: { escapeProgress: 0.62, spinMs: 0 },
+        bindings: { ...DEFAULT_BINDINGS, left: ["KeyQ"], right: ["ArrowRight"] },
+      }),
+    )!;
+    expect(hud.hold).toEqual({ role: "held", by: "FLOPPO", phase: "struggle", escape: 0.6, wiggleKeys: ["Q", "Right"] });
+  });
+
+  it("tells the one holding whom, how close they are to getting free, its own wind-up, and the keys to Spin and let go", () => {
+    const hud = buildRoundHud(
+      input({
+        characters: {
+          me: character({ grabbingId: "floppo" }),
+          floppo: character({ heldByGrabberId: "me", heldPhase: "limp", holdEndsTick: 1000 + 44, escapeProgress: 0.33 }), // 1.467 s left
+        },
+        predicted: { escapeProgress: 0, spinMs: SPIN_WINDUP_MS + SPIN_OVERSPIN_MS / 2 },
+      }),
+    )!;
+    expect(hud.hold).toEqual({
+      role: "grabbing",
+      holding: "FLOPPO",
+      phase: "limp",
+      escape: 0.35,
+      timeLeftMs: 1400,
+      windup: 1,
+      overspin: 0.5,
+      spinKey: "F",
+      letGoKey: "G",
+    });
+  });
+
+  it("shows a dash for an action the Player has unbound, rather than a key that does nothing", () => {
+    const hud = buildRoundHud(
+      input({
+        characters: { me: character({ grabbingId: "x" }), x: character({ heldByGrabberId: "me", heldPhase: "struggle", holdEndsTick: 1010 }) },
+        bindings: { ...DEFAULT_BINDINGS, hit: [] },
+      }),
+    )!;
+    expect(hud.hold).toMatchObject({ spinKey: "—", letGoKey: "G" });
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import type { CSSProperties, MouseEvent, ReactNode } from 'react';
 import type { UiSound } from '../audio/uiSounds';
 import s from './JellyButton.module.css';

@@ -2,7 +2,9 @@ import RAPIER from "@dimforge/rapier3d-compat";
 import type { Box } from "../math/box.js";
 import { conjugateQuat, mulQuat } from "../math/quat.js";
 import { addVec3, rotateVec3ByQuat, scaleVec3, subVec3, type Quat, type Vec3 } from "../math/vec3.js";
-import { IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, MOVING_SEGMENT_IMPACT_SCALE, TICK_DT } from "../tuning.js";
+import { TICK_DT } from "../tuning/clock.js";
+import { IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN } from "../tuning/knockdown.js";
+import { MOVING_SEGMENT_IMPACT_SCALE } from "../tuning/world.js";
 import { motionPose, type MotionPose, type SegmentMotion } from "../track/Motion.js";
 import type { SolidShape } from "../track/asset.js";
 import type { Hazard } from "../track/Module.js";
@@ -35,8 +37,8 @@ export interface MovingSegmentConfig {
   solids: { shape: SolidShape; position: Vec3; rotation: Quat; surface: SurfaceId; hazard?: Hazard; conveyor?: Vec3 }[];
 }
 
-/** One solid part as a Rapier collider description, or `null` for a degenerate hull. */
-const solidColliderDesc = (shape: SolidShape): RAPIER.ColliderDesc | null => {
+/** One solid part as a Rapier collider description, or `null` for a degenerate hull. Shared with `Prop` (ADR 0095), which builds the same shapes on a dynamic body. */
+export const solidColliderDesc = (shape: SolidShape): RAPIER.ColliderDesc | null => {
   switch (shape.type) {
     case "ball":
       return RAPIER.ColliderDesc.ball(shape.radius);

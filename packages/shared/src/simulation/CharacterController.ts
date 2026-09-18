@@ -1,70 +1,28 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { addVec3, dotVec3, lengthVec3, lerpVec3, normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
+import { wrapAngle } from "../math/angle.js";
+import { dotVec3, lengthVec3, normalizeVec3, scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
 import {
   CAPSULE_HALF_HEIGHT,
   CAPSULE_RADIUS,
   CHARACTER_CONTROLLER_OFFSET,
-  GETUP_CAPSULE_LIFT,
-  GETUP_TICKS,
-  GRAVITY_Y,
-  GROUND_SNAP_DISTANCE,
-  GROUND_STICK_SPEED,
-  IMPACT_RAGDOLL_MIN,
-  IMPACT_STAGGER_MIN,
-  MOVE_ACCEL_FACTOR,
-  MOVE_FRICTION_FACTOR,
-  RAGDOLL_IMPACT_VELOCITY_SCALE,
-  RAGDOLL_SETTLE_SPEED,
-  RESPAWN_WOBBLE_TICKS,
-  SLIDE_STEER_BLEND,
-  SURFACE_GROUND_NORMAL_MIN_Y,
-  TICK_DT,
-  WALK_SPEED,
-  WALKABLE_SLOPE_MAX_ANGLE,
-  WALL_IMPACT_LIFT_RATIO,
-  WALL_IMPACT_MIN_SPEED,
-  WALL_IMPACT_SCALE,
+  CHARACTER_TOUCH_MARGIN,
+  FACING_TURN_SPEED_MAX,
   WALL_NORMAL_MAX_Y,
-} from "../tuning.js";
-import type { ReconcileBase, RagdollCause } from "../state/SimState.js";
-import type { SurfaceBounceConfig } from "../track/Surface.js";
-import { CharacterStateMachine, isDownMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
-import { CHARACTER_GROUPS, GROUP_CHARACTER } from "./collisionGroups.js";
-import { DashController } from "./DashController.js";
-import { GrabController } from "./GrabController.js";
-import { HitController } from "./HitController.js";
-import { accelerateVelocity, applyVolumeForce, JumpController, slopeSpeedMultiplier } from "./movementVerbs.js";
-import { Ragdoll } from "./Ragdoll.js";
-import { blendGettingUpBones, type BoneSnapshot } from "./ragdollSkeleton.js";
+} from "../tuning/character.js";
+import { TICK_DT } from "../tuning/clock.js";
+import { GRAB_CARRY_DISTANCE, GRAB_CARRY_LIFT, GRAB_TURN_SPEED_MULTIPLIER } from "../tuning/fight.js";
+import { IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, STAGGER_TICKS, WALL_IMPACT_LIFT_RATIO, WALL_IMPACT_MIN_SPEED, WALL_IMPACT_SCALE } from "../tuning/knockdown.js";
+import { SHOVING_IMPACT_CAUSES, type HeldPhase, type ReconcileBase, type RagdollCause } from "../state/SimState.js";
+import { createCapsule, type Capsule } from "./character/Capsule.js";
+import { InteractionController, type HoldRole, type Hurl } from "./character/InteractionController.js";
+import { MovementController, type Ride } from "./character/MovementController.js";
+import { RagdollController } from "./character/RagdollController.js";
+import { SurfaceController, type GroundContact, type GroundContext } from "./character/SurfaceController.js";
+import { CharacterStateMachine, isDownMotionState, type CharacterMotionState, type MotionMode } from "./CharacterStateMachine.js";
+import { CHARACTER_GROUPS, collisionGroups, GROUP_CHARACTER } from "./collisionGroups.js";
+import type { BoneSnapshot } from "./ragdollSkeleton.js";
 import type { SimInputs } from "./SimInputs.js";
-
-/** A ground normal's Y component below this is steeper than {@link WALKABLE_SLOPE_MAX_ANGLE} — the walkable/Sliding boundary, ticket 03. */
-const WALKABLE_NORMAL_MIN_Y = Math.cos(WALKABLE_SLOPE_MAX_ANGLE);
-
-const DOWN = vec3(0, -1, 0);
-
-/** Where `walkableUnderfoot` casts from, around the capsule's axis (ADR 0084): the centre and a radius out along each axis. */
-const FOOTPRINT_PROBE_OFFSETS: readonly (readonly [number, number])[] = [
-  [0, 0],
-  [CAPSULE_RADIUS, 0],
-  [-CAPSULE_RADIUS, 0],
-  [0, CAPSULE_RADIUS],
-  [0, -CAPSULE_RADIUS],
-];
-
-/** A ground query's filter: another Character is never the floor. */
-const isNotCharacter = (collider: RAPIER.Collider): boolean =>
-  ((collider.collisionGroups() >>> 16) & GROUP_CHARACTER) === 0;
-
-interface PendingImpact {
-  magnitude: number;
-  impulse: Vec3;
-}
-
-interface PendingRespawn {
-  point: Vec3;
-  fallCount: number;
-}
+import { forwardOf, spinAngleAt } from "./spin.js";
 
 /**
  * Reported once per Obstacle/Prop/other-Character the Character's movement
@@ -109,16 +67,18 @@ export const wallImpactKnockback = (normal: Vec3, closingSpeed: number): Vec3 =>
   return scaleVec3(away, Math.max(IMPACT_RAGDOLL_MIN, closingSpeed * WALL_IMPACT_SCALE));
 };
 
+/** A query that sees other Characters' capsules and nothing else. */
+const CHARACTERS_ONLY = collisionGroups(GROUP_CHARACTER, GROUP_CHARACTER);
+
+/** Whether `collider` is anything but a Character's capsule. */
+const isNotCharacter = (collider: RAPIER.Collider): boolean =>
+  ((collider.collisionGroups() >>> 16) & GROUP_CHARACTER) === 0;
+
 /**
- * A Ride for one tick (ADR 0061), handed to the Character by `RapierSimulation`
- * before {@link CharacterController.beginTick}: how far the Moving Segment under
- * it carries its capsule centre this tick, and that Segment's colliders — which
- * the carry sweep ignores, so being carried never collides with the carrier.
+ * The most a grabber's facing may turn in one tick (ADR 0104): the body's top
+ * turn speed (ADR 0085), slowed by what it is carrying.
  */
-export interface Ride {
-  displacement: Vec3;
-  ignoreColliders: ReadonlySet<number>;
-}
+const CARRY_TURN_STEP = FACING_TURN_SPEED_MAX * GRAB_TURN_SPEED_MULTIPLIER * TICK_DT;
 
 /** What {@link CharacterController.snapshot} reports back to `RapierSimulation` each tick. */
 export interface CharacterState {
@@ -151,8 +111,18 @@ export interface CharacterState {
   grabCooldownMs: number;
   /** The id of whoever this Character is currently grabbing, or `null` (M6.1) — drives the renderer's own arm-reach pose. `null` for the HELD side of a hold too; only the grabber's own row is ever non-null. */
   grabbingId: string | null;
-  /** The id of whoever is currently grabbing this Character, or `null` (M6.1) — the reverse of {@link grabbingId}. Lets a client tell "am I involved in a hold at all, as either role," which is what locks this Character's own rendered facing/orientation to the server's frozen value instead of steering it from movement input. */
+  /** The id of whoever is currently grabbing this Character, or `null` (M6.1) — the reverse of {@link grabbingId}. Lets a client tell "am I involved in a hold at all, as either role." */
   heldByGrabberId: string | null;
+  /** Which part of its hold this Character is in, or `null` while nobody holds it (ADR 0104). */
+  heldPhase: HeldPhase | null;
+  /** The Tick the current part of this Character's hold runs out, or `null` (ADR 0104). */
+  holdEndsTick: number | null;
+  /** The Struggle's escape meter, 0..1 (ADR 0104). */
+  escapeProgress: number;
+  /** What the next move input has to reverse to count as a wiggle (ADR 0104). */
+  lastWiggleYaw: number | null;
+  /** How long this Character has been Spinning someone, in ms (ADR 0104). */
+  spinMs: number;
   /** Current horizontal speed (units/s) contributed by an active Dash burst; 0 when not dashing. Drives the speed-lines effect directly — no noisy derivation from position needed. */
   dashSpeed: number;
   /** Rises every time a launch pad fires (M3.7 ticket 02). */
@@ -170,13 +140,24 @@ export interface CharacterState {
  * this class's {@link tick} once per simulation tick — Fall itself is reported
  * in via {@link fall} rather than detected here, since it depends on the
  * kill-plane the sim owns.
+ *
+ * Since the 2026-09 audit's ticket 10 (ADR 0101) this class says the order of
+ * a tick and nothing else. The work is in four parts under `character/`, each
+ * the one place its kind of change goes:
+ *
+ * - {@link MovementController} — velocity, jump, Dash, the two velocity
+ *   models, what rides on top of them, the Ride, the sweep, landing;
+ * - {@link SurfaceController} — what is underfoot and what it does, including
+ *   the hazards a Surface can have (a landing that takes your feet, the speed
+ *   a crash knocks you down at, a run or a turn that does — ADR 0102);
+ * - {@link InteractionController} — Hit and Grab, from this Character's side;
+ * - {@link RagdollController} — every down episode, and the Respawn.
+ *
+ * What each motion state *does* is read off its `MotionMode`
+ * (`CharacterStateMachine`'s `MOTION_MODES`), never by asking which state it is.
  */
 export class CharacterController {
-  private readonly world: RAPIER.World;
-  private readonly rapierController: RAPIER.KinematicCharacterController;
-  private readonly body: RAPIER.RigidBody;
-  private readonly collider: RAPIER.Collider;
-  private readonly ragdoll: Ragdoll;
+  private readonly capsule: Capsule;
   private readonly onCollision: CollisionListener | undefined;
   /**
    * Whether this Character decides for itself when a knockdown ends (the
@@ -187,174 +168,8 @@ export class CharacterController {
   private readonly authoritative: boolean;
 
   private tickCount = 0;
-  /** Capsule velocity (units/s): `x`/`z` set fresh each Controlled tick, `y` integrated. */
-  private velocity: Vec3 = vec3();
-  private grounded = false;
-  /**
-   * The floor collider this tick's ground contact was against, if any
-   * (ticket 01/ADR 0036) — the "floor collider the character controller
-   * already reports" `RapierSimulation` resolves a Surface from, without a
-   * new scene query. Set in {@link resolveCollisions} from this tick's own
-   * `computeColliderMovement` collisions (the same list the dash-into-wall
-   * check already walks), never from a separate raycast. `undefined`
-   * whenever not grounded, so `RapierSimulation` reads the default Surface
-   * in the air exactly like it would with no ground contact at all.
-   */
-  private currentGroundColliderHandle: number | undefined;
-  /**
-   * This tick's ground-contact surface normal, if any (ticket 03, M3.6) —
-   * what decides `tooSteepToWalk` (below) and, while `Sliding`, the
-   * direction gravity is projected along. Updated in {@link resolveCollisions}
-   * with exactly the same "only update on a fresh hit, clear only once
-   * ungrounded" stickiness as {@link currentGroundColliderHandle}, for the
-   * same reason (code review, ticket 02): Rapier's own snap-to-ground can
-   * make `computedGrounded()` true via a correction that never appears in
-   * `computedCollision()`'s list, and this is exactly the steep/fast-descent
-   * case that happens on.
-   */
-  private currentGroundNormal: Vec3 | undefined;
-  /**
-   * Multiplies `WALK_SPEED` this tick (ticket 01) — set from outside by
-   * `RapierSimulation` once it's resolved {@link groundColliderHandle}
-   * against the Track's Surfaces, one tick behind (the same lag `grounded`
-   * itself already has relative to `RapierSimulation`'s per-tick bookkeeping).
-   * 1 (no effect) until anything ever calls {@link setSurfaceTopSpeedMultiplier}.
-   */
-  private surfaceTopSpeedMultiplier = 1;
-  /**
-   * Multiplies both `MOVE_ACCEL_FACTOR` and `MOVE_FRICTION_FACTOR` this tick
-   * (ticket 06) — set from outside by `RapierSimulation` alongside
-   * {@link surfaceTopSpeedMultiplier}, from the same resolved Surface, with
-   * the same one-tick lag. 1 (full grip, today's saturating default) until
-   * anything ever calls {@link setSurfaceGrip}.
-   */
-  private surfaceGrip = 1;
-  /**
-   * Monotonic count of Respawn teleports (ADR 0023 / Q9). The renderer holds the
-   * last value it saw and snaps (no interpolation) when it changes — robust
-   * against the interpolation buffer skipping the exact respawn tick, which a
-   * one-tick boolean was not.
-   */
-  private respawnCount = 0;
-  /** Rises on every entry to `Ragdoll` (ADR 0023). */
-  private ragdollEpoch = 0;
-  /** Cause latched on the last Ragdoll entry; `pendingCause` is what the next entry will latch. */
-  private ragdollCause: RagdollCause = "Fall";
-  private pendingCause: RagdollCause = "Fall";
-  /** Rises every time this Character's own Hit swing fires (M6 ticket 03) — the Epoch idiom, same as {@link ragdollEpoch}. */
-  private hitEpoch = 0;
-  /** See {@link CharacterState.grabEpoch} — the Grab's own counterpart of {@link hitEpoch}. */
-  private grabEpoch = 0;
-  /** Rises every time this Character is on the receiving end of a landed Hit (M6 ticket 03) — set by `RapierSimulation` via {@link registerHitReceived}. */
-  private hitReactEpoch = 0;
   /** Set by {@link beginTick}, read by {@link endTick} once the shared `world.step()` has run. */
   private tickingRagdoll = false;
-
-  private readonly machine = new CharacterStateMachine();
-  private readonly jump = new JumpController();
-  private readonly dash = new DashController();
-  /** Hit's cooldown (M6 ticket 03) — see {@link HitController}. */
-  private readonly hit = new HitController();
-  /**
-   * Whether a swing actually fired THIS tick — set fresh at the top of every
-   * {@link beginTick} (never stale across a tick where {@link beginCapsuleTick}
-   * doesn't run, e.g. pure Ragdoll) and read once by `RapierSimulation`,
-   * right after every Character's `beginTick` has run and before
-   * `world.step()`, to resolve who (if anyone) it actually landed on — a
-   * cross-Character question only `RapierSimulation` can answer.
-   */
-  private pendingHitFired = false;
-  /** The charge fraction (0..1) a swing fired with THIS tick; 0 whenever {@link pendingHitFired} is false (M6.1 hold-to-charge). */
-  private pendingHitChargeFraction = 0;
-  /** Grab's cooldown (M6 ticket 04) — see {@link GrabController}. */
-  private readonly grab = new GrabController();
-  /** Same "fresh this tick only" treatment as {@link pendingHitFired}, for a grab attempt instead of a swing. */
-  private pendingGrabFired = false;
-  private grabHeldLastTick = false;
-  /**
-   * Multiplies `WALK_SPEED` this tick, and independently gates Dash outright,
-   * while this Character is engaged in a Grab hold — either role (M6 ticket
-   * 04). Set from outside by `RapierSimulation`, which alone knows the
-   * cross-Character hold relationship; 1 (no effect, not engaged) until
-   * anything ever calls {@link setGrabSpeedMultiplier}.
-   */
-  private grabSpeedMultiplier = 1;
-  /** Who this Character is currently grabbing, or `null` (M6.1) — see {@link CharacterState.grabbingId}. Set from outside by `RapierSimulation`, which alone knows the cross-Character hold relationship. */
-  private grabbingId: string | null = null;
-  /** Who is currently grabbing this Character, or `null` (M6.1) — the reverse of {@link grabbingId}, see {@link CharacterState.heldByGrabberId}. */
-  private heldByGrabberId: string | null = null;
-  /**
-   * Current horizontal speed (units/s) contributed by an active Dash burst —
-   * the exact `dashEnvelope` curve already driving the physics, exposed
-   * directly so the renderer's speed-lines effect doesn't have to derive it
-   * (noisily) from position deltas. 0 whenever no burst is active.
-   */
-  private dashSpeed = 0;
-  /**
-   * This tick's belt flow, if the ground collider runs one (ADR 0064) — set
-   * from outside by `RapierSimulation` alongside {@link surfaceGrip}, from
-   * the same resolved ground contact, with the same one-tick lag. Joins the
-   * wish velocity `walk` below outright (ADR 0035's "one contributor" model):
-   * grip, slope scaling and the Sliding steer blend all apply to it for
-   * free, and stepping off the belt ends it the same tick. Zero (still
-   * floor, or mid-air) until anything ever calls {@link setConveyorVelocity}.
-   */
-  private conveyorVelocity: Vec3 = { x: 0, y: 0, z: 0 };
-  /**
-   * This tick's Surface-driven bounce config, if any (M3.7 ticket 02) — set
-   * from outside by `RapierSimulation` alongside {@link surfaceTopSpeedMultiplier}/
-   * {@link surfaceGrip}, from the same resolved Surface, with the same
-   * one-tick lag. `undefined` (no bounce, the ordinary ground-stick clamp)
-   * until anything ever calls {@link setSurfaceBounce}.
-   */
-  private surfaceBounce: SurfaceBounceConfig | undefined;
-  /**
-   * This tick's active Volume, if any (M3.7 ticket 04, ADR 0036) — set from
-   * outside by `RapierSimulation`, resolved from the Character's position
-   * with the same one-tick lag `surfaceBounce`/`surfaceGrip` themselves have
-   * (containment is checked *after* this tick's own move, for next tick's
-   * force). `undefined` (no Volume contains this Character) most of the
-   * time, until anything ever calls {@link setActiveVolume}. Deliberately
-   * just `{ force, maxInducedSpeed }`, not the full `VolumeConfig` — this
-   * Character never needs to know its own `bounds`/`priority` back.
-   */
-  private activeVolume: { force: Vec3; maxInducedSpeed: number } | undefined;
-  /**
-   * This tick's shared Grab-tether wish velocity, if any (M6.1, revised from
-   * an earlier spring-pull design after live feedback: a hold reads as a
-   * genuinely *rigid* connection, not a spring) — set from outside by
-   * `RapierSimulation.updateGrabs` to the SAME vector for both participants,
-   * the sum of each one's own wish-velocity, so a Character that inputs
-   * nothing is dragged exactly as fast as the other pulls. Replaces this
-   * Character's own `slopedWalk` contribution outright in
-   * {@link beginCapsuleTick} rather than adding to it — this Character's own
-   * `moveDirection` already fed into computing the shared wish, so re-adding
-   * it here would double-count it. `undefined` (not engaged) until anything
-   * ever calls {@link setGrabTetherWish}.
-   */
-  private grabTetherWish: Vec3 | undefined;
-  /**
-   * The true peak fall speed (units/s, always ≥ 0) since velocity.y was last
-   * non-negative — see the gravity-integration line in {@link beginCapsuleTick}
-   * for the full reasoning. Consumed (and reset) by a genuine bounce;
-   * otherwise reset the instant velocity.y next becomes non-negative (a
-   * jump/bounce/launch apex).
-   */
-  private airbornePeakFallSpeed = 0;
-  /** Rises every time a launch pad fires (M3.7 ticket 02) — the Epoch idiom, same as {@link ragdollEpoch}. */
-  private launchPadEpoch = 0;
-  /**
-   * Set by {@link triggerLaunchPad}, consumed at the top of the very next
-   * {@link beginCapsuleTick} — unlike a speed pad's boost (which only ever
-   * touches the horizontal wish velocity a Surface/Sliding model still gets
-   * to shape), a launch pad's SET overrides the tick's ENTIRE velocity
-   * outright, after every other contributor has already been computed —
-   * Quake's jump-pad model taken further: "your incoming speed is
-   * discarded" applies to gravity and Sliding too, not just walk/Dash.
-   */
-  private pendingLaunchVelocity: Vec3 | undefined;
-  private jumpHeldLastTick = false;
-  private dashHeldLastTick = false;
   /**
    * This Character's last known facing, world-space yaw in radians (M6, ADR
    * 0045) — mirrored straight from `input.facing` every {@link beginTick},
@@ -367,81 +182,35 @@ export class CharacterController {
    */
   private currentFacing = 0;
 
-  /** This tick's Ride, set before `beginTick` (ADR 0061); `undefined` when not riding. */
-  private ride: Ride | undefined;
-  /** The velocity the last applied Ride carried this Character at — what leaving it keeps. */
-  private rideVelocity: Vec3 | undefined;
-  /**
-   * The horizontal part of a Ride's velocity kept after leaving it, added to
-   * every airborne sweep until landing (ADR 0061). Separate from `velocity`
-   * because air control converges on the input wish within a tick and would
-   * erase it; the vertical part goes into `velocity.y` once instead, where
-   * gravity takes it.
-   */
-  private keptRideVelocity: Vec3 | undefined;
-  /** How far a Moving Segment that moved into this capsule pushes it out, taken by the next sweep (ADR 0061). */
-  private pendingPush: Vec3 | undefined;
-
-  /** Strongest Impact queued since the last tick, with the shove to apply if it ragdolls. */
-  private pendingImpact: PendingImpact | null = null;
-  /** Set by {@link fall}; consumed at the top of the next {@link tick}. */
-  private pendingRespawn: PendingRespawn | null = null;
-
-  private getupBones: readonly BoneSnapshot[] = [];
-  private getupStartTick = 0;
-  private getupStartRoot: Vec3 = vec3();
+  private readonly machine = new CharacterStateMachine();
+  private readonly movement: MovementController;
+  private readonly surface: SurfaceController;
+  private readonly interaction: InteractionController;
+  private readonly ragdolls: RagdollController;
+  /** {@link slipOnLanding}, bound once — `MovementController.settleOnGround` calls it at the landing. */
+  private readonly landed = (): void => this.slipOnLanding();
+  /** The capsule, fattened by {@link CHARACTER_TOUCH_MARGIN} — what {@link crashIntoCharacters} asks the world with. */
+  private readonly touchProbe = new RAPIER.Capsule(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS + CHARACTER_TOUCH_MARGIN);
 
   constructor(world: RAPIER.World, spawn: Vec3, onCollision?: CollisionListener, authoritative = true) {
-    this.world = world;
     this.onCollision = onCollision;
     this.authoritative = authoritative;
-
-    this.body = world.createRigidBody(
-      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(spawn.x, spawn.y, spawn.z),
-    );
-    this.collider = world.createCollider(
-      RAPIER.ColliderDesc.capsule(CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS).setCollisionGroups(
-        CHARACTER_GROUPS,
-      ),
-      this.body,
-    );
-
-    this.rapierController = world.createCharacterController(CHARACTER_CONTROLLER_OFFSET);
-    // Snap-to-ground ON (ticket 02, M3.6) — a spike measured it against the
-    // M1-era edge-stalling/Dash-hitching symptoms it was originally disabled
-    // for and reproduced neither; disabling it instead reliably reproduces
-    // the ramp-skip bug it now fixes (see ticket 02's notes for both sets of
-    // numbers). Autostep stays OFF: it hitches during fast movement (Dash),
-    // and nothing about this ticket touches that rationale.
-    this.rapierController.enableSnapToGround(GROUND_SNAP_DISTANCE);
-    // Rapier's own climb/slide split is collapsed back to one coincident
-    // value (ticket 03, M3.6, ADR 0037) — but at the *wall* angle
-    // (`WALL_NORMAL_MAX_Y`), not its old 45°/45° default. That leaves Rapier
-    // responsible for exactly one thing: "is this even standable ground at
-    // all" (below it, `computedGrounded()` can be true; at/above it, this
-    // is a wall — blocked, never grounded). The finer walkable-vs-Sliding
-    // split within that band is this project's own job (`beginCapsuleTick`'s
-    // `tooSteepToWalk` branch + `CharacterStateMachine`), reading the actual
-    // ground-contact normal directly rather than leaning on a second Rapier
-    // threshold — the ADR's "two explicit, independent thresholds" are
-    // WALKABLE_SLOPE_MAX_ANGLE and WALL_NORMAL_MAX_Y, not two Rapier knobs.
-    const wallAngle = Math.acos(WALL_NORMAL_MAX_Y);
-    this.rapierController.setMaxSlopeClimbAngle(wallAngle);
-    this.rapierController.setMinSlopeSlideAngle(wallAngle);
-    this.rapierController.setApplyImpulsesToDynamicBodies(false);
-
-    this.ragdoll = new Ragdoll(world);
+    this.capsule = createCapsule(world, spawn);
+    this.movement = new MovementController(this.capsule);
+    this.surface = new SurfaceController(this.capsule);
+    this.interaction = new InteractionController();
+    this.ragdolls = new RagdollController(this.capsule, this.machine, this.movement, () => this.resetMovementControllers());
   }
 
   /** The camera-follow point: capsule centre while upright, ragdoll pelvis while down. */
   get position(): Vec3 {
-    const t = this.body.translation();
+    const t = this.capsule.body.translation();
     return vec3(t.x, t.y, t.z);
   }
 
   /** This tick's capsule velocity (units/s). Used by `RapierSimulation` to compute a Bump's closing speed against another Character (ticket 04). */
   get currentVelocity(): Vec3 {
-    return { ...this.velocity };
+    return { ...this.movement.velocity };
   }
 
   /** This Character's current facing, world-space yaw in radians (M6, ADR 0045). Used by `RapierSimulation` for Hit's own targeting (ticket 03). */
@@ -451,17 +220,17 @@ export class CharacterController {
 
   /** Handle of this Character's capsule collider, so `RapierSimulation` can recognise it as the thing another Character bumped into (ticket 04). */
   get colliderHandle(): number {
-    return this.collider.handle;
+    return this.capsule.collider.handle;
   }
 
-  /** Handle of the floor collider this tick's ground contact was against, or `undefined` if not grounded (ticket 01) — see {@link currentGroundColliderHandle}. */
+  /** Handle of the floor collider this tick's ground contact was against, or `undefined` if not grounded (ticket 01) — see `SurfaceController.currentGroundColliderHandle`. */
   get groundColliderHandle(): number | undefined {
-    return this.currentGroundColliderHandle;
+    return this.surface.currentGroundColliderHandle;
   }
 
   /** Whether the capsule's last sweep ended on standable ground. */
   get isGrounded(): boolean {
-    return this.grounded;
+    return this.movement.grounded;
   }
 
   /**
@@ -470,22 +239,22 @@ export class CharacterController {
    * through a wall. Two bodies pushing in one tick: the deeper push wins.
    */
   queuePush(push: Vec3): void {
-    if (!this.pendingPush || lengthVec3(push) > lengthVec3(this.pendingPush)) this.pendingPush = { ...push };
+    this.movement.queuePush(push);
   }
 
   /** Set this tick's Ride (ADR 0061) — `RapierSimulation` calls it for every Character before `beginTick`. */
   setRide(ride: Ride | undefined): void {
-    this.ride = ride;
+    this.movement.setRide(ride);
   }
 
-  /** Whether a swing fired THIS tick (M6 ticket 03) — see {@link pendingHitFired}. */
+  /** Whether a swing fired THIS tick (M6 ticket 03) — see `InteractionController.pendingHitFired`. */
   get hitFiredThisTick(): boolean {
-    return this.pendingHitFired;
+    return this.interaction.pendingHitFired;
   }
 
   /** The charge fraction (0..1) the swing that just fired THIS tick was released at — meaningless unless {@link hitFiredThisTick} is true (M6.1 hold-to-charge). */
   get hitChargeFraction(): number {
-    return this.pendingHitChargeFraction;
+    return this.interaction.pendingHitChargeFraction;
   }
 
   /**
@@ -497,83 +266,164 @@ export class CharacterController {
    * so neither can ever fire while its own initiator is mid-Dash.
    */
   cancelDash(): void {
-    this.dash.cancelBurst();
+    this.movement.dash.cancelBurst();
   }
 
-  /** Registers that this Character was just on the receiving end of a landed Hit (M6 ticket 03) — bumps {@link hitReactEpoch}, called by `RapierSimulation.resolveHit`. */
+  /** Registers that this Character was just on the receiving end of a landed Hit (M6 ticket 03) — bumps its `hitReactEpoch`, called by `RapierSimulation.resolveHit`. */
   registerHitReceived(): void {
-    this.hitReactEpoch += 1;
+    this.interaction.registerHitReceived();
   }
 
-  /** Whether a grab attempt fired THIS tick (M6 ticket 04) — see {@link pendingGrabFired}. */
+  /** Whether a grab attempt fired THIS tick (M6 ticket 04) — see `InteractionController.pendingGrabFired`. */
   get grabFiredThisTick(): boolean {
-    return this.pendingGrabFired;
+    return this.interaction.pendingGrabFired;
   }
 
-  /** Sets this tick's Grab-driven walk-speed multiplier (M6 ticket 04) — see {@link grabSpeedMultiplier}. `1` (no effect) once the hold this Character was in has ended. */
-  setGrabSpeedMultiplier(multiplier: number): void {
-    this.grabSpeedMultiplier = multiplier;
+  /** Whether the Player asked to let go this tick (ADR 0093), consumed by the caller that owns the hold. */
+  takeGrabRelease(): boolean {
+    return this.interaction.takeGrabRelease();
+  }
+
+  /** The Spin let go of this tick, or `null` (ADR 0104) — consumed by `GrabHolds`. */
+  takeHurl(): Hurl | null {
+    return this.interaction.takeHurl();
+  }
+
+  /** Whether this tick's Spin ran too long (ADR 0104) — consumed by `GrabHolds`. */
+  takeDizzy(): boolean {
+    return this.interaction.takeDizzy();
+  }
+
+  /** How many ticks this Character has been Spinning the one it holds, 0 while not (ADR 0104). */
+  get spinTicks(): number {
+    return this.interaction.spinning ? this.interaction.spinTicks : 0;
+  }
+
+  /** The Struggle's escape meter, 0..1 (ADR 0104). */
+  get escapeProgress(): number {
+    return this.interaction.escapeProgress;
+  }
+
+  /**
+   * How fast the body is actually moving (units/s): the capsule's velocity
+   * while upright or carried, the ragdoll's own while down — what a hurled
+   * body hits the Characters it reaches with (ADR 0104).
+   */
+  get bodyVelocity(): Vec3 {
+    return this.ragdolls.ragdoll.isActive ? this.ragdolls.ragdoll.rootVelocity() : { ...this.movement.velocity };
   }
 
   /** Starts this Character's own Grab cooldown (M6 ticket 04) — called once a hold it initiated has ended, however it ended. See `GrabController.release`. */
   registerGrabReleased(): void {
-    this.grab.release();
+    this.interaction.registerGrabReleased();
   }
 
-  /** Sets who this Character is currently grabbing, or `null` (M6.1) — see {@link grabbingId}. */
+  /** Sets who this Character is currently grabbing, or `null` (M6.1) — see `InteractionController.grabbingId`. */
   setGrabbingId(id: string | null): void {
-    this.grabbingId = id;
-  }
-
-  /** Sets who is currently grabbing this Character, or `null` (M6.1) — see {@link heldByGrabberId}. */
-  setHeldByGrabberId(id: string | null): void {
-    this.heldByGrabberId = id;
-  }
-
-  /** Sets this tick's Surface-driven top-speed multiplier (ticket 01) — see {@link surfaceTopSpeedMultiplier}. */
-  setSurfaceTopSpeedMultiplier(multiplier: number): void {
-    this.surfaceTopSpeedMultiplier = multiplier;
-  }
-
-  /** Sets this tick's Surface-driven grip (ticket 06) — see {@link surfaceGrip}. */
-  setSurfaceGrip(grip: number): void {
-    this.surfaceGrip = grip;
-  }
-
-  /** Sets this tick's Surface-driven bounce config (M3.7 ticket 02) — see {@link surfaceBounce}. */
-  setSurfaceBounce(bounce: SurfaceBounceConfig | undefined): void {
-    this.surfaceBounce = bounce;
-  }
-
-  /** Sets this tick's belt flow, if the ground collider runs one (ADR 0064) — see {@link conveyorVelocity}. */
-  setConveyorVelocity(velocity: Vec3 | undefined): void {
-    this.conveyorVelocity = velocity ?? { x: 0, y: 0, z: 0 };
-  }
-
-  /** Sets this tick's active Volume, if any (M3.7 ticket 04) — see {@link activeVolume}. */
-  setActiveVolume(volume: { force: Vec3; maxInducedSpeed: number } | undefined): void {
-    this.activeVolume = volume;
-  }
-
-  /** Sets this tick's shared Grab-tether wish velocity, if any (M6.1) — see {@link grabTetherWish}. */
-  setGrabTetherWish(wish: Vec3 | undefined): void {
-    this.grabTetherWish = wish;
+    this.interaction.grabbingId = id;
   }
 
   /**
-   * Overrides this tick's replicated facing outright (M6.1) — called by
-   * `RapierSimulation.updateGrabs` to hold a grabber's or held Character's
-   * own facing frozen at whatever it was the instant a hold started
-   * (`ActiveGrab.grabberFacing`/`heldFacing`), live feedback on the original
-   * camera-mirrored `facing` (ADR 0045): free look while grabbing let the
-   * arm-reach pose end up aiming behind the Character's own back as it
-   * turned. Takes effect immediately for this tick's own {@link snapshot} —
-   * called post-step, after {@link beginTick} has already set
-   * {@link currentFacing} from the raw input, so it wins for whatever's
-   * read afterward.
+   * What the snapshot says about the hold this Character is held in (M6.1,
+   * ADR 0104): by whom, which part of it, and until which Tick — all `null`
+   * while nobody holds it. See `InteractionController.heldByGrabberId`.
    */
-  setFacing(yaw: number): void {
-    this.currentFacing = yaw;
+  reportHeld(grabberId: string | null, phase: HeldPhase | null = null, endsTick: number | null = null): void {
+    this.interaction.heldByGrabberId = grabberId;
+    this.interaction.reportedHeldPhase = phase;
+    this.interaction.holdEndsTick = endsTick;
+  }
+
+  /** Everything the world under this Character says about the coming tick, in one call — see `SurfaceController.apply`. */
+  applyGroundContext(ground: GroundContext): void {
+    this.surface.apply(ground, this.movement.grounded);
+  }
+
+  /** Nobody is holding this Character, until proven otherwise this tick — see `InteractionController.clearHold`. */
+  clearHold(): void {
+    this.interaction.clearHold();
+  }
+
+  /** This Character is at `role`'s end of a hold this tick — see `InteractionController.holdAs`. */
+  holdAs(role: HoldRole, phase: HeldPhase | null = null): void {
+    this.interaction.holdAs(role, phase);
+  }
+
+  /**
+   * Picked up by a Grab (ADR 0104) — see `RagdollController.beginHeld`. The
+   * hold places the body from here on ({@link placeHeld}).
+   */
+  beginHeld(): void {
+    this.ragdolls.beginHeld();
+    this.surface.leaveGround();
+  }
+
+  /**
+   * Where a Character this one carries is held this tick (ADR 0104): arm's
+   * length straight ahead, lifted — on a spring arm, as the camera's is. A
+   * capsule-shaped cast from just above this one toward that point stops at
+   * the first thing in the way (never a Character), so a body swung into a
+   * wall is pulled in rather than put inside it, and a release never starts a
+   * Ragdoll inside the geometry.
+   */
+  carryPoint(): Vec3 {
+    const at = this.capsule.body.translation();
+    const from = vec3(at.x, at.y + GRAB_CARRY_LIFT, at.z);
+    const ahead = forwardOf(this.currentFacing);
+    const hit = this.capsule.world.castShape(
+      from,
+      this.capsule.body.rotation(),
+      ahead,
+      this.capsule.collider.shape,
+      CHARACTER_CONTROLLER_OFFSET,
+      GRAB_CARRY_DISTANCE,
+      false,
+      undefined,
+      CHARACTER_GROUPS,
+      this.capsule.collider,
+      undefined,
+      isNotCharacter,
+    );
+    const reach = hit ? hit.time_of_impact : GRAB_CARRY_DISTANCE;
+    return vec3(from.x + ahead.x * reach, from.y, from.z + ahead.z * reach);
+  }
+
+  /**
+   * Put a Held Character where its grabber carries it this tick (ADR 0104),
+   * turned to `facing`, moving at `velocity` — which is what a release that
+   * keeps the body's momentum leaves with.
+   */
+  placeHeld(point: Vec3, facing: number, velocity: Vec3): void {
+    this.capsule.body.setTranslation({ ...point }, false);
+    this.currentFacing = facing;
+    this.movement.velocity = { ...velocity };
+  }
+
+  /**
+   * Let go of on its feet (ADR 0104): a Struggle won, or set down before it
+   * was lost — sent off at `fling`, Staggering on landing if `wobble`.
+   */
+  releaseOnFeet(fling: Vec3, wobble: boolean): void {
+    this.interaction.forgetStruggle();
+    this.ragdolls.leaveHeldOnFeet(wobble ? STAGGER_TICKS : null);
+    this.movement.velocity = vec3();
+    this.movement.fling(fling);
+  }
+
+  /** The Struggle is over, whichever way it went (ADR 0104) — the meter empties for the next hold. */
+  forgetStruggle(): void {
+    this.interaction.forgetStruggle();
+  }
+
+  /** Let go of into a knockdown with a fresh clock (ADR 0104) — see `RagdollController.knockDownFromHold`. */
+  releaseKnockedDown(cause: RagdollCause, launch: Vec3, tumble: Vec3): void {
+    this.interaction.forgetStruggle();
+    this.ragdolls.knockDownFromHold(cause, launch, tumble);
+  }
+
+  /** Down on the next tick, for `cause`, with nothing hitting it (ADR 0104: a dizzy grabber) — see `RagdollController.knockDown`. */
+  knockDown(cause: RagdollCause): void {
+    this.ragdolls.knockDown(cause);
   }
 
   /** The current motion state — a cheap read (no bone/pose computation), for transition detection. */
@@ -583,21 +433,33 @@ export class CharacterController {
 
   /** Whether a Fall-triggered respawn is queued for the top of the next tick. */
   get hasPendingRespawn(): boolean {
-    return this.pendingRespawn !== null;
+    return this.ragdolls.hasPendingRespawn;
+  }
+
+  /** Fire a launch pad (M3.7 ticket 02, ADR 0069) — see `MovementController.triggerLaunchPad`. */
+  triggerLaunchPad(velocity: Vec3): void {
+    this.movement.triggerLaunchPad(velocity);
   }
 
   /**
-   * Fire a launch pad (M3.7 ticket 02) — called by `RapierSimulation` exactly
-   * once per crossing, on the tick its own position-based rising-edge check
-   * finds a *new* pad the Character wasn't already touching. Queues the
-   * one-shot throw for the very next {@link beginCapsuleTick} — vertical SET,
-   * horizontal ADDED (ADR 0069); there is no ongoing decay state to arm, and
-   * no state change either: a launch never knocks down, the Character stays
-   * exactly as Controlled (or as staggered) as it already was.
+   * A landing the Surface may not let the Character keep (ADR 0092) — asked
+   * of the Surface at the one point in the landing where the peak fall speed
+   * it is judged against is still known. See `SurfaceController.landingImpact`.
    */
-  triggerLaunchPad(velocity: Vec3): void {
-    this.launchPadEpoch += 1;
-    this.pendingLaunchVelocity = { ...velocity };
+  private slipOnLanding(): void {
+    const impulse = this.surface.landingImpact(this.movement.velocity, this.movement.airbornePeakFallSpeed);
+    if (impulse) this.applyImpact(impulse, "Slip");
+  }
+
+  /**
+   * A run or a turn the Surface may not let the Character keep its feet
+   * through (ADR 0102) — asked once the movement model has decided this
+   * tick's velocity, from `brought`, and before anything rides on top of it.
+   * See `SurfaceController.runningImpact`.
+   */
+  private slipWhileRunning(brought: Vec3): void {
+    const impulse = this.surface.runningImpact(brought, this.movement.velocity);
+    if (impulse) this.applyImpact(impulse, "Slip");
   }
 
   /**
@@ -607,41 +469,25 @@ export class CharacterController {
    * the shove flails it right away.
    */
   applyImpact(impulse: Vec3, cause: RagdollCause = "Bump"): void {
+    // ADR 0104: a Held body is the hold's to put down. Queued here, a shove
+    // would sit on the capsule and fire the moment the hold let go.
+    if (this.machine.state === "Held") return;
     const magnitude = lengthVec3(impulse);
+    this.machine.impact(magnitude);
     // Only an impact big enough to change state names the cause of the knockdown
     // it will trigger — a sub-threshold nudge from lingering contact must not
     // overwrite a real cause latched earlier (ADR 0023).
-    if (magnitude >= IMPACT_STAGGER_MIN) this.pendingCause = cause;
-    this.machine.impact(magnitude);
-    if (!this.pendingImpact || magnitude > this.pendingImpact.magnitude) {
-      this.pendingImpact = { magnitude, impulse: { ...impulse } };
-    }
-    if (this.machine.state === "Ragdoll") this.ragdoll.applyImpulse(impulse);
+    this.ragdolls.queueImpact(impulse, magnitude, magnitude >= IMPACT_STAGGER_MIN ? cause : undefined);
+    if (this.machine.state === "Ragdoll") this.ragdolls.ragdoll.applyImpulse(impulse);
+    // ADR 0093: a Hit that is felt but not enough to put the Character down
+    // still moves it. Skipped once down — the capsule is off, and
+    // `beginRagdoll` throws the whole body with this same impulse instead.
+    else if (magnitude >= IMPACT_STAGGER_MIN && SHOVING_IMPACT_CAUSES.has(cause)) this.movement.shove(impulse, magnitude);
   }
 
-  /**
-   * React to a Fall (M5 ticket 03, ADR 0042): losing control always happens
-   * — a Fall never varies, only what follows it does. `respawnPoint` is
-   * `null` for a Round type with no Respawn (Survival): the Character is
-   * eliminated ({@link eliminateNow}) rather than queued a Respawn. A
-   * Respawn is queued for `point`, applied at the top of the next
-   * {@link beginTick} — unchanged, and still the only branch that needs the
-   * state machine's own deferred {@link CharacterStateMachine.forceRagdoll},
-   * since a respawning Character keeps being stepped afterward.
-   * `RapierSimulation`'s own `detectFall` decides which to pass, from
-   * `RoundRules.fallBehavior`.
-   */
+  /** React to a Fall (M5 ticket 03, ADR 0042) — see `RagdollController.fall`. */
   fall(respawnPoint: Vec3 | null, fallCount: number): void {
-    if (respawnPoint) {
-      // No knockdown any more (ADR 0072): a Fall used to force a Ragdoll and
-      // cost one to four and a half seconds of zero input on the way back.
-      // The Character now simply drops out of the world and is put back on
-      // its feet, wobbling — see `respawnAtCheckpoint`.
-      this.resetMovementControllers();
-      this.pendingRespawn = { point: { ...respawnPoint }, fallCount };
-    } else {
-      this.eliminateNow("Fall");
-    }
+    this.ragdolls.fall(respawnPoint, fallCount);
   }
 
   /**
@@ -653,42 +499,7 @@ export class CharacterController {
    * Its own cause (`"Disconnect"`, not `"Fall"`) — nothing fell.
    */
   eliminate(): void {
-    this.eliminateNow("Disconnect");
-  }
-
-  /**
-   * Immediate, synchronous Ragdoll entry — unlike an ordinary Impact or a
-   * Checkpoint respawn, both of which land on the *next* {@link beginTick}
-   * via the state machine's own deferred `forceRagdoll`/`impact` queue, this
-   * has no next `beginTick` to land on: an eliminated Character is never
-   * stepped again (M5 ticket 04, ADR 0042), so it must reach `Ragdoll` and
-   * activate the ragdoll body in this same call if it isn't already down.
-   *
-   * Guarded by `isDownMotionState` — code review, ticket 04 — the same guard
-   * `beginTick` (`prevState !== "Ragdoll"`) and `reconcileTo`
-   * (`!isDownMotionState(...)`) already apply to every *other* Ragdoll-entry
-   * path: without it, eliminating a Character already Ragdolling from an
-   * unrelated Impact (a Bump off a ledge, mid-tumble) would re-snap every
-   * bone to a fresh standing flop, discard its real tumbling velocity for
-   * `this.velocity` (zeroed since that earlier Impact began), overwrite its
-   * true `ragdollCause`, and double-bump `ragdollEpoch` for one knockdown.
-   * Already-down just needs to stop being stepped — `RapierSimulation`'s own
-   * `progress.eliminated` flag (set by the caller regardless) handles that
-   * on its own; there is nothing left for this method to do.
-   *
-   * Mirrors exactly what `beginTick` itself does on an ordinary Ragdoll
-   * entry (`ragdollEpoch`, `ragdollCause`, {@link beginRagdoll}), which is
-   * what disables the capsule collider — {@link beginRagdoll} reads
-   * `velocity` *before* resetting it, so a Fall's own momentum still
-   * carries into the launch, exactly like an ordinary Impact-triggered one.
-   */
-  private eliminateNow(cause: RagdollCause): void {
-    if (isDownMotionState(this.machine.state)) return;
-    this.pendingCause = cause;
-    this.machine.snapTo("Ragdoll");
-    this.ragdollEpoch += 1;
-    this.ragdollCause = cause;
-    this.beginRagdoll();
+    this.ragdolls.eliminate("Disconnect");
   }
 
   /**
@@ -700,134 +511,45 @@ export class CharacterController {
    * with a `world.step()` between them, exactly like this used to be one method.
    */
   beginTick(input: SimInputs): void {
-
-    const jumpPressed = input.jumpHeld && !this.jumpHeldLastTick;
-    const dashPressed = input.dashHeld && !this.dashHeldLastTick;
-    const grabPressed = input.grabHeld && !this.grabHeldLastTick;
-    this.jumpHeldLastTick = input.jumpHeld;
-    this.dashHeldLastTick = input.dashHeld;
-    this.grabHeldLastTick = input.grabHeld;
-    this.currentFacing = input.facing;
-    // Reset every tick, unconditionally — never stale across a tick where
-    // `beginCapsuleTick` (below) doesn't run at all (pure Ragdoll).
-    this.pendingHitFired = false;
-    this.pendingHitChargeFraction = 0;
-    this.pendingGrabFired = false;
+    this.movement.latchButtons(input);
+    this.interaction.latchButtons(input);
+    this.currentFacing = this.interaction.holding ? this.carryTurn(input.facing) : input.facing;
 
     // Order matters: read prevState before the machine ticks; compute `settled`
     // from last tick's physics before this tick's world.step().
     const prevState = this.machine.state;
-    // A non-authoritative (client-prediction) Character never trusts its own
-    // settle-check to end a knockdown — only a server snapshot can (ADR 0015).
-    // Without this it could recover *ahead* of the server, which is exactly
-    // what reopens the double-knockdown bug ADR 0014 fixed: a later, slower
-    // snapshot still reporting the old episode would read as a fresh one.
-    const settled =
-      this.authoritative && this.ragdoll.isActive && this.ragdoll.maxSpeed() < RAGDOLL_SETTLE_SPEED;
-    // Ticket 03, M3.6: last tick's ground contact (from `resolveCollisions`,
-    // read here before this tick's own sweep overwrites it) decides whether
-    // this tick enters/stays in `Sliding` — the same one-tick lag `grounded`
-    // itself already has relative to jump/landing. `currentGroundNormal` is
-    // `undefined` both while airborne and while grounded on a Surface flat
-    // enough to be filtered out by `SURFACE_GROUND_NORMAL_MIN_Y`, so both
-    // correctly read as "not too steep" here. A steep contact alone is not
-    // enough (ADR 0084): the ground under the footprint has to agree, so the
-    // rounded bottom of the capsule brushing a step's edge or chamfer doesn't
-    // read as a slope.
-    const tooSteepToWalk =
-      this.grounded &&
-      this.currentGroundNormal !== undefined &&
-      this.currentGroundNormal.y < WALKABLE_NORMAL_MIN_Y &&
-      !this.walkableUnderfoot();
+    const settled = this.ragdolls.settled(this.authoritative);
+    const tooSteepToWalk = this.surface.tooSteepToWalk(this.movement.grounded);
     const state = this.machine.tick(settled, tooSteepToWalk);
+    this.ragdolls.enter(prevState, state, this.tickCount);
 
-    // Every entry to Ragdoll is a new down episode (ADR 0023) — whether it came
-    // from an Impact, a forced Fall, or the Respawn flop.
-    if (state === "Ragdoll" && prevState !== "Ragdoll") {
-      this.ragdollEpoch += 1;
-      this.ragdollCause = this.pendingCause;
-    }
-
-    if (this.pendingRespawn) {
-      this.respawnAtCheckpoint(this.pendingRespawn);
-    } else if (state === "Ragdoll" && prevState !== "Ragdoll") {
-      this.beginRagdoll();
-    }
-    if (prevState === "Ragdoll" && state === "GettingUp") this.beginGettingUp();
-    if (prevState === "GettingUp" && state === "Controlled") this.getupBones = [];
-
-    this.tickingRagdoll = state === "Ragdoll";
-    if (!this.tickingRagdoll) {
-      this.beginCapsuleTick(input, jumpPressed, dashPressed, grabPressed);
-    }
+    const mode = this.machine.mode;
+    this.tickingRagdoll = mode.body === "ragdoll";
+    // ADR 0104: a Held body is placed by its hold after the step, and its
+    // Player's input does one thing — the Struggle.
+    if (mode.body === "held") this.interaction.struggle(input.moveDirection);
+    else if (!this.tickingRagdoll) this.beginCapsuleTick(input, mode);
+    // A Spin turns the body, whatever the Player's own body turn says.
+    if (this.interaction.spinning) this.currentFacing = this.interaction.spinFacing;
   }
 
   /**
-   * Whether any of five downward rays under the capsule — its centre and four
-   * points a radius out — lands on walkable ground within
-   * {@link GROUND_SNAP_DISTANCE} of its feet (ADR 0084). On a real slope every
-   * ray lands on the slope. Against a step's edge or chamfer, which the
-   * capsule's rounded bottom touches at 45–60° while it still stands on the
-   * deck, at least one lands on the deck: a chamfer on these Assets is
-   * narrower than the ring is wide. Only asked when the contact is already
-   * too steep, so a Character on flat ground casts nothing.
+   * A grabber's facing this tick (ADR 0104): toward where its Player turned
+   * it, but no further in one tick than {@link CARRY_TURN_STEP} — the owning
+   * client turns the body that slowly itself, so this only ever bites on a
+   * client that does not.
    */
-  private walkableUnderfoot(): boolean {
-    const at = this.body.translation();
-    const originY = at.y - CAPSULE_HALF_HEIGHT; // the bottom sphere's centre
-    for (const [dx, dz] of FOOTPRINT_PROBE_OFFSETS) {
-      const hit = this.world.castRayAndGetNormal(
-        new RAPIER.Ray({ x: at.x + dx, y: originY, z: at.z + dz }, DOWN),
-        CAPSULE_RADIUS + GROUND_SNAP_DISTANCE,
-        true,
-        undefined,
-        CHARACTER_GROUPS,
-        this.collider,
-        undefined,
-        isNotCharacter,
-      );
-      if (hit && hit.normal.y >= WALKABLE_NORMAL_MIN_Y) return true;
-    }
-    return false;
-  }
-
-  /**
-   * How far below the capsule, once moved by `movement`, standable ground
-   * lies — within {@link GROUND_SNAP_DISTANCE}, or `undefined` (ADR 0084).
-   * The same cast Rapier's own snap-to-ground makes, for the one case it
-   * skips: a sweep that ended higher than it started.
-   */
-  private standableGroundBelow(movement: Vec3): number | undefined {
-    const at = this.body.translation();
-    const hit = this.world.castShape(
-      { x: at.x + movement.x, y: at.y + movement.y, z: at.z + movement.z },
-      this.body.rotation(),
-      DOWN,
-      this.collider.shape,
-      CHARACTER_CONTROLLER_OFFSET,
-      GROUND_SNAP_DISTANCE,
-      false,
-      undefined,
-      CHARACTER_GROUPS,
-      this.collider,
-      undefined,
-      isNotCharacter,
-    );
-    return hit && hit.normal1.y > WALL_NORMAL_MAX_Y ? hit.time_of_impact : undefined;
+  private carryTurn(wanted: number): number {
+    const turn = wrapAngle(wanted - this.currentFacing);
+    return this.currentFacing + Math.max(-CARRY_TURN_STEP, Math.min(CARRY_TURN_STEP, turn));
   }
 
   /** The other half of {@link beginTick}, run after the shared `world.step()`. */
   endTick(): void {
     if (this.tickingRagdoll) {
-      this.body.setTranslation(this.ragdoll.rootPosition(), false); // camera continuity
-      this.grounded = false;
-      // No ground sweep runs while ragdolling — leaving the last-known handle
-      // in place could hand RapierSimulation a stale Surface (e.g. still
-      // "mud" from before the knockdown) the instant it gets back up
-      // somewhere else entirely. The next real `beginCapsuleTick` recomputes
-      // this fresh from an actual sweep.
-      this.currentGroundColliderHandle = undefined;
-      this.currentGroundNormal = undefined;
+      this.capsule.body.setTranslation(this.ragdolls.ragdoll.rootPosition(), false); // camera continuity
+      this.movement.grounded = false;
+      this.surface.leaveGround();
     }
     this.tickCount += 1;
   }
@@ -835,41 +557,59 @@ export class CharacterController {
   /** Single-Character convenience: {@link beginTick}, step this Character's own world, {@link endTick}. */
   tick(input: SimInputs): void {
     this.beginTick(input);
-    this.world.step();
+    this.capsule.world.step();
     this.endTick();
   }
 
-  /** Controlled / Stagger / Sliding / GettingUp: queue the kinematic capsule's movement, input scaled by the state. */
-  private beginCapsuleTick(
-    input: SimInputs,
-    jumpPressed: boolean,
-    dashPressed: boolean,
-    grabPressed: boolean,
-  ): void {
-    // Stagger/Sliding both dampen *all* movement input — walk, jump and dash
-    // — not just walk.
-    const fullControl = this.machine.inputScale >= 1;
-    const move = scaleVec3(input.moveDirection, this.machine.inputScale);
-    const sliding = this.machine.state === "Sliding";
-    // M6 ticket 04: engaged in a Grab hold, either role — sits alongside
-    // `fullControl` as its own independent gate, since a hold doesn't touch
-    // `machine.inputScale` at all (it's not a state-machine state, just a
-    // per-tick multiplier `RapierSimulation` pushes in).
-    const notGrabbing = this.grabSpeedMultiplier >= 1;
+  /**
+   * Controlled / Stagger / Sliding / GettingUp: queue the kinematic capsule's
+   * movement for this tick, input scaled by the state.
+   *
+   * Read top to bottom this is the tick's story: which verbs fired, what the
+   * movement model makes of them, what is added on top of that outright, how
+   * far the sweep can actually go, and what the floor does about the arrival.
+   * Each step is a method on one of the parts; this one says only the order,
+   * which is the part that matters — several of these are correct only where
+   * they are (a launch overrides the model, so it must follow it; the bounce
+   * reads a peak the gravity integration is what keeps).
+   */
+  private beginCapsuleTick(input: SimInputs, mode: MotionMode): void {
+    const { movement, surface, interaction } = this;
+    // Stagger/Sliding both dampen *all* movement input — walk, jump and dash —
+    // not just walk.
+    const fullControl = mode.inputScale >= 1;
+    const move = scaleVec3(input.moveDirection, mode.inputScale);
+    const slides = mode.velocity === "slide";
 
-    const takeoff = this.jump.beginTick(this.grounded, fullControl && jumpPressed);
-    if (takeoff !== null) this.velocity.y = takeoff;
+    // ADR 0104: a grabber's hands are full — no jump while carrying anyone.
+    const takeoff = movement.beginJump(fullControl && movement.jumpPressed && !interaction.holding, surface);
+    movement.leaveRide();
+    const dashBurst = this.beginActionVerbs(input, move, fullControl, slides);
 
-    // Left a Ride since last tick (ADR 0061): a jump, a walk-off, or the
-    // carrier moving out from under it. Airborne, it keeps the carrier's
-    // velocity; landed straight on other ground, there is nothing to keep.
-    if (!this.ride && this.rideVelocity) {
-      if (!this.grounded) {
-        this.velocity.y += this.rideVelocity.y;
-        this.keptRideVelocity = vec3(this.rideVelocity.x, 0, this.rideVelocity.z);
-      }
-      this.rideVelocity = undefined;
-    }
+    const walk = movement.walkWish(move, surface, interaction.carrySpeedMultiplier);
+    const brought = { ...movement.velocity };
+    if (slides && surface.currentGroundNormal) movement.slideDownSlope(walk, surface.currentGroundNormal);
+    else movement.accelerateTowardWish(input, move, walk, dashBurst, fullControl, surface);
+    this.slipWhileRunning(brought);
+    movement.applyImpulses(surface);
+    this.crashIntoCharacters();
+
+    const corrected = movement.sweepCapsule();
+    movement.settleOnGround(corrected, takeoff, slides, surface, this.landed);
+    this.resolveCollisions();
+    movement.commitMovement(corrected);
+  }
+
+  /**
+   * Dash, Hit and Grab, in the order their gates depend on each other — a Dash
+   * burst started here locks the other two out for as long as it plays.
+   * Returns this tick's Dash contribution to the wish velocity.
+   */
+  private beginActionVerbs(input: SimInputs, move: Vec3, fullControl: boolean, slides: boolean): Vec3 {
+    // M6 ticket 04: engaged in a Grab hold — its own independent gate beside
+    // `fullControl`. Only the grabber's end ever gets here: a Held Character
+    // runs no capsule tick at all (ADR 0104).
+    const notGrabbing = !this.interaction.grabEngaged;
     // Dash only starts while grounded and in full control (a walking burst,
     // not an air dash, and never while Sliding); an already-active burst's
     // own remaining duration still ticks down here even while Sliding, it
@@ -878,8 +618,11 @@ export class CharacterController {
     // unify how a burst's momentum carries across a state change). M6 ticket
     // 04: also never while engaged in a Grab hold — CONTEXT.md's own Grab
     // definition: "the grabber cannot run while holding."
-    const dashBurst = this.dash.beginTick(move, fullControl && dashPressed && this.grounded && notGrabbing);
-    this.dashSpeed = sliding ? 0 : lengthVec3(dashBurst);
+    const dashBurst = this.movement.beginDash(
+      move,
+      fullControl && this.movement.dashPressed && this.movement.grounded && notGrabbing,
+      slides,
+    );
     // M6.1: Dash locks Hit and Grab out entirely while a burst is playing —
     // "dash locks everything until it finishes." Design correction
     // superseding M6.1 ticket 01's original approach-speed scaling, which let
@@ -889,510 +632,158 @@ export class CharacterController {
     // is what exposed it). Read right after `dash.beginTick` above has
     // already advanced this same tick, so it reflects whether a burst is
     // STILL playing out now, not last tick's stale value.
-    const dashActive = this.dash.isActive;
-    // M6.1 hold-to-charge: hold Hit to charge a stronger swing, release to
-    // fire — the striker's own commitment now comes from how long they held
-    // it, not from how fast a Dash happened to have them moving (which can no
-    // longer overlap a swing at all). `fullControl` alone already excludes
-    // Sliding/Stagger (both scale `inputScale` below 1) and Ragdoll/GettingUp
-    // (0). `HitController` tracks the charge/release edges itself from the
-    // raw held state — no external press-edge needed here anymore, unlike
-    // Dash/Grab, which still fire on a rising edge only.
-    const hitResult = this.hit.beginTick(input.hitHeld, fullControl && !dashActive);
-    this.pendingHitFired = hitResult !== null;
-    this.pendingHitChargeFraction = hitResult ?? 0;
-    if (this.pendingHitFired) this.hitEpoch += 1;
-    // M6 ticket 04, M6.1: same shape as Hit above — "may I attempt to grab,"
-    // not "did it connect" (RapierSimulation's job, cross-Character). Also
-    // gated on not already being engaged (so pressing Grab again mid-hold
-    // neither starts a second one nor wastes the cooldown early) and, like
-    // Hit, never while Dashing.
-    this.pendingGrabFired = this.grab.beginTick(fullControl && grabPressed && notGrabbing && !dashActive);
-    // Like `hitEpoch`: the attempt, not the catch — a grab at nobody is still
-    // a reach the player (and everyone watching) should see.
-    if (this.pendingGrabFired) this.grabEpoch += 1;
-    // Surface-scaled, but not yet slope-scaled (below) — the Sliding branch
-    // uses this as-is for its steering blend, deliberately never applying
-    // the slope-angle multiplier (ticket 04): that model is for walking
-    // only, per ADR 0037/CONTEXT.md's split between the two.
-    // M6 ticket 04: `grabSpeedMultiplier` folds in the same way — 1 (no
-    // effect) unless this Character is currently engaged in a hold.
-    // ADR 0064: the belt joins outright — one more contributor to the same
-    // wish velocity (ADR 0035's model), so it steers a slide exactly like it
-    // carries a walk, with no second code path. A Grab hold's tether wish
-    // replaces `walk` outright below, so a held pair ignores belts.
-    const walk = addVec3(
-      scaleVec3(move, WALK_SPEED * this.surfaceTopSpeedMultiplier * this.grabSpeedMultiplier),
-      this.conveyorVelocity,
-    );
-
-    if (sliding && this.currentGroundNormal) {
-      // ADR 0037: the one place gravity is projected onto the slope plane and
-      // integrated tick over tick, rather than the direct `velocity.xz =
-      // target` assignment every other Controlled/Stagger tick uses below —
-      // ADR 0035 rejects that accelerating model for ordinary walking, but
-      // adopts it here.
-      const gravity = vec3(0, GRAVITY_Y, 0);
-      const normal = this.currentGroundNormal;
-      const slopeGravity = subVec3(gravity, scaleVec3(normal, dotVec3(gravity, normal)));
-      // `walk` is already reduced via SLIDE_INPUT_SCALE (folded into `move`
-      // above) — but it's still a *velocity*, not an acceleration, so it
-      // can't just be integrated (`+= walk * TICK_DT`) alongside gravity
-      // the way a first attempt at this did (code review): that grows
-      // without bound the longer a direction is held, eventually swamping
-      // the slide itself. Blending the horizontal velocity toward `walk`
-      // each tick keeps steering genuinely limited — it can pull the
-      // Character's own speed at most as far as `walk`'s magnitude, never
-      // past it, while gravity keeps accumulating independently.
-      const horizontal = lerpVec3({ x: this.velocity.x, y: 0, z: this.velocity.z }, walk, SLIDE_STEER_BLEND);
-      this.velocity.x = horizontal.x + slopeGravity.x * TICK_DT;
-      this.velocity.z = horizontal.z + slopeGravity.z * TICK_DT;
-      this.velocity.y += slopeGravity.y * TICK_DT;
-    } else {
-      const gravityScale = this.jump.gravityScale(fullControl && input.jumpHeld, this.velocity.y);
-      this.velocity.y += GRAVITY_Y * gravityScale * TICK_DT;
-      // M3.7 ticket 02: tracks the TRUE peak fall speed across an entire
-      // fall, independent of the ordinary ground-stick clamp below —
-      // resets the instant velocity.y is non-negative (a jump/bounce/launch
-      // apex, or simply not falling), so it always reflects "how fast has
-      // this Character been falling since it was last not falling," never
-      // contaminated by an intervening clamp. Exists because `surfaceBounce`
-      // (like every Surface field) can take several ticks to resolve after
-      // a fast landing — Rapier's own snap-to-ground correction can report
-      // `computedGrounded()` true for multiple ticks without ever producing
-      // a `computedCollision()` entry (`resolveCollisions`'s own documented
-      // caveat) — and reading `-this.velocity.y` directly at the ground-
-      // stick check, once Surface finally does resolve, would by then only
-      // see whatever the ordinary clamp had already reduced it to on the
-      // ticks in between (empirically confirmed: a bounce Surface bounced
-      // back at exactly its own `minSpeed` floor regardless of fall height,
-      // because the real impact speed was already destroyed before the
-      // bounce math ever ran). Tracking the peak here, decoupled from
-      // `this.velocity.y`'s own clamped value, fixes this without changing
-      // the ground-stick clamp's own timing for every other (non-bounce)
-      // landing at all.
-      this.airbornePeakFallSpeed = this.velocity.y < 0 ? Math.max(this.airbornePeakFallSpeed, -this.velocity.y) : 0;
-
-      // Ticket 04: downhill faster, uphill slower — an explicit multiplier
-      // keyed off the signed slope angle toward `move` (Unity's Character
-      // Controller model, not Quake 3's flatten-to-slope-independent one;
-      // see `slopeSpeedMultiplier`'s own doc comment for both). Only applies
-      // to the walk contribution, not Dash — same "Surface caps WALK_SPEED,
-      // never Dash" precedent ticket 01 already established — and only
-      // while genuinely grounded on a real surface (mid-air/no ground
-      // contact reads as flat, i.e. no effect, exactly like Surface itself).
-      const slope =
-        this.grounded && this.currentGroundNormal ? slopeSpeedMultiplier(move, this.currentGroundNormal) : 1;
-      const slopedWalk = scaleVec3(walk, slope);
-      // Ticket 05, ADR 0035: Dash is now a contributor to the same wish
-      // velocity the persistent-velocity pipeline chases, rather than an
-      // addition tacked directly onto the final velocity outside any model
-      // — the structural change that later lets a wall-Impact rule (ADR
-      // 0037) read "how fast is this Character going" without asking "was
-      // this a Dash?" At today's saturating MOVE_ACCEL_FACTOR/
-      // MOVE_FRICTION_FACTOR (full grip), `accelerateVelocity` reaches
-      // `wish` exactly within this same tick — numerically identical to the
-      // direct `velocity.xz = wish` assignment it replaces. `surfaceGrip`
-      // (ticket 06) multiplies both factors together — Source's own
-      // one-scalar-does-both model — so ice's near-zero grip alone is
-      // exactly what turns this from "identical" into "a genuine, gradual
-      // ramp," with no other code path change needed.
-      //
-      // M6.1: a Grab hold replaces this Character's own `slopedWalk`
-      // outright with the shared tether wish (see `grabTetherWish`'s own
-      // doc comment) — this Character's own `moveDirection` already fed
-      // into computing it, so re-adding `slopedWalk` on top would
-      // double-count this Character's own contribution. `dashBurst` still
-      // adds on top, though it's always zero while held: Dash is gated
-      // out entirely by the same hold (`notGrabbing`, above).
-      const wish = addVec3(this.grabTetherWish ?? slopedWalk, dashBurst);
-      const newVelocity = accelerateVelocity(
-        this.velocity,
-        wish,
-        MOVE_ACCEL_FACTOR * this.surfaceGrip,
-        MOVE_FRICTION_FACTOR * this.surfaceGrip,
-      );
-      this.velocity.x = newVelocity.x;
-      this.velocity.z = newVelocity.z;
-    }
-
-    if (this.pendingLaunchVelocity) {
-      // M3.7 ticket 02, amended by ADR 0069: the *vertical* half of a launch
-      // overrides EVERYTHING computed above this tick — gravity, Sliding's
-      // slope-gravity integration, the Surface/Dash/Conveyor/accelerate model,
-      // all of it — so the apex is the height the author set whether the
-      // Character walked on or fell on (Unreal's `bZOverride`). The horizontal
-      // half is *added* to the run the Character brought: this is a platformer,
-      // not an arena shooter, and Quake's whole-vector `VectorCopy` ("your
-      // incoming speed is discarded") would make a Spring a stop, not a boost.
-      this.velocity = {
-        x: this.velocity.x + this.pendingLaunchVelocity.x,
-        y: this.pendingLaunchVelocity.y,
-        z: this.velocity.z + this.pendingLaunchVelocity.z,
-      };
-      this.pendingLaunchVelocity = undefined;
-    }
-
-    if (this.activeVolume) {
-      // M3.7 ticket 04: unconditional, on top of everything above (including
-      // a launch pad's own SET this same tick) — a Volume is a continuous
-      // force, not a one-shot effect competing for the same "what is this
-      // tick's velocity" slot the way a launch pad's SET does. No flight
-      // mode: this never touches `motionState`, controls, or the camera —
-      // the Character just gets pushed and otherwise behaves exactly as it
-      // already would (walks, staggers, ragdolls) while inside.
-      this.velocity = applyVolumeForce(this.velocity, this.activeVolume.force, this.activeVolume.maxInducedSpeed);
-    }
-
-    // `filterGroups: CHARACTER_GROUPS` so the sweep honours collision groups
-    // the way the rest of the world does — without it the character controller
-    // collides against *everything*, including another Character's active
-    // ragdoll bones (ticket 04: two Characters, one down), which would wall-
-    // knock or block the mover on a body it should pass straight through.
-    const ownVelocity = this.keptRideVelocity ? addVec3(this.velocity, this.keptRideVelocity) : this.velocity;
-    const push = this.pendingPush ?? vec3();
-    this.pendingPush = undefined;
-    this.rapierController.computeColliderMovement(
-      this.collider,
-      addVec3(scaleVec3(ownVelocity, TICK_DT), push),
-      undefined,
-      CHARACTER_GROUPS,
-    );
-    const ownMovement = this.rapierController.computedMovement();
-    const corrected = vec3(ownMovement.x, ownMovement.y, ownMovement.z);
-    const wasGrounded = this.grounded;
-    this.grounded = this.rapierController.computedGrounded();
-    // ADR 0084: a sweep that starts on the floor can come back tilted — Rapier
-    // resolves it against a contact normal a few degrees off vertical (noise
-    // on flat trimeshes, or a chamfer between two decks) and slides the whole
-    // step along it. At Dash speed that lifts the capsule ~0.1 clear of the
-    // floor, and Rapier's own snap-to-ground only pulls down a sweep that went
-    // down, so it reported one airborne tick mid-run. Nothing sent this
-    // Character up — no jump this tick, no upward speed (a launch, a bounce,
-    // an updraft all have one) — so it goes back down onto the floor.
-    if (!this.grounded && wasGrounded && takeoff === null && this.velocity.y <= 0) {
-      const drop = this.standableGroundBelow(corrected);
-      if (drop !== undefined) {
-        corrected.y -= drop;
-        this.grounded = true;
-      }
-    }
-    if (this.grounded) this.keptRideVelocity = undefined;
-    // Skipped while Sliding: this would overwrite the very slope-gravity
-    // velocity just built up above with a flat constant every tick, which
-    // is exactly the ground-stick-as-a-speed unit bug ticket 02 fixed —
-    // reintroducing it here, just for Sliding, would recreate the same skip.
-    if (this.grounded && this.velocity.y < 0 && !sliding) {
-      // M3.7 ticket 02: a bounce Surface takes this exact branch instead of
-      // the ordinary ground-stick clamp — the research doc's own words:
-      // "on the tick where computedGrounded() becomes true on a bouncy
-      // collider, set velocity.y = max(bounceMin, -velocity.y * restitution)
-      // and suppress the ground-stick that would otherwise clamp it." Uses
-      // {@link airbornePeakFallSpeed} rather than reading `-this.velocity.y`
-      // directly — see that field's own comment for why: `surfaceBounce`
-      // can take several ticks to resolve after landing, by which point an
-      // ordinary (non-bounce) clamp may already have run on the ticks in
-      // between, and reading the instantaneous value here would see that
-      // clamp's own residue instead of the real impact speed. A launch pad
-      // never reaches this branch with a negative Y in practice (a launch's
-      // own Y is virtually always positive), so it needs no corresponding
-      // handling here.
-      this.velocity.y = this.surfaceBounce
-        ? Math.max(this.surfaceBounce.minSpeed, this.airbornePeakFallSpeed * this.surfaceBounce.restitution)
-        : -GROUND_STICK_SPEED;
-      // Reset the peak once the ground handle has genuinely resolved,
-      // whether bounce or not — NOT merely "consumed by a bounce" (an
-      // earlier version, code review): `surfaceBounce`/`currentGroundColliderHandle`
-      // can still be stale on the very first landing tick(s) after a fast
-      // fall (see `airbornePeakFallSpeed`'s own comment), so resetting
-      // unconditionally on every ground-stick tick would re-introduce the
-      // original bug (the peak gone before a genuine bounce ever reads it).
-      // But resetting ONLY when a bounce consumes it left a stale peak from
-      // an unrelated, long-past fall sitting around indefinitely through
-      // ordinary walking on non-bounce ground — confirmed empirically: a
-      // Character that fell once, landed normally, then walked flatly for
-      // over a minute still launched to the ORIGINAL fall's full bounce
-      // height the instant it later stepped onto an actual bounce Surface,
-      // with no real fall behind it at all. `currentGroundColliderHandle`
-      // (checked here before `resolveCollisions` below updates it, so it
-      // still reflects whether Surface was ALREADY known going into this
-      // tick) is the same one-tick-lag signal `surfaceBounce` itself is
-      // derived from — once it's resolved, Surface is no longer in doubt,
-      // so it's always safe to let go of a peak nothing has consumed by then.
-      if (this.surfaceBounce || this.currentGroundColliderHandle !== undefined) {
-        this.airbornePeakFallSpeed = 0;
-      }
-      this.jump.land();
-    }
-
-    this.resolveCollisions();
-
-    const carried = this.sweepRide();
-
-    const at = this.body.translation();
-    this.body.setNextKinematicTranslation({
-      x: at.x + corrected.x + carried.x,
-      y: at.y + corrected.y + carried.y,
-      z: at.z + corrected.z + carried.z,
-    });
-    // No world.step() here — the caller (RapierSimulation) steps once for
-    // every Character's queued movement (ticket 02); the single-Character
-    // `tick()` convenience above steps right after calling this.
+    this.interaction.beginVerbs(input, fullControl, this.movement.dash.isActive, this.currentFacing);
+    return dashBurst;
   }
 
-  /**
-   * Carry this Character by this tick's Ride (ADR 0061): a second sweep from
-   * the same start as its own movement, ignoring the carrier's colliders so
-   * riding never collides with what it rides, while anything else (a wall, a
-   * low ceiling) still blocks. Snap-to-ground is off for it: with the
-   * carrier ignored it would otherwise reach for whatever floor lies below.
-   * Its own collisions resolve nothing — being carried into a wall is no
-   * crash of this Character's making. Returns the carried movement.
-   */
-  private sweepRide(): Vec3 {
-    const ride = this.ride;
-    if (!ride) return vec3();
-    this.rapierController.disableSnapToGround();
-    this.rapierController.computeColliderMovement(
-      this.collider,
-      ride.displacement,
-      undefined,
-      CHARACTER_GROUPS,
-      (collider) => !ride.ignoreColliders.has(collider.handle),
-    );
-    this.rapierController.enableSnapToGround(GROUND_SNAP_DISTANCE);
-    const movement = this.rapierController.computedMovement();
-    const carried = vec3(movement.x, movement.y, movement.z);
-    this.rideVelocity = scaleVec3(carried, 1 / TICK_DT);
-    return carried;
-  }
-
-  /**
-   * Walk this tick's `computeColliderMovement` collisions (ticket 06;
-   * re-expressed as a speed threshold, M3.7 ticket 03, ADR 0037): a
-   * Character closing on a near-vertical surface at or above
-   * {@link WALL_IMPACT_MIN_SPEED} knocks it down (wall or Spinner or Prop —
-   * whatever it hit), magnitude scaling with that same closing speed — a
-   * slow build-up or late-release Dash, or simply walking into a wall, is
-   * just a blocked walk. Closing speed is `this.velocity`'s own component
-   * *into* the surface along its normal, whatever gave the Character that
-   * velocity — Dash, a bounce, a launch pad, an updraft, all qualify
-   * identically; there is deliberately no second, parallel "is this
-   * Character Dashing/launched" check (two rules for one event drift apart
-   * under tuning, and then neither can be blamed). Another Character is the
-   * exception: crashing into a player never knocks the *mover* down (ticket
-   * 04 — Bump is one-sided, only the one bumped goes down), so this check
-   * skips Character colliders. Every collision is still forwarded to
-   * {@link onCollision} so `RapierSimulation` can resolve the contact —
-   * Spinner Knockback, a shoved Prop, or a Bump delivered to the other
-   * Character.
-   */
   private resolveCollisions(): void {
-    const count = this.rapierController.numComputedCollisions();
-    // The most floor-like collision this tick (highest normal.y among the
-    // roughly-horizontal, non-Character ones) — the ground contact ticket
-    // 01/ADR 0036 reads a Surface from. `GROUND_STICK_SPEED` (below) is
-    // exactly what makes this reliably show up here every grounded tick:
-    // it's the reason a resting Character keeps sweeping into the floor at
-    // all. `!hitCharacter` matters here for the same reason it matters to
-    // the dash-wall check below: two overlapping Characters standing on a
-    // tilted floor (ADR 0034) can produce a contact normal steeper than the
-    // floor's own — without this exclusion that contact could outrank the
-    // real floor and report the wrong (or no) Surface (code review).
-    let groundNormalY = -Infinity;
-    let groundHandle: number | undefined;
-    let groundNormal: Vec3 | undefined;
+    const controller = this.capsule.controller;
+    const count = controller.numComputedCollisions();
+    let ground: GroundContact | undefined;
     for (let i = 0; i < count; i += 1) {
-      const collision = this.rapierController.computedCollision(i);
+      const collision = controller.computedCollision(i);
       if (!collision?.collider) continue;
-
-      const hitCharacter = ((collision.collider.collisionGroups() >>> 16) & GROUP_CHARACTER) !== 0;
       const normal = vec3(collision.normal1.x, collision.normal1.y, collision.normal1.z);
-
-      if (!hitCharacter && normal.y > SURFACE_GROUND_NORMAL_MIN_Y && normal.y > groundNormalY) {
-        groundNormalY = normal.y;
-        groundHandle = collision.collider.handle;
-        groundNormal = normal;
+      // Another Character is neither floor nor wall here. Two overlapping
+      // Characters on a tilted deck (ADR 0034) can produce a contact normal
+      // steeper than the deck's own, which would outrank the real floor and
+      // report the wrong Surface (code review); and crashing into a Player
+      // never knocks the *mover* down — Bump is one-sided, only the one
+      // bumped goes down (ticket 04). Ice is the exception, and asks the
+      // world rather than this list (`crashIntoCharacters`, ADR 0102).
+      if (((collision.collider.collisionGroups() >>> 16) & GROUP_CHARACTER) === 0) {
+        ground = this.surface.betterGroundContact(ground, collision.collider.handle, normal);
+        this.applyWallImpact(normal, false);
       }
-
-      if (!hitCharacter && Math.abs(normal.y) < WALL_NORMAL_MAX_Y) {
-        // `normal` points away from the wall, toward the Character (Rapier's
-        // own convention — see `wallImpactKnockback`'s doc comment) — moving
-        // *into* the wall is moving opposite to it, so the closing speed is
-        // the negated dot product, not the raw one.
-        const closingSpeed = -dotVec3(this.velocity, normal);
-        if (closingSpeed >= WALL_IMPACT_MIN_SPEED) {
-          this.applyImpact(wallImpactKnockback(normal, closingSpeed), "WallImpact");
-        }
-      }
-
+      // Every collision is still reported, whatever it was, so
+      // `RapierSimulation` can resolve the contact — Motion Knockback, a
+      // shoved Prop, or a Bump delivered to the other Character.
       if (this.onCollision) {
         const point = vec3(collision.witness1.x, collision.witness1.y, collision.witness1.z);
-        this.onCollision(collision.collider.handle, point, { ...this.velocity }, normal);
+        this.onCollision(collision.collider.handle, point, { ...this.movement.velocity }, normal);
       }
     }
-    // Ticket 02 code review: Rapier's own snap-to-ground (enabled this
-    // ticket) can make `computedGrounded()` true via an internal correction
-    // that never goes through `computedCollision()`'s list at all — exactly
-    // on the steep/fast-descent ticks this ticket targets, since those are
-    // the ones the regular sweep alone doesn't keep contact on. When that
-    // happens `groundHandle` is `undefined` even though the Character is
-    // still standing on the same floor as last tick; overwriting
-    // `currentGroundColliderHandle` to `undefined` here would silently drop
-    // the Surface (mud/ice) back to default for as long as it persists —
-    // confirmed empirically to last many consecutive ticks, not just one.
-    // So: only ever *update* it when this tick's sweep actually found a
-    // qualifying collision; otherwise keep whatever it was, and only clear
-    // it once `grounded` itself goes false. Worst case this is one tick
-    // stale right at a genuine Surface boundary — the same order of lag
-    // already accepted everywhere else in this Surface pipeline.
-    if (!this.grounded) {
-      this.currentGroundColliderHandle = undefined;
-      this.currentGroundNormal = undefined;
-    } else if (groundHandle !== undefined) {
-      this.currentGroundColliderHandle = groundHandle;
-      this.currentGroundNormal = groundNormal;
-    }
-  }
-
-  private beginRagdoll(): void {
-    const at = this.body.translation();
-    const impulse = this.takeImpactImpulse();
-    // A crash (dash into a wall/Prop, a Bump, a Spinner — anything carrying an
-    // Impact impulse) absorbs most forward momentum: the ragdoll tumbles, it
-    // doesn't keep full dash speed and rocket through what it hit (ticket 08).
-    // A Fall carries no impulse and keeps its velocity.
-    const scale = lengthVec3(impulse) > 0 ? RAGDOLL_IMPACT_VELOCITY_SCALE : 1;
-    // Knocked down while riding, or in the air after leaving a Ride: the
-    // body keeps what it was being carried at (ADR 0061).
-    const carried = this.rideVelocity ?? this.keptRideVelocity ?? vec3();
-    const launch = addVec3(scaleVec3(this.velocity, scale), carried); // captured before resetMovementControllers zeroes it
-    this.collider.setEnabled(false);
-    this.resetMovementControllers();
-    this.ragdoll.activate(vec3(at.x, at.y, at.z), launch, impulse);
-  }
-
-  private beginGettingUp(): void {
-    this.getupBones = this.ragdoll.readBones();
-    this.getupStartTick = this.tickCount + 1; // this tick's snapshot is t = 0
-    this.getupStartRoot = this.ragdoll.rootPosition();
-    this.ragdoll.deactivate();
-    this.pendingImpact = null;
-    this.body.setTranslation(
-      { x: this.getupStartRoot.x, y: this.getupStartRoot.y + GETUP_CAPSULE_LIFT, z: this.getupStartRoot.z },
-      false,
-    );
-    this.collider.setEnabled(true);
-    this.velocity = vec3();
+    this.surface.adoptGroundContact(this.movement.grounded, ground);
   }
 
   /**
-   * Put a fallen Character back on the Checkpoint — on its feet and unsteady
-   * (ADR 0072), where it used to arrive as a flopping ragdoll.
+   * A Character closing on a near-vertical surface at or above the crash
+   * speed — {@link WALL_IMPACT_MIN_SPEED}, or whatever the Surface underfoot
+   * says instead (`SurfaceController.crashMinSpeed`) — is knocked down by it
+   * (ticket 06, re-expressed as a speed threshold in M3.7 ticket 03, ADR
+   * 0037) — wall or Moving Segment or Prop, whatever it hit, and on ice
+   * another Character too (ADR 0102) — with the magnitude scaling off that
+   * same closing speed, so a slow build-up, a late-release Dash or simply
+   * walking into a wall is just a blocked walk.
    *
-   * The ragdoll is not activated at all: the collider stays on, the capsule is
-   * simply moved, and the Character comes back wobbling for
-   * {@link RESPAWN_WOBBLE_TICKS}. That wobble is the whole cost of a Fall now,
-   * and it is both gentler and more predictable than the knockdown it
-   * replaces — a Track author placing a gap can count on it.
+   * Closing speed is `velocity`'s own component *into* the surface, whatever
+   * gave the Character that velocity: Dash, a bounce, a launch pad, an updraft
+   * all qualify identically. There is deliberately no second, parallel "is
+   * this Character Dashing" check — two rules for one event drift apart under
+   * tuning, and then neither can be blamed.
    */
-  private respawnAtCheckpoint(respawn: PendingRespawn): void {
-    this.pendingRespawn = null;
-    this.respawnCount += 1;
-    this.getupBones = [];
-    this.pendingImpact = null;
-    this.collider.setEnabled(true);
-    this.body.setTranslation({ ...respawn.point }, true);
-    this.resetMovementControllers();
-    this.machine.wobble(RESPAWN_WOBBLE_TICKS);
+  private applyWallImpact(normal: Vec3, intoCharacter: boolean): void {
+    if (Math.abs(normal.y) >= WALL_NORMAL_MAX_Y) return;
+    const minSpeed = this.surface.crashMinSpeed(intoCharacter);
+    if (minSpeed === undefined) return;
+    // `normal` points away from the wall, toward the Character (Rapier's own
+    // convention — see `wallImpactKnockback`), so moving *into* the wall is
+    // moving opposite to it: the closing speed is the negated dot product.
+    const closingSpeed = -dotVec3(this.movement.velocity, normal);
+    if (closingSpeed >= minSpeed) {
+      this.applyImpact(wallImpactKnockback(normal, closingSpeed), "WallImpact");
+    } else if (this.surface.surfaceCrashKnockdown) {
+      // ADR 0102: where any crash takes your feet, a crash is the speed you
+      // *arrive* at. Ice's grip lets velocity keep building against whatever
+      // blocks it, so a Character leaning into a rail went down after a
+      // quarter of a second without having moved (measured) — what it is
+      // only touching, it stops moving into.
+      this.movement.stopAgainst(normal);
+    }
   }
 
-  /** The queued Impact shove, consumed. Zero if none. */
-  private takeImpactImpulse(): Vec3 {
-    const impulse = this.pendingImpact?.impulse ?? vec3();
-    this.pendingImpact = null;
-    return impulse;
+  /**
+   * Running into another Character, on a Surface where anything is a crash
+   * (ice, ADR 0102) — asked of the world, not of the sweep's contacts.
+   * Rapier's character controller can stop one capsule against another
+   * without reporting the contact: measured at 3 approaches in 50 on ice,
+   * each of which then pushed the other Character across the ice with no
+   * crash at all, where a wall went down 50 times in 50. A rule that holds
+   * 94% of the time reads as a bug.
+   *
+   * Run once this tick's velocity is final and before the sweep, so a touch
+   * too slow to count takes the velocity into the other Character out
+   * exactly as a wall does. The normal runs between the two capsules'
+   * nearest points, so one Character standing on another's head is not a
+   * side-on crash.
+   */
+  private crashIntoCharacters(): void {
+    if (!this.surface.surfaceCrashKnockdown) return;
+    const at = this.capsule.body.translation();
+    this.capsule.world.intersectionsWithShape(
+      at,
+      this.capsule.body.rotation(),
+      this.touchProbe,
+      (other) => {
+        const o = other.translation();
+        const dy = at.y - o.y;
+        const apart = Math.sign(dy) * Math.max(0, Math.abs(dy) - 2 * CAPSULE_HALF_HEIGHT);
+        const between = vec3(at.x - o.x, apart, at.z - o.z);
+        if (lengthVec3(between) > 0) this.applyWallImpact(normalizeVec3(between), true);
+        return true;
+      },
+      undefined,
+      CHARACTERS_ONLY,
+      this.capsule.collider,
+      undefined,
+      (collider) => collider.isEnabled(),
+    );
   }
 
+  /** Everything this Character was doing upright, stopped: its movement, and its verbs and holds. */
   private resetMovementControllers(): void {
-    this.velocity = vec3();
-    this.jump.reset();
-    this.dash.reset();
-    this.dashSpeed = 0;
-    // M6 ticket 03 (code review): Hit mirrors Dash's own cooldown idiom, so
-    // it must also mirror Dash's own reset-on-knockdown behavior — without
-    // this, a Character's Hit stayed locked out for whatever was left of its
-    // cooldown after getting up, while Dash always came back instantly, a
-    // surprising inconsistency between two verbs deliberately built the same way.
-    this.hit.reset();
-    // M6 ticket 04: same reasoning as Hit just above — a knockdown resets
-    // Grab's cooldown too, and drops this Character's own view of being
-    // engaged in a hold (`RapierSimulation`'s own grab-relationship map ends
-    // the hold from its side independently; this is the same "safest fallback
-    // until the next real check" treatment `activeVolume`/`surfaceBounce`
-    // already get on reconcile).
-    this.grab.reset();
-    this.grabSpeedMultiplier = 1;
-    this.grabbingId = null;
-    this.heldByGrabberId = null;
-    this.grabTetherWish = undefined;
-    this.pendingLaunchVelocity = undefined;
-    this.airbornePeakFallSpeed = 0;
-    this.rideVelocity = undefined;
-    this.keptRideVelocity = undefined;
-    this.pendingPush = undefined;
-  }
-
-  /** The GettingUp blend's current position — shared by `snapshot()` and `reconcileTo`'s position-tracking correction. */
-  private getupBlendedPosition(elapsed: number, capsuleCentre: Vec3): Vec3 {
-    const getupT = Math.min(1, Math.max(0, elapsed / GETUP_TICKS));
-    return lerpVec3(this.getupStartRoot, capsuleCentre, getupT);
+    this.movement.reset();
+    this.interaction.reset();
   }
 
   snapshot(): CharacterState {
     const state = this.machine.state;
-    const t = this.body.translation();
+    const pose = this.machine.mode.pose;
+    const t = this.capsule.body.translation();
     const capsuleCentre = vec3(t.x, t.y, t.z);
 
     let position = capsuleCentre;
-    let velocity = this.velocity;
+    let velocity = this.movement.velocity;
     let bones: BoneSnapshot[] = [];
-    if (state === "Ragdoll") {
-      position = this.ragdoll.rootPosition();
-      // The capsule's own velocity was zeroed the moment Ragdoll began
-      // (`resetMovementControllers`); report the ragdoll body's real velocity
-      // instead so a reconciling client has a real launch to hand its own
-      // ragdoll on a forced Bump snap (ticket 08 follow-up), not zero.
-      velocity = this.ragdoll.rootVelocity();
-      bones = this.ragdoll.readBones();
-    } else if (state === "GettingUp") {
-      const elapsed = this.tickCount - this.getupStartTick;
-      // position rises smoothly from the settled pelvis to the standing capsule,
-      // so there is no jump at the Ragdoll → GettingUp boundary
-      position = this.getupBlendedPosition(elapsed, capsuleCentre);
-      bones = blendGettingUpBones(this.getupBones, capsuleCentre, elapsed);
+    if (pose !== "capsule") {
+      ({ position, velocity, bones } = this.ragdolls.pose(pose, capsuleCentre, this.tickCount, velocity));
     }
 
     return {
       position,
       velocity: { ...velocity },
-      grounded: this.grounded,
+      grounded: this.movement.grounded,
       motionState: state,
-      respawnCount: this.respawnCount,
-      ragdollEpoch: this.ragdollEpoch,
-      hitEpoch: this.hitEpoch,
-      hitReactEpoch: this.hitReactEpoch,
-      grabEpoch: this.grabEpoch,
-      ragdollCause: this.ragdollCause,
-      dashCooldownMs: this.dash.cooldownMs,
-      dashing: this.dash.isActive,
-      dashSpeed: this.dashSpeed,
-      hitCooldownMs: this.hit.cooldownMs,
-      hitChargeMs: this.hit.chargeMs,
-      grabCooldownMs: this.grab.cooldownMs,
-      grabbingId: this.grabbingId,
-      heldByGrabberId: this.heldByGrabberId,
-      launchPadEpoch: this.launchPadEpoch,
+      respawnCount: this.ragdolls.respawnCount,
+      ragdollEpoch: this.ragdolls.ragdollEpoch,
+      hitEpoch: this.interaction.hitEpoch,
+      hitReactEpoch: this.interaction.hitReactEpoch,
+      grabEpoch: this.interaction.grabEpoch,
+      ragdollCause: this.ragdolls.ragdollCause,
+      dashCooldownMs: this.movement.dash.cooldownMs,
+      dashing: this.movement.dash.isActive,
+      dashSpeed: this.movement.dashSpeed,
+      hitCooldownMs: this.interaction.hit.cooldownMs,
+      hitChargeMs: this.interaction.hit.chargeMs,
+      grabCooldownMs: this.interaction.grab.cooldownMs,
+      grabbingId: this.interaction.grabbingId,
+      heldByGrabberId: this.interaction.heldByGrabberId,
+      heldPhase: this.interaction.reportedHeldPhase,
+      holdEndsTick: this.interaction.holdEndsTick,
+      escapeProgress: this.interaction.escapeProgress,
+      lastWiggleYaw: this.interaction.lastWiggleYaw,
+      spinMs: this.interaction.spinning ? this.interaction.spinMs : 0,
+      launchPadEpoch: this.movement.launchPadEpoch,
       facing: this.currentFacing,
       bones,
     };
@@ -1420,124 +811,37 @@ export class CharacterController {
    *   velocity, ground flag, motion state and dash cooldown from the snapshot;
    *   the caller then replays buffered inputs from here. `dashing` tells the
    *   dash controller whether an in-progress local burst should keep playing
-   *   out (see {@link DashController.restoreCooldownMs}) —
+   *   out (see `DashController.restoreCooldownMs`) —
    *   reconciliation must not silently truncate a burst the server agrees is
    *   still happening.
    */
   reconcileTo(base: ReconcileBase): void {
-    const serverDown = isDownMotionState(base.motionState);
-
-    if (serverDown) {
-      if (this.machine.state !== base.motionState) {
-        if (!isDownMotionState(this.machine.state)) {
-          // A knockdown the client never predicted at all (or already wrongly
-          // recovered from — which can't happen once `authoritative` is
-          // false, but stays correct either way): flop now, at the server's
-          // real position, not wherever we last predicted.
-          this.body.setTranslation({ ...base.position }, false);
-          this.velocity = { ...base.velocity };
-          this.machine.snapTo("Ragdoll");
-          this.beginRagdoll();
-        }
-        if (base.motionState === "GettingUp" && this.machine.state !== "GettingUp") {
-          this.machine.snapTo("GettingUp");
-          this.beginGettingUp();
-        }
-      }
-      if (this.ragdoll.isActive) this.ragdoll.snapRootTo(base.position);
+    if (isDownMotionState(base.motionState)) {
+      this.ragdolls.syncDown(base, this.tickCount);
       return;
     }
 
-    if (isDownMotionState(this.machine.state)) this.returnToControlled();
-    this.body.setTranslation({ ...base.position }, false);
-    this.velocity = { ...base.velocity };
-    this.grounded = base.grounded;
-    // The correction can move the capsule across a Surface boundary (mud/ice
-    // vs default) that a mispredicting client had no way to see coming — the
-    // snapshot carries no Surface of its own (ADR 0036: it's a pure function
-    // of position, never replicated), so the safest thing this can do is
-    // fall back to full grip / no cap and let the very next real ground
-    // sweep recompute the true Surface, exactly like the existing one-tick
-    // lag already does after a normal landing. Without this the first tick
-    // replayed from here
-    // would run with whatever multiplier happened to be set before the
-    // correction (code review, ticket 01) — a *second*, undocumented tick of
-    // wrong walk speed stacked on top of the position correction itself.
-    this.currentGroundColliderHandle = undefined;
-    // Same fallback for a Ride's kept momentum (ADR 0061): not replicated, so
-    // the replay starts without it rather than with a stale one.
-    this.rideVelocity = undefined;
-    this.keptRideVelocity = undefined;
-    this.pendingPush = undefined;
-    // Code review, ticket 03: a snapshot's `motionState` is authoritative for
-    // *state* but carries no ground normal of its own (never replicated —
-    // it's a pure function of position, ADR 0036/0037). Clearing this to
-    // `undefined` unconditionally (as the Surface handle above still
-    // correctly does) would break reconciling into "Sliding" specifically:
-    // `beginTick`'s `tooSteepToWalk` reads this field *before* this same
-    // tick's own sweep can refresh it, so it would read `false` and the
-    // state machine would immediately flip the just-restored Sliding back to
-    // Controlled for one tick — discarding the server's own conclusion. A
-    // synthetic near-vertical normal (just past the walkable threshold) is
-    // enough to keep the *state* correct for that one tick; projected onto a
-    // vertical normal, its own tangential-gravity contribution is ~0, so the
-    // Character simply doesn't accelerate for that one tick instead of
-    // wrongly regaining full control — a much smaller, self-correcting
-    // discrepancy, fixed for real the moment the next sweep runs.
-    this.currentGroundNormal = base.motionState === "Sliding" ? { x: 0, y: WALKABLE_NORMAL_MIN_Y - 0.01, z: 0 } : undefined;
-    this.surfaceTopSpeedMultiplier = 1;
-    this.surfaceGrip = 1;
-    this.surfaceBounce = undefined;
-    // Same reasoning, same ADR 0036 "pure function of position" — a Volume
-    // isn't in the snapshot either, so the safest fallback is "not in one"
-    // until the very next real containment check (below, same tick's own
-    // sweep already refreshed the ground handle by then) recomputes it.
-    this.activeVolume = undefined;
-    // Same reasoning again (M6 ticket 04): whether this Character is
-    // currently engaged in a Grab hold is cross-Character state, never
-    // replicated on the snapshot — "not engaged" until `RapierSimulation`'s
-    // own per-tick push refreshes it, same as `activeVolume` just above.
-    this.grabSpeedMultiplier = 1;
-    this.grabbingId = null;
-    this.heldByGrabberId = null;
-    // M6.1: same reasoning — a hold's shared tether wish is cross-Character
-    // state, never replicated, "not engaged" until the very next real check
-    // re-derives it.
-    this.grabTetherWish = undefined;
-    // Re-derived fresh from `base.velocity` starting the very next tick's
-    // own gravity-integration line — a reconciliation landing mid-fall onto
-    // a bounce Surface loses whatever higher peak a mispredicting client saw
-    // before the correction, the same one-off precision trade every other
-    // Surface-adjacent field here already accepts.
-    this.airbornePeakFallSpeed = 0;
+    if (isDownMotionState(this.machine.state)) this.ragdolls.returnToControlled();
+    this.capsule.body.setTranslation({ ...base.position }, false);
+    this.movement.reconcile(base);
+    this.surface.reconcile(base.motionState === "Sliding");
+    this.interaction.reconcile(base);
     this.machine.snapTo(base.motionState);
-    this.dash.restoreCooldownMs(base.dashCooldownMs, base.dashing);
-    this.hit.restoreCooldownMs(base.hitCooldownMs);
-    this.hit.restoreCharge(base.hitChargeMs);
-    this.grab.restoreCooldownMs(base.grabCooldownMs);
-    // A launch pad has no decay curve to restore (M3.7 ticket 02) — its
-    // whole effect already lives in `base.velocity` above. Only the pending
-    // one-shot write itself needs clearing: never replayed here, only ever
-    // re-derived fresh by `RapierSimulation`'s rising-edge check against the
-    // replayed position.
-    this.pendingLaunchVelocity = undefined;
-    this.jump.reset(); // stale coyote/hold bookkeeping would let replay grant a jump the server won't
-    this.pendingRespawn = null; // a Fall the client predicted but the server (this base) hasn't seen
-  }
-
-  /** Undo a local Ragdoll/GettingUp the server says never happened (or is already over): freeze and hide the bones, re-enable the capsule. */
-  private returnToControlled(): void {
-    if (this.ragdoll.isActive) this.ragdoll.deactivate();
-    this.collider.setEnabled(true);
-    this.getupBones = [];
-    this.pendingImpact = null;
-    this.resetMovementControllers();
+    // ADR 0104: a Held body collides with nothing; any other is solid again —
+    // whichever way round the correction went.
+    this.capsule.collider.setEnabled(base.motionState !== "Held");
+    // A grabber's turn is clamped against the tick before, and a Spin turns
+    // from where the server had it, so the replay starts from its facing. For
+    // everyone else the next input overwrites it anyway.
+    this.currentFacing = base.facing;
+    if (this.interaction.spinTicks > 0) this.interaction.spinStartFacing = base.facing - spinAngleAt(this.interaction.spinTicks);
+    this.ragdolls.forgetRespawn(); // a Fall the client predicted but the server (this base) hasn't seen
   }
 
   /** Remove this Character's capsule body, character controller and ragdoll bones from the world (ticket 01: `removeCharacter`). */
   dispose(): void {
-    this.ragdoll.dispose();
-    this.world.removeCharacterController(this.rapierController);
-    this.world.removeRigidBody(this.body);
+    this.ragdolls.ragdoll.dispose();
+    this.capsule.world.removeCharacterController(this.capsule.controller);
+    this.capsule.world.removeRigidBody(this.capsule.body);
   }
 }

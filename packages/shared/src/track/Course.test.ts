@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
-import { CAPSULE_BOTTOM_OFFSET, TICK_RATE_HZ } from "../tuning.js";
+import { CAPSULE_BOTTOM_OFFSET } from "../tuning/character.js";
+import { TICK_RATE_HZ } from "../tuning/clock.js";
 import { initPhysics, RapierSimulation } from "../simulation/RapierSimulation.js";
 import { IDLE_INPUTS } from "../simulation/SimInputs.js";
 import { loadAssetModule } from "./asset.js";
@@ -17,7 +18,8 @@ import {
 } from "./Course.js";
 import type { Module } from "./Module.js";
 import { M1_MODULES } from "./modules.js";
-import { countCheckpoints, resolveTrack, trackHasFinishZone, trackSpawn, trackSpawnYaw, type Track } from "./Track.js";
+import { resolveTrack } from "./resolveTrack.js";
+import { countCheckpoints, trackHasFinishZone, trackSpawn, trackSpawnYaw, type Track } from "./Track.js";
 
 beforeAll(async () => {
   await initPhysics();

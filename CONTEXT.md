@@ -171,8 +171,9 @@ _Avoid_: version, save
 
 **Thumbnail**:
 One Revision's screenshot — the JPEG its author framed in the Track builder
-just before saving, shown in Discover and on the Round loader. A Revision
-published without one simply has none.
+just before saving (for a code-authored Track, rendered from a camera written
+beside it), shown in Discover, the Lobby, between Rounds and on the Round
+loader. A Revision published without one simply has none.
 _Avoid_: preview (in the builder that means a live 3D vignette), screenshot,
 map image
 
@@ -226,8 +227,9 @@ _Avoid_: bounding box
 **Surface**:
 A property of a piece of Track floor: how well a Character grips it (how fast it
 can accelerate and how fast it slows down) and how fast it may ultimately travel
-on it. A property of floor geometry, never a kind of Module — one Module may mix
-Surfaces across its floor pieces.
+on it. Some Surfaces can also take a Character's feet (see Slip). A property of
+floor geometry, never a kind of Module — one Module may mix Surfaces across its
+floor pieces.
 _Avoid_: material, terrain, ice block, ground type
 
 **Volume**:
@@ -279,6 +281,13 @@ _Avoid_: bouncer, jump pad, trampoline, spring pad
 One concrete instance of a Module placed at a position in a Track. A Track is a
 sequence of Segments.
 _Avoid_: section, tile, chunk, piece
+
+**Attachment**:
+Something authored on one Segment on top of where it stands: its Motion, a
+Conveyor, ice, mud or bounce, a Spring's height, being a Prop, the Start, a
+Checkpoint. Where the Segment stands — its position, orientation and size — is
+not an Attachment.
+_Avoid_: modifier, annotation, flag, option
 
 **Motion**:
 The authored, endlessly repeating movement of one Segment: a Spin (constant
@@ -361,10 +370,17 @@ condition (standing on such a Surface), not by a timer — unlike Stagger. An
 Impact while Sliding knocks the Character straight into Ragdoll.
 _Avoid_: slipping, skidding
 
+**Slip**:
+A knockdown the floor causes: the Character's feet go out from under it on a
+treacherous Surface — a hard landing on ice or in mud, or running or turning
+sharply in mud. Always a chance, never a certainty. Not Sliding, which the
+Character stays on its feet through.
+_Avoid_: trip, stumble, fall (a Fall is leaving the play volume)
+
 **Ragdoll**:
 The Character state where the articulated body takes over full physics and the
-Player has no movement control. Triggered by a hard Impact or dashing into a
-wall. (A Fall no longer triggers it: see Wobble.)
+Player has no movement control. Triggered by a hard Impact, dashing into a
+wall, a Slip, a Hurl, or being let go of while Limp. (A Fall no longer triggers it: see Wobble.)
 
 **GettingUp**:
 The Character state after a Ragdoll: the Character gets back on its feet, still
@@ -421,16 +437,55 @@ keeps going if it carries the Character off an edge. Dashing into a wall or
 edge sends the Character to Ragdoll.
 
 **Grab**:
-Briefly latching onto a Character just ahead of you. Both Characters move at a
-greatly reduced pace for the duration; the held Character struggles free by
-moving away from the grabber, or is released once the grabber's own hold limit
-runs out; cooldown after. Connecting cancels an in-progress Dash for both
-Characters, the same cancellation Hit causes.
+Latching onto a Character just ahead of you — upright or already knocked down —
+and carrying it at arm's length in front of you. An upright one gets a Struggle
+to break free; one that loses it, or was already down, goes Limp. While holding,
+the grabber walks and turns slower and can do nothing else but Spin or let go
+(Grab again). A hold ends on a Hurl, a let-go, the Struggle won, the Limp window
+running out, or the grabber going down; cooldown after, and Grab immunity for
+whoever was held. Connecting cancels an in-progress Dash for both Characters,
+the same cancellation Hit causes.
 _Avoid_: grapple, catch
 
+**Held**:
+The Character state of being carried by a grabber: the Player's input does
+nothing but the Struggle, and the body goes where the grabber takes it.
+
+**Struggle**:
+What a Held Character does to break free — wiggling, i.e. reversing its movement
+input again and again, to fill an escape meter before a window runs out. Winning
+it frees the Character on its feet; losing it leaves it Limp.
+_Avoid_: mash, QTE, escape (as the name of the mechanic)
+
+**Limp**:
+The part of a hold after a lost Struggle, or when the Character was grabbed
+already down: unconscious in the grabber's hands, with no input and no getting
+up, for a short window of the grabber's. Released, a Limp Character goes into
+Ragdoll for a whole knockdown. Not Ragdoll itself — nothing gets up while Limp.
+_Avoid_: ragdoll (for the carried body), unconscious (as a state name)
+
+**Spin**:
+Holding Hit while holding someone: the grabber stands still and turns ever
+faster, swinging the held body round. A swung body knocks down whoever it passes
+through. Spin too long past full speed and the grabber gets dizzy and goes down,
+flinging the held Character away weakly.
+_Avoid_: wind-up (that is only its first half), twirl
+
+**Hurl**:
+Letting go of Hit to end a Spin: the held Character leaves along the circle —
+pulled toward where the grabber is steering — as a knockdown, further the faster
+the Spin was. A hurled body knocks down whoever it lands on.
+_Avoid_: throw (what a knockdown does to the body), toss
+
+**Grab immunity**:
+A short spell after a hold ends, lasting until shortly after the released
+Character is back on its feet, during which nobody can grab it again.
+
 **Hit**:
-A short-range melee move, on its own cooldown like Dash. Connecting lands an
-Impact on the target and cancels an in-progress Dash for both Characters.
+A short-range melee move, on its own cooldown like Dash, charged by holding the
+button. Connecting lands an Impact on the target and cancels an in-progress
+Dash for both Characters. A Hit that doesn't knock the target down still shoves
+it; one that does throws it.
 _Avoid_: punch (that's the unrelated Power-up of the same name), attack, strike
 
 ### Items
@@ -467,6 +522,18 @@ A cosmetic an Account's Character wears on its head — at most one, seen by eve
 Match and on every Screen that shows the Character. Unlocked by the Account's XP, never bought.
 Purely visual: it changes nothing about how the Character moves, collides or is hit.
 _Avoid_: headwear, accessory, helmet, cap (unless naming one hat)
+
+**Skin**:
+Authored art painted over a Character's whole body through its UV map — at most one, unlocked by
+the Account's XP like a Hat, and seen by every Player the same way. A Skin covers the body and
+nothing else: the eyes keep their own look and a Hat keeps its own colours. Purely visual.
+_Avoid_: texture, costume, outfit, pattern, character (when you mean the art it wears)
+
+**Colour**:
+The flat tint a Character's body wears when it has no Skin on — the plainer of the two ways a bean
+can look, and never blended with one: a Skin wins outright. Every Account has a Colour and none are
+locked.
+_Avoid_: body skin (its old name), tint, palette, dye
 
 **Bet**:
 A wager an eliminated Player makes in Spectator Mode, staking Coins on which still-active Player

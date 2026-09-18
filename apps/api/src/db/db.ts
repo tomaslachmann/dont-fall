@@ -3,7 +3,12 @@ import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import { sql } from "drizzle-orm";
-import { DEFAULT_ENVIRONMENT_ID, DEFAULT_SURVIVOR_TARGET, DEFAULT_TIME_LIMIT_MS } from "@dont-fall/shared";
+import {
+  DEFAULT_ACCOUNT_ROLE,
+  DEFAULT_ENVIRONMENT_ID,
+  DEFAULT_SURVIVOR_TARGET,
+  DEFAULT_TIME_LIMIT_MS,
+} from "@dont-fall/shared";
 import * as schema from "./schema.js";
 
 /**
@@ -121,15 +126,27 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
       password_hash TEXT,
       display_name TEXT NOT NULL,
       avatar_url TEXT,
+      role TEXT NOT NULL DEFAULT '${sql.raw(DEFAULT_ACCOUNT_ROLE)}',
       friend_code TEXT UNIQUE,
       created_at INTEGER NOT NULL,
       xp INTEGER NOT NULL DEFAULT 0,
       coins INTEGER NOT NULL DEFAULT 0,
-      body_skin INTEGER NOT NULL DEFAULT 0,
+      color INTEGER NOT NULL DEFAULT 0,
+      skin TEXT,
       bindings TEXT,
       hat TEXT
     )
   `);
+  // ADR 0091: `body_skin` became `color` when real authored skins arrived and
+  // took the word "skin" for themselves. A rename, not a drop: the column's
+  // values are still exactly what they were, and SQLite has done RENAME
+  // COLUMN since 3.25. Runs before the column survey below so the additive
+  // checks see the post-rename shape and never add a second, empty `color`.
+  const preRenameColumns = sqlite.pragma("table_info(accounts)") as { name: string }[];
+  if (preRenameColumns.some((c) => c.name === "body_skin") && !preRenameColumns.some((c) => c.name === "color")) {
+    console.log("api: renaming accounts.body_skin to accounts.color (ADR 0091)");
+    sqlite.exec("ALTER TABLE accounts RENAME COLUMN body_skin TO color");
+  }
   // Match earnings (economy slice): additive backfill in the same style as
   // `time_limit_ms` above — pre-economy Accounts start at zero and keep
   // everything they had. `ADD COLUMN ... NOT NULL DEFAULT` is the backfill.
@@ -140,11 +157,23 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
       sqlite.exec(`ALTER TABLE accounts ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
     }
   }
-  // M9 ticket 15: the equipped body skin — same additive backfill, default
-  // bean (skin 0) for every pre-skins Account.
-  if (!accountColumns.some((c) => c.name === "body_skin")) {
-    console.log("api: backfilling body_skin = 0 onto pre-skins Accounts");
-    sqlite.exec("ALTER TABLE accounts ADD COLUMN body_skin INTEGER NOT NULL DEFAULT 0");
+  // M9 ticket 15: the equipped body color — same additive backfill, default
+  // bean (color 0) for every pre-colors Account.
+  if (!accountColumns.some((c) => c.name === "color")) {
+    console.log("api: backfilling color = 0 onto pre-colors Accounts");
+    sqlite.exec("ALTER TABLE accounts ADD COLUMN color INTEGER NOT NULL DEFAULT 0");
+  }
+  // Account roles: every pre-roles Account backfills to a player — the same
+  // additive migration, `ADD COLUMN ... NOT NULL DEFAULT` as the backfill.
+  if (!accountColumns.some((c) => c.name === "role")) {
+    console.log(`api: backfilling role = '${DEFAULT_ACCOUNT_ROLE}' onto pre-roles Accounts`);
+    sqlite.exec(`ALTER TABLE accounts ADD COLUMN role TEXT NOT NULL DEFAULT '${DEFAULT_ACCOUNT_ROLE}'`);
+  }
+  // ADR 0091: the equipped skin — nullable, and NULL is "no skin, wear the
+  // color", so pre-skins Accounts need no backfill value. Same shape as
+  // `hat` below.
+  if (!accountColumns.some((c) => c.name === "skin")) {
+    sqlite.exec("ALTER TABLE accounts ADD COLUMN skin TEXT");
   }
   // M9 controls: the stored bindings — nullable, so pre-controls Accounts
   // need no backfill value; NULL reads as "never saved".

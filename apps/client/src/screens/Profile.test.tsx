@@ -4,7 +4,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import Profile from "./Profile";
 
 const renderProfile = (props: Partial<React.ComponentProps<typeof Profile>> = {}) =>
-  render(<Profile name="Wobbleton" level={2} xp={240} xpTarget={2000} skin={3} {...props} />);
+  render(<Profile name="Wobbleton" level={2} xp={240} xpTarget={2000} color={3} {...props} />);
 
 describe("Profile", () => {
   it("renders the identity card — name, level, XP bar and the signature-pose render", () => {

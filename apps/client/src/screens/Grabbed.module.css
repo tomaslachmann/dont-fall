@@ -1,0 +1,28 @@
+/* The escape state owns the whole screen: one centered column, mash meter is the only affordance.
+   Ported from the design as it is (ADR 0104) — shared keyframes named with `global()`. */
+.screen { place-items: center; }
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--df-space-5);
+  text-align: center;
+}
+.by {
+  font: var(--df-weight-kicker) var(--df-text-sm) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-mega);
+  color: var(--df-color-accent);
+}
+.word {
+  font: var(--df-weight-display) var(--df-text-mega) / .9 var(--df-font-display);
+  color: var(--df-color-on-brand);
+  text-shadow: 0 var(--df-bevel-5) 0 var(--df-color-ink-35);
+  animation: global(df-bounce) .5s ease-in-out infinite;
+}
+.prompt {
+  font: var(--df-weight-label) var(--df-text-sm) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand);
+}
+.meter { width: min(42%, 100%); margin-top: var(--df-space-5); }

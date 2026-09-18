@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   MAX_MATCH_LENGTH,
   MIN_MATCH_LENGTH,
-  NICKNAME_MAX_LENGTH,
   ROUND_TYPES,
   allReady,
   roundTypeLabel,
@@ -21,8 +20,8 @@ import ReadySwitch from '../ui/ReadySwitch';
 import type { Feel } from '../tokens';
 import type { LobbySnapshot } from '../lib/socket/lobbyConnection.js';
 import { formatRoundClock } from '../lib/utils/roundTimer.js';
-import { useAccount } from '../lib/hooks/useAccount.js';
 import { useDiscoverTracks } from '../lib/hooks/useDiscoverTracks.js';
+import { TRACK_ART_LAYER, thumbnailFor, trackArtStyle } from '../lib/trackArt.js';
 import Discover from './Discover.js';
 import s from './Lobby.module.css';
 
@@ -34,7 +33,6 @@ export interface LobbyProps {
    * (ADR 0054) — private Lobbies only. A quick-matched public Lobby has none.
    */
   code?: string;
-  onSetNickname: (nickname: string) => void;
   onSetReady: (ready: boolean) => void;
   onSelectTrack: (trackId: string) => void;
   onSetRoundType: (roundType: RoundType) => void;
@@ -80,7 +78,6 @@ const SwapIcon = () => (
 export default function Lobby({
   lobby,
   code,
-  onSetNickname,
   onSetReady,
   onSelectTrack,
   onSetRoundType,
@@ -93,21 +90,6 @@ export default function Lobby({
   const navigate = useNavigate();
   const me = lobby.players.find((p) => p.id === lobby.myId);
   const isHost = lobby.hostId === lobby.myId;
-  const { account } = useAccount();
-
-  /**
-   * This Player is named by their Account, not by anything typed here (ADR
-   * 0052: login is mandatory, so a Lobby-local nickname would be a second,
-   * conflicting identity). Sent once the roster actually has this Player in
-   * it and the name doesn't already match — the server echoes it straight
-   * back on the next snapshot, which is what stops this from re-firing.
-   */
-  const myNickname = me?.nickname;
-  useEffect(() => {
-    const name = account?.displayName;
-    if (name === undefined || myNickname === undefined || myNickname === name) return;
-    onSetNickname(name.slice(0, NICKNAME_MAX_LENGTH));
-  }, [account?.displayName, myNickname, onSetNickname]);
 
   // Only the host ever picks a Track, so only the host pays for the fetch —
   // one cached query (fresh for 30s), not a fetch per mount. A failed list
@@ -121,6 +103,13 @@ export default function Lobby({
   const readyCount = lobby.players.filter((p) => p.ready).length;
   const waiting = lobby.players.length - readyCount;
   const open = Math.max(0, lobby.maxPlayers - lobby.players.length);
+  // A Round's thumb: the Track's screenshot over its type's stripes (ADR 0105)
+  // — sign-in already loaded the listing and every picture in it, so a guest
+  // reads the same cache the host's picker fills.
+  const thumbStyle = (id: string | null, pair: [string, string]) => ({
+    ...trackArtStyle(thumbnailFor(tracks, id)),
+    background: `${TRACK_ART_LAYER}, ${stripe(pair)}`,
+  });
   const trackName = (id: string | null): string =>
     id === null ? 'RANDOM PICK' : (tracks?.find((t) => t.id === id)?.name ?? id);
 
@@ -275,7 +264,7 @@ export default function Lobby({
             */}
             <div className={[s.round, s.roundActive].join(' ')}>
               <span className={s.roundNo}>1</span>
-              <span className={s.thumb} style={{ background: stripe(THUMBS[lobby.roundType] ?? THUMBS.random) }} />
+              <span className={s.thumb} style={thumbStyle(lobby.trackId, THUMBS[lobby.roundType] ?? THUMBS.random)} />
               <span className={s.roundText}>
                 <span className={s.roundName}>{trackName(lobby.trackId)}</span>
                 <span>
@@ -318,7 +307,7 @@ export default function Lobby({
               return (
                 <div key={roundIndex} className={s.round}>
                   <span className={s.roundNo}>{roundIndex + 1}</span>
-                  <span className={s.thumb} style={{ background: stripe(thumb) }}>{pick.trackId === null ? '?' : ''}</span>
+                  <span className={s.thumb} style={thumbStyle(pick.trackId, thumb)}>{pick.trackId === null ? '?' : ''}</span>
                   <span className={s.roundText}>
                     <span className={s.roundName}>{trackName(pick.trackId)}</span>
                     <span>

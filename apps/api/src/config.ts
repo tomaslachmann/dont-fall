@@ -2,7 +2,7 @@ import { DEFAULT_API_PORT } from "@dont-fall/shared";
 import { defaultAssetsDir } from "./assets/assets.service.js";
 import type { DiscordOAuthConfig, FetchLike } from "./auth/auth.service.js";
 import type { PortRange } from "@dont-fall/server";
-import { LobbiesService, resolveMaxPlayers, type LobbiesDeps } from "./lobbies/lobbies.service.js";
+import { resolveMaxPlayers, type LobbiesDeps } from "./lobbies/lobbies.service.js";
 
 export interface ApiConfig {
   /** Port to listen on. Defaults to {@link DEFAULT_API_PORT}. */

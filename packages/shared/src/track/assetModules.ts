@@ -4,6 +4,7 @@ import type { LaunchDef } from "./Launch.js";
 import { FAN_MODULE_DEFS } from "./fanAssetDefs.js";
 import { GATE_ASSET_DEFS } from "./gateAssetDefs.js";
 import { KAYKIT_MODULE_DEFS } from "./kaykitAssetDefs.js";
+import { QUARTER_MODULE_DEFS } from "./quarterAssetDefs.js";
 import { TRAP_MODULE_DEFS } from "./trapAssetDefs.js";
 import type { Footprint, Hazard, Module, Socket } from "./Module.js";
 import type { VolumeConfig } from "../simulation/Volume.js";
@@ -110,7 +111,13 @@ const PROMOTED_SOCKETED: AssetModuleDef[] = [
   },
 ];
 
-export const ASSET_MODULE_DEFS: AssetModuleDef[] = [...PROMOTED_SOCKETED, ...FAN_MODULE_DEFS, ...KAYKIT_MODULE_DEFS, ...TRAP_MODULE_DEFS].map((def) => {
+export const ASSET_MODULE_DEFS: AssetModuleDef[] = [
+  ...PROMOTED_SOCKETED,
+  ...FAN_MODULE_DEFS,
+  ...KAYKIT_MODULE_DEFS,
+  ...QUARTER_MODULE_DEFS,
+  ...TRAP_MODULE_DEFS,
+].map((def) => {
   const gate = GATE_ASSET_DEFS[def.id];
   return gate === undefined ? def : { ...def, gate };
 });

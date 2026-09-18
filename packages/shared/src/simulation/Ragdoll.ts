@@ -1,13 +1,7 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { IDENTITY_QUAT } from "../math/quat.js";
 import { vec3, type Vec3 } from "../math/vec3.js";
-import {
-  RAGDOLL_ANGULAR_DAMPING,
-  RAGDOLL_CONTACT_SKIN,
-  RAGDOLL_FRICTION,
-  RAGDOLL_LINEAR_DAMPING,
-  RAGDOLL_SOLVER_ITERATIONS,
-} from "../tuning.js";
+import { RAGDOLL_ANGULAR_DAMPING, RAGDOLL_CONTACT_SKIN, RAGDOLL_FRICTION, RAGDOLL_LINEAR_DAMPING, RAGDOLL_SOLVER_ITERATIONS } from "../tuning/knockdown.js";
 import { RAGDOLL_GROUPS } from "./collisionGroups.js";
 import {
   jointRestPoint,

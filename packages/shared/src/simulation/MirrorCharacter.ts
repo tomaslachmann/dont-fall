@@ -1,6 +1,6 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { vec3, type Vec3 } from "../math/vec3.js";
-import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS } from "../tuning.js";
+import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS } from "../tuning/character.js";
 import { CHARACTER_GROUPS } from "./collisionGroups.js";
 
 /**

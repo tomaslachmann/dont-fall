@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import type { LobbyConnection, LobbySnapshot } from "../socket/lobbyConnection.js";
+import type { LobbyConnection, LobbySnapshot, SocketClose } from "../socket/lobbyConnection.js";
 import { useLobbyConnection } from "./useLobbyConnection.js";
 
 const { createLobbyConnection } = vi.hoisted(() => ({ createLobbyConnection: vi.fn() }));
@@ -14,7 +14,7 @@ const lobby = (phase: LobbySnapshot["phase"] = "LOBBY"): LobbySnapshot =>
     phase,
     matchOver: null,
     hostId: "me",
-    players: [{ id: "me", nickname: "Player", ready: false, joinOrder: 0, accountId: null, bodySkin: null, hat: null }],
+    players: [{ id: "me", nickname: "Player", ready: false, joinOrder: 0, accountId: null, color: null, skin: null, hat: null }],
     trackId: "t1",
     loaded: [],
     trackRevision: 1,
@@ -30,10 +30,10 @@ const lobby = (phase: LobbySnapshot["phase"] = "LOBBY"): LobbySnapshot =>
 
 const fakeConnection = (): LobbyConnection & {
   lobbyListeners: Set<(lobby: LobbySnapshot) => void>;
-  closeListeners: Set<() => void>;
+  closeListeners: Set<(why: SocketClose) => void>;
 } => {
   const lobbyListeners = new Set<(lobby: LobbySnapshot) => void>();
-  const closeListeners = new Set<() => void>();
+  const closeListeners = new Set<(why: SocketClose) => void>();
   return {
     socket: {} as WebSocket,
     welcome: {} as LobbyConnection["welcome"],
@@ -52,7 +52,6 @@ const fakeConnection = (): LobbyConnection & {
       };
     },
     close: vi.fn(),
-    setNickname: vi.fn(),
     setReady: vi.fn(),
     selectTrack: vi.fn(),
     setRoundType: vi.fn(),
@@ -117,9 +116,10 @@ describe("useLobbyConnection", () => {
     await waitFor(() => expect(result.current.connection).toBe(connection));
 
     act(() => {
-      for (const listener of connection.closeListeners) listener();
+      for (const listener of connection.closeListeners) listener({ code: 4004, reason: "this account joined the Match somewhere else" });
     });
-    expect(result.current.closed).toBe(true);
+    // The server's own reason rides out with it (ADR 0090), for the Screen to show.
+    expect(result.current.closed).toEqual({ code: 4004, reason: "this account joined the Match somewhere else" });
 
     unmount();
     expect(connection.close).toHaveBeenCalled();

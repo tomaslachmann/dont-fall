@@ -8,10 +8,12 @@ import s from './Rewards.module.css';
 export interface RewardsProps {
   level?: number;
   /**
-   * Whose beans these are — the celebrating bean wears their skin, or the
-   * default when the Account didn't load.
+   * Whose beans these are — the celebrating bean wears their color, or the
+   * default when the Account didn't load. Shows under no `skin`.
    */
-  skin?: number | null;
+  color?: number | null;
+  /** And their skin (ADR 0091), or none — which is what shows the `color`. */
+  skin?: string | null;
   /** And their hat (ADR 0083), or none. */
   hat?: string | null;
   xpGain?: number;
@@ -51,7 +53,7 @@ const ReplayIcon = () => (
 export default function Rewards({
   level = 43, xpGain = 1240, xpBefore = 0.46, xpEarned = 0.31,
   breakdown = BREAKDOWN, beans = 860, beansSplit = SPLIT,
-  skin = null, hat = null,
+  color = null, skin = null, hat = null,
   unlock, unlockIcon, onPlayAgain, onLobby, onEquip, onExit, feel,
 }: RewardsProps) {
   return (
@@ -67,6 +69,7 @@ export default function Rewards({
       </div>
 
       <CharacterPreview
+        color={color}
         skin={skin}
         hat={hat}
         animation={WIN_SEQUENCE}

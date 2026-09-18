@@ -16,7 +16,7 @@ const ACCOUNT = {
   avatarUrl: null,
   xp: 0,
   coins: 0,
-  bodySkin: 0,
+  color: 0,
   bindings: null as KeyBindings | null,
 };
 

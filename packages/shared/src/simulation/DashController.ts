@@ -1,5 +1,5 @@
 import { lengthVec3, normalizeVec3, scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
-import { DASH_COOLDOWN_TICKS, DASH_DURATION_TICKS, DASH_RELEASE_TICKS, DASH_SPEED } from "../tuning.js";
+import { DASH_COOLDOWN_TICKS, DASH_DURATION_TICKS, DASH_RAMP_TICKS, DASH_RELEASE_TICKS, DASH_SPEED } from "../tuning/movement.js";
 import { CooldownController } from "./CooldownController.js";
 import { dashEnvelope } from "./movementVerbs.js";
 
@@ -113,7 +113,7 @@ export class DashController extends CooldownController {
     if (this.ticksLeft > 0) {
       const elapsed = DASH_DURATION_TICKS - this.ticksLeft + 0.5; // sample mid-tick
       this.ticksLeft -= 1;
-      const speed = DASH_SPEED * dashEnvelope(elapsed, DASH_DURATION_TICKS, DASH_RELEASE_TICKS);
+      const speed = DASH_SPEED * dashEnvelope(elapsed, DASH_DURATION_TICKS, DASH_RAMP_TICKS, DASH_RELEASE_TICKS);
       return scaleVec3(this.dir, speed);
     }
     return vec3();

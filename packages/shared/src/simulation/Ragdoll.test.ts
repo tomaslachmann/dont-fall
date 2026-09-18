@@ -1,6 +1,8 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { beforeAll, describe, expect, it } from "vitest";
-import { GRAVITY_Y, HIT_CHARGE_IMPACT_BONUS, HIT_IMPACT_MAGNITUDE, HIT_LIFT_RATIO, TICK_DT } from "../tuning.js";
+import { GRAVITY_Y } from "../tuning/character.js";
+import { TICK_DT } from "../tuning/clock.js";
+import { HIT_CHARGE_IMPACT_BONUS, HIT_IMPACT_MAGNITUDE, HIT_LIFT_RATIO } from "../tuning/fight.js";
 import { STATIC_GROUPS } from "./collisionGroups.js";
 import { Ragdoll } from "./Ragdoll.js";
 import { RAGDOLL_BONES, type BoneSnapshot } from "./ragdollSkeleton.js";

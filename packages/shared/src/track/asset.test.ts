@@ -3,7 +3,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { Box } from "../math/box.js";
-import { ASSET_FOOTPRINT_EPSILON, ASSET_VISUAL_WARN } from "../tuning.js";
 import { loadAssetModule, readAssetModel, validateAssetModule } from "./asset.js";
 import { ASSET_MODULE_DEFS } from "./assetModules.js";
 
@@ -15,7 +14,6 @@ import { ASSET_MODULE_DEFS } from "./assetModules.js";
 const FLOAT = 5126;
 const UBYTE = 5121;
 const USHORT = 5123;
-const UINT = 5125;
 
 interface FixturePrim {
   positions: number[];

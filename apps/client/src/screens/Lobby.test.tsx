@@ -35,8 +35,8 @@ const baseLobby = (overrides: Partial<LobbySnapshot> = {}): LobbySnapshot => ({
   matchOver: null,
   hostId: "host-id",
   players: [
-    { id: "host-id", nickname: "Host Player", ready: false, joinOrder: 0, accountId: null, bodySkin: null, hat: null },
-    { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, bodySkin: null, hat: null },
+    { id: "host-id", nickname: "Host Player", ready: false, joinOrder: 0, accountId: null, color: null, skin: null, hat: null },
+    { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, color: null, skin: null, hat: null },
   ],
   trackId: "track-a",
   loaded: [],
@@ -62,7 +62,6 @@ const renderLobby = (props: Partial<LobbyProps> = {}) =>
       <FlashHost />
       <WithQuery><Lobby
         lobby={baseLobby()}
-        onSetNickname={noop}
         onSetReady={noop}
         onSelectTrack={noop}
         onSetRoundType={noop}
@@ -103,23 +102,16 @@ describe("Lobby", () => {
     expect(screen.getByText("1 OF 2 READY")).toBeInTheDocument();
   });
 
-  it("names this Player from their Account, with nothing to type here (ADR 0052)", async () => {
-    const onSetNickname = vi.fn();
-    renderLobby({ onSetNickname });
-
-    await waitFor(() => expect(onSetNickname).toHaveBeenCalledWith("Wobbleton"));
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-  });
-
-  it("sends nothing when the roster already shows the Account's name", async () => {
-    const onSetNickname = vi.fn();
+  // ADR 0097: the Lobby neither asks for a name nor sends one — the server
+  // names the seat from the Account the socket authenticated as, and this
+  // Screen only shows what the roster came back with.
+  it("shows the roster's name and offers nothing to type", async () => {
     renderLobby({
-      lobby: baseLobby({ players: [{ id: "host-id", nickname: "Wobbleton", ready: false, joinOrder: 0, accountId: null, bodySkin: null, hat: null }] }),
-      onSetNickname,
+      lobby: baseLobby({ players: [{ id: "host-id", nickname: "Wobbleton", ready: false, joinOrder: 0, accountId: null, color: null, skin: null, hat: null }] }),
     });
 
     await waitFor(() => expect(screen.getByText("Wobbleton")).toBeInTheDocument());
-    expect(onSetNickname).not.toHaveBeenCalled();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
   it("disables Start until everyone connected is Ready, for the host", () => {
@@ -133,12 +125,11 @@ describe("Lobby", () => {
         <WithQuery><Lobby
           lobby={baseLobby({
             players: [
-              { id: "host-id", nickname: "Host Player", ready: true, joinOrder: 0, accountId: null, bodySkin: null, hat: null },
-              { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, bodySkin: null, hat: null },
+              { id: "host-id", nickname: "Host Player", ready: true, joinOrder: 0, accountId: null, color: null, skin: null, hat: null },
+              { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, color: null, skin: null, hat: null },
             ],
           })}
-          onSetNickname={noop}
-          onSetReady={noop}
+            onSetReady={noop}
           onSelectTrack={noop}
           onSetRoundType={noop}
           onSetMatchLength={noop}
@@ -261,8 +252,8 @@ describe("Lobby", () => {
 
     it("shows the server's reason a Round can't start, and disables Start with it", () => {
       const readyPlayers = [
-        { id: "host-id", nickname: "Host Player", ready: true, joinOrder: 0, accountId: null, bodySkin: null, hat: null },
-        { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, bodySkin: null, hat: null },
+        { id: "host-id", nickname: "Host Player", ready: true, joinOrder: 0, accountId: null, color: null, skin: null, hat: null },
+        { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: null, color: null, skin: null, hat: null },
       ];
       renderLobby({ lobby: baseLobby({ players: readyPlayers, startBlockedReason: "This Track has no Finish Zone." }) });
 

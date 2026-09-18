@@ -78,8 +78,10 @@ export interface MatchTableRow {
   nickname: string;
   score: number;
   placement: number;
-  /** Equipped skin at Match end — null for anonymous seats and pre-skins results: the default. */
-  bodySkin: number | null;
+  /** Equipped body color at Match end — null for anonymous seats and pre-colors results: the default. */
+  color: number | null;
+  /** Equipped skin at Match end (ADR 0091) — null for none, which is what shows the `color`. */
+  skin: string | null;
   /** Equipped hat at Match end (ADR 0083) — null for none, and for pre-hats results. */
   hat: string | null;
 }
@@ -111,7 +113,8 @@ export const toMatchResultsView = (
     nickname: result.nicknames[row.id] ?? row.id,
     score: row.score,
     placement: row.placement,
-    bodySkin: (result.bodySkins ?? {})[row.id] ?? null,
+    color: (result.colors ?? {})[row.id] ?? null,
+    skin: (result.skins ?? {})[row.id] ?? null,
     hat: (result.hats ?? {})[row.id] ?? null,
   }));
 

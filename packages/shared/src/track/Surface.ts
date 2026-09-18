@@ -1,3 +1,20 @@
+import {
+  BOUNCE_JUMP_MULTIPLIER,
+  ICE_CRASH_MIN_SPEED,
+  ICE_JUMP_MULTIPLIER,
+  ICE_LANDING_KNOCKDOWN_CHANCE,
+  ICE_LANDING_KNOCKDOWN_MIN_SPEED,
+  ICE_TOP_SPEED_MULTIPLIER,
+  MUD_JUMP_MULTIPLIER,
+  MUD_LANDING_KNOCKDOWN_CHANCE,
+  MUD_LANDING_KNOCKDOWN_MIN_SPEED,
+  MUD_RUN_SLIP_CHANCE_PER_SECOND,
+  MUD_SLIP_MIN_SPEED,
+  MUD_TOP_SPEED_MULTIPLIER,
+  MUD_TURN_SLIP_CHANCE,
+  MUD_TURN_SLIP_MIN_ANGLE,
+} from "../tuning/surfaces.js";
+
 /**
  * A Track floor's Surface id (CONTEXT.md) — how well a Character grips a
  * piece of floor and how fast it may ultimately travel on it. Resolved from
@@ -11,7 +28,8 @@
 export type SurfaceId = string;
 
 /**
- * A Surface's effect on movement (ADR 0035/0036). Two independent knobs,
+ * A Surface's effect on movement (ADR 0035/0036, amended by ADR 0094). Two
+ * independent knobs,
  * per Source's own model:
  *
  * - `topSpeedMultiplier` — scales the *target* (`WALK_SPEED`) a Character's
@@ -48,6 +66,98 @@ export interface SurfaceConfig {
    * per-Surface property, not something every floor tile has an opinion on.
    */
   bounce?: SurfaceBounceConfig;
+  /**
+   * Multiplies {@link JUMP_VELOCITY} for a jump taken *off* this Surface
+   * (ADR 0092). 1 (the default) on every Surface that has no opinion. Below
+   * 1 on ice: you cannot push off something you have no purchase on, and
+   * since height goes with the square of take-off speed, even a light
+   * multiplier is felt.
+   *
+   * Deliberately a take-off knob and not a gravity one: a jump that *starts*
+   * weak is legible ("I didn't get off the ice properly"), while a jump that
+   * starts normally and is then pulled down mid-air reads as the game
+   * cheating.
+   */
+  jumpMultiplier?: number;
+  /**
+   * If set, landing on this Surface hard enough may put the Character down
+   * (ADR 0092) — ice's own hazard, and mud's (ADR 0102), the mirror of
+   * {@link bounce}: both are "what this floor does to an arriving Character",
+   * and both are a property of the floor rather than something every tile
+   * has an opinion on.
+   */
+  landingKnockdown?: SurfaceLandingKnockdownConfig;
+  /**
+   * If set, running into anything while standing on this Surface knocks the
+   * Character down from this closing speed instead of the wall-Impact rule's
+   * own (ADR 0102) — ice's. "Anything" is meant: another Character counts
+   * too, which off such a Surface it never does for the one running (a Bump
+   * is one-sided, M2 ticket 04).
+   */
+  crashKnockdown?: SurfaceCrashKnockdownConfig;
+  /**
+   * If set, running on this Surface — and turning sharply on it — may take
+   * the Character's feet (ADR 0102): mud's.
+   */
+  runningSlip?: SurfaceRunningSlipConfig;
+}
+
+/** A Surface on which any crash takes your feet (ADR 0102). */
+export interface SurfaceCrashKnockdownConfig {
+  /**
+   * The closing speed (units/s, the Character's own velocity into whatever
+   * it hit) at or above which a crash knocks it down. Low, never zero: a
+   * Character resting against a rail is touching it, not crashing into it.
+   */
+  minSpeed: number;
+}
+
+/**
+ * A Surface that may take the Character's feet while it moves on it (ADR
+ * 0102). Both chances are drawn with the same deterministic `slipRoll` a
+ * landing reads, for the same reason (ADR 0092): the client predicts it.
+ */
+export interface SurfaceRunningSlipConfig {
+  /**
+   * Below this horizontal speed (units/s, against the floor, so a belt
+   * carrying you does not count) nothing slips: standing and creeping are
+   * safe.
+   */
+  minSpeed: number;
+  /** The chance of going down per second of running at or above {@link minSpeed}, 0–1. */
+  chancePerSecond: number;
+  /**
+   * A change of direction sharper than this (radians), from one tick to the
+   * next with both at or above {@link minSpeed}, is a turn the feet may not
+   * survive.
+   */
+  turnMinAngle: number;
+  /** The chance such a turn puts the Character down, 0–1. */
+  turnChance: number;
+}
+
+/**
+ * A slippery Surface's landing hazard (ADR 0092). Read on the tick ground
+ * contact resolves, against the same `MovementController.airbornePeakFallSpeed`
+ * a bounce reads — the speed the Character genuinely arrived at, not the
+ * ground-stick residue left after the clamp.
+ */
+export interface SurfaceLandingKnockdownConfig {
+  /**
+   * Below this arrival speed (units/s, downward) a landing is always safe.
+   * Set above a plain standing jump's own landing speed, so stepping and
+   * hopping around on ice is never a coin flip — only a real drop is.
+   */
+  minSpeed: number;
+  /**
+   * The chance of going down on a landing at or above {@link minSpeed}, 0–1.
+   * Drawn deterministically from the Character's id and the landing tick
+   * (`slipRoll`), never `Math.random()`: the step is pure with respect to
+   * `(state, inputs)` (ADR 0003/0005) and the client predicts it, so both
+   * sides must draw the same number for the same landing or every slip
+   * would be a correction.
+   */
+  chance: number;
 }
 
 /**
@@ -80,9 +190,26 @@ export const DEFAULT_SURFACE: SurfaceId = "default";
  */
 export const SURFACES: Record<SurfaceId, SurfaceConfig> = {
   [DEFAULT_SURFACE]: { topSpeedMultiplier: 1, grip: 1 },
-  mud: { topSpeedMultiplier: 0.5, grip: 1 },
-  ice: { topSpeedMultiplier: 1, grip: 0.001 },
-  bounce: { topSpeedMultiplier: 1, grip: 1, bounce: { restitution: 0.85, minSpeed: 6 } },
+  mud: {
+    topSpeedMultiplier: MUD_TOP_SPEED_MULTIPLIER,
+    grip: 1,
+    jumpMultiplier: MUD_JUMP_MULTIPLIER,
+    landingKnockdown: { minSpeed: MUD_LANDING_KNOCKDOWN_MIN_SPEED, chance: MUD_LANDING_KNOCKDOWN_CHANCE },
+    runningSlip: {
+      minSpeed: MUD_SLIP_MIN_SPEED,
+      chancePerSecond: MUD_RUN_SLIP_CHANCE_PER_SECOND,
+      turnMinAngle: MUD_TURN_SLIP_MIN_ANGLE,
+      turnChance: MUD_TURN_SLIP_CHANCE,
+    },
+  },
+  ice: {
+    topSpeedMultiplier: ICE_TOP_SPEED_MULTIPLIER,
+    grip: 0.001,
+    jumpMultiplier: ICE_JUMP_MULTIPLIER,
+    landingKnockdown: { minSpeed: ICE_LANDING_KNOCKDOWN_MIN_SPEED, chance: ICE_LANDING_KNOCKDOWN_CHANCE },
+    crashKnockdown: { minSpeed: ICE_CRASH_MIN_SPEED },
+  },
+  bounce: { topSpeedMultiplier: 1, grip: 1, jumpMultiplier: BOUNCE_JUMP_MULTIPLIER, bounce: { restitution: 0.85, minSpeed: 6 } },
 };
 
 /**

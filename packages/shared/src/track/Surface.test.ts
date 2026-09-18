@@ -26,8 +26,21 @@ describe("SURFACES (ticket 06 — grip: one scalar multiplying both acceleration
     expect(SURFACES.ice!.grip).toBeLessThan(0.2);
   });
 
-  it("ice leaves top speed unchanged — \"ice makes you faster\" is the wrong intuition, per neither Quake nor Source altering max speed for slick surfaces", () => {
-    expect(SURFACES.ice!.topSpeedMultiplier).toBe(1);
+  // ADR 0094 retires "ice leaves top speed alone" (ADR 0035/0036's Quake/Source
+  // rule): a Player scrabbling along ice should not reach concrete's pace. Ice
+  // keeps the milder penalty of the two slow Surfaces — the floor that takes
+  // your feet is not also the one that takes your time.
+  it("ice and mud both cost speed, and mud costs the most of any Surface", () => {
+    expect(SURFACES.ice!.topSpeedMultiplier).toBeLessThan(1);
+    expect(SURFACES.mud!.topSpeedMultiplier).toBeLessThan(SURFACES.ice!.topSpeedMultiplier);
+  });
+
+  // ADR 0094: the only multiplier above 1 — a deck that visibly bulges under
+  // you has to be worth jumping on.
+  it("mud costs a jump and a bounce deck gives one back", () => {
+    expect(SURFACES.mud!.jumpMultiplier).toBeLessThan(1);
+    expect(SURFACES.ice!.jumpMultiplier).toBeLessThan(1);
+    expect(SURFACES.bounce!.jumpMultiplier).toBeGreaterThan(1);
   });
 });
 

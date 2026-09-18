@@ -1,12 +1,8 @@
 import type { Box } from "../math/box.js";
 import type { Vec3 } from "../math/vec3.js";
-import {
-  CAPSULE_BOTTOM_OFFSET,
-  LAUNCH_HEIGHT_MAX,
-  LAUNCH_HEIGHT_MIN,
-  LAUNCH_TRIGGER_MARGIN,
-  launchHeightToSpeed,
-} from "../tuning.js";
+import { LAUNCH_HEIGHT_MAX, LAUNCH_HEIGHT_MIN } from "../tuning/authoring.js";
+import { CAPSULE_BOTTOM_OFFSET } from "../tuning/character.js";
+import { LAUNCH_TRIGGER_MARGIN, launchHeightToSpeed } from "../tuning/world.js";
 
 /**
  * How high one placed Spring throws (CONTEXT.md: Spring, ADR 0069) — metres

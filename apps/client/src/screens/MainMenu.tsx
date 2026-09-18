@@ -133,7 +133,8 @@ export default function MainMenu({
         </div>
 
         <CharacterPreview
-          skin={account?.bodySkin ?? null}
+          color={account?.color ?? null}
+          skin={account?.skin ?? null}
           hat={account?.hat ?? null}
           animation={[{ clip: "Idle", seconds: 4 }, { clip: "Win_Loop", seconds: 3.2 }]}
           sub="IDLE + WIN POSE LOOP"

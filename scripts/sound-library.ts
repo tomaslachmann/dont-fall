@@ -109,6 +109,16 @@ const CRICKETS = { src: "freesound/crickets-night.wav", origin: freesound(522298
 const BIRDS = { src: "freesound/birds-morning_birds.wav", origin: freesound(342462, "Morning Birds", "nick121087") };
 const FAN = { src: "freesound/fan_hum-wind.wav", origin: freesound(17645, "Wind.wav", "Cyril Laurier", "CC-BY 4.0") };
 const BELT = { src: "freesound/Conveyor_belt-xray.aiff", origin: freesound(49972, "XRayBelt.aif", "mwl500", "CC-BY 3.0") };
+/** A vintage synth notification, CC0; the user's pick for the checkpoint (2026-09-17). */
+const CHECKPOINT = {
+  src: "freesound/checkpoint-sound.wav",
+  origin: {
+    title: "Vintage Alert Notification 2_2",
+    author: "Joao_Janz",
+    licence: "CC0",
+    url: "https://freesound.org/people/Joao_Janz/sounds/504861/",
+  } satisfies Origin,
+};
 
 export const SOUND_LIBRARY: readonly Job[] = [
   // --- character -----------------------------------------------------------
@@ -207,7 +217,7 @@ export const SOUND_LIBRARY: readonly Job[] = [
       ["congratulations", "congratulations"],
     ] as const
   ).map(([slot, file]): Job => ({ kind: "copy", out: `match/${slot}.ogg`, src: `kenney/voiceover-pack/Male/${file}.ogg`, origin: VOICE })),
-  { kind: "copy", out: "match/checkpoint.ogg", src: "kenney/music-jingles/Audio/Pizzicato jingles/jingles_PIZZI00.ogg", origin: JINGLES },
+  { kind: "oneshot", out: "match/checkpoint.ogg", ...CHECKPOINT },
   { kind: "copy", out: "match/qualified.ogg", src: "kenney/music-jingles/Audio/Steel jingles/jingles_STEEL07.ogg", origin: JINGLES },
   { kind: "copy", out: "match/round_end.ogg", src: "kenney/music-jingles/Audio/Hit jingles/jingles_HIT15.ogg", origin: JINGLES },
   { kind: "copy", out: "match/results.ogg", src: "kenney/music-jingles/Audio/Pizzicato jingles/jingles_PIZZI07.ogg", origin: JINGLES },

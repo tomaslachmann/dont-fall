@@ -1,5 +1,6 @@
 import { yawQuat, type Quat } from "../math/quat.js";
 import { rotateVec3ByQuat, scaleVec3, type Vec3 } from "../math/vec3.js";
+import type { DeckPlan } from "./DeckPlan.js";
 
 /**
  * A Conveyor's speed preset (CONTEXT.md, ADR 0064) — the whole speed
@@ -130,6 +131,12 @@ export interface DeckFrame {
   orientation: Quat;
   halfX: number;
   halfZ: number;
+  /**
+   * The shape of the walking surface inside that rectangle (ADR 0096), when
+   * it is not the rectangle — a round piece's quarter disc, a holed deck's
+   * hole. Absent means the rectangle, which is what every sheet was before.
+   */
+  plan?: DeckPlan;
 }
 
 /**

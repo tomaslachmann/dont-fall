@@ -1,70 +1,89 @@
-import { ExtrudedText, Screen } from "@dont-fall/ui";
-import styles from "./LoadingScreen.module.css";
+import Stage from "../ui/Stage";
+import Chip from "../ui/Chip";
+import type { ChipTone } from "../ui/Chip";
+import Logo from "../ui/Logo";
+import { TRACK_ART_LAYER, trackArtStyle } from "../lib/trackArt.js";
+import s from "./LoadingScreen.module.css";
 
 export interface LoadingScreenProps {
+  /** What the wait is for, in the design's capitals: `CONNECTING TO THE LOBBY…`. */
   label?: string;
-  /**
-   * The Track the next Round runs on (ADR 0085) — when known, the wait
-   * becomes the full-page Round loader: the Track's screenshot under a
-   * scrim, its name big in the wordmark's own chunky treatment, the
-   * spinner and label under it. Absent (connecting, saving, results),
-   * the plain wait, as before.
-   */
-  trackName?: string;
-  /**
-   * That Track's screenshot URL — shown when given, the plain surface
-   * when not. Kept separate from `trackName` so a Track without a
-   * captured screenshot still gets its name big.
-   */
-  thumbnailUrl?: string;
 }
 
 /**
- * A non-interactive wait with a spinner — "renders the wait, does not time
- * it" (M7 ticket 06's principle for Standings). The default covers the wait
- * between "I confirmed Ready on Standings" and the next Round's Countdown
- * actually starting (M7 ticket 11, ADR 0051): other Players' confirmations
- * (or the timeout) plus this client's own local Track rebuild. The `/lobby`
- * route reuses it with its own label while the socket is still connecting
- * (ADR 0056) — same shape of wait, different reason.
+ * A non-interactive wait: it shows the wait but never times it (M7 ticket 06's
+ * principle for Standings). No mock has one, so it is composed from the mocks' own pieces (ADR
+ * 0105): the Main Menu's stage and sheen, the Logo, and a glass status chip.
+ * Signing in, the session check, connecting to a Lobby, saving and loading
+ * results, and counting beans all read the same.
  */
-export function LoadingScreen({ label = "Loading next Round…", trackName, thumbnailUrl }: LoadingScreenProps) {
-  if (trackName === undefined) {
-    return (
-      <Screen>
-        <div className={styles.loading}>
-          <span className={styles.spinner} aria-hidden="true" />
-          <p className={styles.label}>{label}</p>
-        </div>
-      </Screen>
-    );
-  }
+export function LoadingScreen({ label = "LOADING NEXT ROUND…" }: LoadingScreenProps) {
   return (
-    <Screen>
-      {thumbnailUrl !== undefined && (
-        <img
-          className={styles.backdrop}
-          src={thumbnailUrl}
-          alt=""
-          aria-hidden="true"
-          onError={(e) => {
-            // A screenshot that won't load leaves the plain surface — the
-            // name and the wait below it never depend on it.
-            e.currentTarget.hidden = true;
-          }}
-        />
-      )}
-      <div className={styles.scrim} aria-hidden="true" />
-      <div className={styles.hero}>
-        <p className={styles.kicker}>NEXT ROUND</p>
-        <h1 className={styles.title}>
-          <ExtrudedText color="var(--df-color-accent)" depthColor="var(--df-color-accent-depth)">
-            {trackName}
-          </ExtrudedText>
-        </h1>
-        <span className={styles.spinner} aria-hidden="true" />
-        <p className={styles.heroLabel}>{label}</p>
+    <Stage background="var(--df-stage-menu)" sheen="var(--df-sheen-menu)" className={s.wait}>
+      <Logo size={5} />
+      <StatusChip label={label} />
+    </Stage>
+  );
+}
+
+export interface RoundLoaderProps {
+  /** The Track the Round runs on, in capitals. */
+  trackName: string;
+  /** Its screenshot (ADR 0085), preloaded at sign-in (ADR 0105). Absent: the Lobby's plain stage. */
+  thumbnailUrl?: string | undefined;
+  /** Which Round this is, and of how many — absent before a Match has counted any. */
+  round?: number | undefined;
+  rounds?: number | undefined;
+  /** The Round type, in capitals (`RACE`, `SURVIVAL`) — absent while the draw keeps it hidden. */
+  mode?: string | undefined;
+  /** What the Round is waiting on: `LOADING TRACK…`, `WAITING FOR PLAYERS 3/4`. */
+  label: string;
+}
+
+const MODE_TONE: Record<string, ChipTone> = { RACE: "race", SURVIVAL: "survival" };
+
+/**
+ * The Round loader (ADR 0089, 0105): the Track's screenshot as the Stage's
+ * own field under the plate scrim, which Round this is, the Track's name at
+ * headline size, its mode, and what the Round is still waiting on. It is the
+ * next-up card from BetweenRounds, blown up to the whole screen.
+ */
+export function RoundLoader({ trackName, thumbnailUrl, round, rounds, mode, label }: RoundLoaderProps) {
+  return (
+    <Stage
+      background="var(--df-stage-lobby)"
+      field={TRACK_ART_LAYER}
+      style={trackArtStyle(thumbnailUrl)}
+      sheen="linear-gradient(180deg, rgba(43,27,77,.25) 0%, rgba(43,27,77,.45) 45%, rgba(43,27,77,.85) 100%)"
+      className={s.round}
+    >
+      <header className={s.head}>
+        <Logo size={2.65} chrome />
+      </header>
+      <div className={s.hero}>
+        {round !== undefined && rounds !== undefined && (
+          <span className={s.kicker}>
+            ROUND {round} OF {rounds}
+          </span>
+        )}
+        <h1 className={s.title}>{trackName}</h1>
+        {mode !== undefined && (
+          <Chip tone={MODE_TONE[mode] ?? "any"} lg>
+            {mode}
+          </Chip>
+        )}
       </div>
-    </Screen>
+      <div className={s.foot}>
+        <StatusChip label={label} />
+      </div>
+    </Stage>
+  );
+}
+
+function StatusChip({ label }: { label: string }) {
+  return (
+    <Chip tone="glass" lg dot className={s.status}>
+      <span role="status">{label}</span>
+    </Chip>
   );
 }

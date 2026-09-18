@@ -229,11 +229,12 @@ export const listTracks = (db: ApiDb, modules: Record<string, Module>): TrackLis
     name: string | null;
     authorId: string;
     createdAt: number;
+    revision: number;
     data: string;
     plays: number;
     hasThumbnail: number;
   }>(sql`
-    SELECT track_id as trackId, name, author_id as authorId, created_at as createdAt, data,
+    SELECT track_id as trackId, name, author_id as authorId, created_at as createdAt, revision, data,
       COALESCE((SELECT plays FROM track_plays WHERE track_plays.track_id = t1.track_id), 0) as plays,
       thumbnail IS NOT NULL as hasThumbnail
     FROM tracks t1
@@ -246,6 +247,7 @@ export const listTracks = (db: ApiDb, modules: Record<string, Module>): TrackLis
     name: row.name,
     authorId: row.authorId,
     createdAt: row.createdAt,
+    revision: row.revision,
     hasThumbnail: row.hasThumbnail === 1,
     plays: row.plays,
     // Latest Revision's own Segments, against today's library — a republish

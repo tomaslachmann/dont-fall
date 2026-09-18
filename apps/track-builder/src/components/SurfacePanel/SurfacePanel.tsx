@@ -1,4 +1,4 @@
-import type { ConveyorPreset } from "@dont-fall/shared";
+import { surfaceAttachmentOf, type ConveyorPreset } from "@dont-fall/shared";
 import css from "./SurfacePanel.module.css";
 import { InspectorSection } from "../InspectorSection/InspectorSection";
 import { Kicker } from "../Kicker/Kicker";
@@ -16,16 +16,21 @@ const PRESETS: { value: ConveyorPreset; label: string; title: string }[] = [
 
 const DECKS = [
   { value: "plain", label: "PLAIN", title: "the Module's own grip" },
-  { value: "ice", label: "ICE", title: "near-zero grip — the deck keeps its top speed" },
-  { value: "mud", label: "MUD", title: "heavy drag — feet sink ankle-deep into the sheet" },
+  { value: "ice", label: "ICE", title: "near-zero grip, a weak take-off and a little slower" },
+  { value: "mud", label: "MUD", title: "the slowest floor there is, and a jump it half swallows" },
   { value: "bounce", label: "BOUNCE", title: "an inflatable sheet — it throws back however hard you landed" },
+] as const;
+
+const BODIES = [
+  { value: "placed", label: "PLACED", title: "nailed down — the Asset never moves" },
+  { value: "prop", label: "PROP", title: "a body a Character can shove around" },
 ] as const;
 
 const DECK_HINT: Record<(typeof DECKS)[number]["value"], string> = {
   plain: "One deck, one Surface — these are one choice, never a stack.",
-  ice: "Near-zero grip · the deck keeps its top speed.",
-  mud: "Heavy drag · feet sink ankle-deep into the sheet.",
-  bounce: "Throws you back as hard as you landed · the sheet dents under you.",
+  ice: "Near-zero grip · a weak take-off · a little off the top speed.",
+  mud: "The slowest floor there is · half a jump · feet sink into the sheet.",
+  bounce: "Throws you back as hard as you landed · and roughly doubles a jump.",
 };
 
 /** Radians (free, unnormalised) → display degrees in [0, 360). */
@@ -44,10 +49,22 @@ export function SurfacePanel({ engine }: { engine: BuilderEngine }) {
   const primary = engine.primary;
   const segment = primary !== undefined ? engine.track[primary] : undefined;
   const conveyor = segment?.conveyor;
-  const deck =
-    segment?.bounce === true ? "bounce" : segment?.ice === true ? "ice" : segment?.mud === true ? "mud" : "plain";
+  const deck = (segment && surfaceAttachmentOf(segment)?.key) ?? "plain";
+  // Why this Segment may not be a Prop, if it may not (ADR 0095) — the same
+  // rule publish enforces, said here instead of at the point of refusal.
+  const propLock =
+    segment === undefined
+      ? undefined
+      : segment.motion !== undefined
+        ? "A Moving Segment is authored movement, not physics — clear its Motion first."
+        : segment.start === true
+          ? "The Start has to stay where it is."
+          : segment.checkpoint !== undefined
+            ? "A Checkpoint gate has to stay where it is."
+            : undefined;
 
   const summary = [
+    segment?.prop === true ? "PROP" : undefined,
     deck === "plain" ? undefined : deck.toUpperCase(),
     conveyor ? `BELT · ${PRESETS.find((p) => p.value === conveyor.preset)!.label}` : undefined,
   ].filter(Boolean).join(" · ");
@@ -60,12 +77,30 @@ export function SurfacePanel({ engine }: { engine: BuilderEngine }) {
         ) : (
           <>
             <div className={css.block}>
+              <Kicker>BODY</Kicker>
+              {propLock === undefined ? (
+                <SegmentedControl shape="pill" size="sm" tone="ink" value={segment.prop === true ? "prop" : "placed"}
+                  items={[...BODIES]} onChange={(next) => engine.setSegmentProp(next === "prop")} />
+              ) : (
+                <p className={css.hint}>{propLock}</p>
+              )}
+              <p className={css.hint}>
+                {segment.prop === true
+                  ? "A body physics owns · it falls, it is shoved, and it has no deck of its own."
+                  : "Placed pieces are scenery a Character runs into · a Prop is one it moves."}
+              </p>
+            </div>
+
+            {segment.prop === true ? null : (
+            <div className={css.block}>
               <Kicker>DECK</Kicker>
               <SegmentedControl shape="pill" size="sm" tone="ink" value={deck} items={[...DECKS]}
                 onChange={(next) => engine.setSegmentSurface(next === "plain" ? undefined : next)} />
               <p className={css.hint}>{DECK_HINT[deck]}</p>
             </div>
+            )}
 
+            {segment.prop === true ? null : (
             <div className={css.block}>
               <div className={css.row}>
                 <div className={css.grow}>
@@ -99,6 +134,7 @@ export function SurfacePanel({ engine }: { engine: BuilderEngine }) {
                 </>
               )}
             </div>
+            )}
           </>
         )}
       </div>

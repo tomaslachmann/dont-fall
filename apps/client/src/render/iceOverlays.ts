@@ -7,6 +7,7 @@ import {
   type MovingSegmentConfig,
 } from "@dont-fall/shared";
 import * as THREE from "three";
+import { deckRectGeometry, deckSheetGeometry, loadDeckTexture, tileDeckTexture, type DecodeDeckImage } from "@dont-fall/render";
 import { seatOnDeck } from "./deckSeat.js";
 
 /**
@@ -40,14 +41,7 @@ export const buildIceOverlays = (
   return decks.map((ice) => {
     const { halfX, halfZ } = ice.deck;
 
-    // A clone per sheet: the image is shared, but the repeat is the deck's
-    // own size — one texture object could only repeat for one deck.
-    const sheet = texture.clone();
-    sheet.needsUpdate = true;
-    sheet.wrapS = THREE.RepeatWrapping;
-    sheet.wrapT = THREE.RepeatWrapping;
-    sheet.repeat.set((halfX * 2) / ICE_TILE_WORLD, (halfZ * 2) / ICE_TILE_WORLD);
-    sheet.anisotropy = maxAnisotropy;
+    const sheet = tileDeckTexture(texture, { tileWorld: ICE_TILE_WORLD, width: halfX * 2, depth: halfZ * 2, maxAnisotropy });
     const material = new THREE.MeshStandardMaterial({
       map: sheet,
       transparent: true,
@@ -62,8 +56,12 @@ export const buildIceOverlays = (
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
     });
-    const geometry = new THREE.PlaneGeometry(halfX * 2, halfZ * 2);
-    geometry.rotateX(-Math.PI / 2); // the plane's height becomes depth: a flat XZ sheet
+    // Cut to the deck's own shape when it has one (ADR 0096) — a round piece
+    // wore a square of ice before this. A deck whose top face is its footprint
+    // has no plan and keeps the plane.
+    const geometry = ice.deck.plan
+      ? deckSheetGeometry(ice.deck.plan, halfX, halfZ)
+      : deckRectGeometry(halfX * 2, halfZ * 2);
     const object = new THREE.Mesh(geometry, material);
 
     const movingIndex = moving.findIndex((c) => c.segmentIndex === ice.segmentIndex);
@@ -72,31 +70,9 @@ export const buildIceOverlays = (
   });
 };
 
-/**
- * Decode fetched image bytes into something a `THREE.Texture` can wrap —
- * `createImageBitmap` in browsers, injected in tests (jsdom decodes
- * nothing). Kept behind this seam so the loader stays a pure function of
- * `(fetch, decode)` with no ambient browser globals of its own.
- */
-export type DecodeIceImage = (bytes: Uint8Array) => Promise<ImageBitmap>;
-
-const decodeImageBitmap: DecodeIceImage = (bytes) =>
-  createImageBitmap(new Blob([bytes as unknown as BlobPart], { type: "image/jpeg" }));
-
-/**
- * The shared ice texture (ADR 0066) — fetched once per session through the
- * same bytes pipe as the GLB art, then cloned per sheet by
- * {@link buildIceOverlays}. Colour-correct (sRGB): without it the ice
- * renders washed out next to the deck's own lit art.
- */
-export const loadIceTexture = async (
+/** The shared ice texture (ADR 0066) — fetched once per session through the same bytes pipe as the GLB art, then tiled per sheet. */
+export const loadIceTexture = (
   fetchBytes: (url: string) => Promise<Uint8Array>,
   baseUrl: string,
-  decode: DecodeIceImage = decodeImageBitmap,
-): Promise<THREE.Texture> => {
-  const bitmap = await decode(await fetchBytes(`${baseUrl}/${ICE_TEXTURE_FILE}`));
-  const texture = new THREE.Texture(bitmap);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.needsUpdate = true;
-  return texture;
-};
+  decode?: DecodeDeckImage,
+): Promise<THREE.Texture> => loadDeckTexture(fetchBytes, baseUrl, ICE_TEXTURE_FILE, decode);

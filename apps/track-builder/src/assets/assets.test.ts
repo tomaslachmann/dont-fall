@@ -6,10 +6,8 @@ import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import {
   ASSET_MODULE_DEFS,
-  IDENTITY_QUAT,
   MODULE_LIBRARY,
   readAssetModel,
-  type Track,
 } from "@dont-fall/shared";
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
@@ -19,9 +17,9 @@ import {
   extractVisualRoot,
   loadAssetVisuals,
   loadAssetVisualsProgressive,
+  parseAsset,
   type AssetVisualResult,
 } from "./assets.js";
-import { insertSegment, segmentOverlapsAnyOther } from "../track/trackEdit.js";
 
 const assetsRoot = path.resolve(import.meta.dirname, "../../../../assets");
 const realFetch = async (url: string): Promise<Uint8Array> => {
@@ -85,7 +83,7 @@ describe("loadAssetVisuals", () => {
 describe("extractVisualRoot (the twin of the client's role filter)", () => {
   it.each(ASSET_MODULE_DEFS.map((def) => def.id))("keeps %s's visual and drops its collision", async (moduleId) => {
     const templates = await loadAssetVisuals(realFetch, "http://assets.test", [moduleId]);
-    const template = templates[moduleId]!;
+    const template = templates[moduleId]!.template;
 
     const roles: unknown[] = [];
     template.traverse((object) => {
@@ -161,5 +159,40 @@ describe("loadAssetVisualsProgressive", () => {
     expect((settled.get("bad") as { ok: false; error: Error }).error.message).toMatch(/"bad"/);
     expect(settled.get("missing")).toMatchObject({ ok: false });
     expect((settled.get("missing") as { ok: false; error: Error }).error.message).toMatch(/"missing"/);
+  });
+});
+
+/** The plan's own area — the same arithmetic shared's `DeckPlan.test.ts` pins its cuts with. */
+const areaOf = (plan: { vertices: { x: number; z: number }[]; indices: number[] }): number => {
+  let area = 0;
+  for (let i = 0; i + 2 < plan.indices.length; i += 3) {
+    const a = plan.vertices[plan.indices[i]!]!;
+    const b = plan.vertices[plan.indices[i + 1]!]!;
+    const c = plan.vertices[plan.indices[i + 2]!]!;
+    area += Math.abs((b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z)) / 2;
+  }
+  return area;
+};
+
+describe("parseAsset deck plans (the builder's ADR 0096 link)", () => {
+  it("cuts the quarter circle's plan from the same bytes as its visual — a quarter disc, not its square", async () => {
+    const bytes = await realFetch("http://assets.test/kaykit_platform_quarter_circle_blue.glb");
+
+    const { template, plan } = await parseAsset("kaykit_platform_quarter_circle_blue", bytes);
+
+    expect(template).toBeInstanceOf(THREE.Group);
+    expect(plan).toBeDefined();
+    const quarterDisc = Math.PI / 4;
+    expect(areaOf(plan!)).toBeGreaterThan(quarterDisc * 0.85);
+    expect(areaOf(plan!)).toBeLessThanOrEqual(quarterDisc);
+  });
+
+  it("reads no plan for an unknown id — the visual still parses, sheets fall back to rectangles", async () => {
+    const bytes = await realFetch("http://assets.test/kaykit_floor_wood_2x2.glb");
+
+    const { template, plan } = await parseAsset("no-such-module", bytes);
+
+    expect(template).toBeInstanceOf(THREE.Group);
+    expect(plan).toBeUndefined();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_ROUND_SCORE, QUALIFICATION_SCORE_BONUS } from "../tuning.js";
+import { MAX_ROUND_SCORE, QUALIFICATION_SCORE_BONUS } from "../tuning/match.js";
 import { buildRoundResult, matchPlacements, matchScore, matchWinner, roundScore, type RoundResult } from "./Score.js";
 
 describe("roundScore", () => {
@@ -84,10 +84,10 @@ describe("buildRoundResult", () => {
     const result = buildRoundResult(
       { stayed: { finishTick: 90, checkpointIndex: 4, fallCount: 0 } },
       [
-        { id: "stayed", nickname: "Stayed", ready: true, joinOrder: 0, accountId: null, bodySkin: null, hat: null },
-        { id: "left", nickname: "Left", ready: true, joinOrder: 1, accountId: null, bodySkin: null, hat: null },
+        { id: "stayed", nickname: "Stayed", ready: true, joinOrder: 0, accountId: null, color: null, skin: null, hat: null },
+        { id: "left", nickname: "Left", ready: true, joinOrder: 1, accountId: null, color: null, skin: null, hat: null },
       ],
-      [{ id: "left", nickname: "Left", accountId: null, bodySkin: null, hat: null }],
+      [{ id: "left", nickname: "Left", accountId: null, color: null, skin: null, hat: null }],
     );
 
     expect(result.rows.map((r) => r.id)).toEqual(["stayed"]);

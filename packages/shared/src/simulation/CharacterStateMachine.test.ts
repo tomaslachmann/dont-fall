@@ -1,14 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  GETUP_TICKS,
-  IMPACT_RAGDOLL_MIN,
-  IMPACT_STAGGER_MIN,
-  RAGDOLL_MAX_TICKS,
-  RAGDOLL_MIN_TICKS,
-  SLIDE_INPUT_SCALE,
-  STAGGER_INPUT_SCALE,
-  STAGGER_TICKS,
-} from "../tuning.js";
+import { GETUP_TICKS, IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, RAGDOLL_MAX_TICKS, RAGDOLL_MIN_TICKS, STAGGER_INPUT_SCALE, STAGGER_TICKS } from "../tuning/knockdown.js";
+import { SLIDE_INPUT_SCALE } from "../tuning/movement.js";
 import { CharacterStateMachine, isDownMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
 
 const run = (m: CharacterStateMachine, ticks: number, settled = false) => {

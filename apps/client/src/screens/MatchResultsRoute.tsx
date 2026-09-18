@@ -42,7 +42,7 @@ export function MatchResultsRoute() {
         />
       );
     }
-    return <LoadingScreen label="Loading results…" />;
+    return <LoadingScreen label="LOADING RESULTS…" />;
   }
 
   const view = toMatchResultsView(result, me);
@@ -59,7 +59,7 @@ export function MatchResultsRoute() {
 
   return (
     <MatchOver
-      podium={view.table.slice(0, 3).map((row, i) => ({ name: row.nickname, points: row.score, pose: POSES[i] ?? "", skin: row.bodySkin, hat: row.hat })) as [
+      podium={view.table.slice(0, 3).map((row, i) => ({ name: row.nickname, points: row.score, pose: POSES[i] ?? "", color: row.color, skin: row.skin, hat: row.hat })) as [
         PodiumPlace,
         ...PodiumPlace[],
       ]}

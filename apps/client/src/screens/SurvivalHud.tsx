@@ -2,6 +2,7 @@ import Stage from '../ui/Stage';
 import Avatar from '../ui/Avatar';
 import type { Skin } from '../ui/Avatar';
 import Chip from '../ui/Chip';
+import DashMeter from './DashMeter';
 import type { Feel } from '../tokens';
 import s from './SurvivalHud.module.css';
 
@@ -18,6 +19,10 @@ export interface SurvivalHudProps {
   lastOut: string | null;
   /** Survivors one Fall from the Survivor Target, or the clock running low. */
   critical: boolean;
+  /** Dash recharge, 0–1 (ADR 0092). */
+  dashCharge: number;
+  /** Whether the Dash can fire right now. */
+  dashReady: boolean;
   feel?: Feel;
 }
 
@@ -27,7 +32,9 @@ export interface SurvivalHudProps {
  * No placement — how many are left is Survival's measure. No Stage background:
  * the game shows through.
  */
-export default function SurvivalHud({ remaining, startedWith, alive, youAlive, survived, lastOut, critical, feel }: SurvivalHudProps) {
+export default function SurvivalHud({
+  remaining, startedWith, alive, youAlive, survived, lastOut, critical, dashCharge, dashReady, feel,
+}: SurvivalHudProps) {
   return (
     <Stage feel={feel} className={s.screen} overlay={critical ? <div className={s.danger} /> : undefined}>
       <div className={s.survived}>
@@ -56,6 +63,10 @@ export default function SurvivalHud({ remaining, startedWith, alive, youAlive, s
           CRITICAL ZONE
         </div>
       )}
+
+      <div className={s.dash}>
+        <DashMeter charge={dashCharge} ready={dashReady} />
+      </div>
 
       {lastOut !== null && (
         <div className={s.status}>

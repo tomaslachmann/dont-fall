@@ -38,16 +38,3 @@ export const PauseIcon = ({ size = 11, ...rest }: P) => (
     <rect x="2" y="1" width="3" height="10" rx="1" /><rect x="7" y="1" width="3" height="10" rx="1" />
   </svg>
 );
-
-export const EASING_CURVES: Record<string, string> = {
-  linear: 'M1 15 25 1',
-  'in-out': 'M1 15C9 15 17 1 25 1',
-  out: 'M1 15C15 15 19 1 25 1',
-  in: 'M1 15C7 15 11 1 25 1',
-};
-
-export const EasingIcon = ({ curve = 'in-out', ...rest }: SVGProps<SVGSVGElement> & { curve?: string }) => (
-  <svg width={26} height={16} viewBox="0 0 26 16" fill="none" aria-hidden {...rest}>
-    <path d={EASING_CURVES[curve] ?? EASING_CURVES['in-out']} stroke="currentColor" strokeWidth={2} />
-  </svg>
-);

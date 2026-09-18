@@ -1,11 +1,12 @@
 import type { OrientedBox } from "../math/box.js";
 import { conjugateQuat, IDENTITY_QUAT } from "../math/quat.js";
 import { rotateVec3ByQuat, subVec3, type Vec3 } from "../math/vec3.js";
-import { CAPSULE_BOTTOM_OFFSET, CAPSULE_RADIUS } from "../tuning.js";
+import { CAPSULE_BOTTOM_OFFSET, CAPSULE_RADIUS } from "../tuning/character.js";
 import type { PlacedGate } from "./Gate.js";
 import type { Module } from "./Module.js";
 import { hasMotion } from "./Motion.js";
-import type { Segment, StaticTrimesh, Track } from "./Track.js";
+import type { StaticTrimesh } from "./resolveTrack.js";
+import type { Segment, Track } from "./Track.js";
 
 /**
  * A hoop or an arch switched on as a Checkpoint (CONTEXT.md: Checkpoint, Gate;

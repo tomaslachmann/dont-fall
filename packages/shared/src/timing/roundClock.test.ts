@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_TIME_LIMIT_MS, TICK_MS, TICK_RATE_HZ } from "../tuning.js";
+import { TICK_MS, TICK_RATE_HZ } from "../tuning/clock.js";
+import { DEFAULT_TIME_LIMIT_MS } from "../tuning/match.js";
 import { roundTimeLeftMs } from "./roundClock.js";
 
 describe("roundTimeLeftMs", () => {

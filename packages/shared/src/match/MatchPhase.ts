@@ -1,4 +1,5 @@
-import { COUNTDOWN_MS, ROUND_END_MS, STANDINGS_READY_TIMEOUT_MS, TICK_MS, msToTicks } from "../tuning.js";
+import { TICK_MS, msToTicks } from "../tuning/clock.js";
+import { COUNTDOWN_MS, ROUND_END_MS, STANDINGS_READY_TIMEOUT_MS } from "../tuning/match.js";
 
 /**
  * Where a Match currently is (CONTEXT.md, ADR 0040). The server owns every
@@ -116,6 +117,13 @@ export const phaseLocksInput = (phase: MatchPhase): boolean => phase !== "RUNNIN
  * regardless), so pausing `world.step()` there changes nothing a Player
  * could have driven — it only stops ambient physics (gravity settling,
  * shoves, Spinners) nobody asked for while no Round is live.
+ *
+ * `false` here freezes the WHOLE simulation tick, not just the world's step
+ * (amended 2026-09-18, found live): when only the step was paused, every
+ * Character's own `beginTick` still integrated gravity into a velocity the
+ * skipped step never applied, silently winding up −22 u/s per Lobby second —
+ * and the Countdown's first sweep, fed metres of accumulated fall in one
+ * tick, could put the capsule inside the start deck instead of on it.
  *
  * Shared, not server-only, for the same reason `phaseLocksInput` is: the
  * client predicts through this same `RapierSimulation.tick()` call, so its

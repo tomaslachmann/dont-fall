@@ -17,8 +17,55 @@ export type { CharacterMotionState, BoneSnapshot, PropSnapshot };
  * 2 whenever binary encoding lands. `"Hit"` (M6 ticket 03): a landed swing —
  * distinct from `"Bump"` even though both feed the identical Impact
  * pipeline, since one was thrown on purpose and the other wasn't.
+ *
+ * ADR 0104: `"Hurl"` — thrown out of a Spin, or hit by a body that was (swung
+ * or flying); `"Grab"` — let go of while Limp, or carried until the grabber's
+ * window ran out; `"Dizzy"` — a grabber that Spun for too long.
  */
-export type RagdollCause = "Bump" | "Fall" | "WallImpact" | "Spinner" | "Obstacle" | "Disconnect" | "Hit";
+export type RagdollCause =
+  | "Bump"
+  | "Fall"
+  | "WallImpact"
+  | "Spinner"
+  | "Obstacle"
+  | "Disconnect"
+  | "Hit"
+  | "Slip"
+  | "Hurl"
+  | "Grab"
+  | "Dizzy";
+
+/**
+ * Which part of a hold a Held Character is in (ADR 0104): its Struggle, which
+ * it can still win, or Limp — lost, or grabbed already down.
+ */
+export type HeldPhase = "struggle" | "limp";
+
+/**
+ * The knockdowns another Player caused (ADR 0093) — a swing that landed, or
+ * running someone down. Only these throw the body
+ * ({@link KNOCKDOWN_LAUNCH_SCALE}); scenery drops you where it caught you.
+ * A set rather than a boolean on the cause so the one place that decides
+ * "was this a Player" is findable from either side of it.
+ */
+export const THROWING_RAGDOLL_CAUSES: ReadonlySet<RagdollCause> = new Set<RagdollCause>(["Hit", "Bump", "Hurl"]);
+
+/**
+ * The Impacts that shove a Character which stays on its feet (ADR 0093) — a
+ * swing that landed and nothing else.
+ *
+ * Deliberately narrower than {@link THROWING_RAGDOLL_CAUSES}. A Bump and a
+ * Moving Segment apply an Impact on *every* tick of contact, and the
+ * knockdown they cause depends on closing speed, so shoving the target on the
+ * first light touch pushes it out of the harder contact that was coming — a
+ * Dash into someone stopped knocking them down at all, and a spinning bar
+ * stopped hitting harder at its rim. A Hit is a single event with no
+ * follow-up to spoil, which is exactly why it is the one that shoves.
+ *
+ * A swung or hurled body (ADR 0104) is one too: it counts once per pass of the
+ * circle or per flight, never once per tick of contact.
+ */
+export const SHOVING_IMPACT_CAUSES: ReadonlySet<RagdollCause> = new Set<RagdollCause>(["Hit", "Hurl"]);
 
 export interface CharacterSnapshot {
   /** The point the camera follows: capsule centre while upright, pelvis while ragdolling. */
@@ -77,6 +124,39 @@ export interface CharacterSnapshot {
    * authoritative-only, not-in-`ReconcileBase` treatment as `grabbingId`.
    */
   heldByGrabberId: string | null;
+  /**
+   * Which part of its hold this Character is in, or `null` while nobody holds
+   * it (ADR 0104). Authoritative-only, like {@link heldByGrabberId}.
+   */
+  heldPhase: HeldPhase | null;
+  /**
+   * The Tick the current part of this Character's hold runs out — its
+   * Struggle's window, or its grabber's Limp window — or `null` while nobody
+   * holds it (ADR 0104). The anchor-tick idiom (`phaseStartTick`): a client
+   * derives the time left itself instead of the server sending a countdown.
+   */
+  holdEndsTick: number | null;
+  /**
+   * How full this Character's escape meter is, 0..1 (ADR 0104) — the
+   * Struggle. Predicted by its own client from its own inputs and restored
+   * from here on a reconcile, like `hitChargeMs`, so the meter answers a
+   * wiggle at once instead of a round trip later. 0 while not Held.
+   */
+  escapeProgress: number;
+  /**
+   * The direction, as a yaw, of this Character's last non-zero movement
+   * input while Held, or `null` (ADR 0104) — what the next input has to
+   * reverse to count as a wiggle. On the wire only so a reconcile's replay
+   * judges its first input exactly as the server did.
+   */
+  lastWiggleYaw: number | null;
+  /**
+   * How long (ms) this Character has been Spinning the Character it holds, 0
+   * while not (ADR 0104). The wind-up, and with `facing` the whole Spin: its
+   * angle is a pure function of this, so a reconcile restores both and the
+   * replay turns on from exactly where the server was.
+   */
+  spinMs: number;
   /**
    * Rises every time a launch pad fires (M3.7 ticket 02) — the Epoch idiom
    * (CONTEXT.md), same as {@link ragdollEpoch}. Not restored during
@@ -212,6 +292,11 @@ export interface CharacterSnapshotFields {
   grabCooldownMs?: number;
   grabbingId?: string | null;
   heldByGrabberId?: string | null;
+  heldPhase?: HeldPhase | null;
+  holdEndsTick?: number | null;
+  escapeProgress?: number;
+  lastWiggleYaw?: number | null;
+  spinMs?: number;
   launchPadEpoch?: number;
   facing?: number;
   lastInputTick?: number;
@@ -247,6 +332,14 @@ export type ReconcileBase = Pick<
   | "hitCooldownMs"
   | "hitChargeMs"
   | "grabCooldownMs"
+  // ADR 0104: the two halves of a hold a client predicts — its own Struggle,
+  // and its own Spin, whose angle is `facing`. Facing is restored always, not
+  // only mid-Spin: a grabber's turn is clamped against the tick before, so a
+  // replay needs the server's to clamp from.
+  | "escapeProgress"
+  | "lastWiggleYaw"
+  | "spinMs"
+  | "facing"
   // M4 ticket 02: Qualification is latched and locks input, so the client
   // must be able to take the server's answer rather than keep its own.
   | "finishTick"
@@ -274,6 +367,11 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   grabCooldownMs: fields.grabCooldownMs ?? 0,
   grabbingId: fields.grabbingId ?? null,
   heldByGrabberId: fields.heldByGrabberId ?? null,
+  heldPhase: fields.heldPhase ?? null,
+  holdEndsTick: fields.holdEndsTick ?? null,
+  escapeProgress: fields.escapeProgress ?? 0,
+  lastWiggleYaw: fields.lastWiggleYaw ?? null,
+  spinMs: fields.spinMs ?? 0,
   launchPadEpoch: fields.launchPadEpoch ?? 0,
   facing: fields.facing ?? 0,
   lastInputTick: fields.lastInputTick ?? 0,

@@ -3,7 +3,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Module } from "./Module.js";
-import { chainTrack, resolveTrack, type Segment, type Track } from "./Track.js";
+import { resolveTrack } from "./resolveTrack.js";
+import { chainTrack, type Track } from "./Track.js";
 import {
   ASSET_MODULE_DEFS,
   ASSET_PLACEMENT_MODULES,
@@ -17,10 +18,12 @@ import { invalidLaunchReason, launchDefFor } from "./Launch.js";
 import { pointInBox } from "../math/box.js";
 import type { VolumeConfig } from "../simulation/Volume.js";
 import { KAYKIT_MODULE_DEFS } from "./kaykitAssetDefs.js";
+import { QUARTER_ARC_CENTRES, QUARTER_MODULE_DEFS } from "./quarterAssetDefs.js";
 import { TRAP_MODULE_DEFS } from "./trapAssetDefs.js";
 import { FAN_MODULE_DEFS } from "./fanAssetDefs.js";
 import { M1_MODULES } from "./modules.js";
-import { CAPSULE_BOTTOM_OFFSET, TICK_RATE_HZ } from "../tuning.js";
+import { CAPSULE_BOTTOM_OFFSET } from "../tuning/character.js";
+import { TICK_RATE_HZ } from "../tuning/clock.js";
 import { DEFAULT_CHARACTER_ID, RapierSimulation, initPhysics } from "../simulation/RapierSimulation.js";
 import { IDLE_INPUTS, type SimInputs } from "../simulation/SimInputs.js";
 
@@ -38,7 +41,6 @@ const realFetch = (seen: string[]) => async (url: string): Promise<Uint8Array> =
 };
 
 const NORTH = { ...IDLE_INPUTS, moveDirection: { x: 0, y: 0, z: -1 } };
-const EAST = { ...IDLE_INPUTS, moveDirection: { x: 1, y: 0, z: 0 } };
 
 const tick = (sim: RapierSimulation, seconds: number, input: SimInputs = IDLE_INPUTS): void => {
   for (let n = 0; n < Math.round(seconds * TICK_RATE_HZ); n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: input });
@@ -86,6 +88,22 @@ describe("asset module definitions", () => {
       expect(Math.abs(center.x), `${def.id} x`).toBeLessThanOrEqual(MM);
       expect(Math.abs(center.z), `${def.id} z`).toBeLessThanOrEqual(MM);
       expect(Math.abs(center.y - halfExtents.y), `${def.id} base`).toBeLessThanOrEqual(MM);
+    }
+  });
+
+  it("records where every quarter piece's circle is centred — the point four of them turn about", () => {
+    // `disc` builds a ring by turning four pieces about this point, so it has
+    // to be the real arc centre: every collision vertex inside the piece's
+    // outer radius measured from it, all in the one quadrant it curls into,
+    // and the arc reaching out to the footprint's far edge.
+    expect(Object.keys(QUARTER_ARC_CENTRES).sort()).toEqual(QUARTER_MODULE_DEFS.map((def) => def.id).sort());
+    for (const def of QUARTER_MODULE_DEFS) {
+      const arc = QUARTER_ARC_CENTRES[def.id]!;
+      const size = def.footprint.bounds.halfExtents.x * 2;
+      const points = readAssetModel(realBytes(def.id)).collision.flatMap((mesh) => mesh.positions);
+      const radii = points.map((p) => Math.hypot(p.x - arc.x, p.z - arc.z));
+      expect(Math.max(...radii), def.id).toBeCloseTo(size, 2);
+      expect(points.every((p) => p.x >= arc.x - 1e-3 && p.z >= arc.z - 1e-3), def.id).toBe(true);
     }
   });
 
@@ -325,6 +343,7 @@ describe("asset physics (ticket 02 Done-when)", () => {
       ...KAYKIT_MODULE_DEFS.map((def) => def.id),
       ...TRAP_MODULE_DEFS.map((def) => def.id),
       ...FAN_MODULE_DEFS.map((def) => def.id),
+      ...QUARTER_MODULE_DEFS.map((def) => def.id),
     ]);
     const byId = Object.fromEntries(ASSET_MODULE_DEFS.map((def) => [def.id, def]));
 

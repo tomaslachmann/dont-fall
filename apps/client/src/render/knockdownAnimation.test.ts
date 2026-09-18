@@ -30,7 +30,7 @@ const rig = (): CharacterActions => {
     ko: byDirection((d) => clip(`KO_${d}`, KO_SECONDS)),
     getUp: byDirection((d) => clip(`GetUp_${d}`, GETUP_SECONDS)),
     death: byDirection(() => null),
-    grabReach: null, grabPull: null, grabHold: null, grabDropOut: null,
+    grabReach: null, grabHold: null, grabDropOut: null,
     struggleHeld: null, struggleAir: null, wobble: null, wobbleWalk: null,
   };
 };
@@ -111,6 +111,19 @@ describe("Knockdowns", () => {
     late.advance("a", frame("Ragdoll"), actions);
     late.advance("a", frame("Ragdoll", { deltaSeconds: KNOCKDOWN_PICK_SECONDS + 0.05 }), actions);
     expect(clipName(late.advance("a", frame("Ragdoll", { velocity: pushAt(0) }), actions))).toBe(`KO_${KNOCKDOWN_FALLBACK}`);
+  });
+
+  it("lets the push overrule the stale first read — within the window, the last one wins (found live 2026-09-18)", () => {
+    const actions = rig();
+    const knockdowns = new Knockdowns();
+    // The first drawn Ragdoll frame still carries the Character's own run —
+    // the drawn world is a beat behind the shove that knocked it down.
+    knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(0) }), actions);
+    // The real push (from the right, 90°) arrives two frames later, inside the window…
+    expect(clipName(knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(90) }), actions))).toBe("KO_BR");
+    // …and once the window closes, the fall is settled for good.
+    knockdowns.advance("a", frame("Ragdoll", { deltaSeconds: KNOCKDOWN_PICK_SECONDS, velocity: pushAt(90) }), actions);
+    expect(clipName(knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(180) }), actions))).toBe("KO_BR");
   });
 
   it("gets up the way it fell, from GetUp's first frame, the moment GettingUp is drawn", () => {

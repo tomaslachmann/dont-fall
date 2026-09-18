@@ -1,28 +1,27 @@
-import { readFileSync } from "node:fs";
-import * as path from "node:path";
 import {
   chevronPose,
   CONVEYOR_SPEEDS,
   ICE_OVERLAY_OPACITY,
-  MUD_OVERLAY_LIFT,
-  MUD_SIDE_COLOR,
-  MUD_SLOSH_PHASE_STEP,
-  mudSloshOffset,
   stripLayout,
   TICK_DT,
+  type DeckPlan,
   type Module,
   type Segment,
 } from "@dont-fall/shared";
 import * as THREE from "three";
 import { describe, expect, it, vi } from "vitest";
-import { loadAssetVisuals } from "../assets/assets.js";
-import { addConveyorBelt, addIceOverlay, addMudOverlay, applySegmentTransform, buildSegmentGroup, disposeGroup, templateParts } from "./render.js";
+import { mudOutline } from "@dont-fall/render";
+import {
+  addBounceOverlay,
+  addConveyorBelt,
+  addIceOverlay,
+  addMudOverlay,
+  buildSegmentGroup,
+  disposeGroup,
+  mudPlacementOf,
+  templateParts,
+} from "./render.js";
 
-const assetsRoot = path.resolve(import.meta.dirname, "../../../../assets");
-const realFetch = async (url: string): Promise<Uint8Array> => {
-  const fileName = url.substring(url.lastIndexOf("/") + 1);
-  return new Uint8Array(readFileSync(path.join(assetsRoot, fileName)));
-};
 
 const meshCount = (root: THREE.Object3D): number => {
   let count = 0;
@@ -54,13 +53,16 @@ const deckTemplate = (): THREE.Group => {
 };
 const DECKS = { deck: deckModule() };
 
-const rolesPresent = (root: THREE.Object3D): unknown[] => {
-  const roles: unknown[] = [];
-  root.traverse((object) => {
-    if (object.userData.role !== undefined) roles.push(object.userData.role);
-  });
-  return roles;
+/** A plan smaller than the 8×6 deck — a cut sheet wears this triangle, a fallback the whole rectangle. */
+const TRIANGLE_PLAN: DeckPlan = {
+  vertices: [
+    { x: -2, z: -1.5 },
+    { x: 2, z: -1.5 },
+    { x: 0, z: 1.5 },
+  ],
+  indices: [0, 1, 2],
 };
+
 
 describe("buildSegmentGroup", () => {
   it("draws an asset Segment from its template, placed", () => {
@@ -119,7 +121,7 @@ describe("removing a Segment (the builder's allocate-then-free discipline)", () 
     const parent = new THREE.Group();
     const segment: Segment = { moduleId: "deck", position: { x: 0, y: 0, z: 0 }, rotation: 0, ice: true };
     const group = buildSegmentGroup(DECKS, segment)!;
-    addIceOverlay(group, segment, DECKS.deck, undefined, new THREE.Texture());
+    addIceOverlay(group, segment, DECKS.deck, undefined, new THREE.Texture(), 1, undefined);
     parent.add(group);
     const spies = spyOnMeshResources(group);
     expect(spies.length).toBeGreaterThan(0);
@@ -234,14 +236,14 @@ describe("addIceOverlay (ADR 0066)", () => {
 
   it("sheets nothing when the Segment runs no ice and the Module isn't icy, or the texture hasn't loaded", () => {
     const node = new THREE.Group();
-    expect(addIceOverlay(node, plain, deck(), deckTemplate(), texture())).toBeUndefined();
-    expect(addIceOverlay(node, plain, ice(), deckTemplate(), undefined)).toBeUndefined();
+    expect(addIceOverlay(node, plain, deck(), deckTemplate(), texture(), 1, undefined)).toBeUndefined();
+    expect(addIceOverlay(node, plain, ice(), deckTemplate(), undefined, 1, undefined)).toBeUndefined();
     expect(node.children).toHaveLength(0);
   });
 
   it("sheets attached ice on any Module — the attachment, not the Module, is the mechanism", () => {
     const node = new THREE.Group();
-    const mesh = addIceOverlay(node, { ...plain, ice: true }, deck(), deckTemplate(), texture())!;
+    const mesh = addIceOverlay(node, { ...plain, ice: true }, deck(), deckTemplate(), texture(), 1, undefined)!;
     expect(mesh).toBeDefined();
     expect(node.children).toHaveLength(1);
     expect(mesh.position.y).toBeCloseTo(0.31, 10);
@@ -249,7 +251,7 @@ describe("addIceOverlay (ADR 0066)", () => {
 
   it("sheets the icy deck top in local space — flat, footprint-sized, a decal's lift", () => {
     const node = new THREE.Group();
-    const mesh = addIceOverlay(node, plain, ice(), deckTemplate(), texture())!;
+    const mesh = addIceOverlay(node, plain, ice(), deckTemplate(), texture(), 1, undefined)!;
     expect(mesh).toBeDefined();
     expect(node.children).toHaveLength(1);
 
@@ -267,7 +269,7 @@ describe("addIceOverlay (ADR 0066)", () => {
   it("lays the shared texture translucent — tiled by deck size, never stretched to fit", () => {
     const node = new THREE.Group();
     const master = texture();
-    const mesh = addIceOverlay(node, plain, ice(), deckTemplate(), master)!;
+    const mesh = addIceOverlay(node, plain, ice(), deckTemplate(), master, 1, undefined)!;
     const material = mesh.material as THREE.MeshStandardMaterial;
 
     expect(material.transparent).toBe(true);
@@ -280,81 +282,108 @@ describe("addIceOverlay (ADR 0066)", () => {
     expect(material.map!.repeat.x).toBeCloseTo(4, 10);
     expect(material.map!.repeat.y).toBeCloseTo(3, 10);
   });
+
+  it("cuts the sheet to a passed plan (ADR 0096) — the triangle, not the footprint rectangle", () => {
+    const node = new THREE.Group();
+    const mesh = addIceOverlay(node, plain, ice(), deckTemplate(), texture(), 1, TRIANGLE_PLAN)!;
+    const position = mesh.geometry.getAttribute("position") as THREE.BufferAttribute;
+    expect(position.count).toBe(3);
+    mesh.geometry.computeBoundingBox();
+    const box = mesh.geometry.boundingBox!;
+    expect(box.max.x - box.min.x).toBeCloseTo(4, 10);
+    expect(box.max.z - box.min.z).toBeCloseTo(3, 10);
+  });
 });
 
-describe("addMudOverlay (ADR 0067)", () => {
+describe("addMudOverlay (ADR 0067/0103)", () => {
   const mud = () => deckModule("mud");
+  const deck = () => deckModule();
+  const plain: Segment = { moduleId: "deck", position: { x: 0, y: 0, z: 0 }, rotation: 0 };
+  const placed = (segment: Segment, module: Module, plan?: DeckPlan): { node: THREE.Group; built: THREE.Group | undefined } => {
+    const node = new THREE.Group();
+    const self = mudPlacementOf(segment, module, deckTemplate(), plan);
+    return { node, built: addMudOverlay(node, segment, module, deckTemplate(), self, self ? [self] : []) };
+  };
+  const bodyBox = (built: THREE.Group): THREE.Box3 => {
+    built.updateWorldMatrix(true, true);
+    return new THREE.Box3().setFromObject(built.getObjectByName("mud-body")!);
+  };
+
+  it("builds nothing when the Segment runs no mud and the Module isn't muddy", () => {
+    const { node, built } = placed(plain, deck());
+    expect(built).toBeUndefined();
+    expect(node.children).toHaveLength(0);
+  });
+
+  it("lays attached mud on any Module, on its deck top — the attachment, not the Module, is the mechanism", () => {
+    const { node, built } = placed({ ...plain, mud: true }, deck());
+    expect(node.children).toEqual([built]);
+    const box = bodyBox(built!);
+    // On the 0.3 deck top, standing proud of it: a mass feet sink into, never a decal.
+    expect(box.min.y).toBeGreaterThanOrEqual(0.3);
+    expect(box.max.y - 0.3).toBeGreaterThan(0.15);
+    // Footprint-sized, and never past it.
+    expect(box.max.x - box.min.x).toBeCloseTo(8, 5);
+    expect(box.max.z - box.min.z).toBeCloseTo(6, 5);
+  });
+
+  it("stands as deep on a scaled-up Segment as on any other — the mass undoes the group's scale", () => {
+    const one = bodyBox(placed(plain, mud()).built!);
+    const scaled = { ...plain, scale: 2 };
+    const { node, built } = placed(scaled, mud());
+    const group = new THREE.Group();
+    group.scale.setScalar(2);
+    group.add(node);
+    const twice = bodyBox(built!);
+    // Twice as wide, but no deeper.
+    expect(twice.max.x - twice.min.x).toBeCloseTo(2 * (one.max.x - one.min.x), 4);
+    expect(twice.max.y - 0.6).toBeLessThan(one.max.y - 0.3 + 0.1);
+  });
+
+  it("cuts the mass to a passed plan (ADR 0096) — a triangle, not the footprint", () => {
+    const built = placed(plain, mud(), TRIANGLE_PLAN).built!;
+    const box = bodyBox(built);
+    // The triangle is 4 × 3 inside an 8 × 6 footprint: the mud follows the
+    // triangle, grown out a little over what the plan reads as its bevel.
+    expect(box.max.x - box.min.x).toBeLessThan(6);
+    expect(box.max.z - box.min.z).toBeLessThan(4.5);
+    // Nothing up in the footprint's corners beside the apex.
+    const position = (built.getObjectByName("mud-body") as THREE.Mesh).geometry.getAttribute("position");
+    for (let i = 0; i < position.count; i += 1) {
+      if (position.getZ(i) > 1) expect(Math.abs(position.getX(i))).toBeLessThan(1.5);
+    }
+  });
+
+  it("places each deck where the game does, so mud runs on across a seam between two muddy Segments", () => {
+    // Two 8-wide decks side by side, the second turned half round: its own
+    // frame is not the world's, and the seam is only found if both are placed right.
+    const left = mudPlacementOf({ ...plain, mud: true }, deck(), deckTemplate(), undefined)!;
+    const right = mudPlacementOf({ ...plain, mud: true, position: { x: 8, y: 0, z: 0 }, rotation: Math.PI }, deck(), deckTemplate(), undefined)!;
+    expect(mudOutline(left, [left, right]).filter((edge) => !edge.free)).toHaveLength(1);
+    // ...but not into one that moves on its own.
+    const sliding = mudPlacementOf(
+      { ...plain, mud: true, position: { x: 8, y: 0, z: 0 }, motion: { slide: { offset: { x: 0, y: 0, z: 3 }, period: 4, easing: "linear" } } },
+      deck(),
+      deckTemplate(),
+      undefined,
+    )!;
+    expect(mudOutline(left, [left, sliding]).every((edge) => edge.free)).toBe(true);
+  });
+});
+
+describe("addBounceOverlay (ADR 0070)", () => {
   const deck = () => deckModule();
   const texture = (): THREE.Texture => new THREE.Texture();
   const plain: Segment = { moduleId: "deck", position: { x: 0, y: 0, z: 0 }, rotation: 0 };
 
-  it("builds nothing when the Segment runs no mud and the Module isn't muddy, or the texture hasn't loaded", () => {
+  it("cuts the subdivided sheet to a passed plan (ADR 0096) — hundreds of domed vertices, not the flat lattice", () => {
     const node = new THREE.Group();
-    expect(addMudOverlay(node, plain, 0, deck(), deckTemplate(), texture())).toBeUndefined();
-    expect(addMudOverlay(node, plain, 0, mud(), deckTemplate(), undefined)).toBeUndefined();
-    expect(node.children).toHaveLength(0);
-  });
-
-  it("blocks attached mud on any Module — the attachment, not the Module, is the mechanism", () => {
-    const node = new THREE.Group();
-    const built = addMudOverlay(node, { ...plain, mud: true }, 0, deck(), deckTemplate(), texture())!;
-    expect(built).toBeDefined();
-    expect(node.children).toHaveLength(1);
-    // The 0.3 deck top plus half the lift (centred block) — feet at deck level sink below the mud.
-    expect(built.mesh.position.y).toBeCloseTo(0.34, 10);
-  });
-
-  it("fills the muddy deck top ankle-deep and footprint-sized — a block, opaque, a mass to stand in", () => {
-    const node = new THREE.Group();
-    const built = addMudOverlay(node, plain, 0, mud(), deckTemplate(), texture())!;
-    expect(built).toBeDefined();
-    expect(node.children).toHaveLength(1);
-    const mesh = built.mesh;
-
-    expect(mesh.position.x).toBeCloseTo(0, 10);
-    expect(mesh.position.y).toBeCloseTo(0.34, 10);
-    expect(mesh.position.z).toBeCloseTo(0, 10);
-    mesh.geometry.computeBoundingBox();
-    const box = mesh.geometry.boundingBox!;
-    expect(box.max.x - box.min.x).toBeCloseTo(8, 10); // footprint halfX 4
-    expect(box.max.z - box.min.z).toBeCloseTo(6, 10); // footprint halfZ 3
-    // The filled gap: the block runs the whole lift down to the deck top (f32 geometry, looser precision).
-    expect(box.max.y - box.min.y).toBeCloseTo(MUD_OVERLAY_LIFT, 6);
-    expect(mesh.position.y + box.max.y).toBeCloseTo(0.3 + MUD_OVERLAY_LIFT, 6);
-    expect(mesh.position.y + box.min.y).toBeCloseTo(0.3, 6);
-    const materials = mesh.material as THREE.MeshStandardMaterial[];
-    expect(materials).toHaveLength(6);
-    expect(materials[2]!.transparent).toBe(false);
-    for (const i of [0, 1, 3, 4, 5]) {
-      expect(materials[i]!.map).toBeNull();
-      expect(materials[i]!.color.getHex()).toBe(MUD_SIDE_COLOR);
-    }
-  });
-
-  it("lays the shared texture opaque on top — tiled by deck size, never stretched to fit", () => {
-    const node = new THREE.Group();
-    const master = texture();
-    const built = addMudOverlay(node, plain, 0, mud(), deckTemplate(), master)!;
-    const top = (built.mesh.material as THREE.MeshStandardMaterial[])[2]!;
-
-    expect(top.transparent).toBe(false);
-    expect(top.polygonOffset).toBe(true);
-    expect(top.map).not.toBe(master);
-    expect(top.map!.wrapS).toBe(THREE.RepeatWrapping);
-    expect(top.map!.wrapT).toBe(THREE.RepeatWrapping);
-    // 8×6 deck on a 2-unit tile: 4×3 repeats.
-    expect(top.map!.repeat.x).toBeCloseTo(4, 10);
-    expect(top.map!.repeat.y).toBeCloseTo(3, 10);
-  });
-
-  it("breathes the texture offset off the motion clock — the preview never sits still", () => {
-    const node = new THREE.Group();
-    const built = addMudOverlay(node, plain, 2, mud(), deckTemplate(), texture())!;
-    built.update(39); // 1.3 s in ticks
-    const top = (built.mesh.material as THREE.MeshStandardMaterial[])[2]!;
-    const slosh = mudSloshOffset(39 * TICK_DT, 2 * MUD_SLOSH_PHASE_STEP);
-    expect(top.map!.offset.x).toBeCloseTo(slosh.u, 10);
-    expect(top.map!.offset.y).toBeCloseTo(slosh.v, 10);
+    const mesh = addBounceOverlay(node, { ...plain, bounce: true }, deck(), deckTemplate(), texture(), 1, TRIANGLE_PLAN)!;
+    const position = mesh.geometry.getAttribute("position") as THREE.BufferAttribute;
+    expect(position.count).toBeGreaterThan(4);
+    let maxY = -Infinity;
+    for (let i = 0; i < position.count; i += 1) maxY = Math.max(maxY, position.getY(i));
+    expect(maxY).toBeGreaterThan(0);
   });
 });
 

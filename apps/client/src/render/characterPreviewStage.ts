@@ -7,7 +7,8 @@ import {
   LOCOMOTION_CROSSFADE_SECONDS,
 } from "./characterModel.js";
 import { createWardrobe } from "./hats.js";
-import { tintHueForSkin, tintModel } from "./playerTint.js";
+import { tintHueForColor } from "./playerTint.js";
+import { createSkinCloset } from "./skins.js";
 
 /** Idle turntable speed (rad/s) — one full turn in ~10 s, slow enough to inspect the bean. */
 const TURNTABLE_SPEED = 0.6;
@@ -24,8 +25,10 @@ export interface PreviewStep {
 }
 
 export interface CharacterPreviewStageOptions {
-  /** Equipped skin at mount — or null for the default. Later changes go through {@link CharacterPreviewStage.setSkin}. */
-  skin: number | null;
+  /** Equipped body color at mount — or null for the default. Later changes go through {@link CharacterPreviewStage.setLook}. */
+  color: number | null;
+  /** Equipped skin at mount (ADR 0091) — or null for none, which shows the `color`. */
+  skin: string | null;
   /** Equipped hat at mount (ADR 0083) — or null for none. Later changes go through {@link CharacterPreviewStage.setHat}. */
   hat: string | null;
   /** Slow idle rotation. */
@@ -38,7 +41,8 @@ export interface CharacterPreviewStageOptions {
 
 /** A mounted preview: what the screen's own effects drive once it exists. */
 export interface CharacterPreviewStage {
-  setSkin: (skin: number | null) => void;
+  /** Dresses the bean's body: its `skin`, or its `color` when it has none. */
+  setLook: (color: number | null, skin: string | null) => void;
   /** Puts a hat on, or takes it off for `null`. */
   setHat: (hat: string | null) => void;
   /** Restarts the sequence from its first step. */
@@ -53,7 +57,6 @@ interface PreviewPlayer {
   mixer: THREE.AnimationMixer;
   animations: THREE.AnimationClip[];
   active: THREE.AnimationAction | null;
-  appliedHue: number | null;
   /** Extra turns queued — eased toward, never snapped to. */
   spinTarget: number;
   spinCurrent: number;
@@ -74,7 +77,7 @@ interface PreviewPlayer {
 export const mountCharacterPreview = (
   canvas: HTMLCanvasElement,
   wrap: HTMLElement,
-  { skin: initialSkin, hat: initialHat, autoRotate, steps, onUnavailable }: CharacterPreviewStageOptions,
+  { color: initialColor, skin: initialSkin, hat: initialHat, autoRotate, steps, onUnavailable }: CharacterPreviewStageOptions,
 ): CharacterPreviewStage => {
   const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -89,10 +92,12 @@ export const mountCharacterPreview = (
   rim.position.set(-4, 2, -3);
   scene.add(rim);
 
+  let color = initialColor;
   let skin = initialSkin;
   let hat = initialHat;
-  // This canvas's own wardrobe: a renderer's hats are its own to free.
+  // This canvas's own wardrobe and closet: a renderer's cosmetics are its own to free.
   const wardrobe = createWardrobe();
+  const closet = createSkinCloset();
   let player: PreviewPlayer | null = null;
   let raf = 0;
   let cancelled = false;
@@ -173,8 +178,7 @@ export const mountCharacterPreview = (
       const scale = naturalHeight > 0 ? CHARACTER_VISUAL_HEIGHT / naturalHeight : 1;
       root.scale.setScalar(scale);
       root.position.y = -natural.min.y * scale;
-      const hue = tintHueForSkin(skin);
-      tintModel(root, hue);
+      closet.wear(root, skin, tintHueForColor(color));
       wardrobe.wear(root, hat);
       scene.add(root);
       mixer = new THREE.AnimationMixer(root);
@@ -183,7 +187,6 @@ export const mountCharacterPreview = (
         mixer,
         animations: model.animations,
         active: null,
-        appliedHue: hue,
         spinTarget: 0,
         spinCurrent: 0,
         autoAngle: 0,
@@ -207,15 +210,12 @@ export const mountCharacterPreview = (
     });
 
   return {
-    // The tint follows the skin — guarded, like the match's `setSkins`,
-    // since a re-tint clones every material.
-    setSkin: (next) => {
-      skin = next;
-      if (!player) return;
-      const hue = tintHueForSkin(next);
-      if (hue === player.appliedHue) return;
-      tintModel(player.root, hue);
-      player.appliedHue = hue;
+    // The body follows the pick — the closet drops a change that shows
+    // nothing, since restyling clones every material.
+    setLook: (nextColor, nextSkin) => {
+      color = nextColor;
+      skin = nextSkin;
+      if (player) closet.wear(player.root, nextSkin, tintHueForColor(nextColor));
     },
     setHat: (next) => {
       hat = next;
@@ -243,6 +243,7 @@ export const mountCharacterPreview = (
         disposeRig(root);
       }
       wardrobe.dispose();
+      closet.dispose();
       renderer.dispose();
     },
   };

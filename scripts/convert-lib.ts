@@ -285,7 +285,7 @@ const launchSource = (def: MeasuredDef): string => {
   );
 };
 
-export const emitDefsFile = (path: string, constName: string, header: string, defs: MeasuredDef[]): void => {
+export const emitDefsFile = (path: string, constName: string, header: string, defs: MeasuredDef[], tail = ""): void => {
   const body = defs
     .map(
       (def) =>
@@ -294,6 +294,6 @@ export const emitDefsFile = (path: string, constName: string, header: string, de
     .join("\n");
   writeFileSync(
     path,
-    `${header}\nimport type { AssetModuleDef } from "./assetModules.js";\n\nexport const ${constName}: AssetModuleDef[] = [\n${body}\n];\n`,
+    `${header}\nimport type { AssetModuleDef } from "./assetModules.js";\n\nexport const ${constName}: AssetModuleDef[] = [\n${body}\n];\n${tail}`,
   );
 };

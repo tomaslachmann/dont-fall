@@ -1,4 +1,4 @@
-import { DEFAULT_SURVIVOR_TARGET, DEFAULT_TIME_LIMIT_MS } from "../tuning.js";
+import { DEFAULT_SURVIVOR_TARGET, DEFAULT_TIME_LIMIT_MS } from "../tuning/match.js";
 
 /**
  * The rules a Round runs by, as data (M5 ticket 02, ADR 0041/0043) — never a

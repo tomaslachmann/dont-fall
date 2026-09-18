@@ -46,6 +46,7 @@ const makeViewportStub = (): ViewportStub => ({
   setImpactTintVisible: vi.fn(),
   setEnvironment: vi.fn(),
   frameTrack: vi.fn(),
+  setView: vi.fn(),
   setSelected: vi.fn(),
   setGizmoMode: vi.fn(),
   isGizmoActive: vi.fn(() => false),
@@ -901,53 +902,6 @@ describe("ice texture (ADR 0066)", () => {
     engine.placeModule(DECK);
     await flush();
     expect((vi.mocked(viewport.setTrack).mock.calls.at(-1)![3] as { ice?: unknown }).ice).toBeInstanceOf(THREE.Texture);
-  });
-});
-
-describe("mud texture (ADR 0067)", () => {
-  it("loads lazily on the first sync with mud and hands the texture to the viewport", async () => {
-    const seen: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
-      seen.push(url);
-      return { ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as Response;
-    });
-    engine.attachViewport(document.createElement("div"));
-    engine.placeModule(DECK);
-    engine.setSegmentSurface("mud");
-    await flush();
-
-    expect(seen).toEqual(["http://localhost:8081/assets/mud_surface.jpg"]);
-    const lastSetTrack = vi.mocked(viewport.setTrack).mock.calls.at(-1)!;
-    expect((lastSetTrack[3] as { mud?: unknown }).mud).toBeInstanceOf(THREE.Texture);
-    expect((lastSetTrack[3] as { ice?: unknown }).ice).toBeUndefined();
-
-    // Settled: further syncs reuse it without refetching.
-    vi.mocked(viewport.setTrack).mockClear();
-    engine.placeModule(DECK);
-    await flush();
-    expect(seen).toHaveLength(1);
-    expect((vi.mocked(viewport.setTrack).mock.calls.at(-1)![3] as { mud?: unknown }).mud).toBeInstanceOf(THREE.Texture);
-  });
-
-  it("warns and retries on the next sync when the load fails — a cosmetic never crashes the builder", async () => {
-    let fail = true;
-    vi.stubGlobal("fetch", async () => {
-      if (fail) throw new Error("GET answered 500");
-      return { ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } as Response;
-    });
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    engine.attachViewport(document.createElement("div"));
-    engine.placeModule(DECK);
-    engine.setSegmentSurface("mud");
-    await flush();
-
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("mud overlay unavailable"));
-    expect((vi.mocked(viewport.setTrack).mock.calls.at(-1)![3] as { mud?: unknown }).mud).toBeUndefined();
-
-    fail = false;
-    engine.placeModule(DECK);
-    await flush();
-    expect((vi.mocked(viewport.setTrack).mock.calls.at(-1)![3] as { mud?: unknown }).mud).toBeInstanceOf(THREE.Texture);
   });
 });
 

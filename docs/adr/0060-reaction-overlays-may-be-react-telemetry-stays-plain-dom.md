@@ -3,6 +3,13 @@
 > **Superseded in part by ADR 0088 (2026-09-17):** the Round HUD — `RaceHUD.tsx`
 > included — is now a React overlay too, fed deduplicated display values rather
 > than per-frame ones. The event-feedback contract below stands.
+>
+> **Amended 2026-09-18 (the user's call):** the incoming-Hit flash splits by
+> outcome. A Hit that leaves you standing is only a light red tint at the edges,
+> for 0.6 s, with no word on screen (a screen-reader label only), no crack and
+> no black snap. A knockout keeps the whole flash: KNOCKED DOWN, the snap, the
+> bleed and the bloom. Its crack now paints itself from the point of impact,
+> trunk, branch and hairline in turn, then holds and fades over 1.6 s.
 
 ## Context
 

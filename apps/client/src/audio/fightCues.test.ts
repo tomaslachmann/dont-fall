@@ -21,6 +21,10 @@ const frame = (nowMs: number, over: Partial<Omit<FightFrame, "nowMs">> = {}): Fi
   hitReactEpoch: 0,
   grabEpoch: 0,
   grabbingId: null,
+  heldByGrabberId: null,
+  heldPhase: null,
+  spinMs: 0,
+  facing: 0,
   ragdollEpoch: 0,
   ragdollCause: "Fall",
   respawned: false,
@@ -176,5 +180,39 @@ describe("FightCues (M14 ticket 06)", () => {
     cues.update("a", frame(16, { hitEpoch: 4, hitReactEpoch: 2, ragdollEpoch: 3 }));
     cues.forget("a");
     expect(cues.update("a", frame(1000, { hitEpoch: 5, hitReactEpoch: 3 })).struck).toBe(false);
+  });
+});
+
+describe("FightCues — a hold (ADR 0104)", () => {
+  it("hears a Struggle won — free on its feet — and not a Character set down Staggering", () => {
+    const cues = new FightCues();
+    cues.update("a", frame(0, { heldByGrabberId: "g", heldPhase: "struggle", motionState: "Held" }));
+    expect(cues.update("a", frame(33, { motionState: "Controlled" })).escaped).toBe(true);
+
+    const set = new FightCues();
+    set.update("a", frame(0, { heldByGrabberId: "g", heldPhase: "struggle", motionState: "Held" }));
+    expect(set.update("a", frame(33, { motionState: "Stagger" })).escaped).toBe(false);
+  });
+
+  it("hears the moment a held Character goes Limp, once", () => {
+    const cues = new FightCues();
+    cues.update("a", frame(0, { heldByGrabberId: "g", heldPhase: "struggle", motionState: "Held" }));
+    expect(cues.update("a", frame(33, { heldByGrabberId: "g", heldPhase: "limp", motionState: "Held" })).wentLimp).toBe(true);
+    expect(cues.update("a", frame(66, { heldByGrabberId: "g", heldPhase: "limp", motionState: "Held" })).wentLimp).toBe(false);
+  });
+
+  it("whooshes once each time a Spin comes round, and hears the Hurl when it is let go", () => {
+    const cues = new FightCues();
+    cues.update("g", frame(0, { grabbingId: "h" }));
+    let passes = 0;
+    let facing = 0;
+    for (let n = 1; n <= 40; n += 1) {
+      facing += 0.4; // 16 rad: two and a half turns
+      const cue = cues.update("g", frame(n * 33, { grabbingId: "h", spinMs: n * 33, facing: Math.atan2(Math.sin(facing), Math.cos(facing)) }));
+      if (cue.spinPass) passes += 1;
+      expect(cue.released).toBe(false);
+    }
+    expect(passes).toBe(2);
+    expect(cues.update("g", frame(41 * 33, { grabbingId: null, spinMs: 0, facing: 1 })).released).toBe(true);
   });
 });

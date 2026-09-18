@@ -1,4 +1,4 @@
-import { GRAB_COOLDOWN_TICKS } from "../tuning.js";
+import { GRAB_COOLDOWN_TICKS } from "../tuning/fight.js";
 import { CooldownController } from "./CooldownController.js";
 
 /**

@@ -28,14 +28,7 @@ import {
 import {
   invalidSurvivorTargetReason,
   invalidTimeLimitReason,
-  invalidTrackConveyorReason,
-  invalidTrackCourseFieldsReason,
-  invalidTrackIceReason,
-  invalidTrackMotionReason,
-  invalidTrackBounceReason,
-  invalidTrackLaunchReason,
-  invalidTrackMudReason,
-  invalidTrackSurfaceConflictReason,
+  invalidTrackAttachmentReason,
   invalidTrackThumbnailReason,
   isTrack,
   unknownModuleIds,
@@ -67,29 +60,15 @@ export interface PublishInput {
  * mapping with no domain opinions of its own.
  */
 export const publishTrack = (db: ApiDb, input: PublishInput): { id: string } => {
-  const badMotion = invalidTrackMotionReason(input.track);
-  if (badMotion) throw new ServiceError(400, badMotion);
-  const badConveyor = invalidTrackConveyorReason(input.track);
-  if (badConveyor) throw new ServiceError(400, badConveyor);
-  const badIce = invalidTrackIceReason(input.track);
-  if (badIce) throw new ServiceError(400, badIce);
-  const badMud = invalidTrackMudReason(input.track);
-  if (badMud) throw new ServiceError(400, badMud);
-  const badBounce = invalidTrackBounceReason(input.track);
-  if (badBounce) throw new ServiceError(400, badBounce);
-  const badLaunch = invalidTrackLaunchReason(input.track);
-  if (badLaunch) throw new ServiceError(400, badLaunch);
-  const surfaceConflict = invalidTrackSurfaceConflictReason(input.track);
-  if (surfaceConflict) throw new ServiceError(400, surfaceConflict);
-  const badCourseField = invalidTrackCourseFieldsReason(input.track);
-  if (badCourseField) throw new ServiceError(400, badCourseField);
+  const badAttachment = invalidTrackAttachmentReason(input.track);
+  if (badAttachment) throw new ServiceError(400, badAttachment);
   if (!isTrack(input.track)) {
     throw new ServiceError(
       400,
       "body.track must be a Segment[]: each entry needs a string moduleId, a position with finite x/y/z, " +
         "a finite rotation, finite pitch/roll if present, a scale between " +
         `${MIN_SEGMENT_SCALE} and ${MAX_SEGMENT_SCALE} if present, a conveyor with a known preset and a finite angle if present, ` +
-        "ice/mud/bounce exactly true if present (never more than one), " +
+        "ice/mud/bounce/prop exactly true if present (never more than one Surface), " +
         `and a launch height between ${LAUNCH_HEIGHT_MIN} and ${LAUNCH_HEIGHT_MAX} metres if present`,
     );
   }

@@ -182,8 +182,6 @@ class Harness {
   // own doc for why production never needs these overrides.
   private readonly predictionLoop: PredictionLoop;
   private renderAlpha = 0;
-  private latestServerSnapshot: SimState | null = null;
-  private lastSnapshotArrivedAt = 0;
   private readonly LEAD_ADJUST_FRAMES = 12;
   private smoothedQueueDepth = 1.5;
   private framesSinceLeadAdjust = 12;
@@ -192,7 +190,6 @@ class Harness {
   private targetLead = 2;
   private appliedLead = 0;
   private leadSeeded = false;
-  private lastRenderedPos: { x: number; y: number; z: number } | null = null;
   // proposal: tick-addressed server input buffer (5a) + server-tick estimate (5f)
   private readonly inputByTick = new Map<number, SimInputs>();
   private estServerTickAtArrival = 0;
@@ -390,8 +387,6 @@ class Harness {
         if (this.o.timeSync) this.timeSync.receivePong(m, this.now);
       } else if (m.type === "snapshot") {
         this.snapsThisFrame += 1;
-        this.latestServerSnapshot = m.state;
-        this.lastSnapshotArrivedAt = this.now;
         this.estServerTickAtArrival = m.state.tick;
         this.estServerTickArrivedAt = this.now;
         this.serverInterp.receive(m.state, this.now, m.serverTimeMs);
@@ -585,7 +580,6 @@ class Harness {
         }
       : { ...renderChar.position };
 
-    this.lastRenderedPos = renderPos;
     this.rendered.push({
       t: this.now,
       pos: renderPos,

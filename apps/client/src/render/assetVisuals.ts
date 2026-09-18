@@ -1,6 +1,6 @@
 import {
   assetFileName,
-  hasMotion,
+  segmentBody,
   segmentOrientation,
   segmentScale,
   type Module,
@@ -138,10 +138,13 @@ export interface AssetVisualPlacement {
 export const assetPlacements = (track: Track, library: Record<string, Module>): AssetVisualPlacement[] => {
   const placements: AssetVisualPlacement[] = [];
   for (const [segmentIndex, segment] of track.entries()) {
-    if (library[segment.moduleId]?.asset === undefined) continue;
-    // A Moving Segment's visual moves with it (ADR 0061) — the stage builds
-    // and poses that one itself, so it is no still placement.
-    if (hasMotion(segment.motion)) continue;
+    const module = library[segment.moduleId];
+    if (module?.asset === undefined) continue;
+    // A Moving Segment's visual moves with it (ADR 0061) and a Prop's is drawn
+    // from its replicated pose (ADR 0095) — the stage builds both itself. The
+    // body `resolveTrack` gave it, so an Asset with no solid parts, which
+    // cannot be a Prop and stays where it was put, is still drawn here.
+    if (segmentBody(segment, module) !== "still") continue;
     placements.push({
       moduleId: segment.moduleId,
       segmentIndex,

@@ -7,7 +7,9 @@ import {
   launchVelocityFor,
   type LaunchDef,
 } from "./Launch.js";
-import { GRAVITY_Y, LAUNCH_HEIGHT_MAX, LAUNCH_HEIGHT_MIN, LAUNCH_HEIGHT_PRESETS, launchHeightToSpeed } from "../tuning.js";
+import { LAUNCH_HEIGHT_MAX, LAUNCH_HEIGHT_MIN, LAUNCH_HEIGHT_PRESETS } from "../tuning/authoring.js";
+import { GRAVITY_Y } from "../tuning/character.js";
+import { launchHeightToSpeed } from "../tuning/world.js";
 
 /** Where a body thrown straight up at `speed` stops rising, under this game's own gravity. */
 const apexOf = (speed: number): number => (speed * speed) / (2 * Math.abs(GRAVITY_Y));

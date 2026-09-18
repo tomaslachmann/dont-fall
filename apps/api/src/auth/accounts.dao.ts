@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
-import { invalidBindingsReason, randomBearerToken, type KeyBindings } from "@dont-fall/shared";
+import {
+  invalidBindingsReason,
+  randomBearerToken,
+  resolveAccountRole,
+  type AccountRole,
+  type KeyBindings,
+} from "@dont-fall/shared";
 import type { ApiDb } from "../db/db.js";
 import { hashPassword, verifyPassword } from "./password.js";
 import { accounts, sessions } from "../db/schema.js";
@@ -11,11 +17,15 @@ export interface Account {
   email: string | null;
   displayName: string;
   avatarUrl: string | null;
+  /** This Account's role — `"player"` for everyone, `"admin"` reserved for future administration tooling. No writer yet. */
+  role: AccountRole;
   /** Lifetime match earnings — the economy's persisted half. */
   xp: number;
   coins: number;
-  /** The body's equipped skin id (M9 ticket 15) — a small int, default bean until picked. */
-  bodySkin: number;
+  /** The body's equipped color id (M9 ticket 15) — a small int, default bean until picked. Shows only under no `skin`. */
+  color: number;
+  /** The equipped skin's id (ADR 0091) — `null` for no skin, which is what makes `color` the bean's look. */
+  skin: string | null;
   /** The equipped hat's id (ADR 0083) — `null` for no hat. */
   hat: string | null;
   /** The stored key bindings (M9 controls) — `null` when never saved, which the client resolves to defaults. */
@@ -59,25 +69,28 @@ const toAccount = (row: typeof accounts.$inferSelect): Account => ({
   email: row.email,
   displayName: row.displayName,
   avatarUrl: row.avatarUrl,
+  role: resolveAccountRole(row.role),
   xp: row.xp,
   coins: row.coins,
-  bodySkin: row.bodySkin,
+  color: row.color,
+  skin: row.skin,
   hat: row.hat,
   bindings: toBindings(row.bindings),
 });
 
 /** What one cosmetics write changes — any slot left out keeps what it had. */
 export interface CosmeticsPatch {
-  bodySkin?: number;
+  color?: number;
+  skin?: string | null;
   hat?: string | null;
 }
 
 /**
- * Equips cosmetics (M9 ticket 15, ADR 0083) — the only writer of `bodySkin`
- * and `hat`, called with already-validated values (the service owns the
- * rules, shared owns their shape). Both slots land in one statement, so a
- * save never half-applies. Returns the updated Account, or `undefined` for
- * an unknown id.
+ * Equips cosmetics (M9 ticket 15, ADR 0083/0091) — the only writer of
+ * `color`, `skin` and `hat`, called with already-validated values (the
+ * service owns the rules, shared owns their shape). Every slot lands in one
+ * statement, so a save never half-applies. Returns the updated Account, or
+ * `undefined` for an unknown id.
  */
 export const setCosmetics = (db: ApiDb, accountId: string, patch: CosmeticsPatch): Account | undefined => {
   const updated = db.update(accounts).set(patch).where(eq(accounts.id, accountId)).run();

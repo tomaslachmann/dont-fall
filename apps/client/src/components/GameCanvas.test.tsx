@@ -127,9 +127,9 @@ const freshSeen = (overrides: Partial<ApiSeen> = {}): ApiSeen => ({
 });
 
 const lobbyPlayers = [
-  { id: "me", nickname: "Mushy", ready: true, joinOrder: 0, accountId: null, bodySkin: null },
-  { id: "p2", nickname: "Rival", ready: true, joinOrder: 1, accountId: null, bodySkin: null },
-  { id: "p3", nickname: "Third", ready: true, joinOrder: 2, accountId: null, bodySkin: null },
+  { id: "me", nickname: "Mushy", ready: true, joinOrder: 0, accountId: null, color: null },
+  { id: "p2", nickname: "Rival", ready: true, joinOrder: 1, accountId: null, color: null },
+  { id: "p3", nickname: "Third", ready: true, joinOrder: 2, accountId: null, color: null },
 ];
 
 const lobbyIn = (phase: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -217,8 +217,7 @@ const bootMatch = async (): Promise<{
     reportWorldReady = config.onWorldReady!;
     return {
       stop: vi.fn(),
-      setNickname: vi.fn(),
-      setReady: vi.fn(),
+          setReady: vi.fn(),
       selectTrack: vi.fn(),
       start: vi.fn(),
       standingsReady,
@@ -420,7 +419,7 @@ describe("GameCanvas", () => {
     let reportLobby!: (state: unknown) => void;
     startGame.mockImplementationOnce(async (config: { onLobbyState?: (state: unknown) => void }) => {
       reportLobby = config.onLobbyState!;
-      return { stop: vi.fn(), setNickname: vi.fn(), setReady: vi.fn(), selectTrack: vi.fn(), start: vi.fn() };
+      return { stop: vi.fn(), setReady: vi.fn(), selectTrack: vi.fn(), start: vi.fn() };
     });
 
     renderAtPlayRoute();
@@ -436,7 +435,7 @@ describe("GameCanvas", () => {
   matchId: "match-1",
         phase: "LOBBY",
         hostId: "me",
-        players: [{ id: "me", nickname: "Player", ready: false, joinOrder: 0, accountId: null, bodySkin: null }],
+        players: [{ id: "me", nickname: "Player", ready: false, joinOrder: 0, accountId: null, color: null }],
         trackId: "t1",
         trackRevision: 1,
         timeLimitMs: 180_000,
@@ -502,7 +501,9 @@ describe("GameCanvas", () => {
 
     fireEvent.click(screen.getByRole("switch"));
     expect(standingsReady).toHaveBeenCalledOnce();
-    expect(await screen.findByText("Loading next Round\u2026")).toBeInTheDocument();
+    // The Round loader, naming what it waits on — the next Track is still undrawn.
+    expect(await screen.findByRole("status")).toHaveTextContent(/WAITING FOR PLAYERS \d\/3/);
+    expect(screen.getByRole("heading", { name: "UNREVEALED" })).toBeInTheDocument();
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   });
 
@@ -556,7 +557,7 @@ describe("GameCanvas", () => {
       reportStandings(standingsIn(false));
     });
 
-    expect(await screen.findByText("Saving results…")).toBeInTheDocument();
+    expect(await screen.findByText("SAVING RESULTS…")).toBeInTheDocument();
     expect(screen.queryByText(/Match page/)).not.toBeInTheDocument();
   });
 
@@ -570,12 +571,12 @@ describe("GameCanvas", () => {
       reportLobby(lobbyIn("RESULTS"));
       reportStandings(standingsIn(false));
     });
-    expect(await screen.findByText("Saving results…")).toBeInTheDocument();
+    expect(await screen.findByText("SAVING RESULTS…")).toBeInTheDocument();
 
     await act(async () => {
       reportLobby(lobbyIn("LOBBY"));
     });
-    await waitFor(() => expect(screen.queryByText("Saving results…")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("SAVING RESULTS…")).not.toBeInTheDocument());
   });
 
   it("holds the Countdown overlay on green GO! into the Round, then drops it", async () => {
@@ -610,7 +611,7 @@ describe("GameCanvas", () => {
       reportLobby(lobbyIn("LOADING"));
     });
 
-    expect(await screen.findByText("Loading Track…")).toBeInTheDocument();
+    expect(await screen.findByText("LOADING TRACK…")).toBeInTheDocument();
     expect(screen.getByText("WOBBLE RAMP")).toBeInTheDocument();
 
     // Ready here, but the Round still waits for everyone else's world.
@@ -618,14 +619,41 @@ describe("GameCanvas", () => {
       reportWorldReady(true);
       reportLobby(lobbyIn("LOADING", { loaded: ["me"] }));
     });
-    expect(screen.getByText("Waiting for players… 1/3")).toBeInTheDocument();
+    expect(screen.getByText("WAITING FOR PLAYERS 1/3")).toBeInTheDocument();
 
     // The server starts the Countdown once everyone has reported.
     await act(async () => {
       reportLobby(lobbyIn("COUNTDOWN", { countdownMsLeft: 2900 }));
     });
-    expect(screen.queryByText("Waiting for players… 1/3")).not.toBeInTheDocument();
+    expect(screen.queryByText("WAITING FOR PLAYERS 1/3")).not.toBeInTheDocument();
     expect(await screen.findByText("ROUND 1 OF 3")).toBeInTheDocument();
+  });
+
+  it("knows the Round's Track from the route's own snapshot before the game has raised one, picture and all (ADR 0105)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        const url = typeof input === "string" ? input : (input as Request).url;
+        if (url.endsWith("/tracks")) {
+          return Response.json([
+            { id: "t1", name: "Wobble Ramp", revision: 4, hasThumbnail: true, authorId: "a1", createdAt: 1, plays: 0, hasFinishZone: true },
+          ]);
+        }
+        if (/\/tracks\/[^/]+$/.test(url)) return Response.json(trackDetailStub);
+        return Response.json({ bestMs: null });
+      }),
+    );
+    // The game module is still loading: it has raised nothing at all.
+    startGame.mockImplementationOnce(() => new Promise(() => {}));
+
+    const { container } = renderAtPlayRoute({ connection: { myId: "me" } as never, lobbyAtHandover: lobbyIn("LOADING") as never });
+
+    expect(await screen.findByRole("heading", { name: "WOBBLE RAMP" })).toBeInTheDocument();
+    expect(screen.getByText("ROUND 1 OF 3")).toBeInTheDocument();
+    expect(screen.getByText("RACE")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("LOADING TRACK…");
+    const stage = container.querySelector<HTMLElement>("[data-df-feel]")!;
+    expect(stage.style.getPropertyValue("--df-track-art")).toBe('url("http://localhost:8081/tracks/t1/thumbnail?revision=4")');
   });
 
   it("puts the loading Screen back while a client rebuilds its world for another Track", async () => {
@@ -636,12 +664,12 @@ describe("GameCanvas", () => {
     await act(async () => {
       reportLobby(lobbyIn("RUNNING"));
     });
-    expect(screen.queryByText("Loading Track…")).not.toBeInTheDocument();
+    expect(screen.queryByText("LOADING TRACK…")).not.toBeInTheDocument();
 
     await act(async () => {
       reportWorldReady(false);
     });
-    expect(screen.getByText("Loading Track…")).toBeInTheDocument();
+    expect(screen.getByText("LOADING TRACK…")).toBeInTheDocument();
   });
 
   const raceHudIn = {

@@ -1,9 +1,4 @@
-import {
-  BEANS_PARTICIPATION_FLOOR,
-  BEANS_PER_PLACEMENT_STEP,
-  XP_LEVEL_BASE,
-  XP_PER_MATCH_SCORE,
-} from "./tuning.js";
+import { BEANS_PARTICIPATION_FLOOR, BEANS_PER_PLACEMENT_STEP, XP_LEVEL_BASE, XP_PER_MATCH_SCORE } from "./tuning/economy.js";
 
 /**
  * Match earnings — the persisted-identity economy's first slice (ADR 0052):

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CRITICAL_TIME_LEFT_MS, HUD_THREAT_RADIUS_M, TICK_MS } from "../tuning.js";
+import { TICK_MS } from "../tuning/clock.js";
+import { CRITICAL_TIME_LEFT_MS, HUD_THREAT_RADIUS_M } from "../tuning/hud.js";
 import {
   checkpointSplits,
   liveRacePlaces,

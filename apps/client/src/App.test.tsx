@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { type Account } from "./lib/api/auth.js";
 import { setStoredToken } from "./lib/api/base.js";
@@ -11,7 +11,7 @@ import { parseLobbyParams, parsePlayParams } from "./lib/utils/routeParams.js";
 const { startGame } = vi.hoisted(() => ({ startGame: vi.fn() }));
 vi.mock("./game/index.js", () => ({ startGame }));
 
-const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, xp: 0, coins: 0, bodySkin: 0, hat: null, bindings: null };
+const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, role: "player", xp: 0, coins: 0, color: 0, skin: null, hat: null, bindings: null };
 
 // Every existing test below exercises the gated (post-login) routes — a
 // stored token that resolves is the default here, same as any real Player
@@ -25,7 +25,9 @@ beforeEach(() => {
     vi.fn(async (url: unknown) =>
       String(url).endsWith("/auth/me")
         ? new Response(JSON.stringify(ACCOUNT), { status: 200 })
-        : new Response(JSON.stringify({ maxPlayers: 10, onlinePlayers: 3244 }), { status: 200 }),
+        : String(url).endsWith("/tracks")
+          ? new Response(JSON.stringify([]), { status: 200 })
+          : new Response(JSON.stringify({ maxPlayers: 10, onlinePlayers: 3244 }), { status: 200 }),
     ),
   );
 });
@@ -115,6 +117,34 @@ describe("App", () => {
 });
 
 describe("AuthGate (M9 ticket 11, ADR 0052 — mandatory login, app-wide)", () => {
+  it("once signed in, holds the Main Menu until every Track's name and picture is in (ADR 0105)", async () => {
+    let release!: () => void;
+    const listing = new Promise<Response>((resolve) => {
+      release = () => resolve(new Response(JSON.stringify([]), { status: 200 }));
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown) =>
+        String(url).endsWith("/auth/me")
+          ? new Response(JSON.stringify(ACCOUNT), { status: 200 })
+          : String(url).endsWith("/tracks")
+            ? listing
+            : new Response(JSON.stringify({ maxPlayers: 10, onlinePlayers: 3244 }), { status: 200 }),
+      ),
+    );
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <WithQuery><App /></WithQuery>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("LOADING TRACKS…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /PLAY/ })).not.toBeInTheDocument();
+    await act(async () => release());
+    expect(await screen.findByRole("button", { name: /PLAY/ })).toBeInTheDocument();
+  });
+
   it("with no stored session, redirects / to /auth instead of rendering the Main Menu", async () => {
     localStorage.clear();
     vi.stubGlobal("fetch", vi.fn());

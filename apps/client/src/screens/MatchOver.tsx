@@ -11,8 +11,10 @@ export interface PodiumPlace {
   points: number;
   /** What the render is doing on this plinth. */
   pose: string;
-  /** Equipped skin at Match end — null for anonymous seats: the default. */
-  skin?: number | null;
+  /** Equipped body color at Match end — null for anonymous seats: the default. Shows under no `skin`. */
+  color?: number | null;
+  /** And skin (ADR 0091) — null or left out for none, which shows the `color`. */
+  skin?: string | null;
   /** And hat (ADR 0083) — null or left out for none. */
   hat?: string | null;
 }
@@ -53,6 +55,7 @@ function Place({ place, rank, index, first }: { place: PodiumPlace; rank: string
   return (
     <div className={[s.place, first && s.first].filter(Boolean).join(' ')}>
       <CharacterPreview
+        color={place.color ?? null}
         skin={place.skin ?? null}
         hat={place.hat ?? null}
         animation={performanceForPlace(index)}

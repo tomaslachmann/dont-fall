@@ -261,34 +261,34 @@ describe("setCosmetics (M9 ticket 15, ADR 0083)", () => {
 
   it("defaults to the default bean and no hat — signup equips nothing", () => {
     const account = signup();
-    expect(account).toMatchObject({ bodySkin: 0, hat: null });
-    expect(getAccountById(db, account.id)).toMatchObject({ bodySkin: 0, hat: null });
+    expect(account).toMatchObject({ color: 0, skin: null, hat: null });
+    expect(getAccountById(db, account.id)).toMatchObject({ color: 0, skin: null, hat: null });
   });
 
   it("equips a skin and returns the updated Account", () => {
     const account = signup();
 
-    const updated = setCosmetics(db, account.id, { bodySkin: 2 })!;
+    const updated = setCosmetics(db, account.id, { color: 2 })!;
 
-    expect(updated.bodySkin).toBe(2);
-    expect(getAccountById(db, account.id)!.bodySkin).toBe(2);
+    expect(updated.color).toBe(2);
+    expect(getAccountById(db, account.id)!.color).toBe(2);
   });
 
   it("puts a hat on and takes it off, leaving the skin alone", () => {
     const account = signup();
-    setCosmetics(db, account.id, { bodySkin: 3 });
+    setCosmetics(db, account.id, { color: 3 });
 
-    expect(setCosmetics(db, account.id, { hat: "crown" })).toMatchObject({ bodySkin: 3, hat: "crown" });
-    expect(setCosmetics(db, account.id, { hat: null })).toMatchObject({ bodySkin: 3, hat: null });
+    expect(setCosmetics(db, account.id, { hat: "crown" })).toMatchObject({ color: 3, skin: null, hat: "crown" });
+    expect(setCosmetics(db, account.id, { hat: null })).toMatchObject({ color: 3, skin: null, hat: null });
   });
 
   it("writes both slots at once", () => {
     const account = signup();
-    expect(setCosmetics(db, account.id, { bodySkin: 5, hat: "ufo" })).toMatchObject({ bodySkin: 5, hat: "ufo" });
+    expect(setCosmetics(db, account.id, { color: 5, skin: null, hat: "ufo" })).toMatchObject({ color: 5, skin: null, hat: "ufo" });
   });
 
   it("returns undefined for an unknown Account — nothing written", () => {
-    expect(setCosmetics(db, "nope", { bodySkin: 2 })).toBeUndefined();
+    expect(setCosmetics(db, "nope", { color: 2 })).toBeUndefined();
   });
 });
 

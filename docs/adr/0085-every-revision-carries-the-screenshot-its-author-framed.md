@@ -63,3 +63,13 @@ Match server never reads it.
 - **Auto-capture without framing.** A fixed camera (or a headless render)
   needs no UI but frames badly on every non-trivial Track — and "frame it
   yourself" is what makes the art worth showing.
+
+## Amendment (2026-09-18, ADR 0105)
+
+- Code-authored Tracks carry a Thumbnail after all: rendered from a camera
+  written beside them (`pnpm render:thumbnails`) and sent on publish, as the
+  base race already sent `base_race.jpg`. The "headless render" rejected
+  above was rejected for its fixed camera; these are framed per Track and
+  looked at before they are kept.
+- `TrackListing` carries the latest `revision`, and clients read the pinned
+  `?revision=` URL, so the picture sign-in preloads is cached for good.

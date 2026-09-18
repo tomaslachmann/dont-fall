@@ -44,7 +44,7 @@ const rig = () => {
       ko: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
       getUp: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
       death: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
-      grabReach: null, grabPull: null, grabHold: null, grabDropOut: null,
+      grabReach: null, grabHold: null, grabDropOut: null,
       struggleHeld: null, struggleAir: null, wobble: null, wobbleWalk: null,
     } satisfies CharacterActions,
   };
@@ -236,9 +236,13 @@ describe("JumpSequences", () => {
 
   it("joins the arc where its speed sits when the feet leave slower than a push-off", () => {
     const sequences = new JumpSequences();
-    const frame: JumpFrame = { grounded: false, verticalVelocity: 3, height: 0, moving: true, deltaSeconds: DT, nowMs: 0 };
+    const rising = 3;
+    const frame: JumpFrame = { grounded: false, verticalVelocity: rising, height: 0, moving: true, deltaSeconds: DT, nowMs: 0 };
     const head = sequences.advance("a", frame, timeline)!;
-    expect(head).toBeCloseTo(timeline.apex - 0.3 * (timeline.apex - timeline.liftoff));
+    // The share is the speed's own fraction of a full push-off — read off the
+    // constant, not baked in, so retuning the jump (ADR 0092 cut it to 7.5)
+    // moves this expectation with it instead of failing it.
+    expect(head).toBeCloseTo(timeline.apex - (rising / JUMP_VELOCITY) * (timeline.apex - timeline.liftoff));
     expect(jumpPoseAt(head, actions)!.action).toBe(actions.jumpRise);
   });
 

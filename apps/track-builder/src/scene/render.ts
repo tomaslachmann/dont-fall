@@ -1,4 +1,5 @@
 import {
+  smoothDeckPlan,
   chevronPose,
   CONVEYOR_SPEEDS,
   conveyorWorldVelocity,
@@ -11,22 +12,32 @@ import {
   BOUNCE_SHEET_SEGMENTS,
   BOUNCE_TILE_WORLD,
   bounceDomeLift,
+  addVec3,
+  hasMotion,
   moduleHasMudSurface,
   motionPose,
-  MUD_OVERLAY_LIFT,
-  MUD_SIDE_COLOR,
-  MUD_SLOSH_PHASE_STEP,
-  MUD_TILE_WORLD,
-  mudSloshOffset,
+  rotateVec3ByQuat,
+  scaleVec3,
   segmentOrientation,
   segmentScale,
   stripLayout,
   TICK_DT,
   type Box,
+  type DeckFrame,
+  type DeckPlan,
   type Module,
   type Segment,
 } from "@dont-fall/shared";
 import * as THREE from "three";
+import {
+  MUD_SEAT_LIFT,
+  buildMudMass,
+  deckRectGeometry,
+  deckSheetGeometry,
+  motionCarry,
+  tileDeckTexture,
+  type MudDeckPlacement,
+} from "@dont-fall/render";
 
 const CONVEYOR_CHEVRON_COLOR = 0xffffff;
 
@@ -151,6 +162,7 @@ export const addIceOverlay = (
   template: THREE.Object3D | undefined,
   texture: THREE.Texture | undefined,
   maxAnisotropy = 1,
+  plan: DeckPlan | undefined,
 ): THREE.Mesh | undefined => {
   if (!texture || (segment.ice !== true && !moduleHasIceSurface(module))) return undefined;
   const { center, halfExtents } = module.footprint.bounds;
@@ -159,12 +171,12 @@ export const addIceOverlay = (
   // discarded group mesh-by-mesh, and this file's own rule is fresh
   // allocations everywhere for exactly that reason. The clone shares the
   // image but repeats for this deck's own size.
-  const sheet = texture.clone();
-  sheet.needsUpdate = true;
-  sheet.wrapS = THREE.RepeatWrapping;
-  sheet.wrapT = THREE.RepeatWrapping;
-  sheet.repeat.set((halfExtents.x * 2) / ICE_TILE_WORLD, (halfExtents.z * 2) / ICE_TILE_WORLD);
-  sheet.anisotropy = maxAnisotropy;
+  const sheet = tileDeckTexture(texture, {
+    tileWorld: ICE_TILE_WORLD,
+    width: halfExtents.x * 2,
+    depth: halfExtents.z * 2,
+    maxAnisotropy,
+  });
   const material = new THREE.MeshStandardMaterial({
     map: sheet,
     transparent: true,
@@ -175,8 +187,13 @@ export const addIceOverlay = (
     polygonOffsetFactor: -1,
     polygonOffsetUnits: -1,
   });
-  const geometry = new THREE.PlaneGeometry(halfExtents.x * 2, halfExtents.z * 2);
-  geometry.rotateX(-Math.PI / 2); // the plane's height becomes depth: a flat XZ sheet
+  // Cut to the deck's own shape when it has one (ADR 0096) — the plan the
+  // engine cached from the asset's own bytes, cut by the same shared reader
+  // the game scene cuts its sheet from, so the two never disagree about
+  // where ice stops. A missing plan keeps the footprint rectangle.
+  const geometry = plan
+    ? deckSheetGeometry(plan, halfExtents.x, halfExtents.z)
+    : deckRectGeometry(halfExtents.x * 2, halfExtents.z * 2);
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.set(center.x, deckTopLocal(module, template) + ICE_OVERLAY_LIFT, center.z);
   motionNode.add(mesh);
@@ -197,14 +214,19 @@ export const addBounceOverlay = (
   template: THREE.Object3D | undefined,
   texture: THREE.Texture | undefined,
   maxAnisotropy = 1,
+  plan: DeckPlan | undefined,
 ): THREE.Mesh | undefined => {
   if (segment.bounce !== true && !moduleHasBounceSurface(module)) return undefined;
   const { center, halfExtents } = module.footprint.bounds;
   const width = halfExtents.x * 2;
   const depth = halfExtents.z * 2;
 
-  const geometry = new THREE.PlaneGeometry(width, depth, BOUNCE_SHEET_SEGMENTS, BOUNCE_SHEET_SEGMENTS);
-  geometry.rotateX(-Math.PI / 2);
+  // Cut to the deck's own shape when it has one (ADR 0096) — the engine's
+  // cached plan, subdivided like the game's since the dome lives in the
+  // vertices. A missing plan keeps the footprint rectangle.
+  const geometry = plan
+    ? deckSheetGeometry(smoothDeckPlan(plan), halfExtents.x, halfExtents.z)
+    : deckRectGeometry(width, depth, BOUNCE_SHEET_SEGMENTS);
   const position = geometry.getAttribute("position") as THREE.BufferAttribute;
   for (let i = 0; i < position.count; i += 1) {
     const u = halfExtents.x === 0 ? 0 : position.getX(i) / halfExtents.x;
@@ -216,14 +238,7 @@ export const addBounceOverlay = (
 
   // Fresh geometry/material per sheet, like the ice sheet above — `disposeGroup`
   // frees a discarded group mesh by mesh.
-  const map = texture?.clone();
-  if (map) {
-    map.needsUpdate = true;
-    map.wrapS = THREE.RepeatWrapping;
-    map.wrapT = THREE.RepeatWrapping;
-    map.repeat.set(width / BOUNCE_TILE_WORLD, depth / BOUNCE_TILE_WORLD);
-    map.anisotropy = maxAnisotropy;
-  }
+  const map = texture ? tileDeckTexture(texture, { tileWorld: BOUNCE_TILE_WORLD, width, depth, maxAnisotropy }) : undefined;
   const material = new THREE.MeshStandardMaterial({
     ...(map ? { map } : { color: 0x36c9f0 }),
     roughness: 0.18,
@@ -237,83 +252,58 @@ export const addBounceOverlay = (
 };
 
 /**
- * A muddy Segment's block (ADR 0067) — the same filled opaque mud the game
- * scene lays (`mudOverlays.ts`), built here in the Segment's own local
- * frame so it rides placement, scale and Motion with the rest of the
- * group's content. Parent under the Motion node, never the outer group.
- * Blocks attached mud as well as module-authored mud (the retired Module
- * keeps rendering); returns `undefined` when neither applies or the
- * texture hasn't loaded yet (the engine re-syncs when it lands).
- *
- * The `update` driver breathes the surface off the motion-preview clock
- * (same slosh the game runs, same `segmentIndex` phase stagger) — the
- * preview shows no Characters, so no rings spawn here; only the game
- * answers feet.
+ * Where a muddy Segment's deck is in the world (ADR 0067/0103), and how it
+ * moves — what a mud mass needs to know about itself and every other mud deck
+ * on the Track, so mud runs on across a seam into a neighbour exactly as it
+ * does in the game. `undefined` when the Segment runs no mud. Built at the
+ * rest pose from the same deck top the other overlays read.
+ */
+export const mudPlacementOf = (
+  segment: Segment,
+  module: Module,
+  template: THREE.Object3D | undefined,
+  plan: DeckPlan | undefined,
+): MudDeckPlacement | undefined => {
+  if (segment.mud !== true && !moduleHasMudSurface(module)) return undefined;
+  const scale = segmentScale(segment);
+  const orientation = segmentOrientation(segment);
+  const { center, halfExtents } = module.footprint.bounds;
+  const top = deckTopLocal(module, template);
+  const deck: DeckFrame = {
+    center: addVec3(segment.position, rotateVec3ByQuat(scaleVec3({ x: center.x, y: top, z: center.z }, scale), orientation)),
+    yaw: segment.rotation,
+    orientation,
+    halfX: halfExtents.x * scale,
+    halfZ: halfExtents.z * scale,
+    ...(plan ? { plan: { vertices: plan.vertices.map((v) => ({ x: v.x * scale, z: v.z * scale })), indices: plan.indices } } : {}),
+  };
+  return hasMotion(segment.motion) ? { deck, carry: motionCarry(segment.position, orientation, scale, segment.motion!) } : { deck };
+};
+
+/**
+ * A muddy Segment's mass (ADR 0067/0103) — the same mud the game scene lays
+ * (`mudOverlays.ts`), from the same `@dont-fall/render` builder, set into the
+ * Segment's own local frame so it rides placement and Motion with the rest
+ * of the group's content. Parent under the Motion node, never the outer
+ * group. The mass is built in metres, so it undoes the group's scale: mud is
+ * as deep on a scaled-up piece as on any other.
  */
 export const addMudOverlay = (
   motionNode: THREE.Group,
   segment: Segment,
-  segmentIndex: number,
   module: Module,
   template: THREE.Object3D | undefined,
-  texture: THREE.Texture | undefined,
-  maxAnisotropy = 1,
-): { mesh: THREE.Mesh; update: (tick: number) => void } | undefined => {
-  if (!texture || (segment.mud !== true && !moduleHasMudSurface(module))) return undefined;
-  const { center, halfExtents } = module.footprint.bounds;
-
-  // Fresh geometry/material per block (not shared): `disposeGroup` frees a
-  // discarded group mesh-by-mesh, and this file's own rule is fresh
-  // allocations everywhere for exactly that reason. The clone shares the
-  // image but repeats — and breathes — for this deck's own size.
-  const sheet = texture.clone();
-  sheet.needsUpdate = true;
-  sheet.wrapS = THREE.RepeatWrapping;
-  sheet.wrapT = THREE.RepeatWrapping;
-  sheet.repeat.set((halfExtents.x * 2) / MUD_TILE_WORLD, (halfExtents.z * 2) / MUD_TILE_WORLD);
-  sheet.anisotropy = maxAnisotropy;
-  const topMaterial = new THREE.MeshStandardMaterial({
-    map: sheet,
-    // Opaque and matte: mud is a mass you stand in, not a film you look
-    // through — translucent mud would show the feet through instead of
-    // sinking them.
-    transparent: false,
-    roughness: 0.9,
-    metalness: 0,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
-  });
-  // One instance behind all five untextured slots — the sides are the
-  // filled gap down to the deck, the bottom never faces a camera.
-  const sideMaterial = new THREE.MeshStandardMaterial({
-    color: MUD_SIDE_COLOR,
-    roughness: 1,
-    metalness: 0,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
-  });
-  const geometry = new THREE.BoxGeometry(halfExtents.x * 2, MUD_OVERLAY_LIFT, halfExtents.z * 2);
-  // Box faces [+x, -x, +y, -y, +z, -z]: the texture rides the +y top.
-  const mesh = new THREE.Mesh(geometry, [
-    sideMaterial,
-    sideMaterial,
-    topMaterial,
-    sideMaterial,
-    sideMaterial,
-    sideMaterial,
-  ]);
-  // Centred vertically: the surface sits half the lift above the origin.
-  mesh.position.set(center.x, deckTopLocal(module, template) + MUD_OVERLAY_LIFT / 2, center.z);
-  motionNode.add(mesh);
-
-  const phase = segmentIndex * MUD_SLOSH_PHASE_STEP;
-  const update = (tick: number): void => {
-    const slosh = REDUCED_MOTION ? { u: 0, v: 0 } : mudSloshOffset(tick * TICK_DT, phase);
-    sheet.offset.set(slosh.u, slosh.v);
-  };
-  return { mesh, update };
+  self: MudDeckPlacement | undefined,
+  all: readonly MudDeckPlacement[],
+): THREE.Group | undefined => {
+  if (!self) return undefined;
+  const scale = segmentScale(segment);
+  const { center } = module.footprint.bounds;
+  const { object } = buildMudMass(self, all);
+  object.position.set(center.x, deckTopLocal(module, template) + MUD_SEAT_LIFT / scale, center.z);
+  object.scale.setScalar(1 / scale);
+  motionNode.add(object);
+  return object;
 };
 
 /** `userData` key marking a group whose geometry/materials a cached asset template owns — see `buildSegmentGroup`. */

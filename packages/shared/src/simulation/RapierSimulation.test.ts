@@ -2,31 +2,13 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { orientBox, pointInOrientedBox, type Box, type OrientedBox } from "../math/box.js";
 import { IDENTITY_QUAT, pitchQuat, yawQuat } from "../math/quat.js";
 import { rotateVec3ByQuat } from "../math/vec3.js";
-import {
-  CAPSULE_BOTTOM_OFFSET,
-  LAUNCH_TRIGGER_MARGIN,
-  CAPSULE_RADIUS,
-  DASH_COOLDOWN_MS,
-  DASH_COOLDOWN_TICKS,
-  DASH_DURATION_MS,
-  DASH_SPEED,
-  GRAB_HOLD_MAX_TICKS,
-  GRAB_RANGE,
-  GRAB_STRUGGLE_FREE_TICKS,
-  GROUND_STICK_SPEED,
-  HIT_CHARGE_MAX_TICKS,
-  HIT_COOLDOWN_MS,
-  HIT_RANGE,
-  IMPACT_RAGDOLL_MIN,
-  IMPACT_STAGGER_MIN,
-  RAGDOLL_MAX_MS,
-  SLIDE_INPUT_SCALE,
-  TICK_MS,
-  RESPAWN_WOBBLE_TICKS,
-  STAGGER_TICKS,
-  TICK_RATE_HZ,
-  WALK_SPEED,
-} from "../tuning.js";
+import { CAPSULE_BOTTOM_OFFSET, CAPSULE_RADIUS, GROUND_STICK_SPEED, WALK_SPEED } from "../tuning/character.js";
+import { TICK_MS, TICK_RATE_HZ } from "../tuning/clock.js";
+import { HIT_CHARGE_MAX_TICKS, HIT_COOLDOWN_MS, HIT_RANGE } from "../tuning/fight.js";
+import { IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, RAGDOLL_MAX_MS, RESPAWN_WOBBLE_TICKS, STAGGER_TICKS } from "../tuning/knockdown.js";
+import { DASH_COOLDOWN_MS, DASH_COOLDOWN_TICKS, DASH_DURATION_MS, DASH_SPEED, SLIDE_INPUT_SCALE } from "../tuning/movement.js";
+import { ICE_TOP_SPEED_MULTIPLIER } from "../tuning/surfaces.js";
+import { LAUNCH_TRIGGER_MARGIN } from "../tuning/world.js";
 import { DEFAULT_SURFACE, SURFACES } from "../track/Surface.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import { isDownMotionState } from "./CharacterStateMachine.js";
@@ -40,6 +22,15 @@ beforeAll(async () => {
 });
 
 const GROUND: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 20, y: 0.5, z: 20 } };
+/**
+ * Floor for the suites that run a Dash out to its end. A burst covers ~40
+ * units since ADR 0092 tripled it to three seconds, which walks straight off
+ * {@link GROUND}'s ±20 — the Character then Falls and Respawns, and every
+ * "how far did it get" assertion silently measures the respawn instead. Only
+ * the suites that need the room use this; the ones that test falling off an
+ * edge still want the small floor.
+ */
+const LONG_GROUND: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 60, y: 0.5, z: 60 } };
 const RESTING_SPAWN = { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 };
 
 const input = (partial: Partial<SimInputs> = {}): SimInputs => ({ ...IDLE_INPUTS, ...partial });
@@ -109,6 +100,23 @@ describe("RapierSimulation — physics only steps for COUNTDOWN/RUNNING (grillin
       expect(sim.snapshot().tick).toBe(before + 1);
     }
   });
+
+  it("a Lobby wait leaves no accumulated fall speed behind — the Countdown lands the Character exactly as a fresh drop would (found live 2026-09-18)", () => {
+    // The control: straight into COUNTDOWN, no Lobby wait at all.
+    const control = new RapierSimulation({ spawn: { x: 0, y: 4, z: 0 }, statics: [GROUND] });
+    for (let n = 0; n < 90; n += 1) control.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS }, "COUNTDOWN");
+    const rested = control.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y;
+
+    // Two seconds of Lobby used to integrate −44 u/s into a velocity the
+    // frozen world never applied; the Countdown's first sweep then moved
+    // whole metres in one tick and could deposit the capsule inside the
+    // geometry instead of on it — the "spawned inside the start deck" bug.
+    const sim = new RapierSimulation({ spawn: { x: 0, y: 4, z: 0 }, statics: [GROUND] });
+    for (let n = 0; n < 60; n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS }, "LOBBY");
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity.y).toBe(0);
+    for (let n = 0; n < 90; n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS }, "COUNTDOWN");
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y).toBeCloseTo(rested, 6);
+  });
 });
 
 describe("RapierSimulation — walk", () => {
@@ -148,6 +156,29 @@ describe("RapierSimulation — walk", () => {
 describe("RapierSimulation — Surfaces (ticket 01, ADR 0036): the ground collider handle the character controller already reports, not a new scene query", () => {
   const MUD_FLOOR: Box = { center: { x: 0, y: -0.5, z: 5 }, halfExtents: { x: 10, y: 0.5, z: 5 } }; // world z in [0, 10]
   const DEFAULT_FLOOR: Box = { center: { x: 0, y: -0.5, z: -5 }, halfExtents: { x: 10, y: 0.5, z: 5 } }; // world z in [-10, 0]
+
+  it("hopping across mud is no faster than running it — the take-off Surface governs the air (ADR 0094 amendment, found live 2026-09-18)", () => {
+    const world = {
+      spawn: { x: -8, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 5 },
+      statics: [MUD_FLOOR],
+      staticSurfaces: ["mud" as const],
+    };
+    const EAST = { x: 1, y: 0, z: 0 };
+    const crossed = (hopping: boolean): number => {
+      const sim = new RapierSimulation(world);
+      tick(sim, 0.5); // settle, and let the one-tick Surface lag catch up
+      const from = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x;
+      for (let t = 0; t < 90; t += 1) {
+        sim.tick({ [DEFAULT_CHARACTER_ID]: input({ moveDirection: EAST, jumpHeld: hopping && t % 10 < 5 }) });
+      }
+      return sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x - from;
+    };
+    const ran = crossed(false);
+    const hopped = crossed(true);
+    // Before the carry, every airborne tick ran at full speed and grip —
+    // hopping crossed the flat nearly twice as fast as running it.
+    expect(hopped).toBeLessThanOrEqual(ran * 1.15);
+  });
 
   it("caps top speed while standing on mud", () => {
     const sim = new RapierSimulation({
@@ -226,7 +257,7 @@ describe("RapierSimulation — ice (ticket 06, ADR 0035/0036): grip multiplies b
     expect(speed).toBeLessThan(WALK_SPEED * 0.5); // ...but nowhere near full speed yet
   });
 
-  it("eventually reaches full WALK_SPEED on ice, unchanged — \"ice makes you faster\" is the wrong intuition, but \"ice caps your speed\" would be just as wrong", () => {
+  it("eventually settles at ice's own capped top speed — reached slowly (grip), and lower than concrete's (ADR 0094)", () => {
     const sim = new RapierSimulation({
       spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 10 },
       statics: [ICE_FLOOR],
@@ -238,7 +269,7 @@ describe("RapierSimulation — ice (ticket 06, ADR 0035/0036): grip multiplies b
     tick(sim, 0.5, NORTH);
     const after = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
     const speed = (before.z - after.z) / 0.5;
-    expect(speed).toBeCloseTo(WALK_SPEED, 0); // top speed itself is exactly WALK_SPEED, same as full grip
+    expect(speed).toBeCloseTo(WALK_SPEED * ICE_TOP_SPEED_MULTIPLIER, 0);
   });
 
   it("slides past a turn on ice — releasing the original direction and pressing a new one doesn't reverse velocity the way full grip does; the Character keeps sliding in roughly the old direction for a while", () => {
@@ -260,6 +291,92 @@ describe("RapierSimulation — ice (ticket 06, ADR 0035/0036): grip multiplies b
     const stillSlidingZ = Math.abs(p0.z - beforeTurn.z);
     const newSidewaysX = Math.abs(p0.x - beforeTurn.x);
     expect(stillSlidingZ).toBeGreaterThan(newSidewaysX * 3); // still mostly going the old way, not the new one
+  });
+});
+
+describe("RapierSimulation — ice takes your feet on any crash, mud on the run (ADR 0102)", () => {
+  const ICE_FLOOR: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 20, y: 0.5, z: 20 } };
+  const WALL: Box = { center: { x: 3, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 5 } };
+  const WALL_CONTACT_X = 3 - 0.5 - CAPSULE_RADIUS;
+  const EAST = input({ moveDirection: { x: 1, y: 0, z: 0 } });
+  const onFloor = (x: number, z = 0) => ({ x, y: CAPSULE_BOTTOM_OFFSET + 0.1, z });
+
+  /** Ticks `seconds` of `inputAt(tick)` and counts every entry into Ragdoll, with its cause. */
+  const knockdowns = (sim: RapierSimulation, seconds: number, inputAt: (tick: number) => SimInputs, id = DEFAULT_CHARACTER_ID) => {
+    const causes: string[] = [];
+    let last = sim.snapshot().characters[id]!.motionState;
+    for (let n = 0; n < Math.round(seconds * TICK_RATE_HZ); n += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: inputAt(n) });
+      const c = sim.snapshot().characters[id]!;
+      if (c.motionState === "Ragdoll" && last !== "Ragdoll") causes.push(c.ragdollCause);
+      last = c.motionState;
+    }
+    return causes;
+  };
+
+  it("sliding into a wall on ice knocks the Character down; the same walk on concrete is a blocked walk", () => {
+    const ice = new RapierSimulation({ spawn: onFloor(0), statics: [ICE_FLOOR, WALL], staticSurfaces: ["ice", DEFAULT_SURFACE] });
+    tick(ice, 0.5);
+    expect(knockdowns(ice, 3, () => EAST)).toEqual(["WallImpact"]);
+
+    const concrete = new RapierSimulation({ spawn: onFloor(0), statics: [ICE_FLOOR, WALL] });
+    tick(concrete, 0.5);
+    expect(knockdowns(concrete, 3, () => EAST)).toEqual([]);
+  });
+
+  it("leaning on a wall on ice is not a crash — pushing into it from a standstill never knocks the Character down", () => {
+    // Ice's grip lets velocity keep building against whatever blocks it: before
+    // the contact took it back out, this went down after ~0.25 s without moving.
+    const sim = new RapierSimulation({
+      spawn: onFloor(WALL_CONTACT_X - 0.02),
+      statics: [ICE_FLOOR, WALL],
+      staticSurfaces: ["ice", DEFAULT_SURFACE],
+    });
+    tick(sim, 0.5);
+    expect(knockdowns(sim, 5, () => EAST)).toEqual([]);
+  });
+
+  it("on ice, running into another Character knocks the runner down from any approach — and the one run into takes only its ordinary Bump", () => {
+    // Several run-ups, because Rapier's character controller can stop one
+    // capsule against another without reporting the contact: from a 3.0 run-up
+    // it did, and the runner shoved the other across the ice untouched.
+    for (let runUp = 2.5; runUp <= 3.5; runUp += 0.1) {
+      const sim = new RapierSimulation({ spawn: onFloor(0), statics: [ICE_FLOOR], staticSurfaces: ["ice"] });
+      sim.addCharacter("target", onFloor(0, -runUp));
+      tick(sim, 0.5);
+      expect(knockdowns(sim, 3, () => NORTH), `run-up ${runUp.toFixed(1)}`).toEqual(["WallImpact"]);
+      expect(sim.snapshot().characters["target"]!.ragdollEpoch).toBe(0);
+    }
+  });
+
+  it("leaning on another Character on ice is not a crash either", () => {
+    const sim = new RapierSimulation({ spawn: onFloor(0), statics: [ICE_FLOOR], staticSurfaces: ["ice"] });
+    sim.addCharacter("target", onFloor(0, -(2 * CAPSULE_RADIUS + 0.02)));
+    tick(sim, 0.5);
+    expect(knockdowns(sim, 5, () => NORTH)).toEqual([]);
+  });
+
+  const MUD_FLOOR: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 60, y: 0.5, z: 60 } };
+  const mud = () => {
+    const sim = new RapierSimulation({ spawn: onFloor(0), statics: [MUD_FLOOR], staticSurfaces: ["mud"] });
+    tick(sim, 0.5);
+    return sim;
+  };
+  const heading = (x: number, z: number) => input({ moveDirection: { x, y: 0, z } });
+
+  it("running in mud sometimes takes the Character's feet; standing in it never does", () => {
+    expect(knockdowns(mud(), 60, () => IDLE_INPUTS)).toEqual([]);
+    // A circle, so a minute of running stays on the floor.
+    const running = knockdowns(mud(), 60, (n) => heading(Math.cos(n / TICK_RATE_HZ), Math.sin(n / TICK_RATE_HZ)));
+    expect(running.length).toBeGreaterThan(0);
+    expect(new Set(running)).toEqual(new Set(["Slip"]));
+  });
+
+  it("turning back on yourself in mud is a gamble a strafe is not", () => {
+    const everySecond = (a: SimInputs, b: SimInputs) => (n: number) => (Math.floor(n / TICK_RATE_HZ) % 2 === 0 ? a : b);
+    const reversals = knockdowns(mud(), 60, everySecond(NORTH, SOUTH)).length;
+    const strafes = knockdowns(mud(), 60, everySecond(NORTH, heading(1, 0))).length;
+    expect(reversals).toBeGreaterThan(strafes * 3);
   });
 });
 
@@ -659,6 +776,42 @@ describe("RapierSimulation — Fall & Respawn", () => {
   /** A floating platform with a big void underneath and a kill-plane at y = -8. */
   const PLATFORM: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 4, y: 0.5, z: 4 } };
   const config = { spawn: { x: 0, y: 1.5, z: 0 }, statics: [PLATFORM], killPlaneY: -8 };
+
+  it("a body knocked off the world respawns standing at its Checkpoint the moment it crosses the kill plane — one Fall, no get-up in the void (found live 2026-09-18)", () => {
+    const sim = new RapierSimulation(config);
+    for (let t = 0; t < 30; t += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    // A full-windup Hurl toward the edge — the same call `GrabHolds.hurl`
+    // makes. Reached through the controller directly: the public path needs a
+    // second Character, a caught hold and a wound-up Spin, all of which
+    // `GrabHolds.test.ts` already covers; what THIS test pins is what the
+    // knockdown does when the flying body leaves the world.
+    (sim as unknown as { characters: Map<string, { releaseKnockedDown: (cause: string, l: unknown, t: unknown) => void }> })
+      .characters.get(DEFAULT_CHARACTER_ID)!
+      .releaseKnockedDown("Hurl", { x: 10, y: 3, z: 0 }, { x: 1, y: 0, z: 0 });
+
+    let respawnTick: number | null = null;
+    for (let t = 0; t < 240 && respawnTick === null; t += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      const c = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+      // While the body is still above the kill plane it stays down, uncounted.
+      if (c.position.y > -8 && c.motionState === "Ragdoll") expect(c.fallCount).toBe(0);
+      if (c.motionState !== "Ragdoll") respawnTick = t;
+    }
+    // The respawn happened, promptly after the crossing — never a GettingUp
+    // blended out of the void, never a knockdown clock run out mid-air.
+    expect(respawnTick).not.toBeNull();
+    const back = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(back.fallCount).toBe(1);
+    expect(back.position.x).toBeCloseTo(config.spawn.x, 1);
+    expect(back.position.z).toBeCloseTo(config.spawn.z, 1);
+
+    // …and it STAYS respawned: one Fall on the counter, feet on the platform.
+    for (let t = 0; t < 120; t += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    const settled = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(settled.fallCount).toBe(1);
+    expect(settled.grounded).toBe(true);
+    expect(settled.position.y).toBeGreaterThan(0);
+  });
 
   it("respawns at spawn after Falling past the kill-plane", () => {
     const sim = new RapierSimulation(config);
@@ -1317,7 +1470,7 @@ describe("RapierSimulation — jump", () => {
 
 describe("RapierSimulation — dash", () => {
   const settled = () => {
-    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [GROUND] });
+    const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [LONG_GROUND] });
     tick(sim, 0.5);
     return sim;
   };
@@ -1485,6 +1638,10 @@ describe("RapierSimulation — dash", () => {
       finishTick: midBurst.finishTick,
       eliminated: midBurst.eliminated,
       eliminatedTick: midBurst.eliminatedTick,
+      escapeProgress: midBurst.escapeProgress,
+      lastWiggleYaw: midBurst.lastWiggleYaw,
+      spinMs: midBurst.spinMs,
+      facing: midBurst.facing,
     });
 
     const afterReconcile = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -1541,6 +1698,10 @@ describe("RapierSimulation — dash", () => {
       finishTick: ackedSnapshot.finishTick,
       eliminated: ackedSnapshot.eliminated,
       eliminatedTick: ackedSnapshot.eliminatedTick,
+      escapeProgress: ackedSnapshot.escapeProgress,
+      lastWiggleYaw: ackedSnapshot.lastWiggleYaw,
+      spinMs: ackedSnapshot.spinMs,
+      facing: ackedSnapshot.facing,
     });
     client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unackedInputs);
 
@@ -1622,6 +1783,10 @@ describe("RapierSimulation — dash", () => {
           finishTick: acked.finishTick,
           eliminated: acked.eliminated,
           eliminatedTick: acked.eliminatedTick,
+          escapeProgress: acked.escapeProgress,
+          lastWiggleYaw: acked.lastWiggleYaw,
+          spinMs: acked.spinMs,
+          facing: acked.facing,
         });
         client.replayLocalCharacter(DEFAULT_CHARACTER_ID, inputHistory.slice(ackedIdx + 1));
         const afterSnap = client.snapshot().characters[DEFAULT_CHARACTER_ID]!;
@@ -1712,6 +1877,10 @@ describe("RapierSimulation — Impact & ragdoll", () => {
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bones.length).toBe(0);
     expect(back.y - CAPSULE_BOTTOM_OFFSET).toBeCloseTo(0, 0); // standing on the ground again
+    // ADR 0093 made a knockdown another Player caused throw the whole body,
+    // so this Bump-shaped Impact carries it further than it used to — but at
+    // the tuned `KNOCKDOWN_LAUNCH_SCALE` (~3.7u here) still well inside the
+    // bound this always had.
     expect(Math.hypot(back.x - fellAt.x, back.z - fellAt.z)).toBeLessThan(6);
   });
 
@@ -2225,7 +2394,15 @@ describe("RapierSimulation — dash into a wall", () => {
     // Fall/Respawn" artifact the sweep test's own comment above documents
     // discovering).
     const bigGround: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 30, y: 0.5, z: 30 } };
-    const rad = (60 * Math.PI) / 180; // a shallow, mostly-tangential approach
+    // A shallow, mostly-tangential approach. 60° until ADR 0092: the burst
+    // used to still be building when it met the wall, so 60° closed slowly
+    // enough to stay under the threshold; a burst that now holds at full
+    // speed arrives faster, and 60° knocks down. The usable window is narrow
+    // at both ends and was measured, not derived: below ~62° the closing
+    // speed clears the threshold, and past ~66° the Character runs out the
+    // far end of the wall's own z-extent before ever touching its face, so
+    // the test would pass while proving nothing.
+    const rad = (65 * Math.PI) / 180;
     const moveDir = { x: Math.cos(rad), y: 0, z: Math.sin(rad) };
     const sim = new RapierSimulation({ spawn: RESTING_SPAWN, statics: [bigGround, WALL] });
     tick(sim, 0.5);
@@ -2383,7 +2560,10 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
       "walking around for the whole episode (regression test for the 2026-09 playtest desync: server " +
       "tick=725 lastInputTick=433 Ragdoll, client stayed Controlled)",
     () => {
-      const trace = runClientServerDash(6, 150);
+      // 180 ticks, not 150: since the launch strips its into-the-wall
+      // component (found live 2026-09-18), the body bounces clear of the wall
+      // instead of crumpling against it, and settles a few ticks later.
+      const trace = runClientServerDash(6, 180);
 
       // Sanity: this run actually exercises the bug precondition — the
       // server ran the full Ragdoll → GettingUp → Controlled episode.
@@ -2451,6 +2631,10 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
         finishTick: null,
         eliminated: false,
         eliminatedTick: null,
+        escapeProgress: 0,
+        lastWiggleYaw: null,
+        spinMs: 0,
+        facing: 0,
       });
       sim.reconcileCharacter(DEFAULT_CHARACTER_ID, gettingUp({ x: 5, y: RESTING_SPAWN.y, z: 5 }));
       const afterEntry = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
@@ -2529,6 +2713,10 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     finishTick: null,
     eliminated: false,
     eliminatedTick: null,
+    escapeProgress: 0,
+    lastWiggleYaw: null,
+    spinMs: 0,
+    facing: 0,
   });
 
   it("snaps a locally-Controlled Character into Ragdoll the client never predicted (ADR 0015)", () => {
@@ -2549,6 +2737,10 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       finishTick: null,
       eliminated: false,
       eliminatedTick: null,
+      escapeProgress: 0,
+      lastWiggleYaw: null,
+      spinMs: 0,
+      facing: 0,
     });
 
     // Immediate — the discrete state is never delayed or smoothed (ADR 0013).
@@ -2581,6 +2773,10 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       finishTick: null,
       eliminated: false,
       eliminatedTick: null,
+      escapeProgress: 0,
+      lastWiggleYaw: null,
+      spinMs: 0,
+      facing: 0,
     });
 
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
@@ -2671,6 +2867,10 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
         finishTick: null,
         eliminated: false,
         eliminatedTick: null,
+        escapeProgress: 0,
+        lastWiggleYaw: null,
+        spinMs: 0,
+        facing: 0,
       });
       tick(sim, 0.1); // a few local ticks between snapshots
 
@@ -2735,6 +2935,10 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       finishTick: null,
       eliminated: false,
       eliminatedTick: null,
+      escapeProgress: 0,
+      lastWiggleYaw: null,
+      spinMs: 0,
+      facing: 0,
     });
     sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Sliding");
@@ -3067,6 +3271,10 @@ describe("RapierSimulation — Hit (M6 ticket 03)", () => {
       finishTick: base.finishTick,
       eliminated: base.eliminated,
       eliminatedTick: base.eliminatedTick,
+      escapeProgress: base.escapeProgress,
+      lastWiggleYaw: base.lastWiggleYaw,
+      spinMs: base.spinMs,
+      facing: base.facing,
     });
 
     expect(sim.snapshot().characters[STRIKER]!.hitCooldownMs).toBe(0);
@@ -3113,6 +3321,10 @@ describe("RapierSimulation — Hit (M6 ticket 03)", () => {
         finishTick: ackedSnapshot.finishTick,
         eliminated: ackedSnapshot.eliminated,
         eliminatedTick: ackedSnapshot.eliminatedTick,
+        escapeProgress: ackedSnapshot.escapeProgress,
+        lastWiggleYaw: ackedSnapshot.lastWiggleYaw,
+        spinMs: ackedSnapshot.spinMs,
+        facing: ackedSnapshot.facing,
       });
       client.replayLocalCharacter(STRIKER, unackedInputs);
 
@@ -3159,6 +3371,10 @@ describe("RapierSimulation — Hit (M6 ticket 03)", () => {
         finishTick: ackedSnapshot.finishTick,
         eliminated: ackedSnapshot.eliminated,
         eliminatedTick: ackedSnapshot.eliminatedTick,
+        escapeProgress: ackedSnapshot.escapeProgress,
+        lastWiggleYaw: ackedSnapshot.lastWiggleYaw,
+        spinMs: ackedSnapshot.spinMs,
+        facing: ackedSnapshot.facing,
       });
       const release = input({ facing: NORTH_FACING, hitHeld: false });
       client.replayLocalCharacter(STRIKER, [held, held, release]);
@@ -3196,436 +3412,6 @@ describe("RapierSimulation — Hit (M6 ticket 03)", () => {
     tap(sim, STRIKER);
     expect(sim.snapshot().characters[TARGET]!.hitReactEpoch).toBe(0);
   });
-});
-
-describe("RapierSimulation — Grab (M6 ticket 04)", () => {
-  const GRABBER = DEFAULT_CHARACTER_ID;
-  const HELD = "held";
-  const NORTH_FACING = 0; // forward(0) = (0, 0, -1) — dead north
-  const onGround = (z: number) => ({ x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z });
-
-  /** Grabber at z=0 facing north, held at the given z; both settled on the ground. */
-  const twoCharacters = (heldZ: number): RapierSimulation => {
-    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
-    sim.addCharacter(HELD, onGround(heldZ));
-    for (let n = 0; n < 10; n += 1) sim.tick({}); // settle both
-    return sim;
-  };
-
-  const reach = (facingYaw: number = NORTH_FACING): SimInputs => input({ facing: facingYaw, grabHeld: true });
-
-  it("bumps grabEpoch on every attempt, caught or not — once per press, never while already holding (ADR 0071)", () => {
-    // Nobody within reach: the held Character is far behind the grabber.
-    const sim = twoCharacters(20);
-    expect(sim.snapshot().characters[GRABBER]!.grabEpoch).toBe(0);
-    sim.tick({ [GRABBER]: reach() });
-    expect(sim.snapshot().characters[GRABBER]!.grabbingId).toBeNull();
-    expect(sim.snapshot().characters[GRABBER]!.grabEpoch).toBe(1);
-    // Still held down: a press is an edge, not a level.
-    sim.tick({ [GRABBER]: reach() });
-    expect(sim.snapshot().characters[GRABBER]!.grabEpoch).toBe(1);
-    sim.tick({});
-    sim.tick({ [GRABBER]: reach() });
-    expect(sim.snapshot().characters[GRABBER]!.grabEpoch).toBe(2);
-
-    // A catch counts the same, and pressing again mid-hold does not.
-    const caught = twoCharacters(-1);
-    caught.tick({ [GRABBER]: reach() });
-    expect(caught.snapshot().characters[GRABBER]!.grabbingId).toBe(HELD);
-    expect(caught.snapshot().characters[GRABBER]!.grabEpoch).toBe(1);
-    caught.tick({});
-    caught.tick({ [GRABBER]: reach() });
-    expect(caught.snapshot().characters[GRABBER]!.grabEpoch).toBe(1);
-    // The Character on the other end reached for nothing.
-    expect(caught.snapshot().characters[HELD]!.grabEpoch).toBe(0);
-  });
-
-  it("latches onto a Character within range/facing — both move at GRAB_SPEED_MULTIPLIER after one tick of lag", () => {
-    const sim = twoCharacters(-1); // north of the grabber, within GRAB_RANGE
-    sim.tick({ [GRABBER]: reach() });
-    sim.tick({}); // one tick of lag — the same lag Surface/Volume multipliers already have
-
-    const zBefore = { grabber: sim.snapshot().characters[GRABBER]!.position.z, held: sim.snapshot().characters[HELD]!.position.z };
-    sim.tick({ [GRABBER]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
-    const zAfter = sim.snapshot().characters[GRABBER]!.position.z;
-    const walked = Math.abs(zAfter - zBefore.grabber);
-    expect(walked).toBeLessThan((WALK_SPEED / TICK_RATE_HZ) * 1.5); // nowhere near full WALK_SPEED
-    expect(zBefore.held).toBeDefined();
-  });
-
-  it(
-    "freezes each participant's own facing at whatever it was the instant the hold started, never recomputed " +
-      "toward each other or disturbed by later camera input (M6.1, revised from an earlier 'always face each " +
-      "other' design after live feedback)",
-    () => {
-      const sim = twoCharacters(-1); // held is north of the grabber
-      sim.tick({ [GRABBER]: reach() }); // engages this tick — freezes the grabber's facing at NORTH_FACING
-
-      // From here on the grabber's own camera claims to look south — dead
-      // away from the held Character — but the replicated facing must stay
-      // frozen at whatever it was when the hold started.
-      sim.tick({ [GRABBER]: input({ facing: Math.PI }) });
-      sim.tick({ [GRABBER]: input({ facing: Math.PI }) });
-
-      const grabberFacing = sim.snapshot().characters[GRABBER]!.facing;
-      expect(Math.cos(grabberFacing)).toBeCloseTo(Math.cos(NORTH_FACING), 5);
-      expect(Math.sin(grabberFacing)).toBeCloseTo(Math.sin(NORTH_FACING), 5);
-
-      // The held Character's own facing is frozen too, at whatever it
-      // naturally already was before being grabbed (NORTH_FACING, from
-      // `twoCharacters`' own settle loop) — never forced to face the
-      // grabber instead.
-      const heldFacing = sim.snapshot().characters[HELD]!.facing;
-      expect(Math.cos(heldFacing)).toBeCloseTo(Math.cos(NORTH_FACING), 5);
-      expect(Math.sin(heldFacing)).toBeCloseTo(Math.sin(NORTH_FACING), 5);
-    },
-  );
-
-  it(
-    "drags a Character standing still exactly as fast as the other pulls — a rigid tether, not two independently " +
-      "slowed Characters (M6.1, revised from an earlier distance-threshold spring-pull design after live feedback)",
-    () => {
-      const sim = twoCharacters(-1); // held is north of the grabber
-      sim.tick({ [GRABBER]: reach() });
-      sim.tick({}); // one tick of lag before the tether/multiplier take effect
-
-      const grabberZBefore = sim.snapshot().characters[GRABBER]!.position.z;
-      const heldZBefore = sim.snapshot().characters[HELD]!.position.z;
-      // The grabber walks north; the held sends no input at all.
-      sim.tick({ [GRABBER]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
-      const grabberMoved = grabberZBefore - sim.snapshot().characters[GRABBER]!.position.z;
-      const heldMoved = heldZBefore - sim.snapshot().characters[HELD]!.position.z;
-
-      expect(grabberMoved).toBeGreaterThan(0); // the grabber actually walked
-      expect(heldMoved).toBeCloseTo(grabberMoved, 5); // dragged by exactly the same amount, despite zero input of its own
-    },
-  );
-
-  it("sums both participants' own wish-velocities when they pull the same way, rather than averaging them (M6.1: CONTEXT.md doesn't ask for one side to always win)", () => {
-    const north = input({ moveDirection: { x: 0, y: 0, z: -1 } });
-
-    const solo = twoCharacters(-1);
-    solo.tick({ [GRABBER]: reach() });
-    solo.tick({});
-    const soloZBefore = solo.snapshot().characters[GRABBER]!.position.z;
-    solo.tick({ [GRABBER]: north }); // only the grabber pulls this tick
-    const soloMoved = soloZBefore - solo.snapshot().characters[GRABBER]!.position.z;
-
-    const both = twoCharacters(-1);
-    both.tick({ [GRABBER]: reach() });
-    both.tick({});
-    const bothZBefore = both.snapshot().characters[GRABBER]!.position.z;
-    both.tick({ [GRABBER]: north, [HELD]: north }); // both pull the same way this time
-    const bothMoved = bothZBefore - both.snapshot().characters[GRABBER]!.position.z;
-
-    expect(bothMoved).toBeGreaterThan(soloMoved * 1.5); // meaningfully more than one side alone — summed, not averaged
-  });
-
-  it("reports grabbingId on the grabber's own snapshot the instant a hold engages — never on the held Character's own row (M6.1: the renderer's own arm-reach pose)", () => {
-    const sim = twoCharacters(-1);
-    sim.tick({ [GRABBER]: reach() });
-
-    expect(sim.snapshot().characters[GRABBER]!.grabbingId).toBe(HELD);
-    expect(sim.snapshot().characters[HELD]!.grabbingId).toBeNull(); // the held side never grabs anyone
-  });
-
-  it("reports heldByGrabberId on the held Character's own snapshot, the mirror of grabbingId — and clears it when the hold ends (M6.1: each client locks its own Character's rendered facing off these two)", () => {
-    const sim = twoCharacters(-1);
-    sim.tick({ [GRABBER]: reach() });
-
-    expect(sim.snapshot().characters[HELD]!.heldByGrabberId).toBe(GRABBER);
-    expect(sim.snapshot().characters[GRABBER]!.heldByGrabberId).toBeNull(); // the grabber isn't the one being held
-
-    for (let n = 0; n < GRAB_HOLD_MAX_TICKS + 1; n += 1) sim.tick({}); // release via timeout
-
-    expect(sim.snapshot().characters[HELD]!.heldByGrabberId).toBeNull();
-  });
-
-  it("clears grabbingId the instant a hold ends, however it ends (M6.1)", () => {
-    const sim = twoCharacters(-1);
-    sim.tick({ [GRABBER]: reach() });
-    sim.tick({});
-    expect(sim.snapshot().characters[GRABBER]!.grabbingId).toBe(HELD);
-
-    for (let n = 0; n < GRAB_HOLD_MAX_TICKS + 1; n += 1) sim.tick({}); // release via timeout
-
-    expect(sim.snapshot().characters[GRABBER]!.grabbingId).toBeNull();
-  });
-
-  it("misses a Character outside GRAB_RANGE, even directly ahead", () => {
-    const sim = twoCharacters(-(GRAB_RANGE + 1));
-    sim.tick({ [GRABBER]: reach() });
-    sim.tick({});
-    sim.tick({ [GRABBER]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
-    const walked = Math.abs(sim.snapshot().characters[GRABBER]!.position.z - onGround(0).z);
-    // Not slowed at all — moved close to a full walk step, not a crawl.
-    expect(walked).toBeGreaterThan((WALK_SPEED / TICK_RATE_HZ) * 0.5);
-  });
-
-  it(
-    "cancels the held Character's own in-progress Dash the instant a hold connects — the grabber's own Dash can " +
-      "never be in progress here (M6.1 gates it out entirely)",
-    () => {
-      const sim = twoCharacters(-1);
-      sim.tick({ [HELD]: input({ moveDirection: { x: 0, y: 0, z: 1 }, dashHeld: true }) });
-      expect(sim.snapshot().characters[HELD]!.dashing).toBe(true);
-
-      sim.tick({ [GRABBER]: reach() });
-
-      expect(sim.snapshot().characters[HELD]!.dashing).toBe(false);
-    },
-  );
-
-  it("cannot latch on while the grabber is mid-Dash — Dash locks Grab out entirely until it finishes (M6.1)", () => {
-    // HELD placed farther than a full Dash's own ~13.5-unit reach (empirically
-    // measured) — a full-speed Dash must never approach it at all, so the
-    // sole effect under test is whether Grab engages, uncontaminated by a
-    // Bump into HELD along the way.
-    const sim = twoCharacters(-18);
-    const dashTicks = Math.round(DASH_DURATION_MS / TICK_MS);
-    for (let n = 0; n < dashTicks; n += 1) sim.tick({ [GRABBER]: input({ ...NORTH, dashHeld: true, grabHeld: true }) });
-    sim.tick({});
-    // Never engaged — the held Character still moves at full speed.
-    const zBefore = sim.snapshot().characters[HELD]!.position.z;
-    sim.tick({ [HELD]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
-    const walked = Math.abs(sim.snapshot().characters[HELD]!.position.z - zBefore);
-    expect(walked).toBeGreaterThan((WALK_SPEED / TICK_RATE_HZ) * 0.5);
-  });
-
-  it("the grabber cannot Dash while holding — CONTEXT.md: \"the grabber cannot run while holding\"", () => {
-    const sim = twoCharacters(-1);
-    sim.tick({ [GRABBER]: reach() });
-    sim.tick({}); // let the multiplier take effect
-
-    sim.tick({ [GRABBER]: input({ ...NORTH, dashHeld: true }) });
-    expect(sim.snapshot().characters[GRABBER]!.dashing).toBe(false);
-  });
-
-  it("auto-releases once the hold's max duration elapses, and starts the grabber's cooldown only then", () => {
-    const sim = twoCharacters(-1);
-    sim.tick({ [GRABBER]: reach() });
-    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0); // not yet — only release starts it
-
-    for (let n = 0; n < GRAB_HOLD_MAX_TICKS + 1; n += 1) sim.tick({});
-
-    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBeGreaterThan(0);
-    // The multiplier is lifted — a fresh walk covers real ground again.
-    const zBefore = sim.snapshot().characters[GRABBER]!.position.z;
-    sim.tick({ [GRABBER]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
-    const walked = Math.abs(sim.snapshot().characters[GRABBER]!.position.z - zBefore);
-    expect(walked).toBeGreaterThan((WALK_SPEED / TICK_RATE_HZ) * 0.5);
-  });
-
-  it("the held Character breaks free by moving away from the grabber for the struggle-free duration", () => {
-    const sim = twoCharacters(-1); // held is north of the grabber
-    sim.tick({ [GRABBER]: reach() });
-    sim.tick({}); // engage
-
-    // Held moves further north — directly away from the grabber.
-    const away = input({ moveDirection: { x: 0, y: 0, z: -1 } });
-    for (let n = 0; n < GRAB_STRUGGLE_FREE_TICKS - 1; n += 1) {
-      sim.tick({ [HELD]: away });
-      expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0); // still held, not released yet
-    }
-    sim.tick({ [HELD]: away }); // the tick that reaches the full struggle duration
-
-    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBeGreaterThan(0);
-  });
-
-  it("struggling resets the instant the held Character stops actively resisting — no partial progress carries over", () => {
-    const sim = twoCharacters(-1);
-    sim.tick({ [GRABBER]: reach() });
-    sim.tick({});
-
-    const away = input({ moveDirection: { x: 0, y: 0, z: -1 } });
-    for (let n = 0; n < GRAB_STRUGGLE_FREE_TICKS - 1; n += 1) sim.tick({ [HELD]: away });
-    sim.tick({ [HELD]: IDLE_INPUTS }); // stops resisting for exactly one tick
-    for (let n = 0; n < GRAB_STRUGGLE_FREE_TICKS - 1; n += 1) sim.tick({ [HELD]: away });
-
-    // Still held — the reset means this many further ticks of struggling isn't enough yet.
-    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0);
-  });
-
-  it("cannot grab a Character already engaged in another hold", () => {
-    const SOUTH_FACING = Math.PI; // forward(π) = (0, 0, 1) — dead south
-    const sim = new RapierSimulation({ spawn: onGround(0), statics: [GROUND] });
-    sim.addCharacter(HELD, onGround(-1));
-    sim.addCharacter("third", onGround(-2)); // north of HELD, facing south — HELD is directly ahead of THIRD too
-    for (let n = 0; n < 10; n += 1) sim.tick({});
-
-    sim.tick({ [GRABBER]: reach() }); // grabs HELD (nearest to GRABBER)
-    sim.tick({});
-    // THIRD tries to grab HELD too — but HELD is already engaged, so this must be a no-op for THIRD.
-    sim.tick({ third: input({ facing: SOUTH_FACING, grabHeld: true }) });
-    sim.tick({});
-
-    // If the exclusion failed, THIRD would now ALSO be registered as a
-    // grabber (a second, bogus ActiveGrab entry) and get slowed to
-    // GRAB_SPEED_MULTIPLIER itself — the only Character-visible signal that
-    // distinguishes "never engaged" from "silently engaged a second time",
-    // since Grab's cooldown never starts on press either way (only on
-    // release), so checking THIRD's own cooldown here would prove nothing.
-    const zBefore = sim.snapshot().characters.third!.position.z;
-    sim.tick({ third: input({ moveDirection: { x: 0, y: 0, z: 1 } }) });
-    const walked = Math.abs(sim.snapshot().characters.third!.position.z - zBefore);
-    expect(walked).toBeGreaterThan((WALK_SPEED / TICK_RATE_HZ) * 0.5);
-  });
-
-  it("respects its own cooldown after release — pressing again before it expires does not fire", () => {
-    const sim = twoCharacters(-1);
-    sim.tick({ [GRABBER]: reach() });
-    for (let n = 0; n < GRAB_HOLD_MAX_TICKS + 1; n += 1) sim.tick({}); // release via timeout
-    const cooldownAfterRelease = sim.snapshot().characters[GRABBER]!.grabCooldownMs;
-    expect(cooldownAfterRelease).toBeGreaterThan(0);
-
-    sim.tick({ [GRABBER]: reach() }); // pressed again, still on cooldown
-    // The held Character never got re-engaged — still moves at full speed.
-    const zBefore = sim.snapshot().characters[HELD]!.position.z;
-    sim.tick({ [HELD]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
-    const walked = Math.abs(sim.snapshot().characters[HELD]!.position.z - zBefore);
-    expect(walked).toBeGreaterThan((WALK_SPEED / TICK_RATE_HZ) * 0.5);
-  });
-
-  it("resets alongside Dash's/Hit's own cooldown the instant Ragdoll begins, and ends the hold outright (code review precedent, tickets 03/04)", () => {
-    const sim = twoCharacters(-1);
-    sim.tick({ [GRABBER]: reach() });
-    sim.tick({});
-    expect(sim.snapshot().characters[HELD]!.grounded).toBeDefined(); // sanity: HELD exists and is engaged
-
-    const base = sim.snapshot().characters[GRABBER]!;
-    sim.reconcileCharacter(GRABBER, {
-      position: { ...base.position },
-      velocity: { ...base.velocity },
-      grounded: base.grounded,
-      motionState: "Ragdoll",
-      dashCooldownMs: base.dashCooldownMs,
-      dashing: base.dashing,
-      hitCooldownMs: base.hitCooldownMs,
-      hitChargeMs: base.hitChargeMs,
-      grabCooldownMs: base.grabCooldownMs,
-      finishTick: base.finishTick,
-      eliminated: base.eliminated,
-      eliminatedTick: base.eliminatedTick,
-    });
-
-    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0);
-
-    // The hold itself also ends from RapierSimulation's own side on the very
-    // next tick's `updateGrabs` pass — the held Character walks at full speed again.
-    sim.tick({});
-    const zBefore = sim.snapshot().characters[HELD]!.position.z;
-    sim.tick({ [HELD]: input({ moveDirection: { x: 0, y: 0, z: -1 } }) });
-    const walked = Math.abs(sim.snapshot().characters[HELD]!.position.z - zBefore);
-    expect(walked).toBeGreaterThan((WALK_SPEED / TICK_RATE_HZ) * 0.5);
-  });
-
-  it(
-    "survives a reconcile-then-replay without desyncing grabCooldownMs — a client reconciled to an older " +
-      "snapshot and replayed forward lands on the exact same value the undisturbed ground truth has",
-    () => {
-      const truth = twoCharacters(-1);
-      const client = twoCharacters(-1);
-      const K = 10;
-      const ACKED_LAG = 4;
-
-      let ackedSnapshot: ReturnType<typeof truth.snapshot>["characters"][string] | null = null;
-      const unackedInputs: SimInputs[] = [];
-      for (let t = 1; t <= K; t += 1) {
-        const grabberInput = t === 1 ? reach() : input({ facing: NORTH_FACING });
-        truth.tick({ [GRABBER]: grabberInput });
-        client.tick({ [GRABBER]: grabberInput });
-        if (t === K - ACKED_LAG) ackedSnapshot = truth.snapshot().characters[GRABBER]!;
-        if (t > K - ACKED_LAG) unackedInputs.push(grabberInput);
-      }
-      if (!ackedSnapshot) throw new Error("unreachable");
-
-      client.reconcileCharacter(GRABBER, {
-        position: { ...ackedSnapshot.position },
-        velocity: { ...ackedSnapshot.velocity },
-        grounded: ackedSnapshot.grounded,
-        motionState: ackedSnapshot.motionState,
-        dashCooldownMs: ackedSnapshot.dashCooldownMs,
-        dashing: ackedSnapshot.dashing,
-        hitCooldownMs: ackedSnapshot.hitCooldownMs,
-        hitChargeMs: ackedSnapshot.hitChargeMs,
-        grabCooldownMs: ackedSnapshot.grabCooldownMs,
-        finishTick: ackedSnapshot.finishTick,
-        eliminated: ackedSnapshot.eliminated,
-        eliminatedTick: ackedSnapshot.eliminatedTick,
-      });
-      client.replayLocalCharacter(GRABBER, unackedInputs);
-
-      const truthNow = truth.snapshot().characters[GRABBER]!;
-      const clientNow = client.snapshot().characters[GRABBER]!;
-      expect(clientNow.grabCooldownMs).toBeCloseTo(truthNow.grabCooldownMs, 0);
-    },
-  );
-
-  it("never targets an eliminated Character — inert by design (ADR 0042), same invariant Hit already enforces (code review)", () => {
-    const sim = twoCharacters(-1);
-    sim.eliminateCharacter(HELD);
-    sim.tick({ [GRABBER]: reach() });
-    sim.tick({});
-    // Never engaged — the grabber's own Dash still works freely.
-    sim.tick({ [GRABBER]: input({ ...NORTH, dashHeld: true }) });
-    expect(sim.snapshot().characters[GRABBER]!.dashing).toBe(true);
-  });
-
-  it("never targets a Character that's merely down (Ragdoll/GettingUp, not eliminated) — a phantom one-tick hold would waste the grabber's own Dash-cancel/cooldown for nothing (code review)", () => {
-    const sim = twoCharacters(-1);
-    // Force TARGET-equivalent (HELD) into Ragdoll via a direct reconcile — the exact
-    // same deterministic approach the Hit/Dash-cooldown-reset tests already use.
-    const base = sim.snapshot().characters[HELD]!;
-    sim.reconcileCharacter(HELD, {
-      position: { ...base.position },
-      velocity: { ...base.velocity },
-      grounded: base.grounded,
-      motionState: "Ragdoll",
-      dashCooldownMs: base.dashCooldownMs,
-      dashing: base.dashing,
-      hitCooldownMs: base.hitCooldownMs,
-      hitChargeMs: base.hitChargeMs,
-      grabCooldownMs: base.grabCooldownMs,
-      finishTick: base.finishTick,
-      eliminated: base.eliminated,
-      eliminatedTick: base.eliminatedTick,
-    });
-
-    sim.tick({ [GRABBER]: reach() });
-    sim.tick({});
-    // Never engaged — the grabber's own Dash still works freely, and its cooldown never started.
-    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0);
-    sim.tick({ [GRABBER]: input({ ...NORTH, dashHeld: true }) });
-    expect(sim.snapshot().characters[GRABBER]!.dashing).toBe(true);
-  });
-
-  it("starts the grabber's own cooldown when the held Character disconnects mid-hold, not just on the usual release paths (code review)", () => {
-    const sim = twoCharacters(-1);
-    sim.tick({ [GRABBER]: reach() });
-    sim.tick({});
-    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0);
-
-    sim.removeCharacter(HELD);
-
-    expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBeGreaterThan(0);
-  });
-
-  it(
-    "the struggle-free check judges the SAME input the held Character's own movement actually used this tick — " +
-      "a locked phase substitutes idle movement for the sim itself, so a real 'moving away' keypress sent during " +
-      "a lock must not silently accumulate struggle progress (code review)",
-    () => {
-      const sim = twoCharacters(-1);
-      sim.tick({ [GRABBER]: reach() });
-      sim.tick({});
-
-      const away = input({ moveDirection: { x: 0, y: 0, z: -1 } });
-      for (let n = 0; n < GRAB_STRUGGLE_FREE_TICKS + 2; n += 1) sim.tick({ [HELD]: away }, "LOBBY");
-
-      // Still held — none of those locked ticks counted toward struggling free.
-      expect(sim.snapshot().characters[GRABBER]!.grabCooldownMs).toBe(0);
-    },
-  );
 });
 
 describe("RapierSimulation — Conveyor (ADR 0064): the ground collider's belt flow carries whoever stands on it", () => {
@@ -4134,6 +3920,10 @@ describe("RapierSimulation — launch pads (M3.7 ticket 02, ADR 0069): vertical 
       finishTick: firedSnap.finishTick,
       eliminated: firedSnap.eliminated,
       eliminatedTick: firedSnap.eliminatedTick,
+      escapeProgress: firedSnap.escapeProgress,
+      lastWiggleYaw: firedSnap.lastWiggleYaw,
+      spinMs: firedSnap.spinMs,
+      facing: firedSnap.facing,
     });
     sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, buffered);
 
@@ -4704,6 +4494,10 @@ describe("RapierSimulation — Character facing (M6 ticket 01, ADR 0045)", () =>
       finishTick: ackedSnapshot.finishTick,
       eliminated: ackedSnapshot.eliminated,
       eliminatedTick: ackedSnapshot.eliminatedTick,
+      escapeProgress: ackedSnapshot.escapeProgress,
+      lastWiggleYaw: ackedSnapshot.lastWiggleYaw,
+      spinMs: ackedSnapshot.spinMs,
+      facing: ackedSnapshot.facing,
     });
     client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unackedInputs);
 

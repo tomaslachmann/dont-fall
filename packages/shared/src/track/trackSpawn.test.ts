@@ -2,9 +2,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { playgroundSpawn } from "../playground.js";
 import { IDLE_INPUTS } from "../simulation/SimInputs.js";
 import { RapierSimulation, initPhysics } from "../simulation/RapierSimulation.js";
-import { TICK_RATE_HZ } from "../tuning.js";
+import { TICK_RATE_HZ } from "../tuning/clock.js";
 import { M1_TRACK, MODULE_LIBRARY } from "./modules.js";
-import { resolveTrack, trackSpawn } from "./Track.js";
+import { resolveTrack } from "./resolveTrack.js";
+import { trackSpawn } from "./Track.js";
 import type { Track } from "./Track.js";
 
 beforeAll(async () => {

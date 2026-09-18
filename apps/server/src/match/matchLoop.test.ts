@@ -44,7 +44,8 @@ const saveRuntime = (saveResult: (result: unknown) => Promise<boolean>): SaveRun
   roundTrackIds: ["track-1"],
   matchNicknames: new Map([["a", "Ann"]]),
   matchAccountIds: new Map([["a", "acc-1"]]),
-  matchBodySkins: new Map([["a", 2]]),
+  matchColors: new Map([["a", 2]]),
+  matchSkins: new Map([["a", "tiger"]]),
   matchHats: new Map([["a", "crown"]]),
   totalFalls: { a: 2 },
   matchResults: { saveResult: saveResult as SaveRuntime["matchResults"]["saveResult"] },
@@ -70,10 +71,23 @@ describe("saveMatchResultIfDue (ADR 0059)", () => {
       results: [{ rows: [{ id: "a", placement: 1, qualified: true }] }],
       roundTrackIds: ["track-1"],
       nicknames: { a: "Ann" },
-      bodySkins: { a: 2 },
+      colors: { a: 2 },
+      skins: { a: "tiger" },
       hats: { a: "crown" },
       totalFalls: { a: 2 },
     });
+    expect(rt.savingResults).toBe(false);
+    expect(rt.resultsSavedMatchId).toBe("m1");
+    expect(rt.resultsSavedAtMs).toEqual(expect.any(Number));
+  });
+
+  it("a Match with no played Round marks itself saved without calling the API — nothing to persist, and rows the API would refuse (found live 2026-09-18)", () => {
+    const saveResult = vi.fn(async () => true);
+    const rt = saveRuntime(saveResult);
+    rt.roundResults = [];
+
+    saveMatchResultIfDue(rt, 1_000);
+    expect(saveResult).not.toHaveBeenCalled();
     expect(rt.savingResults).toBe(false);
     expect(rt.resultsSavedMatchId).toBe("m1");
     expect(rt.resultsSavedAtMs).toEqual(expect.any(Number));

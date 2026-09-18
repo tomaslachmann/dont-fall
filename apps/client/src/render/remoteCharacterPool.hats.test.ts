@@ -31,6 +31,8 @@ const standing = (): RenderCharacter => ({
   launchPadEpoch: 0,
   grabbingId: null,
   heldByGrabberId: null,
+  heldPhase: null,
+  spinMs: 0,
 });
 
 /** A wardrobe that only remembers what each rig was last dressed in, and whether it was still drawn then. */

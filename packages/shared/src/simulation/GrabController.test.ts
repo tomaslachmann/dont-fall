@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GRAB_COOLDOWN_MS } from "../tuning.js";
+import { GRAB_COOLDOWN_MS } from "../tuning/fight.js";
 import { GrabController } from "./GrabController.js";
 
 describe("GrabController (M6 ticket 04 — cooldown starts on release, not on press, unlike Dash/Hit's own idiom)", () => {

@@ -5,7 +5,7 @@
  * and the auth Screens are the only callers. Origin, token storage, and
  * transport come from the shared base (`api.ts`) — no `baseUrl` threading.
  */
-import type { KeyBindings } from "@dont-fall/shared";
+import type { AccountRole, KeyBindings } from "@dont-fall/shared";
 import { ApiError, apiBaseUrl, apiFetch, apiJson, apiPost, getStoredToken } from "./base.js";
 
 export interface Account {
@@ -14,11 +14,15 @@ export interface Account {
   email: string | null;
   displayName: string;
   avatarUrl: string | null;
+  /** This Account's role — `"player"` for everyone, `"admin"` reserved. Received, never rendered on (yet). */
+  role: AccountRole;
   /** Lifetime match earnings — the economy's persisted half. */
   xp: number;
   coins: number;
-  /** The body's equipped skin id (M9 ticket 15) — a small int, default bean until picked. */
-  bodySkin: number;
+  /** The body's equipped color id (M9 ticket 15) — a small int, default bean until picked. Shows only under no `skin`. */
+  color: number;
+  /** The equipped skin's id (ADR 0091) — `null` for no skin, which is what makes `color` the bean's look. */
+  skin: string | null;
   /** The equipped hat's id (ADR 0083) — `null` for no hat. */
   hat: string | null;
   /** The stored key bindings (M9 controls) — `null` when never saved, which resolves to defaults. */
@@ -85,18 +89,19 @@ export const fetchAccount = async (): Promise<Account | null> => {
 /** Where the "Log in with Discord" button sends the browser — the API does the whole OAuth dance and redirects back to `/auth/callback`. */
 export const discordAuthorizeUrl = (): string => `${apiBaseUrl()}/auth/discord/authorize`;
 
-/** What one cosmetics save equips — a slot left out keeps what the Account has; `hat: null` takes the hat off. */
+/** What one cosmetics save equips — a slot left out keeps what the Account has; `skin`/`hat: null` takes that one off. */
 export interface CosmeticsChoice {
-  bodySkin?: number;
+  color?: number;
+  skin?: string | null;
   hat?: string | null;
 }
 
 /**
- * Equips cosmetics (M9 ticket 15, ADR 0083) — PUTs the cosmetics
+ * Equips cosmetics (M9 ticket 15, ADR 0083/0091) — PUTs the cosmetics
  * sub-resource and returns the updated Account, so the screen refreshes in
  * the one round trip. Throws `ApiError` like every other authed call: a 400
- * for something that isn't a skin or a hat, a 403 for a hat above the
- * Account's level, a 401 for a dead token.
+ * for something that isn't a color, a skin or a hat, a 403 for a skin or
+ * hat above the Account's level, a 401 for a dead token.
  */
 export const saveCosmetics = async (choice: CosmeticsChoice): Promise<Account> =>
   apiJson<Account>("/auth/me/cosmetics", {

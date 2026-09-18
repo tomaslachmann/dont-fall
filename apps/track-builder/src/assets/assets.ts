@@ -2,7 +2,11 @@ import {
   ASSET_MODULE_DEFS,
   ASSET_PLACEMENT_MODULES,
   assetFileName,
+  attachAssetGeometry,
+  deckPlanOf,
+  loadAssetModule,
   type AssetCategory,
+  type DeckPlan,
   type Module,
 } from "@dont-fall/shared";
 import { shareTextures, type SharedTextureCache } from "@dont-fall/render";
@@ -72,12 +76,45 @@ const hasMesh = (root: THREE.Object3D): boolean => {
  */
 const sharedTextures: SharedTextureCache = new Map();
 
+const defById = new Map(ASSET_MODULE_DEFS.map((def) => [def.id, def]));
+
 /**
- * Parse one fetched asset file into its visual template (M8 ticket 05).
- * Detached from any scene — the viewport clones it once per placed Segment
- * and the tab clones it once per preview.
+ * One file's deck plan (ADR 0096) — the shared collision reader over the same
+ * bytes the visual template parses from, shaped and cut exactly like the
+ * game's own `loadAssetLibrary` + `resolveTrack` path, so the builder's
+ * sheets copy the asset's shape the way the client's already do. Never
+ * throws: an unknown id or an unreadable file reads no plan, and the sheets
+ * fall back to their rectangles — a tile must never die over a sheet nicety.
  */
-export const parseAssetVisual = async (moduleId: string, bytes: Uint8Array): Promise<THREE.Group> => {
+export const parseAssetDeckPlan = (moduleId: string, bytes: Uint8Array): DeckPlan | undefined => {
+  const def = defById.get(moduleId);
+  if (!def) return undefined;
+  try {
+    const validated = loadAssetModule(bytes, {
+      footprint: def.footprint.bounds,
+      ...(def.surface === undefined ? {} : { surface: def.surface }),
+    });
+    return deckPlanOf(attachAssetGeometry(def, validated));
+  } catch {
+    return undefined;
+  }
+};
+
+/** Everything one asset file settles into: its visual template plus its deck plan for surface sheets. */
+export interface ParsedAsset {
+  template: THREE.Group;
+  plan: DeckPlan | undefined;
+}
+
+/**
+ * Parse one fetched asset file (M8 ticket 05): its visual template plus, from
+ * the same bytes, its deck plan for surface sheets (ADR 0096).
+ * The template is detached from any scene — the viewport clones it once per
+ * placed Segment and the tab clones it once per preview. Only a visual
+ * failure throws; a missing plan settles as `undefined` (see
+ * {@link parseAssetDeckPlan}).
+ */
+export const parseAsset = async (moduleId: string, bytes: Uint8Array): Promise<ParsedAsset> => {
   // GLTFLoader reads the whole ArrayBuffer it is given, so it gets an exact
   // copy — never `bytes.buffer`, which may be a larger backing store the
   // view only covers part of. Four tiny files; the copy is noise.
@@ -91,23 +128,27 @@ export const parseAssetVisual = async (moduleId: string, bytes: Uint8Array): Pro
   } catch (err) {
     throw new Error(`asset "${moduleId}": visual parse failed: ${(err as Error).message}`);
   }
+  let template: THREE.Group;
   try {
-    return extractVisualRoot(scene);
+    template = extractVisualRoot(scene);
   } catch (err) {
     throw new Error(`asset "${moduleId}": ${(err as Error).message}`);
   }
+  return { template, plan: parseAssetDeckPlan(moduleId, bytes) };
 };
 
 export const ASSET_LOAD_CONCURRENCY = 8;
 
 /**
- * Fetch every tab Module's visual template through the API (M8 ticket
- * 05, ADR 0050 as amended — fetched at tab open, never a builder-local
- * copy). `fetchBytes`/`baseUrl` are injected, not builder-hardcoded,
- * mirroring the client's own loader pattern through its own fetch. The URL
- * is derived from the id via the shared `assetFileName`, exactly like
- * `loadAssetLibrary` — the filename stem rule (ADR 0050) holds for every
- * loader, so a mismatch is impossible by construction in any of them.
+ * Fetch every tab Module's asset through the API (M8 ticket 05, ADR 0050 as
+ * amended — fetched at tab open, never a builder-local copy): its visual
+ * template plus its deck plan for surface sheets (ADR 0096), both parsed
+ * from the same bytes. `fetchBytes`/`baseUrl` are injected, not
+ * builder-hardcoded, mirroring the client's own loader pattern through its
+ * own fetch. The URL is derived from the id via the shared `assetFileName`,
+ * exactly like `loadAssetLibrary` — the filename stem rule (ADR 0050) holds
+ * for every loader, so a mismatch is impossible by construction in any of
+ * them.
  *
  * Up to `ASSET_LOAD_CONCURRENCY` files load at once — one at a time was
  * ~1.8 s of tab-open wait for the 124-file asset set.
@@ -116,8 +157,8 @@ export const loadAssetVisuals = async (
   fetchBytes: (url: string) => Promise<Uint8Array>,
   baseUrl: string,
   moduleIds: string[] = assetTabModuleIds(),
-): Promise<Record<string, THREE.Group>> => {
-  const loaded: THREE.Group[] = new Array(moduleIds.length);
+): Promise<Record<string, ParsedAsset>> => {
+  const loaded: ParsedAsset[] = new Array(moduleIds.length);
   let next = 0;
   // One failure rejects the load; the other workers stop taking new files.
   let failed = false;
@@ -134,7 +175,7 @@ export const loadAssetVisuals = async (
         throw new Error(`asset "${moduleId}": could not fetch ${url}: ${(err as Error).message}`);
       }
       try {
-        loaded[index] = await parseAssetVisual(moduleId, bytes);
+        loaded[index] = await parseAsset(moduleId, bytes);
       } catch (err) {
         failed = true;
         throw err;
@@ -146,7 +187,7 @@ export const loadAssetVisuals = async (
 };
 
 /** One file's outcome — the Assets tab settles each tile independently. */
-export type AssetVisualResult = { ok: true; template: THREE.Group } | { ok: false; error: Error };
+export type AssetVisualResult = ({ ok: true } & ParsedAsset) | { ok: false; error: Error };
 
 /**
  * The Assets tab's own loader: same fetch-then-parse pipe as
@@ -169,7 +210,7 @@ export const loadAssetVisualsProgressive = async (
       const url = `${baseUrl}/${assetFileName(moduleId)}`;
       try {
         const bytes = await fetchBytes(url);
-        onSettled(moduleId, { ok: true, template: await parseAssetVisual(moduleId, bytes) });
+        onSettled(moduleId, { ok: true, ...(await parseAsset(moduleId, bytes)) });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         onSettled(moduleId, { ok: false, error: new Error(`asset "${moduleId}": ${message}`) });

@@ -1,13 +1,5 @@
-import {
-  GETUP_TICKS,
-  IMPACT_RAGDOLL_MIN,
-  IMPACT_STAGGER_MIN,
-  RAGDOLL_MAX_TICKS,
-  RAGDOLL_MIN_TICKS,
-  SLIDE_INPUT_SCALE,
-  STAGGER_INPUT_SCALE,
-  STAGGER_TICKS,
-} from "../tuning.js";
+import { GETUP_TICKS, IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, RAGDOLL_MAX_TICKS, RAGDOLL_MIN_TICKS, STAGGER_INPUT_SCALE, STAGGER_TICKS } from "../tuning/knockdown.js";
+import { SLIDE_INPUT_SCALE } from "../tuning/movement.js";
 
 /**
  * The Character's motion state (ADR 0006, ticket 05; `Sliding` added ticket
@@ -24,14 +16,21 @@ import {
  * Ragdoll    → GettingUp  (past RAGDOLL_MIN_TICKS and settled, or at RAGDOLL_MAX_TICKS)
  * GettingUp  → Controlled (after GETUP_TICKS — uninterruptible, so continuous
  *                          Impacts can't soft-lock the Character while down)
+ * any        ↔ Held       (only ever set from outside, by a Grab hold — ADR 0104)
  * ```
+ *
+ * `Held` (ADR 0104) is the one state this machine never enters or leaves on
+ * its own: whether a Character is being carried is a cross-Character fact,
+ * and only `GrabHolds` knows it. While Held the machine only waits — no timer
+ * runs out, and no Impact or Wobble lands, because the body belongs to the
+ * hold until the hold lets go of it.
  *
  * Every state transition is still exactly one per {@link CharacterStateMachine.tick}
  * call — recovering from Stagger onto a still-too-steep Surface reaches
  * Controlled this tick and Sliding the next, the same way GettingUp reaches
  * Controlled one tick before anything else about that tick is re-evaluated.
  */
-export type CharacterMotionState = "Controlled" | "Stagger" | "Sliding" | "Ragdoll" | "GettingUp";
+export type CharacterMotionState = "Controlled" | "Stagger" | "Sliding" | "Ragdoll" | "GettingUp" | "Held";
 
 /**
  * Whether a Character in this motion state is "down" — Ragdolled or getting
@@ -44,6 +43,51 @@ export type CharacterMotionState = "Controlled" | "Stagger" | "Sliding" | "Ragdo
  */
 export const isDownMotionState = (state: CharacterMotionState): boolean =>
   state === "Ragdoll" || state === "GettingUp";
+
+/**
+ * Whether this Character's own Player moves its body in this motion state —
+ * false while down and while Held (ADR 0104). Such a body is only ever where
+ * the server says it is: a client never predicts it, and draws the server's.
+ */
+export const isPlayerDrivenMotionState = (state: CharacterMotionState): boolean =>
+  !isDownMotionState(state) && state !== "Held";
+
+/**
+ * What a motion state *does* to the Character, as opposed to when it is
+ * entered and left (that is {@link CharacterStateMachine}'s). The
+ * `CharacterController` reads these fields and never asks which state it is
+ * in — so a new state that moves like an existing one is a new row here, not
+ * a new branch there (codebase audit 2026-09, ticket 10).
+ */
+export interface MotionMode {
+  /** How much of the Player's movement input reaches the Character — walk, jump and Dash alike. */
+  inputScale: number;
+  /**
+   * What moves the body: the kinematic capsule, the ragdoll's own physics with
+   * the capsule switched off, or a Grab hold, which places the capsule itself
+   * with its collider off (ADR 0104).
+   */
+  body: "capsule" | "ragdoll" | "held";
+  /**
+   * How the capsule's velocity is found each tick: accelerate toward the wish
+   * velocity (ADR 0035), or gravity projected onto the slope and integrated
+   * (ADR 0037) — which also keeps the ground-stick clamp and any Dash
+   * contribution out of it. `none` while the ragdoll moves the body.
+   */
+  velocity: "accelerate" | "slide" | "none";
+  /** Where the snapshot says the body is: the capsule, the ragdoll, or the get-up blend from one to the other. */
+  pose: "capsule" | "ragdoll" | "gettingUp";
+}
+
+/** Every motion state's {@link MotionMode} — see ADR 0006/0037 for the states themselves. */
+export const MOTION_MODES: { readonly [State in CharacterMotionState]: MotionMode } = {
+  Controlled: { inputScale: 1, body: "capsule", velocity: "accelerate", pose: "capsule" },
+  Stagger: { inputScale: STAGGER_INPUT_SCALE, body: "capsule", velocity: "accelerate", pose: "capsule" },
+  Sliding: { inputScale: SLIDE_INPUT_SCALE, body: "capsule", velocity: "slide", pose: "capsule" },
+  Ragdoll: { inputScale: 0, body: "ragdoll", velocity: "none", pose: "ragdoll" },
+  GettingUp: { inputScale: 0, body: "capsule", velocity: "accelerate", pose: "gettingUp" },
+  Held: { inputScale: 0, body: "held", velocity: "none", pose: "capsule" },
+};
 
 /**
  * Drives the Character between its motion states. Pure with respect to the world
@@ -62,12 +106,14 @@ export class CharacterStateMachine {
     return this.motionState;
   }
 
+  /** What the current state does to the Character — see {@link MOTION_MODES}. */
+  get mode(): MotionMode {
+    return MOTION_MODES[this.motionState];
+  }
+
   /** Movement-input multiplier for the current state. */
   get inputScale(): number {
-    if (this.motionState === "Controlled") return 1;
-    if (this.motionState === "Stagger") return STAGGER_INPUT_SCALE;
-    if (this.motionState === "Sliding") return SLIDE_INPUT_SCALE;
-    return 0; // Ragdoll, GettingUp
+    return this.mode.inputScale;
   }
 
   /** Queue an Impact for the next {@link tick}. Only the strongest one counts. */
@@ -144,6 +190,10 @@ export class CharacterStateMachine {
     this.pendingImpact = 0;
     this.forcedRagdoll = false;
     this.pendingWobbleTicks = 0;
+
+    // ADR 0104: a Held Character is the hold's to put down. Whatever was
+    // queued while it was carried has already been dropped above.
+    if (this.motionState === "Held") return this.motionState;
 
     const hardHit = forced || impact >= IMPACT_RAGDOLL_MIN;
     // A fresh hard hit downs a Controlled, Staggering or Sliding Character.

@@ -20,8 +20,10 @@ export const SULK_SEQUENCE: PreviewStep[] = [{ clip: "Sulk_In" }, { clip: "Sulk_
 export const SHRUG_SEQUENCE: PreviewStep[] = [{ clip: "Shrug_In" }, { clip: "Shrug_Hold", seconds: 3.2 }, { clip: "Shrug_Out" }];
 
 export interface CharacterPreviewProps {
-  /** Equipped skin — or null for the default, when nobody's skin is known. */
-  skin: number | null;
+  /** Equipped body color — or null for the default, when nobody's color is known. Shows under no `skin`. */
+  color: number | null;
+  /** Equipped skin (ADR 0091) — null or left out for none, which shows the `color`. */
+  skin?: string | null | undefined;
   /** Equipped hat (ADR 0083) — null or left out for none. */
   hat?: string | null | undefined;
   animation: PreviewAnimation;
@@ -58,17 +60,19 @@ const webglAvailable = (): boolean => {
 
 /**
  * The live 3D bean every screen rents (M9): the same BLIP rig the match
- * renders, tinted with a skin, performing one looping clip or a looping
- * sequence. CharacterSelect's turntable, the MainMenu hero, the MatchOver
- * podium, the Rewards celebration and the Auth/NotFound greeters are all
- * this component with different props — the stage (renderer, lights, camera
- * fit, tint, hat, teardown) exists exactly once, in `render/characterPreviewStage`.
+ * renders, wearing a skin or a color, performing one looping clip or a
+ * looping sequence. CharacterSelect's turntable, the MainMenu hero, the
+ * MatchOver podium, the Rewards celebration and the Auth/NotFound greeters
+ * are all this component with different props — the stage (renderer, lights,
+ * camera fit, body, hat, teardown) exists exactly once, in
+ * `render/characterPreviewStage`.
  *
  * That stage is loaded with a dynamic `import()` (ADR 0008): these screens
  * are the menu bundle, which must not carry three.js or the rig loader.
  */
 export function CharacterPreview({
-  skin,
+  color,
+  skin = null,
   hat = null,
   animation,
   autoRotate = true,
@@ -89,6 +93,8 @@ export function CharacterPreview({
   const stepsKey = JSON.stringify(steps);
   const stepsRef = useRef(steps);
   stepsRef.current = steps;
+  const colorRef = useRef(color);
+  colorRef.current = color;
   const skinRef = useRef(skin);
   skinRef.current = skin;
   const hatRef = useRef(hat);
@@ -106,6 +112,7 @@ export function CharacterPreview({
         if (cancelled) return;
         try {
           stage = mountCharacterPreview(canvas, wrap, {
+            color: colorRef.current,
             skin: skinRef.current,
             hat: hatRef.current,
             autoRotate,
@@ -135,8 +142,8 @@ export function CharacterPreview({
   }, []);
 
   useEffect(() => {
-    stageRef.current?.setSkin(skin);
-  }, [skin]);
+    stageRef.current?.setLook(color, skin);
+  }, [color, skin]);
 
   useEffect(() => {
     stageRef.current?.setHat(hat);

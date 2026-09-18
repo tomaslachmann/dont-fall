@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { rotateVec3ByQuat, type Vec3 } from "../math/vec3.js";
-import { TICK_RATE_HZ } from "../tuning.js";
+import { TICK_RATE_HZ } from "../tuning/clock.js";
 import {
   applyMotionPose,
   backAndForth,

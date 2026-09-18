@@ -5,6 +5,10 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
+    // 2026-09 audit: twenty dead imports had accumulated in one server file and
+    // five dead locals in the client's frame loop, all invisible to the suite
+    // and to review. This is what stops that class of drift coming back.
+    "noUnusedLocals": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,

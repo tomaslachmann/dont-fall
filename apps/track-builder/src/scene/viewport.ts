@@ -1,4 +1,4 @@
-import { createEnvironment, findSpinningParts, spinParts, type Environment } from "@dont-fall/render";
+import { createEnvironment, findSpinningParts, simmerMud, spinParts, type Environment, type MudDeckPlacement } from "@dont-fall/render";
 import {
   cloudFloorY,
   DEFAULT_KILL_PLANE_Y,
@@ -11,10 +11,12 @@ import {
   TICK_RATE_HZ,
   TRACK_THUMBNAIL_HEIGHT,
   TRACK_THUMBNAIL_WIDTH,
+  type DeckPlan,
   type EnvironmentPreset,
   type Module,
   type MotionPose,
   type Track,
+  type Vec3,
 } from "@dont-fall/shared";
 import { footprintCorners, motionPath, OUTCOME_COLOURS } from "../motion/motionPreview.js";
 import * as THREE from "three";
@@ -33,6 +35,7 @@ import {
   addBounceOverlay,
   addIceOverlay,
   addMudOverlay,
+  mudPlacementOf,
   applyMotionAt,
   applySegmentTransform,
   boundingRadius,
@@ -54,13 +57,12 @@ import {
 export type { SegmentTransform };
 
 /**
- * Lazily loaded deck-sheet textures (ADR 0066/0067) — each present once the
+ * Lazily loaded deck-sheet textures (ADR 0066/0070) — each present once the
  * engine's load for it lands, absent before (or when its Surface never
  * appears on the Track, in which case it is never fetched at all).
  */
 export interface SurfaceTextures {
   ice?: THREE.Texture | undefined;
-  mud?: THREE.Texture | undefined;
   bounce?: THREE.Texture | undefined;
 }
 
@@ -165,15 +167,18 @@ export interface TrackViewport {
    * the loaded visual template per asset Module id — placed asset Segments
    * render a clone each, everything else its boxes-and-markers group.
    * Optional and default-empty, so procedural-only callers pass nothing.
-   * `surfaceTextures` (ADR 0066/0067) sheets icy/muddy decks; each absent
+   * `surfaceTextures` (ADR 0066/0070) sheets icy/bouncy decks; each absent
    * until the engine's lazy load lands, in which case those decks render
-   * unsheeted this sync.
+   * unsheeted this sync. Mud needs no texture (ADR 0103). `deckPlans` (ADR
+   * 0096) cuts sheets and mud to the asset's own shape; a missing plan keeps
+   * the footprint rectangle.
    */
   setTrack: (
     modules: Record<string, Module>,
     track: Track,
     assetTemplates?: Record<string, THREE.Group>,
     surfaceTextures?: SurfaceTextures,
+    deckPlans?: Record<string, DeckPlan | undefined>,
   ) => void;
   /**
    * Re-applies every existing Segment group's position/orientation from
@@ -221,6 +226,12 @@ export interface TrackViewport {
    * add/delete swung the whole view, which read as everything placed moving.
    */
   frameTrack: () => void;
+  /**
+   * Puts the orbit camera at `position`, looking at `target` — a framing written
+   * down rather than dragged into place: an authored Track's Thumbnail
+   * (ADR 0105, `thumbnail.html`). The orbit controls keep working from there.
+   */
+  setView: (view: { position: Vec3; target: Vec3; fov?: number }) => void;
   /**
    * Highlights every Segment in `indices` (or clears all highlights if
    * empty) — also attaches/detaches the drag gizmo (ticket 03). A single
@@ -408,8 +419,6 @@ export const createTrackViewport = (
   let tints: { index: number; tint: ImpactTint }[] = [];
   /** Conveyor march drivers (ADR 0064) — rebuilt with the Track, ticked with the motion clock. */
   let belts: ((tick: number) => void)[] = [];
-  /** Mud slosh drivers (ADR 0067) — same lifecycle as the belts; the preview breathes, it never ripples (no Characters). */
-  let mudBreaths: ((tick: number) => void)[] = [];
 
   // The Motion guide lives in the scene, not under the Segment's group — a
   // child there would stretch the selection box — and follows the group's
@@ -654,7 +663,7 @@ export const createTrackViewport = (
   resize();
 
   return {
-    setTrack(nextModules, nextTrack, assetTemplates = {}, surfaceTextures = {}) {
+    setTrack(nextModules, nextTrack, assetTemplates = {}, surfaceTextures = {}, deckPlans = {}) {
       const wasEmpty = track.length === 0;
       modules = nextModules;
       track = nextTrack;
@@ -663,9 +672,17 @@ export const createTrackViewport = (
       for (const { tint } of tints) tint.dispose();
       tints = [];
       belts = [];
-      mudBreaths = [];
       trackGroup = new THREE.Group();
       groupByIndex = new Map();
+      // Every mud deck first: a deck's mud runs on across a seam into a
+      // neighbour, so each one is built knowing all the others (ADR 0103).
+      const mudPlacements = new Map<number, MudDeckPlacement>();
+      nextTrack.forEach((segment, index) => {
+        const module = nextModules[segment.moduleId];
+        const placement = module && mudPlacementOf(segment, module, assetTemplates[segment.moduleId], deckPlans[segment.moduleId]);
+        if (placement) mudPlacements.set(index, placement);
+      });
+      const allMud = [...mudPlacements.values()];
       nextTrack.forEach((segment, index) => {
         const group = buildSegmentGroup(nextModules, segment, assetTemplates);
         if (!group) return;
@@ -697,23 +714,11 @@ export const createTrackViewport = (
             assetTemplates[segment.moduleId],
             surfaceTextures.ice,
             renderer.capabilities.getMaxAnisotropy(),
+            deckPlans[segment.moduleId],
           );
-          // A muddy deck's block (ADR 0067) — same parenting, same
-          // load-then-re-sync contract as the ice sheet above, plus its
-          // slosh driver on the motion clock, like the belt's march.
-          const mud = addMudOverlay(
-            motionNode,
-            segment,
-            index,
-            module,
-            assetTemplates[segment.moduleId],
-            surfaceTextures.mud,
-            renderer.capabilities.getMaxAnisotropy(),
-          );
-          if (mud) {
-            mud.update(motionTick);
-            mudBreaths.push(mud.update);
-          }
+          // A muddy deck's mass (ADR 0067/0103) — same parenting as the ice
+          // sheet above; still, since nobody wades through the preview.
+          addMudOverlay(motionNode, segment, module, assetTemplates[segment.moduleId], mudPlacements.get(index), allMud);
           // A bouncy deck's inflatable sheet (ADR 0070), at rest — the
           // builder has nobody standing on it to dent it.
           addBounceOverlay(
@@ -723,6 +728,7 @@ export const createTrackViewport = (
             assetTemplates[segment.moduleId],
             surfaceTextures.bounce,
             renderer.capabilities.getMaxAnisotropy(),
+            deckPlans[segment.moduleId],
           );
         }
         applyMotionAt(group, segment, motionTick);
@@ -864,7 +870,6 @@ export const createTrackViewport = (
     setMotionTime(tick) {
       motionTick = tick;
       for (const belt of belts) belt(tick);
-      for (const breathe of mudBreaths) breathe(tick);
       if (impactTintVisible) {
         for (const { index, tint } of tints) {
           const segment = track[index];
@@ -878,6 +883,15 @@ export const createTrackViewport = (
       }
       for (const box of selectionBoxes) box.update();
       followMotionGuide();
+    },
+    setView({ position, target, fov }) {
+      camera.position.set(position.x, position.y, position.z);
+      orbitControls.target.set(target.x, target.y, target.z);
+      if (fov !== undefined) {
+        camera.fov = fov;
+        camera.updateProjectionMatrix();
+      }
+      orbitControls.update();
     },
     frameTrack() {
       if (track.length === 0) return;
@@ -1019,6 +1033,8 @@ export const createTrackViewport = (
       // A fan's rotor turns in the preview too (ADR 0075). Found every frame:
       // the Track is being edited, and a few hundred nodes is nothing to walk.
       spinParts(findSpinningParts(trackGroup), now);
+      // And the mud bubbles (ADR 0103), on the same wall clock.
+      simmerMud(trackGroup, now / 1000);
       environment?.drawn.update(camera, now, orbitControls.target);
       renderer.render(scene, camera);
     },

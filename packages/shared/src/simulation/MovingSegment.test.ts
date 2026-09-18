@@ -4,11 +4,13 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { IDENTITY_QUAT } from "../math/quat.js";
 import { addVec3, rotateVec3ByQuat, subVec3 } from "../math/vec3.js";
-import { CAPSULE_BOTTOM_OFFSET, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, TICK_RATE_HZ } from "../tuning.js";
+import { CAPSULE_BOTTOM_OFFSET, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS } from "../tuning/character.js";
+import { TICK_RATE_HZ } from "../tuning/clock.js";
 import type { Module } from "../track/Module.js";
 import { loadAssetModule } from "../track/asset.js";
 import { ASSET_MODULE_DEFS, attachAssetGeometry } from "../track/assetModules.js";
-import { resolveTrack, type Track } from "../track/Track.js";
+import { resolveTrack } from "../track/resolveTrack.js";
+import { type Track } from "../track/Track.js";
 import {
   impactOutcome,
   motionTwist,

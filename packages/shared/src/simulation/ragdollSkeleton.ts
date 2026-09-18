@@ -1,12 +1,6 @@
 import { IDENTITY_QUAT, slerpQuat, type Quat } from "../math/quat.js";
 import { addVec3, lerpVec3, vec3, type Vec3 } from "../math/vec3.js";
-import {
-  GETUP_TICKS,
-  RAGDOLL_ELBOW_MAX,
-  RAGDOLL_KNEE_MIN,
-  RAGDOLL_NECK_LIMIT,
-  RAGDOLL_SPINE_LIMIT,
-} from "../tuning.js";
+import { GETUP_TICKS, RAGDOLL_ELBOW_MAX, RAGDOLL_KNEE_MIN, RAGDOLL_NECK_LIMIT, RAGDOLL_SPINE_LIMIT } from "../tuning/knockdown.js";
 
 /** One bone's world transform, for the snapshot / renderer. Ordered as {@link RAGDOLL_BONES}. */
 export interface BoneSnapshot {

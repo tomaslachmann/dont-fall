@@ -1,7 +1,8 @@
 /* Hit-received flash (M9 ticket 09) — the mock's fx layers without its invented
    readouts (no attacker, direction wedge, damage, combo, or stagger meter:
-   the sim has none of those). Layer order: black snap -> red bleed ->
-   impact bloom -> cracks -> banner. Pointer-transparent throughout: a flash
+   the sim has none of those). A Hit that leaves you standing is only a light
+   red (2026-09-18, the user's call); a knockout is the whole flash. Layer
+   order: black snap -> red bleed -> impact bloom -> cracks -> banner. Pointer-transparent throughout: a flash
    mid-Round must never eat input. The snap and bleed alphas stay low on
    purpose: the animations peak near-opaque, so the game must show through
    the layers themselves — a slight red screen, never a blackout. */
@@ -20,7 +21,7 @@
   font: var(--df-weight-display) var(--df-text-mega) / 1 var(--df-font-display);
   color: var(--df-color-on-brand);
   text-shadow: 0 var(--df-bevel-5) 0 rgba(90, 0, 0, .55);
-  animation: df-fx-pop 3s cubic-bezier(.2, 1.5, .4, 1) infinite;
+  animation: global(df-fx-pop) 3s cubic-bezier(.2, 1.5, .4, 1) 1 forwards;
 }
 
 .sub {
@@ -34,16 +35,57 @@
 .fx { display: grid; grid-template-areas: 'fx'; pointer-events: none; }
 .fx > * { grid-area: fx; width: 100%; height: 100%; }
 
-.snap { background: rgba(21, 12, 40, .35); animation: df-hit-black 3s linear infinite; }
+/* A Hit that leaves you standing: only the design's red bleed, lighter, once. */
+.tint {
+  background: radial-gradient(65% 60% at 50% 50%, rgba(255,40,40,.05) 0%, rgba(214,20,20,.25) 78%, rgba(150,8,8,.40) 100%);
+  opacity: 0;
+  animation: tint .6s ease-out 1;
+}
+@keyframes tint { 0% { opacity: 0; } 15% { opacity: .55; } 100% { opacity: 0; } }
+
+/* The knockout: the design's layers, once each — the flash mounts per knockdown. */
+.snap { background: rgba(21, 12, 40, .35); opacity: 0; animation: global(df-hit-black) 3s linear 1; }
 .bleed {
   background: radial-gradient(65% 60% at 50% 50%, rgba(255,40,40,.05) 0%, rgba(214,20,20,.25) 78%, rgba(150,8,8,.40) 100%);
-  animation: df-hit-red 3s ease-out infinite;
+  opacity: 0;
+  animation: global(df-hit-red) 3s ease-out 1;
 }
 /* white bloom at the point of contact */
 .bloom {
   background: radial-gradient(circle at 76% 40%, rgba(255,255,255,.5), transparent 26%);
-  animation: df-hit-black 3s linear infinite;
+  opacity: 0;
+  animation: global(df-hit-black) 3s linear 1;
 }
-.cracks { animation: df-crack 3s ease-out infinite; }
+
+/* The crack paints itself (2026-09-18): every stroke is one unit long
+   (`pathLength="1"`), dashed by exactly that, and the dash slides in from its
+   root — each at its own `--df-fx-delay`, over `--df-fx-take`. Drawn twice: a
+   dark line under the white one, so it reads on a bright sky as well as on a
+   dark deck. Held once drawn, then the whole break fades before the shell
+   takes the flash down. */
+.cracks { animation: crackFade 1.6s linear 1 forwards; }
 .cracks svg { width: 100%; height: 100%; display: block; }
-.cracks path { stroke: var(--df-color-on-brand); stroke-width: 3; fill: none; opacity: .85; stroke-linecap: round; }
+.cracks path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: paint var(--df-fx-take, .2s) cubic-bezier(.2, .8, .3, 1) var(--df-fx-delay, 0s) 1 forwards;
+}
+.line path { stroke: var(--df-color-on-brand); opacity: .9; }
+.shadow { transform: translate(2px, 3px); }
+.shadow path { stroke: rgba(43, 27, 77, .45); }
+.line .trunk { stroke-width: 4; }
+.line .branch { stroke-width: 2.6; }
+.line .hair { stroke-width: 1.4; }
+.shadow .trunk { stroke-width: 6; }
+.shadow .branch { stroke-width: 4; }
+.shadow .hair { stroke-width: 2.4; }
+@keyframes paint { to { stroke-dashoffset: 0; } }
+@keyframes crackFade { 0%, 68% { opacity: 1; } 100% { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .cracks path { animation: none; stroke-dashoffset: 0; }
+  .banner { animation: none; }
+}

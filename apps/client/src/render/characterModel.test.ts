@@ -35,7 +35,6 @@ const setup = () => {
     getUp: noDirections,
     death: noDirections,
     grabReach: null,
-    grabPull: null,
     grabHold: null,
     grabDropOut: null,
     struggleHeld: null,

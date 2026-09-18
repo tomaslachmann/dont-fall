@@ -17,8 +17,8 @@ describe("MatchOver podium", () => {
     render(
       <MatchOver
         podium={[
-          { name: "GOOPY", points: 520, pose: "WINNER CELEBRATION LOOP", skin: 2 },
-          { name: "NOODLEBEAN", points: 495, pose: "SULK POSE", skin: null },
+          { name: "GOOPY", points: 520, pose: "WINNER CELEBRATION LOOP", color: 2, skin: "tiger" },
+          { name: "NOODLEBEAN", points: 495, pose: "SULK POSE", color: null },
         ]}
       />,
     );

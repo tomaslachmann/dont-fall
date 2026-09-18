@@ -5,7 +5,7 @@ import type { PropConfig } from "./simulation/Prop.js";
 import type { SpinnerConfig } from "./simulation/Spinner.js";
 import { M1_MODULES, M1_TRACK } from "./track/modules.js";
 import type { SurfaceId } from "./track/Surface.js";
-import { resolveTrack } from "./track/Track.js";
+import { resolveTrack } from "./track/resolveTrack.js";
 
 /**
  * The M1 playground, resolved from the Module/Track system (`./track/`) —

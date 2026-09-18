@@ -6,7 +6,7 @@ import { ApiError, setStoredToken } from '../lib/api/base.js';
 import s from './AuthScreen.module.css';
 import Stage from '../ui/Stage.js';
 import Logo from '../ui/Logo.js';
-import { BASE_BODY_SKIN_ID } from '@dont-fall/shared';
+import { BASE_BODY_COLOR_ID } from '@dont-fall/shared';
 import { CharacterPreview } from './CharacterPreview.js';
 import Panel from '../ui/Panel.js';
 import JellyButton from '../ui/JellyButton.js';
@@ -106,7 +106,7 @@ export function AuthScreen() {
 
       <div className={s.body}>
         <CharacterPreview
-          skin={BASE_BODY_SKIN_ID}
+          color={BASE_BODY_COLOR_ID}
           animation={[{ clip: "Idle", seconds: 4 }, { clip: "Wobble", seconds: 3.2 }]}
           autoRotate={false}
           label="3D CHARACTER RENDER"

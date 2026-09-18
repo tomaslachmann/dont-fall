@@ -1,0 +1,35 @@
+/* The Dash recharge (ADR 0092), bottom-right on both Round HUDs. Sized to the
+   word it carries rather than to the viewport: it sits over live gameplay and
+   should read at a glance without taking the corner over. */
+.dash {
+  display: flex;
+  flex-direction: column;
+  gap: var(--df-space-3);
+  width: calc(var(--df-u) * 13);
+  padding: var(--df-space-4) var(--df-space-5);
+  border-radius: var(--df-radius-card);
+  background: var(--df-color-plate);
+  box-shadow: 0 var(--df-bevel-2) 0 var(--df-color-shadow);
+}
+.label {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-on-brand-80);
+}
+.meter { gap: 0; }
+
+/* Ready: the state that changes what the Player does next, so it is the one
+   that gets the colour. The pulse is slow on purpose — a fast one over live
+   gameplay reads as an alarm. */
+.ready { background: var(--df-color-plate-strong); }
+.ready .label {
+  color: var(--df-color-go);
+  animation: df-dash-ready 1.6s ease-in-out infinite;
+}
+@keyframes df-dash-ready {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ready .label { animation: none; }
+}

@@ -1,15 +1,6 @@
 import { addVec3, dotVec3, lengthVec3, normalizeVec3, scaleVec3, subVec3, type Vec3 } from "../math/vec3.js";
-import {
-  COYOTE_TICKS,
-  JUMP_HOLD_GRAVITY_SCALE,
-  JUMP_HOLD_MAX_TICKS,
-  JUMP_VELOCITY,
-  MOVE_STOP_SPEED,
-  MOVE_VELOCITY_CAP,
-  SLOPE_SPEED_ANGLE_FACTOR,
-  SLOPE_SPEED_MULTIPLIER_MIN,
-  TICK_DT,
-} from "../tuning.js";
+import { TICK_DT } from "../tuning/clock.js";
+import { COYOTE_TICKS, JUMP_HOLD_GRAVITY_SCALE, JUMP_HOLD_MAX_TICKS, JUMP_VELOCITY, MOVE_STOP_SPEED, MOVE_VELOCITY_CAP, SLOPE_SPEED_ANGLE_FACTOR, SLOPE_SPEED_MULTIPLIER_MIN } from "../tuning/movement.js";
 
 const smoothstep = (x: number): number => x * x * (3 - 2 * x);
 
@@ -141,17 +132,27 @@ export const applyVolumeForce = (velocity: Vec3, force: Vec3, maxInducedSpeed: n
 
 /**
  * The dash speed envelope: a "nitro" build — {@link smoothstep}-eased up to
- * full speed continuously across the whole burst (never plateaus early), then
- * released back to 0 over the final `rampOut`, so it doesn't cut dead at full
- * speed. `elapsed` and `duration` are in ticks. If `rampOut` covers the whole
- * `duration` there is no build at all, just the release curve throughout.
+ * full speed over `rampIn`, held there, then released back to 0 over the
+ * final `rampOut` so it doesn't cut dead at full speed. `elapsed`,
+ * `duration`, `rampIn` and `rampOut` are all in ticks.
+ *
+ * `rampIn` arrived with ADR 0092, when the burst tripled to three seconds:
+ * the build used to run across the whole burst, which a 3× longer burst
+ * would have turned into three seconds of gentle acceleration instead of a
+ * dash. Passing `rampIn = duration - rampOut` reproduces exactly the old
+ * shape, so the generalization is the same curve with the plateau exposed.
+ * A `rampIn` that would overrun the release is clamped back to it, and if
+ * `rampOut` covers the whole `duration` there is no build at all, just the
+ * release curve throughout.
  */
-export const dashEnvelope = (elapsed: number, duration: number, rampOut: number): number => {
+export const dashEnvelope = (elapsed: number, duration: number, rampIn: number, rampOut: number): number => {
   if (elapsed <= 0 || elapsed >= duration) return 0;
   const clampedRampOut = Math.min(rampOut, duration);
   const releaseStart = duration - clampedRampOut;
   if (releaseStart <= 0) return smoothstep((duration - elapsed) / duration);
-  if (elapsed < releaseStart) return smoothstep(elapsed / releaseStart);
+  const clampedRampIn = Math.min(Math.max(rampIn, 0), releaseStart);
+  if (elapsed < clampedRampIn) return smoothstep(elapsed / clampedRampIn);
+  if (elapsed < releaseStart) return 1;
   return smoothstep((duration - elapsed) / clampedRampOut);
 };
 

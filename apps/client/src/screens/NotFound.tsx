@@ -1,7 +1,7 @@
 import Stage from '../ui/Stage';
 import JellyButton from '../ui/JellyButton';
 import Logo from '../ui/Logo';
-import { BASE_BODY_SKIN_ID } from '@dont-fall/shared';
+import { BASE_BODY_COLOR_ID } from '@dont-fall/shared';
 import { CharacterPreview, SHRUG_SEQUENCE } from './CharacterPreview.js';
 import Pill from '../ui/Pill';
 import type { Feel } from '../tokens';
@@ -45,7 +45,7 @@ export default function NotFound({
         </div>
 
         <CharacterPreview
-          skin={BASE_BODY_SKIN_ID}
+          color={BASE_BODY_COLOR_ID}
           animation={SHRUG_SEQUENCE}
           autoRotate={false}
           sub="SHRUG POSE"

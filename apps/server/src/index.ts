@@ -37,4 +37,4 @@ if (isMain) {
 }
 
 export { startServer } from "./matchServer.js";
-export type { MatchServer, PortRange, StartServerConfig } from "./matchServer.js";
+export type { MatchServer, PortRange, ServerRuntimeConfig, StartServerConfig } from "./matchServer.js";

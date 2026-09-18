@@ -21,7 +21,8 @@ const RESULT = {
   nicknames: { p1: "Floppo", p2: "Goopy" },
   roundTrackIds: ["t1", "t2"],
   accountIds: { p1: "acc-1" },
-  bodySkins: { p1: 2 },
+  colors: { p1: 2 },
+  skins: { p1: "tiger" },
   hats: { p1: "crown" },
   totalFalls: { p1: 1, p2: 3 },
   endedAtMs: 60_000,
@@ -59,7 +60,8 @@ describe("match results service", () => {
       ).toThrowError(/placement/);
       expect(() => saveMatchResult(db, { ...RESULT, nicknames: [] })).toThrowError(/nicknames/);
       expect(() => saveMatchResult(db, { ...RESULT, accountIds: [] })).toThrowError(/accountIds/);
-      expect(() => saveMatchResult(db, { ...RESULT, bodySkins: [] })).toThrowError(/bodySkins/);
+      expect(() => saveMatchResult(db, { ...RESULT, colors: [] })).toThrowError(/colors/);
+      expect(() => saveMatchResult(db, { ...RESULT, skins: [] })).toThrowError(/skins/);
       expect(() => saveMatchResult(db, { ...RESULT, hats: "crown" })).toThrowError(/hats/);
       expect(() => saveMatchResult(db, { ...RESULT, roundTrackIds: "t1" })).toThrowError(/roundTrackIds/);
       expect(() => saveMatchResult(db, { ...RESULT, roundTrackIds: ["t1", 7] })).toThrowError(/roundTrackIds/);
@@ -81,14 +83,27 @@ describe("match results service", () => {
     }
   });
 
-  it("defaults a missing bodySkins map — pre-skins saves carry none", () => {
+  it("defaults a missing colors map — pre-colors saves carry none", () => {
     const dir = mkdtempSync(join(tmpdir(), "api-matches-test-"));
     try {
       const db = openDb(join(dir, "test.sqlite"));
-      const { bodySkins: _dropped, ...legacy } = RESULT;
+      const { colors: _dropped, ...legacy } = RESULT;
 
       expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
-      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, bodySkins: {} });
+      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, colors: {} });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults a missing skins map — pre-skins saves carry none (ADR 0091)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "api-matches-test-"));
+    try {
+      const db = openDb(join(dir, "test.sqlite"));
+      const { skins: _dropped, ...legacy } = RESULT;
+
+      expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
+      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, skins: {} });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

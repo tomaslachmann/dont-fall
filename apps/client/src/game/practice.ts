@@ -20,7 +20,7 @@ import {
 import { loadCharacterModel } from "../render/characterModel.js";
 import { gameAudioContext } from "../audio/gameAudio.js";
 import { STAGE_SOUND_SLOTS } from "../audio/slots.js";
-import { decodedBytes, loadSoundBank } from "../audio/soundBank.js";
+import { loadSoundBank } from "../audio/soundBank.js";
 import { stageSoundSlots } from "../audio/stageSounds.js";
 import { resumeOnFirstGesture } from "../audio/unlock.js";
 import { applyAudioVolumes, readAudioVolumes, subscribeAudioVolumes } from "../lib/audioSettings.js";
@@ -31,6 +31,7 @@ import { FreeLookCamera, PlayerInput } from "../input/input.js";
 import { loadBootBindings, resolveEffectiveBindings, writeStoredBindings } from "../lib/bindingsStore.js";
 import { createTeardown, type Teardown } from "../lib/utils/teardown.js";
 import { fetchAccount } from "../lib/api/auth.js";
+import { NO_HOLD } from "../render/grabAnimation.js";
 import { createStage } from "../render/scene.js";
 import { createTrackLoading } from "./trackLoading.js";
 import { DEFAULT_GRAPHICS_QUALITY, GRAPHICS_QUALITY_SETTINGS, type GraphicsQuality } from "../lib/graphicsQuality.js";
@@ -87,7 +88,6 @@ export const startPracticeGame = async (config: PracticeConfig): Promise<GameHan
 };
 
 const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise<GameHandle> => {
-  const bootStartedAt = performance.now();
   // Sounds decode alongside the rest of the load, never on first play (ADR 0087).
   const audioContext = gameAudioContext();
   if (audioContext) teardown.add(resumeOnFirstGesture(audioContext, window));
@@ -97,7 +97,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     audioContext ? loadSoundBank(audioContext, STAGE_SOUND_SLOTS) : undefined,
   ]);
 
-  const { fetchTrack, loadLibrary, loadVisualTemplates, loadIceTexture, loadMudTexture, loadBounceTexture, fetchStats } =
+  const { fetchTrack, loadLibrary, loadVisualTemplates, loadIceTexture, loadBounceTexture } =
     createTrackLoading(config.host);
   const { track, name, environment } = await fetchTrack(config.trackId);
   const trackName = name ?? config.trackId;
@@ -127,7 +127,6 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     iceDecks: resolved.iceDecks,
     iceTexture: await loadIceTexture(),
     mudDecks: resolved.mudDecks,
-    mudTexture: await loadMudTexture(),
     bounceTexture: await loadBounceTexture(),
     volumes: resolved.volumes,
     sounds,
@@ -152,7 +151,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
   };
   void fetchAccount()
     .then((account) => {
-      stage.setLocalSkin(account?.bodySkin ?? null);
+      stage.setLocalLook(account?.color ?? null, account?.skin ?? null);
       stage.setLocalHat(account?.hat ?? null);
       keyBindings = resolveEffectiveBindings(account);
       keyboard.setBindings(keyBindings);
@@ -160,7 +159,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
       if (account?.bindings) writeStoredBindings(account.id, account.bindings);
       emitState(finishAnnounced);
     })
-    .catch(() => stage.setLocalSkin(null));
+    .catch(() => stage.setLocalLook(null, null));
   teardown.add(() => keyboard.dispose());
   const look = new FreeLookCamera(stage.domElement);
   // Start looking along the Start's forward (ADR 0068).
@@ -222,7 +221,6 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     // ever locks input (M5 ticket 01's gate reads the phase we pass).
     accumulatorMs += elapsedMs;
     let steps = 0;
-    const simStartedAt = performance.now();
     while (accumulatorMs + FIXED_STEP_EPSILON_MS >= TICK_MS && steps < MAX_STEPS_PER_FRAME) {
       previousSnapshot = sim.snapshot();
       sim.tick({ [DEFAULT_CHARACTER_ID]: input }, "RUNNING");
@@ -230,7 +228,6 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
       steps += 1;
     }
     if (accumulatorMs + FIXED_STEP_EPSILON_MS >= TICK_MS) accumulatorMs = 0;
-    const simMs = performance.now() - simStartedAt;
 
     const snapshot = sim.snapshot();
     const render = interpolateState(previousSnapshot, snapshot, accumulatorMs / TICK_MS);
@@ -258,13 +255,11 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
       0,
       // G still reaches: every attempt bumps `grabEpoch`, caught or not.
       c.grabEpoch,
-      // Solo: a Grab only ever engages another Character (`activeGrabs` is
-      // keyed grabber → held), and free-roam has none — so an attempt never
-      // becomes a hold, and there is no hold to draw or facing to freeze.
-      // Literal rather than read off `c`, which can only ever report null
-      // here (ADR 0071).
-      undefined,
-      false,
+      // Solo: a Grab only ever engages another Character (`GrabHolds` keys
+      // a hold grabber → held), and free-roam has none — so an attempt never
+      // becomes a hold, and there is no hold to draw. A literal rather than
+      // read off `c`, which can only ever report none here (ADR 0071).
+      NO_HOLD,
     );
     stage.updateMotion(snapshot.tick - 1 + accumulatorMs / TICK_MS);
     stage.updateCamera(visualCharacter.position, look.yaw, look.pitch, Math.min(elapsedMs, 100) / 1000);
@@ -300,7 +295,6 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
   const notInPractice = (): void => {};
   return {
     stop: () => teardown.run(),
-    setNickname: notInPractice,
     setReady: notInPractice,
     selectTrack: notInPractice,
     setRoundType: notInPractice,

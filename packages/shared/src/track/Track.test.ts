@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { dotQuat, eulerQuat, IDENTITY_QUAT } from "../math/quat.js";
 import type { Module } from "./Module.js";
-import { chainTrack, countCheckpoints, placeAfter, resolveTrack, segmentOrientation, trackHasFinishZone, trackSpawn } from "./Track.js";
+import { resolveTrack } from "./resolveTrack.js";
+import { chainTrack, countCheckpoints, placeAfter, segmentOrientation, trackHasFinishZone, trackSpawn } from "./Track.js";
 import type { Track } from "./Track.js";
 import { M1_MODULES, M1_TRACK } from "./modules.js";
-import { GRAVITY_Y } from "../tuning.js";
+import { GRAVITY_Y } from "../tuning/character.js";
 
 const STRAIGHT_SOCKETS: Module["sockets"] = [
   { id: "entry", type: "floor", position: { x: 0, y: 0, z: 3 }, yaw: Math.PI },
@@ -814,5 +815,28 @@ describe("retired pad Modules (ADR 0064)", () => {
     expect(resolved.warnings).toHaveLength(2);
     expect(resolved.warnings[0]).toMatch(/Segment 0.*speed-pad/);
     expect(resolved.warnings[1]).toMatch(/Segment 1.*slow-pad/);
+  });
+});
+
+describe("an Asset Prop (ADR 0095/0099)", () => {
+  const CONE: Module = {
+    id: "cone",
+    statics: [],
+    asset: {
+      meshes: [{ positions: [{ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, { x: 0, y: 1, z: 0 }], indices: [0, 1, 2], surface: "default" }],
+      solid: [{ shape: { type: "ball", radius: 0.5 }, position: { x: 0, y: 0.5, z: 0 }, rotation: IDENTITY_QUAT, surface: "default" }],
+    },
+    sockets: [],
+    footprint: FOOTPRINT,
+  };
+
+  it("draws no belt strip even when a belt arrives on it unvalidated — a Prop has no deck", () => {
+    // Publish refuses the pair (ADR 0099); a Track that skips publish must
+    // not draw a belt running over a ball that is rolling away.
+    const resolved = resolveTrack({ cone: CONE }, [
+      { moduleId: "cone", position: { x: 0, y: 0, z: 0 }, rotation: 0, prop: true, conveyor: { preset: "fast", angle: 0 } },
+    ]);
+    expect(resolved.props).toHaveLength(1);
+    expect(resolved.conveyors).toEqual([]);
   });
 });

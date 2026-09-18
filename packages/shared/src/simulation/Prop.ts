@@ -1,15 +1,40 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import type { Quat } from "../math/quat.js";
+import { IDENTITY_QUAT, type Quat } from "../math/quat.js";
 import { lengthVec3, scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
-import { PROP_PUSH_SCALE } from "../tuning.js";
+import { PROP_PUSH_SCALE } from "../tuning/world.js";
+import type { SolidShape } from "../track/asset.js";
 import { PROP_GROUPS } from "./collisionGroups.js";
+import { solidColliderDesc } from "./MovingSegment.js";
 
-export type PropShape = { kind: "box"; halfExtents: Vec3 } | { kind: "ball"; radius: number };
+/** One authored solid part of an Asset Prop, already scaled, in the Asset's own frame (ADR 0065/0095). */
+export interface PropSolidPart {
+  shape: SolidShape;
+  position: Vec3;
+  rotation: Quat;
+}
+
+export type PropShape =
+  | { kind: "box"; halfExtents: Vec3 }
+  | { kind: "ball"; radius: number }
+  /**
+   * An Asset Prop (ADR 0095): a placed Asset a Character can shove around,
+   * colliding as the authored solid parts a Moving Segment collides as — and
+   * for the same reason (a hollow trimesh on a body that moves traps whatever
+   * ends up inside it). `moduleId`/`scale` are what the renderer draws it
+   * with; nothing in the simulation reads them.
+   */
+  | { kind: "asset"; moduleId: string; scale: number; parts: PropSolidPart[] };
 
 export interface PropConfig {
   shape: PropShape;
-  /** Starting position (body centre). */
+  /**
+   * Starting position. The body centre for a box or a ball; for an Asset
+   * Prop it is the Segment's own origin — the Asset pivot its parts are
+   * measured from — so the body starts exactly where the Track placed it.
+   */
   center: Vec3;
+  /** Starting orientation, identity when absent — how an Asset Prop keeps the yaw/pitch/roll it was placed with. */
+  rotation?: Quat;
   mass?: number;
   friction?: number;
 }
@@ -40,28 +65,42 @@ const ZERO = { x: 0, y: 0, z: 0 };
  */
 export class Prop {
   readonly config: PropConfig;
-  readonly collider: RAPIER.Collider;
+  /**
+   * Every collider on this body — one for a box or a ball, one per authored
+   * solid part for an Asset Prop. `RapierSimulation` maps each handle back to
+   * the Prop, so a shove landing on any part of an Asset moves the whole thing.
+   */
+  readonly colliders: RAPIER.Collider[];
   private readonly body: RAPIER.RigidBody;
 
   constructor(world: RAPIER.World, config: PropConfig) {
     this.config = config;
+    const rotation = config.rotation ?? IDENTITY_QUAT;
     this.body = world.createRigidBody(
-      RAPIER.RigidBodyDesc.dynamic().setTranslation(config.center.x, config.center.y, config.center.z),
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(config.center.x, config.center.y, config.center.z)
+        .setRotation(rotation),
     );
-    const desc =
-      config.shape.kind === "box"
-        ? RAPIER.ColliderDesc.cuboid(
-            config.shape.halfExtents.x,
-            config.shape.halfExtents.y,
-            config.shape.halfExtents.z,
-          )
-        : RAPIER.ColliderDesc.ball(config.shape.radius);
-    this.collider = world.createCollider(
-      desc
-        .setMass(config.mass ?? DEFAULT_MASS)
-        .setFriction(config.friction ?? DEFAULT_FRICTION)
-        .setCollisionGroups(PROP_GROUPS),
-      this.body,
+    const friction = config.friction ?? DEFAULT_FRICTION;
+    const descs: RAPIER.ColliderDesc[] =
+      config.shape.kind === "asset"
+        ? config.shape.parts.flatMap((part) => {
+            const desc = solidColliderDesc(part.shape);
+            return desc === null ? [] : [desc.setTranslation(part.position.x, part.position.y, part.position.z).setRotation(part.rotation)];
+          })
+        : config.shape.kind === "box"
+          ? [RAPIER.ColliderDesc.cuboid(config.shape.halfExtents.x, config.shape.halfExtents.y, config.shape.halfExtents.z)]
+          : [RAPIER.ColliderDesc.ball(config.shape.radius)];
+    if (descs.length === 0) {
+      // An Asset whose solid parts all came out degenerate: keep a body rather
+      // than a hole in the Track, sized from nothing so it simply falls away.
+      descs.push(RAPIER.ColliderDesc.ball(0.1));
+    }
+    // The mass is the Prop's, not each part's — split evenly, so an Asset
+    // built from five hulls is no heavier than one built from one.
+    const perCollider = (config.mass ?? DEFAULT_MASS) / descs.length;
+    this.colliders = descs.map((desc) =>
+      world.createCollider(desc.setMass(perCollider).setFriction(friction).setCollisionGroups(PROP_GROUPS), this.body),
     );
   }
 

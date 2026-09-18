@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { UNTITLED_TRACK_NAME, type TrackListing } from '@dont-fall/shared';
-import { trackThumbnailUrl } from '../lib/api/tracks.js';
+import { listedThumbnailUrl } from '../lib/trackArt.js';
 import Stage from '../ui/Stage';
 import JellyButton from '../ui/JellyButton';
 import Chip from '../ui/Chip';
@@ -159,7 +159,7 @@ export default function Discover({ tracks, isLoading, error, onRetry, selectedId
                   {t.hasThumbnail && (
                     <img
                       className={s.thumbImg}
-                      src={trackThumbnailUrl(t.id)}
+                      src={listedThumbnailUrl(t)}
                       alt=""
                       loading="lazy"
                       onError={(e) => {

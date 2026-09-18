@@ -38,11 +38,17 @@ function BrokeredLobby({ serverPort, code }: { serverPort: number; code?: string
   // and its TRY AGAIN remounts this route for a fresh handshake. No
   // auto-retry countdown: redialing a dead lobby on a timer is the lobby
   // tick lesson all over again — the Player asks for it explicitly.
-  if (error !== null || closed) throw new ConnectionError(error?.message ?? "The connection dropped.");
+  // The server's own reason when it gave one — "server is full", a Track that
+  // would not load, or this Account taking its seat somewhere else (ADR 0090).
+  if (error !== null || closed !== null) {
+    // An ordinary drop carries no reason at all (an empty string), and gets
+    // the generic line.
+    throw new ConnectionError(error?.message ?? (closed?.reason || "The connection dropped."));
+  }
 
   const onHome = () => navigate("/");
   if (connection !== null && lobby !== null && lobby.phase !== "LOBBY") {
-    return <GameCanvas connection={connection} onExit={onHome} onMatchEnd={onHome} />;
+    return <GameCanvas connection={connection} lobbyAtHandover={lobby} onExit={onHome} onMatchEnd={onHome} />;
   }
 
   if (lobby !== null) {
@@ -50,7 +56,6 @@ function BrokeredLobby({ serverPort, code }: { serverPort: number; code?: string
       <Lobby
         lobby={lobby}
         {...(code === undefined ? {} : { code })}
-        onSetNickname={actions.setNickname}
         onSetReady={actions.setReady}
         onSelectTrack={actions.selectTrack}
         onSetRoundType={actions.setRoundType}
@@ -61,5 +66,5 @@ function BrokeredLobby({ serverPort, code }: { serverPort: number; code?: string
     );
   }
 
-  return <LoadingScreen label="Connecting to the Lobby…" />;
+  return <LoadingScreen label="CONNECTING TO THE LOBBY…" />;
 }

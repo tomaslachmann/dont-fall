@@ -5,11 +5,15 @@ import {
   hitImpactMagnitude,
   IMPACT_RAGDOLL_MIN,
   isDownMotionState,
+  SPIN_WINDUP_MS,
   type CharacterMotionState,
+  type HeldPhase,
   type RagdollCause,
   type Vec3,
 } from "@dont-fall/shared";
 import { RiseLatch } from "./riseLatch.js";
+
+const TAU = Math.PI * 2;
 
 /**
  * The soonest a drawn swing, or a drawn grab attempt, may fire again (ms): the
@@ -56,6 +60,13 @@ export const KNOCKDOWN_WEIGHT: Readonly<Record<RagdollCause, "heavy" | "medium">
   Hit: "medium",
   Fall: "medium",
   Disconnect: "medium",
+  // A slip on ice is your own feet going, not something hitting you (ADR 0092).
+  Slip: "medium",
+  // ADR 0104: thrown out of a Spin — or hit by a body that was — lands like a
+  // wall does. A Limp body put down, or a grabber's own dizzy fall, does not.
+  Hurl: "heavy",
+  Grab: "medium",
+  Dizzy: "medium",
 };
 
 /**
@@ -75,6 +86,11 @@ export interface FightFrame {
   hitReactEpoch: number;
   grabEpoch: number;
   grabbingId: string | null;
+  /** Both ends of a hold, and where the Spin has got to (ADR 0104). */
+  heldByGrabberId: string | null;
+  heldPhase: HeldPhase | null;
+  spinMs: number;
+  facing: number;
   ragdollEpoch: number;
   ragdollCause: RagdollCause;
   /** This frame's Respawn, from `MovementCues`. */
@@ -98,6 +114,14 @@ export interface FightCue {
   gettingUp: boolean;
   /** It was knocked off balance by something other than a Hit or a Respawn: a Bump, a machine. */
   bumped: boolean;
+  /** It won its Struggle and is free, on its feet (ADR 0104). */
+  escaped: boolean;
+  /** It lost its Struggle and hangs Limp (ADR 0104). */
+  wentLimp: boolean;
+  /** Its Spin came round once more, wound up this far (0..1) — one whoosh a turn (ADR 0104). */
+  spinPass: { windup: number } | null;
+  /** It let go of a Spin: the Hurl (ADR 0104). */
+  released: boolean;
 }
 
 const QUIET: FightCue = Object.freeze({
@@ -108,6 +132,10 @@ const QUIET: FightCue = Object.freeze({
   knockdown: null,
   gettingUp: false,
   bumped: false,
+  escaped: false,
+  wentLimp: false,
+  spinPass: null,
+  released: false,
 });
 
 interface Seen {
@@ -119,6 +147,12 @@ interface Seen {
   respawnedAtMs: number;
   downAtMs: number;
   staggeredAtMs: number;
+  held: boolean;
+  heldPhase: HeldPhase | null;
+  spinMs: number;
+  facing: number;
+  /** How far the current Spin has turned (rad), as heard — a whoosh each time it comes round. */
+  spinTurned: number;
 }
 
 interface Swing {
@@ -148,6 +182,10 @@ const distance = (a: Vec3, b: Vec3): number => Math.hypot(a.x - b.x, a.y - b.y, 
  * - **Getting up:** entering `GettingUp`.
  * - **Bump:** entering `Stagger`, or a medium knockdown, unless a Hit or a
  *   Respawn just caused it.
+ * - **A hold (ADR 0104):** getting free on its feet (`heldByGrabberId`
+ *   clearing into `Controlled`), going Limp (`heldPhase` turning), a Spin
+ *   coming round (its `facing` summed while `spinMs` runs), and letting go of
+ *   one (`spinMs` falling to 0).
  */
 export class FightCues {
   private readonly seen = new Map<string, Seen>();
@@ -172,6 +210,11 @@ export class FightCues {
       respawnedAtMs: -Infinity,
       downAtMs: -Infinity,
       staggeredAtMs: -Infinity,
+      held: frame.heldByGrabberId !== null,
+      heldPhase: frame.heldPhase,
+      spinMs: frame.spinMs,
+      facing: frame.facing,
+      spinTurned: 0,
     };
     this.seen.set(id, seen);
     if (struck) seen.struckAtMs = nowMs;
@@ -208,10 +251,30 @@ export class FightCues {
     const grabbing = frame.grabbingId !== null;
     const gripped = previous !== undefined && grabbing && !previous.grabbing;
 
+    // ADR 0104. Free on its feet is a won Struggle; set down Staggering, or
+    // thrown, is not.
+    const held = frame.heldByGrabberId !== null;
+    const escaped = previous !== undefined && previous.held && !held && motionState === "Controlled";
+    const wentLimp = previous !== undefined && held && previous.heldPhase === "struggle" && frame.heldPhase === "limp";
+    let spinPass: FightCue["spinPass"] = null;
+    if (frame.spinMs > 0 && seen.spinMs > 0) {
+      const turn = Math.abs(Math.atan2(Math.sin(frame.facing - seen.facing), Math.cos(frame.facing - seen.facing)));
+      const laps = Math.floor(seen.spinTurned / TAU);
+      seen.spinTurned += turn;
+      if (Math.floor(seen.spinTurned / TAU) > laps) spinPass = { windup: Math.min(1, frame.spinMs / SPIN_WINDUP_MS) };
+    } else if (frame.spinMs === 0) {
+      seen.spinTurned = 0;
+    }
+    const released = previous !== undefined && seen.spinMs > 0 && frame.spinMs === 0;
+
     seen.motionState = motionState;
     seen.grabbing = grabbing;
-    return swing || struck || reached || gripped || knockdown || gettingUp || bumped
-      ? { swing, struck, reached, gripped, knockdown, gettingUp, bumped }
+    seen.held = held;
+    seen.heldPhase = frame.heldPhase;
+    seen.spinMs = frame.spinMs;
+    seen.facing = frame.facing;
+    return swing || struck || reached || gripped || knockdown || gettingUp || bumped || escaped || wentLimp || spinPass || released
+      ? { swing, struck, reached, gripped, knockdown, gettingUp, bumped, escaped, wentLimp, spinPass, released }
       : QUIET;
   }
 

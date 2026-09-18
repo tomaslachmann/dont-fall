@@ -1,4 +1,4 @@
-import { MAX_ROUND_SCORE, QUALIFICATION_SCORE_BONUS } from "../tuning.js";
+import { MAX_ROUND_SCORE, QUALIFICATION_SCORE_BONUS } from "../tuning/match.js";
 import type { LobbyPlayer } from "./Lobby.js";
 import { rankWithTies } from "./ranking.js";
 import { buildResults, type DnfEntry, type ResultsCharacter, type ResultsRow } from "./Results.js";

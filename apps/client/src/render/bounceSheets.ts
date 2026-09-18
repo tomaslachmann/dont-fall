@@ -15,8 +15,10 @@ import {
   type MovingSegmentConfig,
   type RenderCharacter,
   type Vec3,
+  smoothDeckPlan,
 } from "@dont-fall/shared";
 import * as THREE from "three";
+import { deckSheetGeometry, loadDeckTexture, tileDeckTexture, type DecodeDeckImage } from "@dont-fall/render";
 import { seatOnDeck, toDeckFrame } from "./deckSeat.js";
 
 /**
@@ -145,21 +147,23 @@ export const buildBounceSheets = (
     const width = deck.halfX * 2;
     const depth = deck.halfZ * 2;
 
-    const geometry = new THREE.PlaneGeometry(width, depth, BOUNCE_SHEET_SEGMENTS, BOUNCE_SHEET_SEGMENTS);
-    geometry.rotateX(-Math.PI / 2); // lie flat: the plane's own +Z becomes world -Z
+    // Cut to the deck's own shape when it has one (ADR 0096), and subdivided
+    // until it is dense enough to dome and to dent — a collision mesh's top
+    // face can be two triangles where the lattice it replaces had hundreds.
+    const geometry = deck.plan
+      ? deckSheetGeometry(smoothDeckPlan(deck.plan), deck.halfX, deck.halfZ)
+      : (() => {
+          const plane = new THREE.PlaneGeometry(width, depth, BOUNCE_SHEET_SEGMENTS, BOUNCE_SHEET_SEGMENTS);
+          plane.rotateX(-Math.PI / 2); // lie flat: the plane's own +Z becomes world -Z
+          return plane;
+        })();
     const position = geometry.getAttribute("position") as THREE.BufferAttribute;
     // The flat lattice, kept as the rest state — every frame rewrites y from
     // it, so a dent can never accumulate into the mesh itself.
     const restX = Float32Array.from({ length: position.count }, (_, i) => position.getX(i));
     const restZ = Float32Array.from({ length: position.count }, (_, i) => position.getZ(i));
 
-    const map = texture?.clone() ?? null;
-    if (map) {
-      map.needsUpdate = true;
-      map.wrapS = THREE.RepeatWrapping;
-      map.wrapT = THREE.RepeatWrapping;
-      map.repeat.set(width / BOUNCE_TILE_WORLD, depth / BOUNCE_TILE_WORLD);
-    }
+    const map = texture ? tileDeckTexture(texture, { tileWorld: BOUNCE_TILE_WORLD, width, depth }) : null;
     const material = new THREE.MeshStandardMaterial({
       ...(map ? { map } : { color: 0x36c9f0 }),
       // Taut inflatable plastic: the map carries the grain, the material
@@ -208,28 +212,9 @@ export const buildBounceSheets = (
     return { object, movingIndex: movingIndex < 0 ? null : movingIndex, update };
   });
 
-/**
- * Decode fetched image bytes for the sheet — `createImageBitmap` in browsers,
- * injected in tests, exactly the seam the mud loader uses.
- */
-export type DecodeBounceImage = (bytes: Uint8Array) => Promise<ImageBitmap>;
-
-const decodeImageBitmap: DecodeBounceImage = (bytes) =>
-  createImageBitmap(new Blob([bytes as unknown as BlobPart], { type: "image/jpeg" }));
-
-/**
- * The shared bounce texture (ADR 0070) — fetched once per session through the
- * same bytes pipe as the GLB art, then cloned per sheet by
- * {@link buildBounceSheets}. Colour-correct (sRGB), like ice and mud.
- */
-export const loadBounceTexture = async (
+/** The shared bounce texture (ADR 0070) — fetched once per session through the same bytes pipe as the GLB art, then tiled per sheet. */
+export const loadBounceTexture = (
   fetchBytes: (url: string) => Promise<Uint8Array>,
   baseUrl: string,
-  decode: DecodeBounceImage = decodeImageBitmap,
-): Promise<THREE.Texture> => {
-  const bitmap = await decode(await fetchBytes(`${baseUrl}/${BOUNCE_TEXTURE_FILE}`));
-  const texture = new THREE.Texture(bitmap);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.needsUpdate = true;
-  return texture;
-};
+  decode?: DecodeDeckImage,
+): Promise<THREE.Texture> => loadDeckTexture(fetchBytes, baseUrl, BOUNCE_TEXTURE_FILE, decode);

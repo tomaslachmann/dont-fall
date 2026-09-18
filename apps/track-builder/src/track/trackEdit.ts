@@ -1,5 +1,6 @@
 import {
   addVec3,
+  attachmentsOf,
   clampLaunchHeight,
   conjugateQuat,
   findSocket,
@@ -19,10 +20,9 @@ import {
   subVec3,
   type AssetCategory,
   type Module,
+  type AttachmentKey,
   type Quat,
   type Segment,
-  type SegmentConveyor,
-  type SegmentMotion,
   type Track,
   type Vec3,
 } from "@dont-fall/shared";
@@ -80,18 +80,13 @@ const chainsAfter = (prevModule: Module, module: Module): boolean =>
 
 /**
  * `segment` chained onto its predecessor — `placeAfter` builds a fresh
- * Segment, so everything it doesn't compute (a Motion, ADR 0061; a belt,
- * ADR 0064; ice, ADR 0066; mud, ADR 0067) is carried over from the one it
- * re-places, or re-chaining after any upstream edit would silently strip it.
+ * Segment, so every Attachment it carries (ADR 0099) is carried over from the
+ * one it re-places, or re-chaining after any upstream edit would silently
+ * strip it.
  */
 const chainOnto = (prevSegment: Segment, prevModule: Module, segment: Segment, module: Module): Segment => ({
   ...placeAfter(prevSegment, prevModule, segment.moduleId, module, "exit", "entry", segmentScale(segment)),
-  ...(segment.motion ? { motion: segment.motion } : {}),
-  ...(segment.conveyor ? { conveyor: segment.conveyor } : {}),
-  ...(segment.ice ? { ice: segment.ice } : {}),
-  ...(segment.mud ? { mud: segment.mud } : {}),
-  ...(segment.start ? { start: segment.start } : {}),
-  ...(segment.checkpoint ? { checkpoint: segment.checkpoint } : {}),
+  ...attachmentsOf(segment),
 });
 
 /**
@@ -267,25 +262,22 @@ export const deleteSegment = (track: Track, modules: Record<string, Module>, ind
 export const removeLast = (track: Track): Track => track.slice(0, -1);
 
 /**
- * Duplicates the Segment at `index`, inserting the copy (Motion and belt
- * included) right after it. A Track has one Start, so the copy is never it;
- * a Checkpoint's copy is the next Checkpoint (ADR 0068).
+ * Duplicates the Segment at `index`, inserting the copy — every Attachment
+ * included (ADR 0099) — right after it. A Track has one Start, so the copy is
+ * never it; a Checkpoint's copy is the next Checkpoint (ADR 0068).
  */
 export const duplicateSegment = (track: Track, modules: Record<string, Module>, index: number): Track => {
   assertIndexInRange("duplicateSegment", track, index);
-  const { moduleId, motion, scale, conveyor, ice, mud, bounce, checkpoint, launch } = track[index]!;
-  let duplicated = insertSegment(track, modules, index + 1, moduleId);
-  if (scale !== undefined) duplicated = setSegmentScale(duplicated, modules, index + 1, scale);
-  if (motion) duplicated = setSegmentMotion(duplicated, index + 1, motion);
-  if (ice) duplicated = setSegmentIce(duplicated, index + 1, ice);
-  if (mud) duplicated = setSegmentMud(duplicated, index + 1, mud);
-  if (bounce) duplicated = setSegmentBounce(duplicated, index + 1, bounce);
-  if (launch) duplicated = setSegmentLaunch(duplicated, index + 1, launch.height);
+  const source = track[index]!;
+  const { start: _start, checkpoint, ...copied } = attachmentsOf(source);
+  let duplicated = insertSegment(track, modules, index + 1, source.moduleId);
+  if (source.scale !== undefined) duplicated = setSegmentScale(duplicated, modules, index + 1, source.scale);
+  duplicated = duplicated.map((segment, i) => (i === index + 1 ? { ...segment, ...copied } : segment));
   if (checkpoint) {
     duplicated = setSegmentCheckpoint(duplicated, index + 1, true);
     if (checkpoint.respawn) duplicated = setCheckpointRespawn(duplicated, index + 1, checkpoint.respawn);
   }
-  return conveyor ? setSegmentConveyor(duplicated, index + 1, conveyor) : duplicated;
+  return duplicated;
 };
 
 /**
@@ -374,11 +366,6 @@ export const worldToSegmentLocal = (segment: Segment, point: Vec3): Vec3 =>
   scaleVec3(rotateVec3ByQuat(subVec3(point, segment.position), conjugateQuat(segmentOrientation(segment))), 1 / segmentScale(segment));
 
 /**
- * Gives the Segment at `index` a Motion, or takes it away (`undefined`) —
- * ADR 0061. Its rest placement is untouched and nothing re-chains: a Motion
- * moves a Segment around where it sits, never where the next one attaches.
- */
-/**
  * Scales the Segment at `index` uniformly (ADR 0062), clamped to the stored
  * bounds. A chained Segment stays attached at its entry — re-placed through
  * its scaled entry Socket — and everything after it re-chains onto the scaled
@@ -391,85 +378,37 @@ export const setSegmentScale = (track: Track, modules: Record<string, Module>, i
   return rechainFrom(withScaled, modules, index);
 };
 
-export const setSegmentMotion = (track: Track, index: number, motion: SegmentMotion | undefined): Track => {
-  assertIndexInRange("setSegmentMotion", track, index);
-  return track.map((segment, i) => {
-    if (i !== index) return segment;
-    const { motion: _previous, ...rest } = segment;
-    return motion ? { ...rest, motion } : rest;
-  });
-};
-
 /**
- * Attach (`conveyor` set) or detach (`undefined`) a belt on one Segment
- * (ADR 0064) — the same shape as {@link setSegmentMotion}: a pure per-Segment
- * annotation swap, no re-chain (a belt moves nobody's geometry).
+ * Attaches `value` as the Segment at `index`'s `key` Attachment, or detaches
+ * it (`undefined`) — ADR 0099. A pure per-Segment swap with no re-chain: an
+ * Attachment moves nobody's geometry, not even a Motion, which moves a Segment
+ * around where it sits and never where the next one attaches. The Start and a
+ * Checkpoint are not here: each is a rule across the Track (one Start;
+ * Checkpoints numbered 1, 2, 3…), with a setter of its own above.
  */
-export const setSegmentConveyor = (track: Track, index: number, conveyor: SegmentConveyor | undefined): Track => {
-  assertIndexInRange("setSegmentConveyor", track, index);
+export const setSegmentAttachment = <K extends Exclude<AttachmentKey, "start" | "checkpoint">>(
+  track: Track,
+  index: number,
+  key: K,
+  value: Segment[K] | undefined,
+): Track => {
+  assertIndexInRange("setSegmentAttachment", track, index);
   return track.map((segment, i) => {
     if (i !== index) return segment;
-    const { conveyor: _previous, ...rest } = segment;
-    return conveyor ? { ...rest, conveyor } : rest;
-  });
-};
-
-/**
- * Attach (`true`) or detach (`undefined`) ice on one Segment (ADR 0066) —
- * the same shape as {@link setSegmentConveyor}: a pure per-Segment
- * annotation swap, no re-chain (ice moves nobody's geometry).
- */
-export const setSegmentIce = (track: Track, index: number, ice: boolean | undefined): Track => {
-  assertIndexInRange("setSegmentIce", track, index);
-  return track.map((segment, i) => {
-    if (i !== index) return segment;
-    const { ice: _previous, ...rest } = segment;
-    return ice ? { ...rest, ice } : rest;
+    const next: Segment = { ...segment };
+    if (value === undefined) delete next[key];
+    else next[key] = value;
+    return next;
   });
 };
 
 /**
  * Set (`height`) or clear (`undefined`) one Spring Segment's own throw
- * height (ADR 0069) — the same shape as {@link setSegmentConveyor}: a pure
- * per-Segment annotation swap, no re-chain. Clearing it does not stop the
- * Spring launching; it falls back to the Asset's own default.
+ * height (ADR 0069), pulled into the storable range. Clearing it does not
+ * stop the Spring launching; it falls back to the Asset's own default.
  */
-export const setSegmentLaunch = (track: Track, index: number, height: number | undefined): Track => {
-  assertIndexInRange("setSegmentLaunch", track, index);
-  return track.map((segment, i) => {
-    if (i !== index) return segment;
-    const { launch: _previous, ...rest } = segment;
-    return height === undefined ? rest : { ...rest, launch: { height: clampLaunchHeight(height) } };
-  });
-};
-
-/**
- * Attach (`true`) or detach (`undefined`) mud on one Segment (ADR 0067) —
- * the same shape as {@link setSegmentIce}: a pure per-Segment annotation
- * swap, no re-chain (mud moves nobody's geometry).
- */
-export const setSegmentMud = (track: Track, index: number, mud: boolean | undefined): Track => {
-  assertIndexInRange("setSegmentMud", track, index);
-  return track.map((segment, i) => {
-    if (i !== index) return segment;
-    const { mud: _previous, ...rest } = segment;
-    return mud ? { ...rest, mud } : rest;
-  });
-};
-
-/**
- * Attach (`true`) or detach (`undefined`) the bounce sheet on one Segment
- * (ADR 0070) — the same shape as {@link setSegmentMud}, and the third member
- * of the one-deck-one-Surface choice.
- */
-export const setSegmentBounce = (track: Track, index: number, bounce: boolean | undefined): Track => {
-  assertIndexInRange("setSegmentBounce", track, index);
-  return track.map((segment, i) => {
-    if (i !== index) return segment;
-    const { bounce: _previous, ...rest } = segment;
-    return bounce ? { ...rest, bounce } : rest;
-  });
-};
+export const setSegmentLaunch = (track: Track, index: number, height: number | undefined): Track =>
+  setSegmentAttachment(track, index, "launch", height === undefined ? undefined : { height: clampLaunchHeight(height) });
 
 // Two-tier snap steps (ADR 0034). `MOVE_STEP_FINE`/`ROTATE_STEP`/
 // `ROTATE_STEP_FINE` are shared by the keyboard nudge (ticket 02) and the

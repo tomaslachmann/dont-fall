@@ -129,7 +129,6 @@ export const toLobbySnapshot = (myId: string, maxPlayers: number, message: Snaps
  */
 export interface LobbyActions {
   /** Sets this connection's own nickname. Cosmetic — never a start gate. */
-  setNickname: (nickname: string) => void;
   /** Sets this connection's own Ready state. Only meaningful in LOBBY. */
   setReady: (ready: boolean) => void;
   /** Host-only: picks a different Track for this Lobby. Ignored if not host or not in LOBBY. */
@@ -158,6 +157,12 @@ export interface LobbyActions {
  * second socket for the Match would rejoin as a stranger — new id, lost
  * Ready, lost host.
  */
+/** Why a Lobby socket closed — the server's own code and reason, empty for an ordinary drop. */
+export interface SocketClose {
+  code: number;
+  reason: string;
+}
+
 export interface LobbyConnection extends LobbyActions {
   /** The underlying socket — handed to the game, which attaches its snapshot/sim feed to it. Never re-created. */
   readonly socket: WebSocket;
@@ -169,8 +174,13 @@ export interface LobbyConnection extends LobbyActions {
   getLobby: () => LobbySnapshot | null;
   /** Fires on every snapshot whose Lobby content actually changed (JSON-deduped against the snapshot rate). */
   subscribeLobby: (listener: (lobby: LobbySnapshot) => void) => () => void;
-  /** Fires once when the socket drops. M2 does not reconnect (ADR 0011) — the shell routes away. */
-  onClose: (listener: () => void) => () => void;
+  /**
+   * Fires once when the socket drops, with the server's own close code and
+   * reason when it named one (a full server, a Track that would not load, or
+   * this Account taking its seat somewhere else — ADR 0090). M2 does not
+   * reconnect (ADR 0011); the shell routes away, saying why when it can.
+   */
+  onClose: (listener: (why: SocketClose) => void) => () => void;
   /** Tears the socket down. Idempotent — safe under StrictMode's double unmount and game handoff races. */
   close: () => void;
 }
@@ -209,7 +219,7 @@ export const createLobbyConnection = async (options: LobbyConnectionOptions = {}
   let lobby: LobbySnapshot | null = null;
   let lastLobbyJson: string | null = null;
   const lobbyListeners = new Set<(lobby: LobbySnapshot) => void>();
-  const closeListeners = new Set<() => void>();
+  const closeListeners = new Set<(why: SocketClose) => void>();
 
   const send = (message: ClientMessage): void => {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
@@ -236,8 +246,9 @@ export const createLobbyConnection = async (options: LobbyConnectionOptions = {}
     lobby = next;
     for (const listener of [...lobbyListeners]) listener(next);
   });
-  const stopClose = listen(socket, "close", () => {
-    for (const listener of [...closeListeners]) listener();
+  const stopClose = listen(socket, "close", (event) => {
+    const { code, reason } = event as CloseEvent;
+    for (const listener of [...closeListeners]) listener({ code, reason });
   });
   void stopMessage;
   void stopClose;
@@ -267,7 +278,6 @@ export const createLobbyConnection = async (options: LobbyConnectionOptions = {}
       stopClose();
       socket.close();
     },
-    setNickname: (nickname) => send({ type: "setNickname", nickname }),
     setReady: (ready) => send({ type: "setReady", ready }),
     selectTrack: (trackId) => send({ type: "selectTrack", trackId }),
     setRoundType: (roundType) => send({ type: "setRoundType", roundType }),

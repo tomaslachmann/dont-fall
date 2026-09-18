@@ -20,6 +20,7 @@ import { startApi, type ApiService } from "@dont-fall/api";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { startServer, type MatchServer } from "./matchServer.js";
+import { SEAT_TAKEN_OVER_CLOSE_CODE } from "./match/lobby.js";
 
 // ADR 0028: the Match server now has a hard runtime dependency on the API.
 // One shared instance for this whole file, pointed to by TRACK_SERVICE_URL, so
@@ -545,8 +546,7 @@ describe("startServer", () => {
   it("removes a disconnected client's Character so it stops appearing in broadcasts", async () => {
     server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0 });
     const first = connect(server.port);
-    const firstWelcome = await nextMessage(first);
-    const firstId = (firstWelcome as { playerId: string }).playerId;
+    await nextMessage(first); // welcome
     await nextMessage(first); // first snapshot while both are about to connect
 
     const second = connect(server.port);
@@ -1369,7 +1369,7 @@ describe("startServer — a Round ends (M4 ticket 05)", () => {
 
     // M9 ticket 11 phase 2b / ticket 15: the row captures the Account and the
     // body skin at drop, so the Results screen can attribute it afterwards.
-    expect(afterDrop.dnf).toEqual([{ id: welcomeA.playerId, nickname: "Player", accountId: null, bodySkin: null, hat: null }]);
+    expect(afterDrop.dnf).toEqual([{ id: welcomeA.playerId, nickname: "Player", accountId: null, color: null, skin: null, hat: null }]);
     // Eliminated, not removed (M5 ticket 04, ADR 0042): the entry stays —
     // pulling its rigid body out of the world mid-Round would disturb
     // contact resolution for everyone still racing (the flaw this ticket
@@ -1549,6 +1549,92 @@ describe("startServer — a Survival Round ends (M5 ticket 05)", () => {
   });
 });
 
+describe("startServer — one seat per Account (ADR 0090)", () => {
+  const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
+    new Promise((resolve) => {
+      const onMessage = (raw: Buffer): void => {
+        const message = JSON.parse(raw.toString()) as ServerMessage;
+        if (message.type !== "snapshot") return;
+        socket.off("message", onMessage);
+        resolve(message);
+      };
+      socket.on("message", onMessage);
+    });
+
+  const snapshotUntil = async (
+    socket: WebSocket,
+    predicate: (s: Extract<ServerMessage, { type: "snapshot" }>) => boolean,
+    max = 400,
+  ): Promise<Extract<ServerMessage, { type: "snapshot" }>> => {
+    for (let i = 0; i < max; i += 1) {
+      const snapshot = await nextSnapshot(socket);
+      if (predicate(snapshot)) return snapshot;
+    }
+    throw new Error("condition never held");
+  };
+
+  const signUp = async (email: string): Promise<{ accountId: string; token: string }> => {
+    const res = await fetch(`${process.env.TRACK_SERVICE_URL}/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password: "password-123", displayName: email.split("@")[0] }),
+    });
+    const { account, token } = (await res.json()) as { account: { id: string }; token: string };
+    return { accountId: account.id, token };
+  };
+
+  it("hands the seat to the newest sign-in and closes the older one", async () => {
+    const { accountId, token } = await signUp("one-seat@example.com");
+    server = await startServer({ port: 0 });
+
+    const first = connect(server.port);
+    await nextMessage(first); // welcome
+    first.send(JSON.stringify({ type: "auth", token } satisfies ClientMessage));
+    await snapshotUntil(first, (s) => s.lobby.players[0]?.accountId === accountId);
+
+    const second = connect(server.port);
+    await nextMessage(second); // welcome
+    const closed = nextClose(first);
+    second.send(JSON.stringify({ type: "auth", token } satisfies ClientMessage));
+
+    // The one already sitting there is closed, saying why.
+    const { code, reason } = await closed;
+    expect(code).toBe(SEAT_TAKEN_OVER_CLOSE_CODE);
+    expect(reason).toMatch(/joined the Match somewhere else/);
+
+    // And the Account is left holding exactly one seat — the new one.
+    second.send(JSON.stringify({ type: "sync" } satisfies ClientMessage));
+    const settled = await snapshotUntil(second, (s) => s.lobby.players.length === 1);
+    expect(settled.lobby.players[0]!.accountId).toBe(accountId);
+    second.close();
+  }, 20_000);
+
+  it("leaves other Accounts, and anonymous seats, alone", async () => {
+    const mine = await signUp("one-seat-mine@example.com");
+    const theirs = await signUp("one-seat-theirs@example.com");
+    server = await startServer({ port: 0 });
+
+    const anonymous = connect(server.port);
+    await nextMessage(anonymous); // welcome
+    const rival = connect(server.port);
+    await nextMessage(rival); // welcome
+    rival.send(JSON.stringify({ type: "auth", token: theirs.token } satisfies ClientMessage));
+    await snapshotUntil(rival, (s) => s.lobby.players.some((p) => p.accountId === theirs.accountId));
+
+    const me = connect(server.port);
+    await nextMessage(me); // welcome
+    me.send(JSON.stringify({ type: "auth", token: mine.token } satisfies ClientMessage));
+
+    const settled = await snapshotUntil(me, (s) => s.lobby.players.some((p) => p.accountId === mine.accountId));
+    // Three seats still: nobody else's was taken for mine.
+    expect(settled.lobby.players).toHaveLength(3);
+    expect(settled.lobby.players.filter((p) => p.accountId === null)).toHaveLength(1);
+    anonymous.close();
+    rival.close();
+    me.close();
+  }, 20_000);
+});
+
 describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
   const nextSnapshot = (socket: WebSocket): Promise<Extract<ServerMessage, { type: "snapshot" }>> =>
     new Promise((resolve) => {
@@ -1571,18 +1657,31 @@ describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
     }
   };
 
-  it("truncates and trims a nickname, and leaves it alone when the trimmed result is empty", async () => {
+  // ADR 0097: the seat is named by the Account the socket authenticates as,
+  // not by anything the client sends. Trimmed and capped here because a
+  // display name has no length limit of its own on the API.
+  it("names the seat from the Account's own display name, trimmed and capped", async () => {
     server = await startServer({ port: 0 });
+    const signup = await fetch(`${process.env.TRACK_SERVICE_URL}/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: "long-name@example.com",
+        password: "password-123",
+        displayName: "  Speedy Gonzalez the Third  ",
+      }),
+    });
+    expect(signup.status).toBe(201);
+    const { token } = (await signup.json()) as { token: string };
+
     const a = connect(server.port);
     await nextMessage(a); // welcome
+    const anon = await snapshotUntil(a, (s) => s.lobby.players.length === 1);
+    expect(anon.lobby.players[0]!.nickname).toBe("Player"); // before auth lands
 
-    a.send(JSON.stringify({ type: "setNickname", nickname: "  " } satisfies ClientMessage));
-    const untouched = await snapshotUntil(a, (s) => s.lobby.players.length === 1);
-    expect(untouched.lobby.players[0]!.nickname).toBe("Player"); // the default, unblanked
-
-    a.send(JSON.stringify({ type: "setNickname", nickname: "  Speedy Gonzalez the Third  " } satisfies ClientMessage));
-    const renamed = await snapshotUntil(a, (s) => s.lobby.players[0]!.nickname !== "Player");
-    expect(renamed.lobby.players[0]!.nickname).toBe("Speedy Gonzalez the Thir"); // trimmed, then capped to NICKNAME_MAX_LENGTH (24)
+    a.send(JSON.stringify({ type: "auth", token } satisfies ClientMessage));
+    const named = await snapshotUntil(a, (s) => s.lobby.players[0]!.nickname !== "Player");
+    expect(named.lobby.players[0]!.nickname).toBe("Speedy Gonzalez the Thir"); // capped to NICKNAME_MAX_LENGTH (24)
     a.close();
   });
 
@@ -1605,7 +1704,7 @@ describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
 
     a.send(JSON.stringify({ type: "auth", token } satisfies ClientMessage));
     const bound = await snapshotUntil(a, (s) => s.lobby.players[0]?.accountId === account.id);
-    expect(bound.lobby.players[0]).toMatchObject({ accountId: account.id });
+    expect(bound.lobby.players[0]).toMatchObject({ accountId: account.id, nickname: "Authed" });
     a.close();
   });
 
@@ -1618,9 +1717,10 @@ describe("startServer — the Lobby (M4 ticket 07, ADR 0040)", () => {
     a.send(JSON.stringify({ type: "auth", token: "no-such-session" } satisfies ClientMessage));
     // Auth is enrichment, never a gate: the seat plays on, unattributed.
     // Proven by the socket surviving — a close would reject the next message.
-    a.send(JSON.stringify({ type: "setNickname", nickname: "StillHere" } satisfies ClientMessage));
-    const renamed = await snapshotUntil(a, (s) => s.lobby.players[0]!.nickname === "StillHere");
-    expect(renamed.lobby.players[0]!.accountId).toBeNull();
+    a.send(JSON.stringify({ type: "setReady", ready: true } satisfies ClientMessage));
+    const ready = await snapshotUntil(a, (s) => s.lobby.players[0]!.ready);
+    expect(ready.lobby.players[0]!.accountId).toBeNull();
+    expect(ready.lobby.players[0]!.nickname).toBe("Player"); // a refused token names nobody
     a.close();
   });
 
@@ -2478,7 +2578,7 @@ describe("startServer — pick or shuffle (M7 ticket 05, ADR 0049)", () => {
     await snapshotUntil(socket, (s) => s.lobby.matchLength === 2);
     await startMatch(socket);
 
-    const final = await snapshotUntil(socket, (s) => s.phase === "RESULTS" && s.roundResults.length === 2);
+    await snapshotUntil(socket, (s) => s.phase === "RESULTS" && s.roundResults.length === 2);
     // And it stays at 2 — never draws a 3rd the default would have. Terminal
     // RESULTS is idle (ADR 0057): consume the save landing (`matchOver`) and
     // the auto-confirm's own echo, then prove nothing else ever comes, then

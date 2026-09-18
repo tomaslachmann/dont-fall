@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { ASSET_PLACEMENT_MODULES, MODULE_LIBRARY, STANDINGS_READY_TIMEOUT_MS, countCheckpoints } from "@dont-fall/shared";
+import { ASSET_PLACEMENT_MODULES, MODULE_LIBRARY, STANDINGS_READY_TIMEOUT_MS, UNTITLED_TRACK_NAME, countCheckpoints } from "@dont-fall/shared";
 import { Button } from "@dont-fall/ui";
 import type { ExitReason, GameHandle, StandingsSnapshot } from "../game/index.js";
 import type { HitTakenEvent } from "../game/hitTaken.js";
@@ -14,10 +14,10 @@ import { readGraphicsQuality } from "../lib/graphicsQuality.js";
 import { setGameActive } from "../lib/gamePresence.js";
 import { skinForPlayerId } from "../lib/avatarSkins.js";
 import { useBeanBalance, useBettingState, usePlaceBet } from "../lib/hooks/useBetting.js";
-import { trackThumbnailUrl } from "../lib/api/tracks.js";
 import { useTrackDetail } from "../lib/hooks/useTrackDetail.js";
 import { useTrackList } from "../lib/hooks/useTrackList.js";
 import { usePersonalBest } from "../lib/hooks/usePersonalBest.js";
+import { thumbnailFor } from "../lib/trackArt.js";
 import {
   formatRaceClock,
   formatRaceTime,
@@ -30,8 +30,10 @@ import type { LobbyConnection, LobbySnapshot } from "../lib/socket/lobbyConnecti
 import BetweenRounds from "../screens/BetweenRounds.js";
 import Countdown from "../screens/Countdown.js";
 import FinishedOrOut from "../screens/FinishedOrOut.js";
+import Grabbed from "../screens/Grabbed.js";
 import HitFeedback from "../screens/HitFeedback.js";
-import { LoadingScreen } from "../screens/LoadingScreen.js";
+import HoldingPanel from "../screens/HoldingPanel.js";
+import { LoadingScreen, RoundLoader } from "../screens/LoadingScreen.js";
 import Spectator from "../screens/Spectator.js";
 import { PracticeHud } from "../screens/PracticeHud.js";
 import RaceHUD from "../screens/RaceHUD.js";
@@ -58,6 +60,13 @@ export interface GameCanvasProps {
    */
   connection?: LobbyConnection;
   /**
+   * The route's own latest Lobby snapshot, the one that handed the socket over
+   * (ADR 0056). The Round loader reads it until the game raises its own, so
+   * it knows its Track from the first frame instead of after the game module
+   * has loaded (ADR 0105).
+   */
+  lobbyAtHandover?: LobbySnapshot | null;
+  /**
    * Free-roam practice instead of a Match (m8.1 ticket 01): the game boots
    * a local session (`practice: true` through to `startGame`), renders the
    * practice hint bar instead of every match overlay, and never opens a
@@ -77,10 +86,14 @@ export interface GameCanvasProps {
  */
 const GO_HOLD_MS = 1000;
 /**
- * How long the incoming-Hit flash stays up per landing (M9 ticket 09) — one
- * beat, the GO! hold's own cadence. Display-only; the sim never waits on it.
+ * How long the incoming-Hit flash stays up per landing (M9 ticket 09).
+ * Display-only; the sim never waits on it. A Hit that leaves you standing is
+ * a brief red tint; a knockout holds long enough for its crack to paint, sit
+ * and fade (2026-09-18) — the two match `HitFeedback.module.css`'s own
+ * `tint` and `crackFade`.
  */
-const HIT_FLASH_MS = 1000;
+const HIT_FLASH_MS = 600;
+const KNOCKDOWN_FLASH_MS = 1600;
 
 /**
  * The boundary ADR 0008 and M4 ticket 01 prepared: takes a config in, hands
@@ -88,7 +101,7 @@ const HIT_FLASH_MS = 1000;
  * match-end/exit back out. Renders a plain div; the game loop never runs
  * through React.
  */
-export function GameCanvas({ trackId, serverPort, connection, practice, onMatchEnd, onExit }: GameCanvasProps) {
+export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, practice, onMatchEnd, onExit }: GameCanvasProps) {
   // While a Match is mounted a game owns the screen — the global social
   // alerts step aside for it (a Lobby invite returns once the game is gone,
   // unless the Player answered it first). A practice boot is not a game
@@ -194,7 +207,7 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
   }, [showGo]);
   useEffect(() => {
     if (!hitTaken) return;
-    const timer = setTimeout(() => setHitTaken(null), HIT_FLASH_MS);
+    const timer = setTimeout(() => setHitTaken(null), hitTaken.event.knockedDown ? KNOCKDOWN_FLASH_MS : HIT_FLASH_MS);
     return () => clearTimeout(timer);
   }, [hitTaken]);
   useEffect(() => {
@@ -217,16 +230,24 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
   const personalBestMs = usePersonalBest(practice ? undefined : lobby?.trackId, roundNumber);
   // The Round loader (ADR 0089): up while this client is still building its
   // world, and while the server holds LOADING for everyone else's. The Track
-  // it names is the one the Round runs on, art and all (ADR 0085).
+  // it names is the one the Round runs on, art and all (ADR 0085). Its name
+  // and picture come off the listing sign-in already loaded (ADR 0105), and
+  // the route's snapshot names it before the game has raised one.
   const roundLoading = !practice && (!worldReady || lobby === null || lobby.phase === "LOADING");
-  const currentTrackName = (trackDetail?.name ?? lobby?.trackId ?? "").toUpperCase();
-  const currentTrackThumbnail =
-    lobby && trackList?.find((t) => t.id === lobby.trackId)?.hasThumbnail ? trackThumbnailUrl(lobby.trackId) : undefined;
+  const loaderLobby = lobby ?? lobbyAtHandover ?? null;
+  const loaderTrackId = loaderLobby?.trackId ?? trackId;
+  const nameOf = (id: string): string => {
+    const listed = trackList?.find((t) => t.id === id);
+    return (listed ? (listed.name ?? UNTITLED_TRACK_NAME) : (trackDetail?.name ?? UNTITLED_TRACK_NAME)).toUpperCase();
+  };
+  // Round numbers count up on COUNTDOWN, so while one loads it is the next.
+  const loadingRound =
+    loaderLobby?.phase === "COUNTDOWN" || loaderLobby?.phase === "RUNNING" ? roundNumber : roundNumber + 1;
   // Who the Round is still waiting for, once this client itself is ready.
   const loadingLabel =
     lobby !== null && worldReady
-      ? `Waiting for players… ${lobby.loaded.length}/${lobby.players.length}`
-      : "Loading Track…";
+      ? `WAITING FOR PLAYERS ${lobby.loaded.length}/${lobby.players.length}`
+      : "LOADING TRACK…";
   const totalCheckpoints = trackDetail ? countCheckpoints(trackDetail.track, { ...MODULE_LIBRARY, ...ASSET_PLACEMENT_MODULES }) : 0;
   const navigate = useNavigate();
 
@@ -383,12 +404,9 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
     : (lobby?.players ?? []);
   const nextPick = lobby ? lobby.roundPicks[roundNumber - 1] : undefined;
   const nextTrackName = nextPick?.trackId ? trackNameOf(nextPick.trackId) : "UNREVEALED";
-  // The Round loader's screenshot (ADR 0085) — the same next Track
-  // BetweenRounds names above, art only when its Revision captured one.
-  const nextTrackThumbnail =
-    nextPick?.trackId && trackList?.find((t) => t.id === nextPick.trackId)?.hasThumbnail
-      ? trackThumbnailUrl(nextPick.trackId)
-      : undefined;
+  // The next Track's screenshot (ADR 0085): the same one BetweenRounds names
+  // above, and art only when its Revision captured one.
+  const nextTrackThumbnail = thumbnailFor(trackList, nextPick?.trackId);
   // The Match is over and its results are persisted (ADR 0059) — leave for
   // the results page, which unmounts this canvas (game, physics, socket)
   // behind the navigation. `?me=` names whose page it is; a standalone
@@ -419,11 +437,17 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
           screenshot and name fill the wait (ADR 0085). */}
       {roundLoading && (
         <div className={styles.screenOverlay}>
-          <LoadingScreen
-            label={loadingLabel}
-            {...(currentTrackName === "" ? {} : { trackName: currentTrackName })}
-            {...(currentTrackThumbnail === undefined ? {} : { thumbnailUrl: currentTrackThumbnail })}
-          />
+          {loaderTrackId === undefined ? (
+            <LoadingScreen label={loadingLabel} />
+          ) : (
+            <RoundLoader
+              trackName={nameOf(loaderTrackId)}
+              thumbnailUrl={thumbnailFor(trackList, loaderTrackId)}
+              {...(loaderLobby === null ? {} : { round: loadingRound, rounds: loaderLobby.matchLength })}
+              {...(loaderLobby?.roundType ? { mode: loaderLobby.roundType.toUpperCase() } : {})}
+              label={loadingLabel}
+            />
+          )}
         </div>
       )}
       {lobby && (lobby.phase === "COUNTDOWN" || (lobby.phase === "RUNNING" && showGo)) && !practice && trackDetail && (
@@ -464,6 +488,8 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
                   ? null
                   : { name: roundHud.threat.nickname.toUpperCase(), skin: skinForPlayerId(roundHud.threat.id) }
               }
+              dashCharge={roundHud.dashCharge}
+              dashReady={roundHud.dashReady}
             />
           ) : (
             <SurvivalHud
@@ -474,6 +500,35 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
               survived={formatSurvived(roundHud.survivedMs)}
               lastOut={roundHud.lastOut === null ? null : `${roundHud.lastOut.toUpperCase()} WAS ELIMINATED`}
               critical={roundHud.critical}
+              dashCharge={roundHud.dashCharge}
+              dashReady={roundHud.dashReady}
+            />
+          )}
+        </div>
+      )}
+      {/* ADR 0104: a hold, either end — its own overlay above the Round HUD, so
+          the held Player's column sits over everything else it could read, and
+          the grabber's panel over the HUD's bottom edge. Same conditions as the
+          HUD it belongs to. */}
+      {lobby && lobby.phase === "RUNNING" && roundHud?.hold && !showGo && runEnd === null && spectate === null && !practice && (
+        <div className={`${styles.screenOverlay} ${styles.hudOverlay}`}>
+          {roundHud.hold.role === "held" ? (
+            <Grabbed
+              by={roundHud.hold.by.toUpperCase()}
+              phase={roundHud.hold.phase}
+              progress={Math.round(roundHud.hold.escape * 100)}
+              wiggleKeys={roundHud.hold.wiggleKeys}
+            />
+          ) : (
+            <HoldingPanel
+              holding={roundHud.hold.holding.toUpperCase()}
+              phase={roundHud.hold.phase}
+              escape={Math.round(roundHud.hold.escape * 100)}
+              timeLeft={`${(roundHud.hold.timeLeftMs / 1000).toFixed(1)}s`}
+              windup={roundHud.hold.windup}
+              overspin={roundHud.hold.overspin}
+              spinKey={roundHud.hold.spinKey}
+              letGoKey={roundHud.hold.letGoKey}
             />
           )}
         </div>
@@ -585,10 +640,16 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
         standings &&
         !practice &&
         (readyForNextRound ? (
-          <LoadingScreen
-            trackName={nextTrackName}
-            {...(nextTrackThumbnail ? { thumbnailUrl: nextTrackThumbnail } : {})}
-          />
+          <div className={styles.screenOverlay}>
+            <RoundLoader
+              trackName={nextTrackName.toUpperCase()}
+              thumbnailUrl={nextTrackThumbnail}
+              round={roundNumber + 1}
+              rounds={lobby.matchLength}
+              {...(nextPick?.roundType ? { mode: nextPick.roundType.toUpperCase() } : {})}
+              label={`WAITING FOR PLAYERS ${confirmedCount}/${standings.standings.length}`}
+            />
+          </div>
         ) : standings.roundsRemaining ? (
           <div className={styles.screenOverlay}>
             <BetweenRounds
@@ -599,6 +660,7 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
               nextTrack={nextTrackName}
               nextNote={nextPick?.trackId ? "" : "DRAWN AT MATCH START — REVEALED WHEN THE ROUND LOADS"}
               {...(nextPick?.roundType ? { nextMode: nextPick.roundType.toUpperCase() } : {})}
+              {...(nextTrackThumbnail === undefined ? {} : { nextThumbnail: nextTrackThumbnail })}
               autoStart={autoStartLabel}
               readyCount={confirmedCount}
               onReady={() => {
@@ -615,7 +677,7 @@ export function GameCanvas({ trackId, serverPort, connection, practice, onMatchE
           // Terminal RESULTS (ADR 0059): the server is saving (or just
           // saved) — the effect above navigates to the results page the
           // moment `matchOver` lands, unmounting this canvas behind it.
-          <LoadingScreen label="Saving results…" />
+          <LoadingScreen label="SAVING RESULTS…" />
         ))}
       {exitReason && (
         <div className={styles.exitBanner}>

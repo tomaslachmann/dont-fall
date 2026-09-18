@@ -10,7 +10,7 @@ const actionsWith = (struggleAir: THREE.AnimationAction | null): CharacterAction
   ko: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
   getUp: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
   death: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
-  grabReach: null, grabPull: null, grabHold: null, grabDropOut: null,
+  grabReach: null, grabHold: null, grabDropOut: null,
   struggleHeld: null, struggleAir, wobble: null, wobbleWalk: null,
 });
 

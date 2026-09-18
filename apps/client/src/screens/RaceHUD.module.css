@@ -64,6 +64,15 @@
   color: var(--df-color-on-brand-60);
 }
 
+/* The Dash meter (ADR 0092) takes the free bottom-right cell; the threat
+   banner keeps the full-width row it centres itself in. */
+.dash {
+  grid-row: 3;
+  grid-column: 3;
+  justify-self: end;
+  align-self: end;
+}
+
 .threat {
   grid-row: 3;
   grid-column: 1 / -1;

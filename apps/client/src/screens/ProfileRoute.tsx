@@ -13,7 +13,7 @@ const COLLAPSED_ROWS = 5;
 
 /**
  * `/profile` — your career card, reached from the Main Menu account block.
- * Identity (name, level, XP bar, skin render) reads off the Account through
+ * Identity (name, level, XP bar, bean render) reads off the Account through
  * the shared level curve; everything else reads off `GET /career` — stat
  * tiles, badges, and the finished-Match history, all derived from Matches
  * that actually happened. SEE ALL unfolds the whole fetched page; SHARE CARD
@@ -46,7 +46,8 @@ export function ProfileRoute() {
   return (
     <Profile
       name={account?.displayName ?? "BEAN"}
-      skin={account?.bodySkin ?? null}
+      color={account?.color ?? null}
+      skin={account?.skin ?? null}
       hat={account?.hat ?? null}
       level={level}
       xp={xp - xpLevelStart(level)}

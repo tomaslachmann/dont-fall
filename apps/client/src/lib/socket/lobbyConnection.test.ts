@@ -39,7 +39,7 @@ const snapshot = (overrides: Partial<SnapshotMessage> = {}): SnapshotMessage =>
     trackRevision: 3,
     lobby: {
       hostId: "p1",
-      players: [{ id: "p1", nickname: "Host", ready: false, joinOrder: 0, accountId: null, bodySkin: null, hat: null }],
+      players: [{ id: "p1", nickname: "Host", ready: false, joinOrder: 0, accountId: null, color: null, skin: null, hat: null }],
       roundType: "race",
       matchLength: 3,
       roundPicks: [
@@ -62,7 +62,7 @@ describe("toLobbySnapshot", () => {
       matchOver: null,
       countdownMsLeft: 0,
       hostId: "p1",
-      players: [{ id: "p1", nickname: "Host", ready: false, joinOrder: 0, accountId: null, bodySkin: null, hat: null }],
+      players: [{ id: "p1", nickname: "Host", ready: false, joinOrder: 0, accountId: null, color: null, skin: null, hat: null }],
       trackId: "track-1",
       trackRevision: 3,
       timeLimitMs: 180_000,
@@ -217,7 +217,6 @@ describe("createLobbyConnection", () => {
     instances[0]!.dispatch("message", { data: JSON.stringify(welcome) });
     const connection = await pending;
 
-    connection.setNickname("Wobbleton");
     connection.setReady(true);
     connection.selectTrack("track-2");
     connection.setRoundType("survival");
@@ -228,7 +227,6 @@ describe("createLobbyConnection", () => {
 
     expect(instances[0]!.sent.map((raw) => JSON.parse(raw))).toEqual([
       { type: "sync" }, // asked outright on connect (ADR 0057), before anything else
-      { type: "setNickname", nickname: "Wobbleton" },
       { type: "setReady", ready: true },
       { type: "selectTrack", trackId: "track-2" },
       { type: "setRoundType", roundType: "survival" },

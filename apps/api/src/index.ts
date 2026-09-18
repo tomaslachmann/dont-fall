@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { resolveConfig } from "./config.js";
-import { buildApp, startApi } from "./app.js";
+import { startApi } from "./app.js";
 
 // Programmatic surface (ADR 0058): the match-server suites boot the API over
 // real HTTP; route tests use `buildApp` + `inject` and never touch the network.

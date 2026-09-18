@@ -105,7 +105,7 @@ its rights follow the author's plan with that service. Non-commercial licences a
 | `match/final_round.ogg` | Voiceover Pack (male voice: Jeffrey M. Smith) | Kenney (www.kenney.nl) | CC0 | <https://kenney.nl/assets/voiceover-pack> |
 | `match/you_win.ogg` | Voiceover Pack (male voice: Jeffrey M. Smith) | Kenney (www.kenney.nl) | CC0 | <https://kenney.nl/assets/voiceover-pack> |
 | `match/congratulations.ogg` | Voiceover Pack (male voice: Jeffrey M. Smith) | Kenney (www.kenney.nl) | CC0 | <https://kenney.nl/assets/voiceover-pack> |
-| `match/checkpoint.ogg` | Music Jingles | Kenney (www.kenney.nl) | CC0 | <https://kenney.nl/assets/music-jingles> |
+| `match/checkpoint.ogg` | Vintage Alert Notification 2_2 | Joao_Janz | CC0 | <https://freesound.org/people/Joao_Janz/sounds/504861/> |
 | `match/qualified.ogg` | Music Jingles | Kenney (www.kenney.nl) | CC0 | <https://kenney.nl/assets/music-jingles> |
 | `match/round_end.ogg` | Music Jingles | Kenney (www.kenney.nl) | CC0 | <https://kenney.nl/assets/music-jingles> |
 | `match/results.ogg` | Music Jingles | Kenney (www.kenney.nl) | CC0 | <https://kenney.nl/assets/music-jingles> |

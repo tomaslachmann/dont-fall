@@ -14,7 +14,7 @@ import {
   wrapAround,
   type EnvironmentPreset,
 } from "./Environment.js";
-import { DEFAULT_KILL_PLANE_Y } from "../tuning.js";
+import { DEFAULT_KILL_PLANE_Y } from "../tuning/world.js";
 
 const DAY = ENVIRONMENT_PRESETS.day;
 

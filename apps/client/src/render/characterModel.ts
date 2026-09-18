@@ -9,13 +9,20 @@ import type { LocomotionState } from "./locomotionAnimation.js";
 /**
  * BLIP — the game's Character (ADR 0071), `apps/client/public/models/BLIP.glb`.
  * One self-contained GLB: three meshes (body and two eyes) over a 20-joint
- * skeleton, two flat materials and no texture at all, with fifty-one named
- * clips authored for this game's own verbs (`BLIP_Animated_v7.glb`: v6 with
- * `Walk` and `Run` reworked to share one stride and a new `Sprint`, ADR 0081).
- * The file served is that rig as the cosmetics pack exports it
- * (`BLIP_Character_Cosmetics_v1.glb`): the same nodes and clips, byte for
- * byte, plus the body's `Hat_Tuck` morph that hides the crest under a hat
- * (ADR 0083).
+ * skeleton, with fifty-one named clips authored for this game's own verbs
+ * (`BLIP_Animated_v7.glb`: v6 with `Walk` and `Run` reworked to share one
+ * stride and a new `Sprint`, ADR 0081), plus the body's `Hat_Tuck` morph
+ * that hides the crest under a hat (ADR 0083).
+ *
+ * The file served is that rig as the *skins* pack exports it
+ * (`BLIP_Character_Skins_v1.glb`, ADR 0091) — the same nodes, joints,
+ * morph and clips as the cosmetics pack before it, with two additions the
+ * skins need: a `TEXCOORD_0` UV channel on the body, and a body material
+ * that carries a base-color map (the `starter-cream` texture, embedded)
+ * rather than a flat cream factor. Every equipped skin is that one map
+ * swapped (`render/skins.ts`); a body wearing a color clears it instead.
+ * The older texture-less GLB cannot wear any of it — there is nothing to
+ * map the art onto.
  *
  * It replaced MushroomKing (Quaternius, CC0), which was a stand-in with five
  * usable clips and no pelvis in its rig.
@@ -116,9 +123,16 @@ export interface CharacterActions {
    * where `getUp` begins.
    */
   death: Readonly<Record<KnockdownDirection, THREE.AnimationAction | null>>;
-  /** The Grab, as a sequence: reach for them, pull them in, hold them there. */
+  /**
+   * The Grab, as a sequence: reach for them, then hold them at arm's length.
+   * `grabHold` is the rig's `Grab_HoldOut` — its arms-out hold loop, whose
+   * first frame IS `Grab_Reach`'s last (measured seam: 0°), so the reach
+   * flows straight into the hold with nothing between. The rig's other hold —
+   * the `Grab_Pull`/`Grab_HoldIn` hug against the chest — is deliberately
+   * unbound: the game carries at arm's length (ADR 0104), and the hug put the
+   * hands 0.7 units away from the body they were supposedly holding.
+   */
   grabReach: THREE.AnimationAction | null;
-  grabPull: THREE.AnimationAction | null;
   grabHold: THREE.AnimationAction | null;
   /** Letting go from arm's length — how a reach that caught nobody comes back in. */
   grabDropOut: THREE.AnimationAction | null;
@@ -187,8 +201,7 @@ export const loadCharacterActions = (mixer: THREE.AnimationMixer, animations: TH
     death: byDirection((d) => held(`Death_${d}`)),
     // Posed by the grab's own clock (`pinClipPose`), like the jump.
     grabReach: held("Grab_Reach"),
-    grabPull: held("Grab_Pull"),
-    grabHold: clipAction("Grab_HoldIn"),
+    grabHold: clipAction("Grab_HoldOut"),
     grabDropOut: held("Grab_DropOut"),
     struggleHeld: clipAction("Struggle_Held"),
     struggleAir: clipAction("Struggle_Air"),

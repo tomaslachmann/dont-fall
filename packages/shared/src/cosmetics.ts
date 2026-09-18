@@ -1,60 +1,133 @@
 import { levelForXp } from "./economy.js";
 
 /**
- * Body skins (M9 ticket 15) — the Player's bean color, the first cosmetic.
- * Stored as a small int on the Account (`bodySkin`), validated here so the
- * API and any future writer share the one rule, rendered from
- * {@link BODY_SKIN_HUES} by any client holding a skin id.
+ * Body colors (M9 ticket 15) — the Player's bean tint, the first cosmetic.
+ * Stored as a small int on the Account (`color`), validated here so the API
+ * and any future writer share the one rule, rendered from
+ * {@link BODY_COLOR_HUES} by any client holding a color id.
+ *
+ * A color is one of *two* ways a bean can look, and the plainer one: an
+ * equipped {@link SKINS} skin paints the whole body with authored art and
+ * wins outright, so a color only ever shows on a bean wearing no skin (ADR
+ * 0091). The two never blend — a tinted leopard is nobody's idea.
  *
  * The seven tints are the Character Select screen's own stripe list, in its
- * order, plus the rig's factory look as {@link BASE_BODY_SKIN_ID} — all
- * equip for now (the screen's lock tiles are future content, not these
- * skins). Ticket 13 may gate some behind ownership — until then the rule is
- * just the range. Hues are degrees [0, 360) in the same space as the remote
- * rig tint they drive.
+ * order, plus the rig's factory look as {@link BASE_BODY_COLOR_ID}. Hues are
+ * degrees [0, 360) in the same space as the remote rig tint they drive.
  */
-export const BODY_SKIN_COUNT = 8;
+export const BODY_COLOR_COUNT = 8;
 
-/** The default bean — what every pre-skins Account backfills to. */
-export const DEFAULT_BODY_SKIN = 0;
+/** The default bean — what every pre-colors Account backfills to. */
+export const DEFAULT_BODY_COLOR = 0;
 
 /**
- * The factory look — BLIP's own authored colors, explicitly untinted.
- * Appended last so every stored tint id keeps its meaning.
+ * The factory look — BLIP's own authored body, explicitly untinted: the
+ * cream base color the rig ships with (`starter-cream`'s own texture, which
+ * is the model's embedded material). Appended last so every stored color id
+ * keeps its meaning.
  */
-export const BASE_BODY_SKIN_ID = 7;
+export const BASE_BODY_COLOR_ID = 7;
 
 /**
- * One hue per skin, in Character Select order (pink, sky, green, peach,
+ * One hue per color, in Character Select order (pink, sky, green, peach,
  * lavender, red, ice) — computed off the screen's own stripe colors, except
  * ice, which the tint's fixed saturation/lightness would otherwise merge
- * into sky: it sits nudged toward cyan so the two blues read apart. Stands
- * in for real art, like the stripes themselves.
+ * into sky: it sits nudged toward cyan so the two blues read apart.
  */
-export const BODY_SKIN_HUES: readonly number[] = [330, 205, 120, 30, 260, 0, 185];
+export const BODY_COLOR_HUES: readonly number[] = [330, 205, 120, 30, 260, 0, 185];
 
 /**
  * Why `id` can't be equipped, or `undefined` when it can — an int in
- * `[0, BODY_SKIN_COUNT)` until ticket 13's ownership takes over.
+ * `[0, BODY_COLOR_COUNT)`. Colors have no unlock level: every bean can wear
+ * every color, and the gated cosmetics are the skins and hats.
  */
-export const invalidBodySkinReason = (id: unknown): string | undefined => {
-  if (typeof id !== "number" || !Number.isInteger(id) || id < 0 || id >= BODY_SKIN_COUNT) {
-    return `bodySkin must be an integer 0–${BODY_SKIN_COUNT - 1}`;
+export const invalidBodyColorReason = (id: unknown): string | undefined => {
+  if (typeof id !== "number" || !Number.isInteger(id) || id < 0 || id >= BODY_COLOR_COUNT) {
+    return `color must be an integer 0–${BODY_COLOR_COUNT - 1}`;
   }
   return undefined;
 };
 
 /**
- * The hue a skin id wears: the table hue for a tint, `null` for the base
- * (factory colors — the renderer restores rather than recolors), and
- * `undefined` for anything else. The one place that knows base is not a
- * hue, so no renderer indexes {@link BODY_SKIN_HUES} with it by accident.
+ * The hue a color id wears: the table hue for a tint, `null` for the base
+ * (factory look — the renderer restores rather than recolors), and
+ * `undefined` for anything else. The one place that knows base is not a hue,
+ * so no renderer indexes {@link BODY_COLOR_HUES} with it by accident.
  */
-export const bodySkinHue = (skin: number | null): number | null | undefined => {
-  if (skin === BASE_BODY_SKIN_ID) return null;
-  return typeof skin === "number" && Number.isInteger(skin) && skin >= 0 && skin < BODY_SKIN_HUES.length
-    ? BODY_SKIN_HUES[skin]!
+export const bodyColorHue = (color: number | null): number | null | undefined => {
+  if (color === BASE_BODY_COLOR_ID) return null;
+  return typeof color === "number" && Number.isInteger(color) && color >= 0 && color < BODY_COLOR_HUES.length
+    ? BODY_COLOR_HUES[color]!
     : undefined;
+};
+
+/**
+ * A skin BLIP can wear (ADR 0091): authored art painted over the whole body
+ * through the rig's own UV map, the first cosmetic with real texture work.
+ * Worn by at most one per Character and stored on the Account as its `id`,
+ * exactly like a {@link HatDef}.
+ *
+ * A skin covers the body and nothing else: the eyes keep their own material,
+ * a hat keeps its own colors, and the body's `color` tint is simply not
+ * applied while a skin is on.
+ */
+export interface SkinDef {
+  /** Stored on the Account and sent on the Lobby roster — never renamed once shipped. */
+  id: string;
+  /** What the wardrobe calls it. */
+  name: string;
+  /** The level (`levelForXp` of the Account's XP) it unlocks at. */
+  unlockLevel: number;
+}
+
+/**
+ * Every skin, in wardrobe order: cheapest unlock first. The art comes in two
+ * collections (six patterned colors, six animals) and the levels are the
+ * pack's own suggestion, which deliberately alternates between them — which
+ * is why this one flat list, sorted by level, reads as the alternation the
+ * artist intended rather than as two blocks.
+ */
+export const SKINS: readonly SkinDef[] = [
+  { id: "starter-cream", name: "STARTER CREAM", unlockLevel: 1 },
+  { id: "zebra", name: "ZEBRA", unlockLevel: 3 },
+  { id: "mint-spots", name: "MINT SPOTS", unlockLevel: 4 },
+  { id: "tiger", name: "TIGER", unlockLevel: 6 },
+  { id: "sunset-stripes", name: "SUNSET STRIPES", unlockLevel: 8 },
+  { id: "cow", name: "COW", unlockLevel: 10 },
+  { id: "galaxy", name: "GALAXY", unlockLevel: 12 },
+  { id: "leopard", name: "LEOPARD", unlockLevel: 14 },
+  { id: "hazard-neon", name: "HAZARD NEON", unlockLevel: 16 },
+  { id: "giraffe", name: "GIRAFFE", unlockLevel: 18 },
+  { id: "prismatic", name: "PRISMATIC", unlockLevel: 20 },
+  { id: "frog", name: "FROG", unlockLevel: 24 },
+];
+
+/** The skin `id` names, or `undefined` for anything that isn't one. */
+export const skinById = (id: unknown): SkinDef | undefined =>
+  typeof id === "string" ? SKINS.find((skin) => skin.id === id) : undefined;
+
+/**
+ * Why `skin` isn't something to wear at all, or `undefined` when it is: a
+ * known skin id, or `null` for none — which is how a bean falls back to its
+ * `color`.
+ */
+export const invalidSkinReason = (skin: unknown): string | undefined => {
+  if (skin === null || skinById(skin)) return undefined;
+  return `skin must be null or one of: ${SKINS.map((known) => known.id).join(", ")}`;
+};
+
+/** Whether an Account with `xp` has unlocked `skin`. */
+export const isSkinUnlocked = (skin: SkinDef, xp: number): boolean => levelForXp(xp) >= skin.unlockLevel;
+
+/**
+ * Why an Account with `xp` can't wear `skin` yet, or `undefined` when it
+ * can. Taking a skin off (`null`) is always allowed, and so is an id that
+ * isn't a skin at all — that is {@link invalidSkinReason}'s to refuse.
+ */
+export const lockedSkinReason = (skin: string | null, xp: number): string | undefined => {
+  const def = skinById(skin);
+  if (!def || isSkinUnlocked(def, xp)) return undefined;
+  return `${def.name} unlocks at level ${def.unlockLevel}`;
 };
 
 /**

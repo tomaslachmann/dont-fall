@@ -21,7 +21,7 @@ const MATCH_WIN = {
   roundTrackIds: ["t-green", "t-green"],
   nicknames: { p1: "Floppo", p2: "Goopy" },
   accountIds: { p1: "acc-1", p2: "acc-2" },
-  bodySkins: {},
+  colors: {},
   totalFalls: { p1: 0, p2: 2 },
   endedAtMs: 60_000,
 };
@@ -41,7 +41,7 @@ const MATCH_PODIUM = {
   roundTrackIds: ["t-nameless", "t-gone"],
   nicknames: { p1: "Floppo", p2: "Goopy", px: "Anon" },
   accountIds: { p1: "acc-1", p2: "acc-2" },
-  bodySkins: {},
+  colors: {},
   totalFalls: { p1: 5, p2: 1, px: 9 },
   endedAtMs: 120_000,
 };

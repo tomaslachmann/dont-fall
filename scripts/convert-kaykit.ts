@@ -49,7 +49,7 @@ import {
   type MeasuredDef,
 } from "./convert-lib.js";
 import { addSolidNodes, describeParts } from "./convert-solids.js";
-import { LAUNCH_HEIGHT_PRESETS } from "../packages/shared/src/tuning.js";
+import { LAUNCH_HEIGHT_PRESETS } from "../packages/shared/src/tuning/authoring.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const assetsDir = join(root, "assets");

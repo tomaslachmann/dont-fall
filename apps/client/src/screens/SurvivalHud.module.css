@@ -68,6 +68,15 @@
 }
 .critical svg { width: calc(var(--df-u) * 1.4); fill: currentColor; flex: none; }
 
+/* The Dash meter (ADR 0092) takes the free bottom-right cell; the elimination
+   status keeps the full-width row it centres itself in. */
+.dash {
+  grid-row: 3;
+  grid-column: 3;
+  justify-self: end;
+  align-self: end;
+}
+
 .status {
   grid-row: 3;
   grid-column: 1 / -1;

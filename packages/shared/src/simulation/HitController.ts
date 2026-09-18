@@ -1,11 +1,5 @@
-import {
-  HIT_CHARGE_IMPACT_BONUS,
-  HIT_CHARGE_MAX_TICKS,
-  HIT_COOLDOWN_TICKS,
-  HIT_IMPACT_MAGNITUDE,
-  HIT_IMPACT_MAX,
-  TICK_MS,
-} from "../tuning.js";
+import { TICK_MS } from "../tuning/clock.js";
+import { HIT_CHARGE_IMPACT_BONUS, HIT_CHARGE_MAX_TICKS, HIT_COOLDOWN_TICKS, HIT_IMPACT_MAGNITUDE, HIT_IMPACT_MAX } from "../tuning/fight.js";
 import { CooldownController } from "./CooldownController.js";
 
 /**

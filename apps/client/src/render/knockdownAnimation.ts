@@ -25,7 +25,9 @@ export const KNOCKDOWN_FALLBACK: KnockdownDirection = "B";
 /**
  * How long (s) a knockdown keeps looking for its push. Its first frames
  * stand the same way in every direction, so a push that turns up a frame or
- * two late still picks the fall without a visible switch.
+ * two late still picks the fall without a visible switch — and within this
+ * window the LAST non-null read wins, because the first one is usually the
+ * Character's own stale walk velocity, not the shove (found live 2026-09-18).
  */
 export const KNOCKDOWN_PICK_SECONDS = 0.1;
 
@@ -69,8 +71,6 @@ export interface KnockdownFrame {
 
 interface Knockdown {
   direction: KnockdownDirection;
-  /** Whether `direction` came from a real push rather than the fallback. */
-  picked: boolean;
   phase: "ko" | "getUp";
   /** Seconds into the current phase's clip. */
   seconds: number;
@@ -107,7 +107,15 @@ export class Knockdowns {
       // A fresh fall, or a new one landing during the last one's get-up tail.
       if (!entry || entry.phase !== "ko") return this.start(id, "ko", frame, actions);
       entry.seconds += deltaSeconds;
-      if (!entry.picked && entry.seconds <= KNOCKDOWN_PICK_SECONDS) this.pick(entry, frame);
+      // Re-picked every frame of the window, last non-null read wins (found
+      // live 2026-09-18: every fall played the same clip). Latching the first
+      // non-null read defeated the window's whole purpose: a *moving*
+      // Character's first drawn Ragdoll frame still carries its own walk
+      // velocity — the drawn world runs a beat behind the push — so the fall
+      // always followed the run, never the shove that caused it. The clips'
+      // first frames stand the same in every direction, which is exactly what
+      // makes a switch inside the window invisible.
+      if (entry.seconds <= KNOCKDOWN_PICK_SECONDS) this.pick(entry, frame);
       return poseOf(entry, actions);
     }
 
@@ -156,7 +164,7 @@ export class Knockdowns {
   }
 
   private start(id: string, phase: Knockdown["phase"], frame: KnockdownFrame, actions: CharacterActions): ClipPose | null {
-    const entry: Knockdown = { direction: KNOCKDOWN_FALLBACK, picked: false, phase, seconds: 0, inTail: false };
+    const entry: Knockdown = { direction: KNOCKDOWN_FALLBACK, phase, seconds: 0, inTail: false };
     if (phase === "ko") this.pick(entry, frame);
     this.entries.set(id, entry);
     return poseOf(entry, actions);
@@ -164,9 +172,7 @@ export class Knockdowns {
 
   private pick(entry: Knockdown, frame: KnockdownFrame): void {
     const direction = knockdownDirection(frame.velocity, frame.modelQuaternion);
-    if (direction === null) return;
-    entry.direction = direction;
-    entry.picked = true;
+    if (direction !== null) entry.direction = direction;
   }
 }
 

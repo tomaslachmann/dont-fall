@@ -43,15 +43,6 @@ describe("assets", () => {
     expect(Number(res.headers["content-length"])).toBe(expected.length);
   });
 
-  it("serves the shared mud texture with its image content type and length (ADR 0067)", async () => {
-    const expected = readFileSync(join(defaultAssetsDir(), "mud_surface.jpg"));
-    const res = await app.inject({ method: "GET", url: "/assets/mud_surface.jpg" });
-
-    expect(res.statusCode).toBe(200);
-    expect(res.headers["content-type"]).toBe("image/jpeg");
-    expect(Number(res.headers["content-length"])).toBe(expected.length);
-  });
-
   it("404s a missing file naming it, never an HTML error page", async () => {
     const res = await app.inject({ method: "GET", url: "/assets/does_not_exist.glb" });
     expect(res.statusCode).toBe(404);

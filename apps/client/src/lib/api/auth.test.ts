@@ -47,7 +47,7 @@ describe("parseAuthCallbackFragment", () => {
   });
 });
 
-const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, xp: 0, coins: 0, bodySkin: 0, hat: null, bindings: null };
+const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, role: "player", xp: 0, coins: 0, color: 0, skin: null, hat: null, bindings: null };
 
 describe("signup / login", () => {
   it("signup posts the form and returns {account, token}", async () => {
@@ -146,14 +146,14 @@ describe("discordAuthorizeUrl", () => {
 describe("saveCosmetics (M9 ticket 15, ADR 0083)", () => {
   it("PUTs the skin and the hat and returns the updated Account", async () => {
     setStoredToken("tok-1");
-    const updated = { ...ACCOUNT, bodySkin: 3, hat: "cone" };
+    const updated = { ...ACCOUNT, color: 3, skin: null, hat: "cone" };
     const fetchMock = vi.fn(async () => new Response(JSON.stringify(updated), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(saveCosmetics({ bodySkin: 3, hat: "cone" })).resolves.toEqual(updated);
+    await expect(saveCosmetics({ color: 3, skin: null, hat: "cone" })).resolves.toEqual(updated);
     expect(fetchMock).toHaveBeenCalledWith(
       `${API}/auth/me/cosmetics`,
-      expect.objectContaining({ method: "PUT", body: JSON.stringify({ bodySkin: 3, hat: "cone" }) }),
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ color: 3, skin: null, hat: "cone" }) }),
     );
   });
 

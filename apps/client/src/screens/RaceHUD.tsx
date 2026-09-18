@@ -2,6 +2,7 @@ import Stage from '../ui/Stage';
 import Avatar from '../ui/Avatar';
 import type { Skin } from '../ui/Avatar';
 import Pill from '../ui/Pill';
+import DashMeter from './DashMeter';
 import { Pips } from '../ui/Meter';
 import type { Feel } from '../tokens';
 import s from './RaceHUD.module.css';
@@ -24,6 +25,10 @@ export interface RaceHUDProps {
   personalBest: string | null;
   /** Who is right behind you; `null` hides the callout. */
   threat: { name: string; skin: Skin } | null;
+  /** Dash recharge, 0–1 (ADR 0092). */
+  dashCharge: number;
+  /** Whether the Dash can fire right now. */
+  dashReady: boolean;
   feel?: Feel;
 }
 
@@ -33,7 +38,8 @@ export interface RaceHUDProps {
  * Every value arrives already rounded to what is drawn.
  */
 export default function RaceHUD({
-  position, field, time, ms, delta, deltaAhead, checkpoint, checkpoints, personalBest, threat, feel,
+  position, field, time, ms, delta, deltaAhead, checkpoint, checkpoints, personalBest, threat,
+  dashCharge, dashReady, feel,
 }: RaceHUDProps) {
   return (
     <Stage feel={feel} className={s.screen}>
@@ -63,6 +69,10 @@ export default function RaceHUD({
         </span>
         <Pips total={checkpoints} done={checkpoint} />
         {personalBest !== null && <span className={s.pb}>{personalBest}</span>}
+      </div>
+
+      <div className={s.dash}>
+        <DashMeter charge={dashCharge} ready={dashReady} />
       </div>
 
       {threat && (

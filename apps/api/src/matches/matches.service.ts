@@ -40,9 +40,11 @@ const invalidMatchResultReason = (body: unknown): string | undefined => {
   // M9 ticket 11 phase 2b: pre-2b saves carry no such map at all (readers
   // default it) — but a present non-object is malformed, not legacy.
   if (body.accountIds !== undefined && !isRecord(body.accountIds)) return "accountIds must be an object";
-  // Same posture for the podium skins: pre-skins saves carry no map (readers
-  // default it) — but a present non-object is malformed, not legacy.
-  if (body.bodySkins !== undefined && !isRecord(body.bodySkins)) return "bodySkins must be an object";
+  // Same posture for the podium colors: pre-colors saves carry no map
+  // (readers default it) — but a present non-object is malformed, not legacy.
+  if (body.colors !== undefined && !isRecord(body.colors)) return "colors must be an object";
+  // And the podium skins (ADR 0091), the same way.
+  if (body.skins !== undefined && !isRecord(body.skins)) return "skins must be an object";
   // And the podium hats (ADR 0083), the same way.
   if (body.hats !== undefined && !isRecord(body.hats)) return "hats must be an object";
   // And the same for the per-Round Track ids: pre-index saves carry no list
@@ -80,7 +82,8 @@ export const saveMatchResult = (db: ApiDb, body: unknown): { matchId: string } =
     ...result,
     roundTrackIds: result.roundTrackIds ?? [],
     accountIds: result.accountIds ?? {},
-    bodySkins: result.bodySkins ?? {},
+    colors: result.colors ?? {},
+    skins: result.skins ?? {},
     hats: result.hats ?? {},
   };
   storeMatchResult(db, stored);
@@ -109,13 +112,14 @@ export const getMatchResult = (db: ApiDb, matchId: string): PersistedMatchResult
   const result = readMatchResult(db, matchId);
   if (!result) throw new ServiceError(404, `no finished Match "${matchId}"`);
   // Pre-2b rows carry no `accountIds` map — default it so the type stays honest.
-  // Pre-skins rows likewise carry no `bodySkins`, pre-hats rows no `hats`,
-  // pre-index rows no `roundTrackIds`.
+  // Pre-colors rows likewise carry no `colors`, pre-skins rows no `skins`,
+  // pre-hats rows no `hats`, pre-index rows no `roundTrackIds`.
   return {
     ...result,
     roundTrackIds: result.roundTrackIds ?? [],
     accountIds: result.accountIds ?? {},
-    bodySkins: result.bodySkins ?? {},
+    colors: result.colors ?? {},
+    skins: result.skins ?? {},
     hats: result.hats ?? {},
   };
 };

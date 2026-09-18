@@ -1,8 +1,10 @@
 import {
   invalidBindingsReason,
-  invalidBodySkinReason,
+  invalidBodyColorReason,
   invalidHatReason,
+  invalidSkinReason,
   lockedHatReason,
+  lockedSkinReason,
   randomBearerToken,
   type KeyBindings,
 } from "@dont-fall/shared";
@@ -186,26 +188,33 @@ export const whoAmI = (db: ApiDb, token: string | undefined): Account => {
 };
 
 /**
- * Equips cosmetics (M9 ticket 15, ADR 0083) — the body skin, the hat, or
- * both, on the one sub-resource. A slot left out keeps what it had; `hat:
- * null` takes the hat off. Every slot is checked before anything is written,
- * so a refused hat never lands a skin sent with it. A hat above the
- * Account's level is a 403: the id is fine, the Account can't have it yet.
- * Returns the updated Account, so the screen refreshes in the one round
- * trip.
+ * Equips cosmetics (M9 ticket 15, ADR 0083/0091) — the body color, the
+ * skin, the hat, or any combination, on the one sub-resource. A slot left
+ * out keeps what it had; `skin: null` / `hat: null` takes that one off.
+ * Every slot is checked before anything is written, so a refused hat never
+ * lands a skin sent with it. A skin or hat above the Account's level is a
+ * 403: the id is fine, the Account can't have it yet. Returns the updated
+ * Account, so the screen refreshes in the one round trip.
  */
 export const updateCosmetics = (
   db: ApiDb,
   token: string | undefined,
-  input: { bodySkin?: unknown; hat?: unknown },
+  input: { color?: unknown; skin?: unknown; hat?: unknown },
 ): Account => {
   const account = token ? getAccountBySessionToken(db, token) : undefined;
   if (!account) throw new ServiceError(401, "not logged in");
   const patch: CosmeticsPatch = {};
-  if (input.bodySkin !== undefined) {
-    const reason = invalidBodySkinReason(input.bodySkin);
+  if (input.color !== undefined) {
+    const reason = invalidBodyColorReason(input.color);
     if (reason) throw new ServiceError(400, reason);
-    patch.bodySkin = input.bodySkin as number;
+    patch.color = input.color as number;
+  }
+  if (input.skin !== undefined) {
+    const reason = invalidSkinReason(input.skin);
+    if (reason) throw new ServiceError(400, reason);
+    const locked = lockedSkinReason(input.skin as string | null, account.xp);
+    if (locked) throw new ServiceError(403, locked);
+    patch.skin = input.skin as string | null;
   }
   if (input.hat !== undefined) {
     const reason = invalidHatReason(input.hat);
@@ -214,8 +223,8 @@ export const updateCosmetics = (
     if (locked) throw new ServiceError(403, locked);
     patch.hat = input.hat as string | null;
   }
-  if (patch.bodySkin === undefined && patch.hat === undefined) {
-    throw new ServiceError(400, "nothing to equip: send bodySkin, hat, or both");
+  if (patch.color === undefined && patch.skin === undefined && patch.hat === undefined) {
+    throw new ServiceError(400, "nothing to equip: send color, skin, hat, or any combination");
   }
   const updated = setCosmetics(db, account.id, patch);
   if (!updated) throw new ServiceError(401, "not logged in");

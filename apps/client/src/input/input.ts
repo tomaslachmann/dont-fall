@@ -75,6 +75,11 @@ export class PlayerInput {
     this.swallow = new Set(Object.values(this.bindings).flat().filter((code) => SWALLOWABLE.has(code)));
   }
 
+  /** The bindings in force right now — what the Round HUD prints its prompts from (ADR 0104). */
+  get currentBindings(): KeyBindings {
+    return this.bindings;
+  }
+
   movementKeys(): MovementKeys {
     const keys: MovementKeys = { forward: false, back: false, left: false, right: false };
     for (const code of this.held) {

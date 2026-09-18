@@ -103,8 +103,8 @@
 }
 .locked svg { width: 34%; fill: none; stroke: var(--df-color-ink-45); stroke-width: 2.6; stroke-linecap: round; }
 .lockLabel { font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui); color: var(--df-color-ink-45); }
-/* Hats (ADR 0083): the art pack's own icons on a pale tile; a locked one greys out under its lock. */
-.hatTile {
+/* Icon tiles — hats (ADR 0083) and skins (ADR 0091): the art pack's own icons on a pale tile; a locked one greys out under its lock. */
+.iconTile {
   position: relative;
   display: grid;
   place-items: center;
@@ -114,12 +114,12 @@
   letter-spacing: var(--df-tracking-label);
   color: var(--df-color-ink-45);
 }
-.hatIcon { width: 88%; height: 88%; object-fit: contain; pointer-events: none; }
-.hatLocked { grid-template-rows: auto auto; align-content: center; gap: var(--df-space-2); cursor: default; }
-.hatLocked:hover, .hatLocked:active { transform: none; }
-.hatLocked .hatIcon { position: absolute; inset: 6%; width: 88%; height: 88%; filter: grayscale(1); opacity: .3; }
-.hatLocked svg { position: relative; width: 34%; fill: none; stroke: var(--df-color-ink-45); stroke-width: 2.6; stroke-linecap: round; }
-.hatLocked .lockLabel { position: relative; }
+.tileIcon { width: 88%; height: 88%; object-fit: contain; pointer-events: none; }
+.tileLocked { grid-template-rows: auto auto; align-content: center; gap: var(--df-space-2); cursor: default; }
+.tileLocked:hover, .tileLocked:active { transform: none; }
+.tileLocked .tileIcon { position: absolute; inset: 6%; width: 88%; height: 88%; filter: grayscale(1); opacity: .3; }
+.tileLocked svg { position: relative; width: 34%; fill: none; stroke: var(--df-color-ink-45); stroke-width: 2.6; stroke-linecap: round; }
+.tileLocked .lockLabel { position: relative; }
 .shopOnly {
   display: grid;
   place-items: center;

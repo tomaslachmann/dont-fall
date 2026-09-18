@@ -36,6 +36,21 @@ export const GRIP_RATE = 1.3;
 /** A Bump's thud, lifted a little over the landing files it shares. */
 export const BUMP_RATE = 1.15;
 
+/**
+ * A hold's stand-ins (ADR 0104), pitched away from the sounds they share
+ * files with: getting free is a jump's hop lifted, going Limp a knockdown's
+ * thud dropped, the Hurl a swing dropped low and heavy.
+ */
+export const ESCAPE_RATE = 1.25;
+export const LIMP_RATE = 0.8;
+export const HURL_RATE = 0.75;
+
+/** A Spin's whoosh each time it comes round (ADR 0104): louder and higher the faster it turns. */
+export const spinLevel = (windup: number): { gain: number; rate: number } => {
+  const w = Math.min(1, Math.max(0, windup));
+  return { gain: 0.45 + 0.55 * w, rate: 0.8 + 0.5 * w };
+};
+
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
 const lerp = (from: number, to: number, t: number): number => from + (to - from) * t;
 
@@ -84,6 +99,10 @@ export type SoundCharacter = Pick<
   | "hitReactEpoch"
   | "grabEpoch"
   | "grabbingId"
+  | "heldByGrabberId"
+  | "heldPhase"
+  | "spinMs"
+  | "facing"
   | "ragdollEpoch"
   | "ragdollCause"
 >;
@@ -198,6 +217,11 @@ export class CharacterSounds {
       this.playFighting(cue.knockdown.weight === "heavy" ? "character.knockdown_hard" : "character.knockdown", character, local);
     }
     if (cue.gettingUp) this.playFighting("character.getup", character, local);
+    // ADR 0104: a hold, both ends.
+    if (cue.escaped) this.playFighting("character.escape", character, local, { rate: ESCAPE_RATE });
+    if (cue.wentLimp) this.playFighting("character.limp", character, local, { rate: LIMP_RATE });
+    if (cue.spinPass) this.playFighting("character.spin", character, local, spinLevel(cue.spinPass.windup));
+    if (cue.released) this.playFighting("character.hurl", character, local, { rate: HURL_RATE });
   }
 
   /** Getting around. Returns whether the Character Respawned this frame. */

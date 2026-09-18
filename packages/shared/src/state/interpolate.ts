@@ -4,7 +4,7 @@ import { lerpVec3, type Vec3 } from "../math/vec3.js";
 import type { CharacterMotionState } from "../simulation/CharacterStateMachine.js";
 import type { PropSnapshot } from "../simulation/Prop.js";
 import type { BoneSnapshot } from "../simulation/ragdollSkeleton.js";
-import type { RagdollCause, SimState } from "./SimState.js";
+import type { HeldPhase, RagdollCause, SimState } from "./SimState.js";
 
 interface Posed {
   position: Vec3;
@@ -65,6 +65,10 @@ export interface RenderCharacter {
   grabbingId: string | null;
   /** Not interpolated — the reverse of {@link grabbingId} (M6.1): whether (and by whom) this Character is currently held, which locks its own rendered facing to the server's frozen value instead of steering it from movement input. */
   heldByGrabberId: string | null;
+  /** Not interpolated — which part of its hold a Held Character is in (ADR 0104): kicking in its Struggle, or hanging Limp. */
+  heldPhase: HeldPhase | null;
+  /** Not interpolated — how long this Character has been Spinning someone (ADR 0104); the whoosh and the wind-up follow it. */
+  spinMs: number;
 }
 
 export interface RenderState {
@@ -126,6 +130,8 @@ export const interpolateState = (
       launchPadEpoch: n.launchPadEpoch,
       grabbingId: n.grabbingId,
       heldByGrabberId: n.heldByGrabberId,
+      heldPhase: n.heldPhase,
+      spinMs: n.spinMs,
     };
   }
 

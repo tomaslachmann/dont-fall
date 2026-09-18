@@ -1,7 +1,8 @@
 import { lengthVec3, subVec3, type Vec3 } from "../math/vec3.js";
 import type { Checkpoint } from "../simulation/Checkpoint.js";
 import type { FinishZone } from "../simulation/FinishZone.js";
-import { CRITICAL_SURVIVORS_ABOVE_TARGET, CRITICAL_TIME_LEFT_MS, HUD_THREAT_RADIUS_M, TICK_MS } from "../tuning.js";
+import { TICK_MS } from "../tuning/clock.js";
+import { CRITICAL_SURVIVORS_ABOVE_TARGET, CRITICAL_TIME_LEFT_MS, HUD_THREAT_RADIUS_M } from "../tuning/hud.js";
 import { rankWithTies } from "./ranking.js";
 
 /**

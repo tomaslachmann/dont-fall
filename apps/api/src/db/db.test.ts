@@ -93,8 +93,8 @@ describe("openDb migrating the pre-ADR-0053 accounts schema", () => {
     ).toThrow();
   });
 
-  it("backfills body_skin = 0 onto pre-skins accounts, preserving rows (M9 ticket 15)", () => {
-    // The exact pre-skins shape by hand — every column except `body_skin`.
+  it("backfills color = 0 onto pre-skins accounts, preserving rows (M9 ticket 15)", () => {
+    // The exact pre-skins shape by hand — every column except `color`.
     const raw = new Database(dbPath);
     raw.exec(`
       CREATE TABLE accounts (
@@ -122,7 +122,7 @@ describe("openDb migrating the pre-ADR-0053 accounts schema", () => {
 
     expect(db.select().from(accounts).where(eq(accounts.id, "old-id")).get()).toMatchObject({
       displayName: "Old Bean",
-      bodySkin: 0,
+      color: 0,
     });
   });
 
@@ -141,11 +141,11 @@ describe("openDb migrating the pre-ADR-0053 accounts schema", () => {
         created_at INTEGER NOT NULL,
         xp INTEGER NOT NULL DEFAULT 0,
         coins INTEGER NOT NULL DEFAULT 0,
-        body_skin INTEGER NOT NULL DEFAULT 0,
+        color INTEGER NOT NULL DEFAULT 0,
         bindings TEXT
       )
     `);
-    raw.prepare("INSERT INTO accounts (id, email, display_name, created_at, body_skin) VALUES (?, ?, ?, ?, ?)").run(
+    raw.prepare("INSERT INTO accounts (id, email, display_name, created_at, color) VALUES (?, ?, ?, ?, ?)").run(
       "old-id",
       "old@example.com",
       "Old Bean",
@@ -158,7 +158,7 @@ describe("openDb migrating the pre-ADR-0053 accounts schema", () => {
 
     expect(db.select().from(accounts).where(eq(accounts.id, "old-id")).get()).toMatchObject({
       displayName: "Old Bean",
-      bodySkin: 4,
+      color: 4,
       hat: null,
     });
     db.update(accounts).set({ hat: "cone" }).where(eq(accounts.id, "old-id")).run();

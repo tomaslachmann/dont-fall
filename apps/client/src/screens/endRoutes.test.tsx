@@ -97,7 +97,7 @@ describe("RewardsRoute", () => {
 });
 
 describe("RewardsRoute hat unlocks (ADR 0083)", () => {
-  const ACCOUNT = { id: "acc-1", discordId: null, email: null, displayName: "Bean", avatarUrl: null, coins: 0, bodySkin: 0, bindings: null };
+  const ACCOUNT = { id: "acc-1", discordId: null, email: null, displayName: "Bean", avatarUrl: null, coins: 0, color: 0, bindings: null };
 
   const renderRewards = (claim: { xpBefore: number; xpAfter: number }) => {
     let hat: string | null = null;

@@ -12,3 +12,9 @@ export const lerpAngle = (a: number, b: number, t: number): number => {
   if (diff < -Math.PI) diff += TAU;
   return a + diff * t;
 };
+
+/** Wraps an angle (radians) into (−π, π], so a turn toward it always takes the shortest arc. */
+export const wrapAngle = (angle: number): number => {
+  const wrapped = ((((angle + Math.PI) % TAU) + TAU) % TAU) - Math.PI;
+  return wrapped === -Math.PI ? Math.PI : wrapped;
+};

@@ -4,6 +4,7 @@ import {
   type LobbyActions,
   type LobbyConnection,
   type LobbySnapshot,
+  type SocketClose,
 } from "../socket/lobbyConnection.js";
 
 export interface LobbyConnectionState {
@@ -26,7 +27,8 @@ export interface LobbyConnectionState {
   /** Establishing the connection failed (unreachable broker port, refused welcome). */
   error: Error | null;
   /** The socket dropped after connecting. M2 does not reconnect (ADR 0011) — the route goes back. */
-  closed: boolean;
+  /** Why the socket closed, when it has — carries the server's own reason (ADR 0090). `null` while it is open. */
+  closed: SocketClose | null;
 }
 
 /**
@@ -39,7 +41,7 @@ export const useLobbyConnection = (serverPort: number, host?: string): LobbyConn
   const [connection, setConnection] = useState<LobbyConnection | null>(null);
   const [lobby, setLobby] = useState<LobbySnapshot | null>(null);
   const [error, setError] = useState<Error | null>(null);
-  const [closed, setClosed] = useState(false);
+  const [closed, setClosed] = useState<SocketClose | null>(null);
   const connectionRef = useRef<LobbyConnection | null>(null);
 
   useEffect(() => {
@@ -49,7 +51,7 @@ export const useLobbyConnection = (serverPort: number, host?: string): LobbyConn
     setConnection(null);
     setLobby(null);
     setError(null);
-    setClosed(false);
+    setClosed(null);
     connectionRef.current = null;
 
     createLobbyConnection({ ...(host === undefined ? {} : { host }), serverPort })
@@ -65,8 +67,8 @@ export const useLobbyConnection = (serverPort: number, host?: string): LobbyConn
           created.subscribeLobby((next) => {
             if (!cancelled) setLobby(next);
           }),
-          created.onClose(() => {
-            if (!cancelled) setClosed(true);
+          created.onClose((why) => {
+            if (!cancelled) setClosed(why);
           }),
         );
       })
@@ -84,7 +86,6 @@ export const useLobbyConnection = (serverPort: number, host?: string): LobbyConn
 
   const actions = useMemo<LobbyActions>(
     () => ({
-      setNickname: (nickname) => connectionRef.current?.setNickname(nickname),
       setReady: (ready) => connectionRef.current?.setReady(ready),
       selectTrack: (trackId) => connectionRef.current?.selectTrack(trackId),
       setRoundType: (roundType) => connectionRef.current?.setRoundType(roundType),

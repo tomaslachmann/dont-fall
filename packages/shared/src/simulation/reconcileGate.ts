@@ -1,5 +1,5 @@
 import type { CharacterSnapshot } from "../state/SimState.js";
-import { RECONCILE_POSITION_EPSILON } from "../tuning.js";
+import { RECONCILE_POSITION_EPSILON } from "../tuning/netcode.js";
 import { isDownMotionState } from "./CharacterStateMachine.js";
 
 /** The slice of a Character this gate compares — the server's report and our own prediction. */
