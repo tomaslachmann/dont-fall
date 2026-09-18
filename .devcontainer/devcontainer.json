@@ -9,7 +9,8 @@
   "name": "DON'T FALL — online",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:22-bookworm",
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
   },
   "hostRequirements": { "cpus": 2 },
   "containerEnv": { "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0" },

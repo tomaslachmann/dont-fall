@@ -1,5 +1,8 @@
 # 0107 — Online testing: the client on GitHub Pages, the server in a Codespace
 
+> Superseded in its hosting by ADR 0108 (the whole Docker stack on one address in the
+> Codespace). The `/match/<port>` proxy, `?server=` and the `BASE_URL` work below stand.
+
 ## Context
 
 The user, on 2026-09-18, wanted to play the game online with other people. They

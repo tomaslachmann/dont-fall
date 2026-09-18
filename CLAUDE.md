@@ -439,15 +439,18 @@ authored Tracks carry their own Thumbnails (`assets/<id>.jpg`, rendered from cod
 `pnpm publish:tracks`). **Waiting on the user:** the look of every wait, and republishing the four
 Tracks so their pictures reach the API.
 
-**Online testing, built, first deploy pending** — **ADR 0107**, the user's ask on 2026-09-18 (no free
-hosting found; GitHub Pages, with an integration). Pages serves files only, so the game and the Track
-builder go there (`pnpm build:pages` → `site/`, `.github/workflows/pages.yml` on every push to `main`)
-and the server runs in a GitHub Codespace (`.devcontainer/`, `pnpm run online` prints the link). A page
-learns its server from `?server=<origin>` (remembered in `localStorage`, shared by game and builder),
-else `VITE_SERVER_URL`, else the local fixed ports; the API proxies each Lobby's socket at
-`/match/<port>` (only for live Lobby ports), and every public-file URL and the router read Vite's
-`BASE_URL`. Email and password only online. **Waiting on the user:** Settings → Pages → Source: GitHub
-Actions, creating the Codespace, and the first real session (see `README.md`).
+**Online play, verified locally** — **ADR 0108** (superseding the hosting half of ADR 0107, the
+user's call on 2026-09-18 after GitHub Pages proved fiddly: "why not simply in Docker"). Online is the
+same Docker stack as local on one address: a `web` service (`apps/web/`, nginx) serves the game at `/`,
+the builder at `/builder/` and passes `/api/` (HTTP and every Lobby socket, `/api/match/<port>`,
+carried on by the API's own proxy) to the API; both apps are built with `VITE_SERVER_URL=/api`, read
+against the page's own origin. `pnpm run online` runs `docker compose up -d --build api web`,
+publishes missing authored Tracks and prints the one link (a Codespace's forwarded 8088, made public;
+locally http://localhost:8088). The Codespace has Docker (`docker-in-docker`) and runs it on every
+start. Verified on an isolated stack (18081/18088): game, builder, deep links, `/api`, publishing,
+and a real Lobby `welcome` through `/api/match/<port>`. Kept from ADR 0107: the proxy, `?server=`,
+`BASE_URL`-aware URLs, the Pages workflow (still deploys, no longer the way to play). **Waiting on the
+user:** the first session in a Codespace (see `README.md`).
 
 **One seat per Account, done on tests** — signing in on a second tab takes the seat and closes the
 first, with a reason the Screen shows (**ADR 0090**, the user's call on 2026-09-17). Found while
