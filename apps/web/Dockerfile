@@ -7,7 +7,7 @@ RUN corepack enable
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 WORKDIR /app
 
-COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/render/package.json packages/render/package.json
 COPY packages/ui/package.json packages/ui/package.json
