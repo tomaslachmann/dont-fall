@@ -56,7 +56,16 @@ const stubApi = (seen: { claimBodies: unknown[] }, results: Record<string, unkno
       const method = (init.method ?? "GET").toUpperCase();
       if (url.endsWith("/rewards/claim")) {
         seen.claimBodies.push(JSON.parse(String(init.body)));
-        return Response.json({ gainedXp: 240, gainedCoins: 36, xpBefore: 100, xpAfter: 340, coinsBefore: 10, coinsAfter: 46 });
+        return Response.json({
+          gainedXp: 240,
+          gainedCoins: 36,
+          xpBefore: 100,
+          xpAfter: 340,
+          coinsBefore: 10,
+          coinsAfter: 46,
+          rounds: [{ placement: 2, playerCount: 3, score: 70 }],
+          betWinnings: 0,
+        });
       }
       if (method === "GET" && /\/matches\/[^/]+$/.test(url)) {
         const id = url.substring(url.lastIndexOf("/") + 1);
@@ -96,6 +105,24 @@ describe("MatchResultsRoute", () => {
     expect(screen.getByText("Third")).toBeInTheDocument();
   });
 
+  it("finds your line by the Account you signed in with, with no ?me= at all (ADR 0110)", async () => {
+    localStorage.setItem("df_auth_token", "tok");
+    const account = { id: "acc-b", discordId: null, email: null, displayName: "Rival", avatarUrl: null, avatarUploadedAt: null, xp: 0, coins: 0, color: 0, skin: null, hat: null, bindings: null };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        const url = typeof input === "string" ? input : (input as Request).url;
+        if (url.endsWith("/auth/me")) return Response.json(account);
+        if (url.endsWith("/matches/m1")) return Response.json({ ...RESULT, accountIds: { b: "acc-b" } });
+        throw new Error(`unstubbed API call in test: ${url}`);
+      }),
+    );
+    renderAtMatch("/match/m1");
+
+    expect(await screen.findByText("YOU FINISHED 1ST · 190 PTS")).toBeInTheDocument();
+    localStorage.clear();
+  });
+
   it("a two-Player Match renders a two-place podium — simply no 3rd", async () => {
     stubApi({ claimBodies: [] }, { m2: TWO_PLAYER });
     renderAtMatch("/match/m2?me=b");
@@ -106,7 +133,7 @@ describe("MatchResultsRoute", () => {
     expect(screen.queryByText("3RD")).not.toBeInTheDocument();
   });
 
-  it("COLLECT banks the Match's own claim rows with its id on /rewards", async () => {
+  it("COLLECT claims the Match by its id alone on /rewards — the server finds the Rounds (ADR 0110)", async () => {
     const seen = { claimBodies: [] as unknown[] };
     stubApi(seen, { m1: RESULT });
     renderAtMatch("/match/m1?me=b");
@@ -114,13 +141,7 @@ describe("MatchResultsRoute", () => {
     fireEvent.click(await screen.findByRole("button", { name: "COLLECT REWARDS" }));
     expect(await screen.findByText("MATCH REWARDS")).toBeInTheDocument();
     expect(seen.claimBodies).toHaveLength(1);
-    expect(seen.claimBodies[0]).toEqual({
-      matchId: "m1",
-      rounds: [
-        { placement: 2, playerCount: 3, score: 70 },
-        { placement: 1, playerCount: 2, score: 120 },
-      ],
-    });
+    expect(seen.claimBodies[0]).toEqual({ matchId: "m1" });
   });
 
   it("FULL SCOREBOARD opens the fetched table as FINAL STANDINGS", async () => {

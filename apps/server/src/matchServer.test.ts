@@ -6,6 +6,7 @@ import {
   M1_TRACK,
   MIN_TIME_LIMIT_MS,
   RapierSimulation,
+  STANDINGS_READY_TIMEOUT_MS,
   TICK_MS,
   matchScore,
   roundScore,
@@ -2235,6 +2236,58 @@ describe("startServer — a Match runs several Rounds (M7 ticket 04, ADR 0049)",
     const later = await nextSnapshot(socket);
     expect(later.phase).toBe("RESULTS");
     expect(later.roundResults).toHaveLength(3);
+    socket.close();
+  });
+
+  it("numbers every Round on the snapshot, and a socket that joins mid-Match reads the server's number (ADR 0110)", async () => {
+    const trackId = await publishTrack(INSTANT_FINISH);
+    server = await startServer({ port: 0, playersToStart: 1, countdownMs: 0, roundEndMs: 0 }); // default matchLength: 3
+    const socket = connect(server.port, `?track=${trackId}`);
+    const welcome = await nextMessage(socket);
+    expect(welcome.type).toBe("welcome");
+    autoConfirmStandings(socket);
+    const seen: { phase: string; round: number; finished: number; deadline: number | null; now: number; more: boolean }[] = [];
+    socket.on("message", (raw) => {
+      const message = JSON.parse(raw.toString()) as ServerMessage;
+      if (message.type !== "snapshot") return;
+      seen.push({
+        phase: message.phase,
+        round: message.round,
+        finished: message.roundResults.length,
+        deadline: message.standingsDeadlineMs,
+        now: message.serverTimeMs,
+        more: message.roundsRemaining,
+      });
+    });
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 1, trackId, roundType: "race" } satisfies ClientMessage));
+    socket.send(JSON.stringify({ type: "pickRoundSlot", roundIndex: 2, trackId, roundType: "race" } satisfies ClientMessage));
+    await startMatch(socket);
+
+    await snapshotUntil(socket, (s) => s.round === 2);
+    const late = connect(server.port);
+    await nextMessage(late); // welcome
+    const lateFirst = await nextSnapshot(late);
+    expect(lateFirst.round).toBeGreaterThanOrEqual(2);
+    late.close();
+
+    await snapshotUntil(socket, (s) => s.roundResults.length === 3 && s.phase === "RESULTS");
+    // In LOBBY there is no Round; from LOADING it is the next one; RESULTS
+    // still names the one just finished.
+    for (const { phase, round, finished } of seen) {
+      if (phase === "LOBBY") expect(round).toBe(0);
+      else if (phase === "RESULTS") expect(round).toBe(finished);
+      else expect(round).toBe(finished + 1);
+    }
+    expect(new Set(seen.map((s) => s.round))).toEqual(new Set([0, 1, 2, 3]));
+    // The Standings deadline: only on Standings that lead to another Round,
+    // ahead of the snapshot that carries it by the configured timeout.
+    for (const { phase, deadline, now, more } of seen) {
+      if (phase === "RESULTS" && more) {
+        expect(deadline).not.toBeNull();
+        expect(deadline! - now).toBeGreaterThan(0);
+        expect(deadline! - now).toBeLessThanOrEqual(STANDINGS_READY_TIMEOUT_MS);
+      } else expect(deadline).toBeNull();
+    }
     socket.close();
   });
 

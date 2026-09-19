@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { ASSET_PLACEMENT_MODULES, MODULE_LIBRARY, STANDINGS_READY_TIMEOUT_MS, UNTITLED_TRACK_NAME, countCheckpoints } from "@dont-fall/shared";
+import { ASSET_PLACEMENT_MODULES, MODULE_LIBRARY, UNTITLED_TRACK_NAME, countCheckpoints } from "@dont-fall/shared";
 import { Button } from "@dont-fall/ui";
 import type { ExitReason, GameHandle, StandingsSnapshot } from "../game/index.js";
 import type { HitTakenEvent } from "../game/hitTaken.js";
@@ -12,7 +12,7 @@ import { ConnectionError } from "../lib/errors.js";
 import { browserStorage } from "../lib/browserStorage.js";
 import { readGraphicsQuality } from "../lib/graphicsQuality.js";
 import { setGameActive } from "../lib/gamePresence.js";
-import { skinForPlayerId } from "../lib/avatarSkins.js";
+import { avatarLook, NO_AVATAR, type AvatarLook } from "../lib/avatar.js";
 import { useBeanBalance, useBettingState, usePlaceBet } from "../lib/hooks/useBetting.js";
 import { useTrackDetail } from "../lib/hooks/useTrackDetail.js";
 import { useTrackList } from "../lib/hooks/useTrackList.js";
@@ -37,6 +37,7 @@ import { LoadingScreen, RoundLoader } from "../screens/LoadingScreen.js";
 import Spectator from "../screens/Spectator.js";
 import { PracticeHud } from "../screens/PracticeHud.js";
 import RaceHUD from "../screens/RaceHUD.js";
+import Scoreboard from "../screens/Scoreboard.js";
 import SurvivalHud from "../screens/SurvivalHud.js";
 import styles from "./GameCanvas.module.css";
 
@@ -95,6 +96,13 @@ const GO_HOLD_MS = 1000;
 const HIT_FLASH_MS = 600;
 const KNOCKDOWN_FLASH_MS = 1600;
 
+/** FinishedOrOut's OFF YOUR PB plate: seconds to a tenth, signed, and a warning only when slower. */
+const offYourPb = (deltaMs: number): { label: string; value: string; warn?: true } => ({
+  label: "OFF YOUR PB",
+  value: `${deltaMs > 0 ? "+" : "-"}${(Math.abs(deltaMs) / 1000).toFixed(1)}`,
+  ...(deltaMs > 0 ? { warn: true as const } : {}),
+});
+
 /**
  * The boundary ADR 0008 and M4 ticket 01 prepared: takes a config in, hands
  * the game its own React-untouched div to mount into, and reports
@@ -131,13 +139,7 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
   useEffect(() => {
     if (lobby?.phase !== "RESULTS") setReadyForNextRound(false);
   }, [lobby?.phase]);
-  // Which Round just played / is playing — counted off COUNTDOWN entries,
-  // since neither snapshot numbers its Rounds (roundResults order is Match
-  // scope the shell never sees). Reset on LOBBY: a fresh Match in the same
-  // mount starts counting over.
-  const [roundNumber, setRoundNumber] = useState(0);
   const prevPhaseRef = useRef<string | null>(null);
-  const prevTotalsRef = useRef(new Map<string, { score: number; placement: number }>());
   // Your run ended mid-Round (ticket 14) — the FinishedOrOut verdict's
   // facts, raised once per Round by the game. Cleared on the next COUNTDOWN
   // with everything else Round-scoped; the verdict itself only renders while
@@ -156,13 +158,13 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
   // is true there is nothing under the loading Screen worth showing.
   const [worldReady, setWorldReady] = useState(false);
   const [askedSpectate, setAskedSpectate] = useState(false);
-  // Local stopwatch anchor for the panel's ALIVE FOR — set on RUNNING entry
-  // (display-only elapsed; the server owns every clock that matters).
-  const [roundStartedAt, setRoundStartedAt] = useState<number | null>(null);
-  // When this RESULTS began, for the auto-start countdown (local clock —
-  // the server owns the timeout, this only renders its remainder).
-  const [resultsAt, setResultsAt] = useState<number | null>(null);
+  // The auto-start countdown's clock — ticks only while Standings are up; the
+  // deadline itself is the server's (ADR 0110).
   const [nowMs, setNowMs] = useState(() => Date.now());
+  // The full table behind BetweenRounds' SCOREBOARD, over the game rather
+  // than on its own route: leaving the route would close the socket and the
+  // Player with it (ADR 0110).
+  const [scoreboardOpen, setScoreboardOpen] = useState(false);
   // The Countdown overlay holds on green GO! for one beat after release
   // (GO_HOLD_MS) — set on the COUNTDOWN → RUNNING edge, cleared by the timer
   // below. Display-only, like everything else phase-edged here.
@@ -177,29 +179,20 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
   useEffect(() => {
     const phase = lobby?.phase ?? null;
     if (phase === "COUNTDOWN" && prevPhaseRef.current !== "COUNTDOWN") {
-      setRoundNumber((n) => n + 1);
       setRunEnd(null);
       setAskedSpectate(false);
       setHitTaken(null);
     }
-    if (phase === "RUNNING" && prevPhaseRef.current !== "RUNNING") {
-      setRoundStartedAt(Date.now());
-      setShowGo(true);
-    }
-    if (phase !== "RUNNING") setRoundStartedAt(null);
-    if (phase === "LOBBY") {
-      setRoundNumber(0);
-      prevTotalsRef.current = new Map();
-    }
-    if (phase === "RESULTS") setResultsAt((prev) => prev ?? Date.now());
-    else setResultsAt(null);
+    if (phase === "RUNNING" && prevPhaseRef.current !== "RUNNING") setShowGo(true);
+    if (phase !== "RESULTS") setScoreboardOpen(false);
     prevPhaseRef.current = phase;
   }, [lobby?.phase]);
   useEffect(() => {
-    if (resultsAt === null) return;
+    if (lobby?.phase !== "RESULTS") return;
+    setNowMs(Date.now());
     const timer = setInterval(() => setNowMs(Date.now()), 500);
     return () => clearInterval(timer);
-  }, [resultsAt]);
+  }, [lobby?.phase]);
   useEffect(() => {
     if (!showGo) return;
     const timer = setTimeout(() => setShowGo(false), GO_HOLD_MS);
@@ -210,12 +203,6 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
     const timer = setTimeout(() => setHitTaken(null), hitTaken.event.knockedDown ? KNOCKDOWN_FLASH_MS : HIT_FLASH_MS);
     return () => clearTimeout(timer);
   }, [hitTaken]);
-  useEffect(() => {
-    if (lobby?.phase !== "RESULTS" || standings === null) return;
-    prevTotalsRef.current = new Map(
-      standings.standings.map((row) => [row.id, { score: row.score, placement: row.placement }]),
-    );
-  }, [lobby?.phase, standings]);
   const trackDetail = useTrackDetail(practice ? undefined : lobby?.trackId);
   const trackList = useTrackList();
   // Ticket 14: the Spectator panel's board — polled only while the panel is
@@ -224,6 +211,9 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
   // the panel wants it the instant it opens.
   const panelWanted =
     lobby?.phase === "RUNNING" && spectate !== null && (runEnd === null || askedSpectate) && !practice;
+  // Which Round is playing, or just played while in RESULTS — the server's
+  // own number (ADR 0110), `0` before the first Round.
+  const roundNumber = lobby?.round ?? 0;
   const betting = useBettingState(lobby?.matchId, panelWanted ? roundNumber : undefined, panelWanted);
   const beanBalance = useBeanBalance();
   const placeBet = usePlaceBet();
@@ -240,9 +230,12 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
     const listed = trackList?.find((t) => t.id === id);
     return (listed ? (listed.name ?? UNTITLED_TRACK_NAME) : (trackDetail?.name ?? UNTITLED_TRACK_NAME)).toUpperCase();
   };
-  // Round numbers count up on COUNTDOWN, so while one loads it is the next.
+  // The server numbers a Round from the moment it starts loading; a snapshot
+  // from before that (the route's LOBBY handover) still reads the last one.
   const loadingRound =
-    loaderLobby?.phase === "COUNTDOWN" || loaderLobby?.phase === "RUNNING" ? roundNumber : roundNumber + 1;
+    loaderLobby === null || loaderLobby.phase === "LOBBY" || loaderLobby.phase === "RESULTS"
+      ? (loaderLobby?.round ?? 0) + 1
+      : loaderLobby.round;
   // Who the Round is still waiting for, once this client itself is ready.
   const loadingLabel =
     lobby !== null && worldReady
@@ -394,11 +387,26 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
   // absent in practice, where there is no Match and no "you".
   const myId = connection?.myId;
   const trackNameOf = (id: string): string => trackList?.find((t) => t.id === id)?.name ?? id;
-  const standingRows = standings ? toStandingRows(standings.standings, prevTotalsRef.current, myId) : null;
-  const confirmedCount = standings?.standings.filter((row) => row.confirmed).length ?? 0;
-  const autoStartMs = resultsAt === null ? 0 : Math.max(0, STANDINGS_READY_TIMEOUT_MS - (nowMs - resultsAt));
-  const autoStartLabel = `${Math.floor(autoStartMs / 60000)}:${String(Math.floor((autoStartMs % 60000) / 1000)).padStart(2, "0")}`;
+  // Whose avatar is whose (ADR 0110): each Player's Account picture over
+  // their bean's Colour, off the roster. Someone no longer on it has left —
+  // the disc alone.
+  const lookOf = (id: string): AvatarLook => {
+    const player = lobby?.players.find((p) => p.id === id);
+    return player ? avatarLook(player.accountId, player.color) : NO_AVATAR;
+  };
+  const standingRows = standings ? toStandingRows(standings.standings, myId, lookOf) : null;
+  // Who the next Round waits on: everyone still connected, not those who left.
+  const stillHere = standings?.standings.filter((row) => !row.gone) ?? [];
+  const confirmedCount = stillHere.filter((row) => row.confirmed).length;
+  const autoStartAtMs = standings?.autoStartAtMs ?? null;
+  const autoStartLabel = autoStartAtMs === null ? null : formatRoundClock(Math.max(0, autoStartAtMs - nowMs));
   const myLobbyPlayer = lobby?.players.find((p) => p.id === myId);
+  const isRace = lobby?.roundType === "race";
+  // Your place in the start line's order (spawn slots follow join order),
+  // among the Players here now — never above the field (ADR 0110).
+  const gridSpot = myLobbyPlayer
+    ? 1 + (lobby?.players.filter((p) => p.joinOrder < myLobbyPlayer.joinOrder).length ?? 0)
+    : 1;
   const lineOrder = myLobbyPlayer
     ? [myLobbyPlayer, ...(lobby?.players.filter((p) => p.id !== myId) ?? [])]
     : (lobby?.players ?? []);
@@ -457,11 +465,12 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
             rounds={lobby.matchLength}
             track={(trackDetail.name ?? lobby.trackId).toUpperCase()}
             mode={lobby.roundType.toUpperCase()}
-            gridSpot={myLobbyPlayer ? myLobbyPlayer.joinOrder + 1 : 1}
+            gridSpot={gridSpot}
             field={lobby.players.length}
-            checkpoints={totalCheckpoints}
+            checkpoints={isRace ? totalCheckpoints : 0}
+            personalBest={isRace && personalBestMs !== null ? `PB ${formatRaceTime(personalBestMs)}` : null}
             countdownMsLeft={lobby.phase === "COUNTDOWN" ? lobby.countdownMsLeft : 0}
-            onTheLine={lineOrder.slice(0, 5).map((p) => skinForPlayerId(p.id))}
+            onTheLine={lineOrder.slice(0, 5).map((p) => lookOf(p.id))}
             othersOnTheLine={Math.max(0, lobby.players.length - 5)}
           />
         </div>
@@ -486,22 +495,30 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
               threat={
                 roundHud.threat === null
                   ? null
-                  : { name: roundHud.threat.nickname.toUpperCase(), skin: skinForPlayerId(roundHud.threat.id) }
+                  : { name: roundHud.threat.nickname.toUpperCase(), look: lookOf(roundHud.threat.id) }
               }
               dashCharge={roundHud.dashCharge}
               dashReady={roundHud.dashReady}
+              dashRechargeS={roundHud.dashRechargeS}
+              dashKey={roundHud.dashKey}
             />
           ) : (
             <SurvivalHud
               remaining={roundHud.remaining}
               startedWith={roundHud.startedWith}
-              alive={roundHud.alive.map(skinForPlayerId)}
+              alive={roundHud.alive.map(lookOf)}
               youAlive={roundHud.youAlive}
               survived={formatSurvived(roundHud.survivedMs)}
-              lastOut={roundHud.lastOut === null ? null : `${roundHud.lastOut.toUpperCase()} WAS ELIMINATED`}
+              lastOut={
+                roundHud.lastOut === null
+                  ? null
+                  : `${roundHud.lastOut.toUpperCase()} ${roundHud.lastOutLeft ? "LEFT" : "WAS ELIMINATED"}`
+              }
               critical={roundHud.critical}
               dashCharge={roundHud.dashCharge}
               dashReady={roundHud.dashReady}
+              dashRechargeS={roundHud.dashRechargeS}
+              dashKey={roundHud.dashKey}
             />
           )}
         </div>
@@ -546,18 +563,33 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
                     ? [
                         { label: "TIME", value: formatRaceTime(runEnd.raceTimeMs ?? 0) },
                         { label: "POINTS", value: `+${Math.round(runEnd.points)}`, accent: true as const },
+                        // The design's third plate, off the Personal Best this
+                        // Round started with (ADR 0088, 0110) — only when one exists.
+                        ...(personalBestMs === null || runEnd.raceTimeMs === null
+                          ? []
+                          : [offYourPb(runEnd.raceTimeMs - personalBestMs)]),
                       ]
                     : [
                         { label: "SURVIVED", value: formatSurvived(runEnd.survivedMs ?? 0) },
                         { label: "POINTS", value: `+${Math.round(runEnd.points)}`, accent: true as const },
+                        // ADR 0110: who put you out, when someone did.
+                        ...(runEnd.outBy === null
+                          ? []
+                          : [
+                              {
+                                label: `${runEnd.outBy.how.toUpperCase()} BY`,
+                                value: runEnd.outBy.nickname.toUpperCase(),
+                              },
+                            ]),
                       ],
               },
             ]}
             position={runEnd.placement}
             field={runEnd.playerCount}
-            checkpoints={totalCheckpoints}
+            checkpoints={isRace ? totalCheckpoints : 0}
             checkpointsDone={runEnd.outcome === "finished" ? totalCheckpoints : (runEnd.checkpointIndex ?? -1) + 1}
-            nextRoundIn={formatRoundClock(lobby.timeLimitMs)}
+            personalBest={isRace && personalBestMs !== null ? `PB ${formatRaceTime(personalBestMs)}` : null}
+            roundEndsIn={formatRoundClock(lobby.timeLimitMs)}
             onSpectate={() => {
               setAskedSpectate(true);
               handleRef.current?.enterSpectate();
@@ -584,9 +616,9 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
           <Spectator
             following={spectate.followingNickname}
             {...(spectate.followingId === null ? {} : { followingId: spectate.followingId })}
-            followingSkin={skinForPlayerId(spectate.followingId ?? "me")}
+            followingLook={lookOf(spectate.followingId ?? myId ?? "")}
             place={spectate.followedPlace === null ? "—" : `#${spectate.followedPlace}`}
-            aliveFor={roundStartedAt === null ? "—" : formatSurvived(Date.now() - roundStartedAt)}
+            aliveFor={formatSurvived(spectate.aliveForMs)}
             beansLeft={spectate.beansLeft}
             round={`ROUND ${roundNumber} · ${lobby.roundType.toUpperCase()}`}
             yourExit={
@@ -598,8 +630,14 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
             }
             runners={spectate.runners
               .map((runner) => {
-                const odds = betting?.runners.find((board) => board.playerId === runner.id)?.odds ?? null;
-                return { id: runner.id, name: runner.nickname, skin: skinForPlayerId(runner.id), odds };
+                const board = betting?.runners.find((entry) => entry.playerId === runner.id);
+                return {
+                  id: runner.id,
+                  name: runner.nickname,
+                  look: lookOf(runner.id),
+                  odds: board?.odds ?? null,
+                  ...(board === undefined ? {} : { pool: board.pool }),
+                };
               })
               .map((runner, _, runners) => {
                 const defined = runners.filter((other) => other.odds !== null);
@@ -617,12 +655,13 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
               return {
                 main: `${latest.nickname} STAKED ${latest.amount} ON ${latest.targetNickname}`.toUpperCase(),
                 sub: `${betting.bettorCount} SPECTATORS BETTING`,
+                look: avatarLook(latest.accountId, null),
               };
             })()}
-            closesIn={
-              betting && betting.open ? formatRoundClock(Math.max(0, betting.closesAtMs - Date.now())) : null
-            }
+            // ADR 0110: a board closes when one runner is left, not on a clock.
+            closesIn={betting && betting.open ? "AT 1 LEFT" : null}
             balance={beanBalance}
+            {...(betting === null ? {} : { totalPool: betting.totalPool })}
             onFollow={(playerId) => handleRef.current?.spectateFollow(playerId)}
             onPrev={() => handleRef.current?.spectatePrev()}
             onNext={() => handleRef.current?.spectateNext()}
@@ -647,8 +686,12 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
               round={roundNumber + 1}
               rounds={lobby.matchLength}
               {...(nextPick?.roundType ? { mode: nextPick.roundType.toUpperCase() } : {})}
-              label={`WAITING FOR PLAYERS ${confirmedCount}/${standings.standings.length}`}
+              label={`WAITING FOR PLAYERS ${confirmedCount}/${stillHere.length}`}
             />
+          </div>
+        ) : standings.roundsRemaining && scoreboardOpen ? (
+          <div className={styles.screenOverlay}>
+            <Scoreboard rows={standingRows ?? []} title={`AFTER ROUND ${roundNumber}`} onBack={() => setScoreboardOpen(false)} />
           </div>
         ) : standings.roundsRemaining ? (
           <div className={styles.screenOverlay}>
@@ -661,15 +704,14 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
               nextNote={nextPick?.trackId ? "" : "DRAWN AT MATCH START — REVEALED WHEN THE ROUND LOADS"}
               {...(nextPick?.roundType ? { nextMode: nextPick.roundType.toUpperCase() } : {})}
               {...(nextTrackThumbnail === undefined ? {} : { nextThumbnail: nextTrackThumbnail })}
-              autoStart={autoStartLabel}
+              {...(autoStartLabel === null ? {} : { autoStart: autoStartLabel })}
               readyCount={confirmedCount}
+              readyOf={stillHere.length}
               onReady={() => {
                 setReadyForNextRound(true);
                 handleRef.current?.standingsReady();
               }}
-              onScoreboard={() =>
-                navigate("/scoreboard", { state: { rows: standingRows ?? [], title: `AFTER ROUND ${roundNumber}` } })
-              }
+              onScoreboard={() => setScoreboardOpen(true)}
               onLeave={goToMainMenu}
             />
           </div>

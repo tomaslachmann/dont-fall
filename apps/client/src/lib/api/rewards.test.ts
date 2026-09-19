@@ -8,7 +8,7 @@ afterEach(() => {
 });
 
 describe("claimRewards", () => {
-  it("posts the Match's rows and returns the credit", async () => {
+  it("posts only the Match's id — the server finds your Rounds (ADR 0110) — and returns the credit", async () => {
     const fetchMock = vi.fn(
       async () =>
         new Response(
@@ -17,12 +17,10 @@ describe("claimRewards", () => {
         ),
     );
     vi.stubGlobal("fetch", fetchMock);
-    const rounds = [{ placement: 1, playerCount: 4, score: 120 }];
-
-    await expect(claimRewards(rounds, "m1")).resolves.toMatchObject({ gainedXp: 320, gainedCoins: 60 });
+    await expect(claimRewards("m1")).resolves.toMatchObject({ gainedXp: 320, gainedCoins: 60 });
     expect(fetchMock).toHaveBeenCalledWith(
       `${API}/rewards/claim`,
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ matchId: "m1", rounds }) }),
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ matchId: "m1" }) }),
     );
   });
 });

@@ -9,10 +9,14 @@ import { StatTile } from '../ui/Pill';
 import type { Feel } from '../tokens';
 import s from './MainMenu.module.css';
 import { useNavigate } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
+import { fetchCareer } from '../lib/api/career.js';
+import { formatStay } from '../lib/utils/roundTimer.js';
 import { useAccount } from '../lib/hooks/useAccount';
 import { useFriends } from '../lib/hooks/useFriends';
 import { useGameSettings } from '../lib/hooks/useGameSettings';
 import { formatBeansOnline } from '../lib/api/settings';
+import { avatarLook } from '../lib/avatar.js';
 import SettingsIcon from '../ui/SettingsIcon';
 import { builderUrl } from '../lib/publicUrl.js';
 
@@ -49,6 +53,9 @@ export default function MainMenu({
   // reads — the menu never fetches the roster twice. Answering requests and
   // invites is the global alert stack's job, not this Screen's.
   const friends = useFriends();
+  // The three tiles are the career's own numbers (ADR 0110), shared with the
+  // Profile screen's cache; a dash until they arrive.
+  const career = useQuery({ queryKey: ['career'], queryFn: fetchCareer, enabled: account !== null }).data?.stats;
   return (
     <Stage
       background="var(--df-stage-menu)"
@@ -63,7 +70,7 @@ export default function MainMenu({
 
         <div className={s.identity}>
           <button type="button" className={s.account} onClick={() => navigate("/profile")} aria-label="Profile">
-            <Avatar skin="pink" />
+            <Avatar look={account ? avatarLook(account.id, account.color, account.avatarUploadedAt) : undefined} />
             <span className={s.accountText}>
               <span className={s.name}>{account?.displayName}</span>
               <span className={s.level}>LEVEL {shownLevel}</span>
@@ -96,8 +103,6 @@ export default function MainMenu({
 
           <nav className={s.nav}>
             {NAV.map(([label, dest]) => {
-              // Leaderboards has no screen yet — it logs until its own exists
-              // rather than navigating nowhere.
               const target =
                 dest === 'character'
                   ? '/character'
@@ -107,7 +112,9 @@ export default function MainMenu({
                       ? '/friends'
                       : dest === 'credits'
                         ? '/credits'
-                        : null;
+                        : dest === 'leaderboards'
+                          ? '/leaderboards'
+                          : null;
               const button = (
                 <JellyButton
                   key={dest}
@@ -146,9 +153,9 @@ export default function MainMenu({
       </div>
 
       <div className={s.stats}>
-        <StatTile label="BEST SURVIVAL" value="06:11" />
-        <StatTile label="WINS" value="137" />
-        <StatTile label="GRABS BROKEN" value="892" accent />
+        <StatTile label="BEST SURVIVAL" value={career?.bestSurvivalMs == null ? '—' : formatStay(career.bestSurvivalMs)} />
+        <StatTile label="WINS" value={career ? String(career.wins) : '—'} />
+        <StatTile label="GRABS BROKEN" value={career ? String(career.grabsBroken) : '—'} accent />
       </div>
     </Stage>
   );

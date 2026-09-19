@@ -216,6 +216,7 @@ describe("heartbeat", () => {
           id: expect.any(String),
           fromAccountId: a,
           fromDisplayName: "Amy",
+          fromColor: 0,
           lobby: { kind: "private", code: "ABC123" },
           sentAt: NOW,
         },
@@ -344,10 +345,11 @@ describe("recentPlayers", () => {
           accountId: newFriend,
           displayName: "New",
           avatarUrl: null,
+          color: 0,
           matchesTogether: 1,
           lastPlayedAt: 3_000,
         },
-        { accountId: old, displayName: "Old", avatarUrl: null, matchesTogether: 2, lastPlayedAt: 2_000 },
+        { accountId: old, displayName: "Old", avatarUrl: null, color: 0, matchesTogether: 2, lastPlayedAt: 2_000 },
       ],
     });
     expect(recentPlayers(db, makeAccount("Lonely")).recent).toEqual([]);

@@ -11,7 +11,7 @@ import {
   creditAccountEarnings,
   getAccountEarnings,
 } from "../auth/accounts.dao.js";
-import { getBettingState, openBettingRound, placeBet, settleBettingRound } from "./bets.service.js";
+import { closeBettingRound, getBettingState, openBettingRound, placeBet, settleBettingRound } from "./bets.service.js";
 
 const SERVICE_TOKEN = "test-service-token";
 const RUNNERS = [
@@ -89,6 +89,47 @@ describe("betting service", () => {
       expect(second).toEqual(first);
       // Paid once, not twice: 1000 - 100 staked + 100 won back.
       expect(getAccountEarnings(db, ann.id)?.coins).toBe(1000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a Round with no winner at all refunds every stake (ADR 0110)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "api-bets-test-"));
+    try {
+      const db = openDb(join(dir, "test.sqlite"));
+      const ann = fund(db, "ann@example.com", "Ann", 1000);
+      const bob = fund(db, "bob@example.com", "Bob", 1000);
+      openBettingRound(db, { matchId: "m1", round: 1, closesAtMs: 60_000, runners: RUNNERS });
+      placeBet(db, { id: ann.id, displayName: "Ann" }, { matchId: "m1", round: 1, targetId: "p1", amount: 100 }, 1_000);
+      placeBet(db, { id: bob.id, displayName: "Bob" }, { matchId: "m1", round: 1, targetId: "p2", amount: 250 }, 2_000);
+
+      settleBettingRound(db, { matchId: "m1", round: 1, winnerIds: [] }, 50_000);
+      expect(getBettingState(db, "m1", 1, 51_000).settled).toBe(true);
+      expect(getAccountEarnings(db, ann.id)?.coins).toBe(1000);
+      expect(getAccountEarnings(db, bob.id)?.coins).toBe(1000);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a board closes when the match server says one runner is left, and only ever earlier (ADR 0110)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "api-bets-test-"));
+    try {
+      const db = openDb(join(dir, "test.sqlite"));
+      const ann = fund(db, "ann@example.com", "Ann", 1000);
+      openBettingRound(db, { matchId: "m1", round: 1, closesAtMs: 600_000, runners: RUNNERS });
+      expect(getBettingState(db, "m1", 1, 5_000).open).toBe(true);
+
+      closeBettingRound(db, { matchId: "m1", round: 1 }, 10_000);
+      expect(getBettingState(db, "m1", 1, 10_000).open).toBe(false);
+      expect(() =>
+        placeBet(db, { id: ann.id, displayName: "Ann" }, { matchId: "m1", round: 1, targetId: "p1", amount: 10 }, 11_000),
+      ).toThrow(/closed/);
+      // A later close never reopens it.
+      closeBettingRound(db, { matchId: "m1", round: 1 }, 20_000);
+      expect(getBettingState(db, "m1", 1, 15_000).closesAtMs).toBe(10_000);
+      expect(() => closeBettingRound(db, { matchId: "m1", round: 9 }, 20_000)).toThrow(/no betting round/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -7,7 +7,7 @@ const NOW = 1_000_000_000_000;
 const friend = (presence: FriendPresence): FriendView => ({
   accountId: "a1",
   displayName: "Floppo",
-  avatarUrl: null,
+  avatarUrl: null, color: 0,
   friendsSince: 1,
   presence,
 });
@@ -79,7 +79,7 @@ describe("tabOf / requestNote / recentNote", () => {
   it("recent rows always know matches together and last played", () => {
     expect(
       recentNote(
-        { accountId: "a2", displayName: "Bo", avatarUrl: null, matchesTogether: 2, lastPlayedAt: NOW - 3_600_000 },
+        { accountId: "a2", displayName: "Bo", avatarUrl: null, color: 0, matchesTogether: 2, lastPlayedAt: NOW - 3_600_000 },
         NOW,
       ),
     ).toBe("PLAYED 2 MATCHES TOGETHER · 1 HOUR AGO");

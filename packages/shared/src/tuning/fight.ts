@@ -295,3 +295,17 @@ export const BUMP_IMPULSE_SCALE = 0.6;
  * a visible pop off the ground — same idea as {@link WALL_IMPACT_LIFT_RATIO}.
  */
 export const BUMP_LIFT_RATIO = 0.3;
+
+// --- Elimination credit (ADR 0110) ------------------------------------------
+
+/**
+ * How long (ms) a grab, a throw or a Hit still counts as who put a Character
+ * out, when it Falls out of a Survival Round — the knocked-out card's GRABBED /
+ * HURLED / HIT BY. Long enough to cover a shove, the tumble and the drop off
+ * the edge; short enough that a bump half a Round ago is not credited with a
+ * Fall its victim walked into on their own.
+ */
+export const ELIMINATION_CREDIT_MS = 5_000;
+
+/** {@link ELIMINATION_CREDIT_MS} in whole ticks. */
+export const ELIMINATION_CREDIT_TICKS = msToTicks(ELIMINATION_CREDIT_MS);

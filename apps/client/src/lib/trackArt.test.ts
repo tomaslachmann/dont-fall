@@ -10,6 +10,8 @@ const row = (id: string, revision: number, hasThumbnail: boolean): TrackListing 
   revision,
   hasThumbnail,
   plays: 0,
+  playsThisWeek: 0,
+  playsToday: 0,
   hasFinishZone: true,
 });
 

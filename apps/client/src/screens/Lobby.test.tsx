@@ -47,6 +47,7 @@ const baseLobby = (overrides: Partial<LobbySnapshot> = {}): LobbySnapshot => ({
   startBlockedReason: undefined,
   countdownMsLeft: 0,
   matchLength: 1,
+  round: 0,
   roundPicks: [],
   maxPlayers: 10,
   ...overrides,
@@ -185,7 +186,7 @@ describe("Lobby", () => {
     it("shows the broker's code for a private Lobby", () => {
       renderLobby({ code: "PLUMJA" });
 
-      expect(screen.getByText("PLUMJA")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Copy the code PLUMJA" })).toHaveTextContent("PLUMJA");
       expect(screen.getByText("PRIVATE")).toBeInTheDocument();
     });
 
@@ -197,17 +198,15 @@ describe("Lobby", () => {
       expect(screen.getByRole("button", { name: "INVITE FRIENDS" })).toBeDisabled();
     });
 
-    it("copies the code for sharing and flashes it, and never offers to when there is none", async () => {
+    it("copies the code for sharing from the code itself, and flashes it (ADR 0110)", async () => {
       const writeText = vi.fn().mockResolvedValue(undefined);
       vi.stubGlobal("navigator", { clipboard: { writeText } });
 
       renderLobby({ code: "PLUMJA" });
 
-      fireEvent.click(screen.getByRole("button", { name: "INVITE FRIENDS" }));
+      fireEvent.click(screen.getByRole("button", { name: "Copy the code PLUMJA" }));
       expect(writeText).toHaveBeenCalledWith("PLUMJA");
       expect(await screen.findByText("Invite code copied.")).toBeInTheDocument();
-      // The button keeps its label — the flash carries the confirmation.
-      expect(screen.getByRole("button", { name: "INVITE FRIENDS" })).toBeInTheDocument();
     });
 
     it("a copy that fails flashes why instead of claiming it", async () => {
@@ -216,8 +215,45 @@ describe("Lobby", () => {
 
       renderLobby({ code: "PLUMJA" });
 
-      fireEvent.click(screen.getByRole("button", { name: "INVITE FRIENDS" }));
+      fireEvent.click(screen.getByRole("button", { name: "Copy the code PLUMJA" }));
       expect(await screen.findByText("Couldn't copy the code.")).toBeInTheDocument();
+    });
+  });
+
+  describe("INVITE FRIENDS (ADR 0110)", () => {
+    it("opens Friends in place and sends a real invite to this Lobby, confirmed on the flash stack", async () => {
+      localStorage.setItem("df_auth_token", "tok");
+      const invites: unknown[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: unknown, init?: RequestInit) => {
+          const url = String(input);
+          if (url.endsWith("/friends/invite")) {
+            invites.push(JSON.parse(String(init?.body)));
+            return Response.json({ id: "inv-1" });
+          }
+          if (url.endsWith("/friends")) {
+            return Response.json({
+              friends: [
+                { accountId: "acc-f", displayName: "Floppo", avatarUrl: null, color: 1, friendsSince: 0, presence: { status: "online" } },
+              ],
+              online: 1,
+              total: 1,
+              requests: [],
+            });
+          }
+          if (url.endsWith("/friends/recent")) return Response.json({ recent: [] });
+          if (url.endsWith("/friends/code")) return Response.json({ code: "ABC123" });
+          return Response.json([]);
+        }),
+      );
+      renderLobby({ code: "PLUMJA", inviteRef: { kind: "private", code: "PLUMJA" } });
+
+      fireEvent.click(screen.getByRole("button", { name: "INVITE FRIENDS" }));
+      fireEvent.click(await screen.findByRole("button", { name: /^INVITE$/ }));
+      expect(await screen.findByText("Invite sent.")).toBeInTheDocument();
+      expect(invites).toEqual([{ accountId: "acc-f", lobby: { kind: "private", code: "PLUMJA" } }]);
+      localStorage.clear();
     });
   });
 

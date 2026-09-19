@@ -7,6 +7,8 @@ import {
   getBetRound,
   insertBet,
   listBets,
+  closeBetRound,
+  listSettledBetRounds,
   markSettled,
   openBetRound,
   recentBets,
@@ -29,7 +31,8 @@ export interface BettingState {
   runners: BettingRunnerState[];
   totalPool: number;
   bettorCount: number;
-  recentBets: { nickname: string; amount: number; targetNickname: string; placedAtMs: number }[];
+  /** The latest tickets, newest first — `accountId` is the bettor, whose avatar the ticker shows (ADR 0110). */
+  recentBets: { accountId: string; nickname: string; amount: number; targetNickname: string; placedAtMs: number }[];
 }
 
 const TICKER_LIMIT = 5;
@@ -59,6 +62,7 @@ const stateOf = (db: ApiDb, matchId: string, round: number, nowMs: number): Bett
     totalPool,
     bettorCount: countBettors(db, matchId, round),
     recentBets: recentBets(db, matchId, round, TICKER_LIMIT).map((bet) => ({
+      accountId: bet.accountId,
       nickname: bet.nickname,
       amount: bet.amount,
       targetNickname: bet.targetNickname,
@@ -91,6 +95,23 @@ export const openBettingRound = (
   }
   const opened = openBetRound(db, round);
   return { matchId: opened.matchId, round: opened.round, closesAtMs: opened.closesAtMs, open: !opened.settled };
+};
+
+/**
+ * Closes a Round's board before it settles — the match server's call the Tick
+ * only one runner is left in it (ADR 0110). Idempotent, and only ever earlier.
+ */
+export const closeBettingRound = (
+  db: ApiDb,
+  close: { matchId: string; round: number },
+  nowMs: number,
+): { matchId: string; round: number; open: false } => {
+  if (typeof close.matchId !== "string" || close.matchId.length === 0) throw new ServiceError(400, "matchId is required");
+  if (!Number.isInteger(close.round) || close.round < 1) throw new ServiceError(400, "round must be a positive integer");
+  if (!closeBetRound(db, close.matchId, close.round, nowMs)) {
+    throw new ServiceError(404, "no betting round for this Match and Round");
+  }
+  return { matchId: close.matchId, round: close.round, open: false };
 };
 
 /**
@@ -144,7 +165,9 @@ export const getBettingState = (db: ApiDb, matchId: string, round: number, nowMs
  * Settles a Round — the match server's call when the Round ends. Idempotent:
  * an already-settled Round keeps its first answer (the DAO), so a retried
  * settle can't pay twice. Winners are the placement-1 runners; with none
- * backed, every stake refunds (`settlePayouts`' void round).
+ * backed, every stake refunds (`settlePayouts`' void round). A Round with no
+ * winners at all — abandoned, every racer gone — is that same void round
+ * (ADR 0110): refused, it left the pool open and every stake stranded.
  */
 export const settleBettingRound = (
   db: ApiDb,
@@ -155,9 +178,7 @@ export const settleBettingRound = (
     throw new ServiceError(400, "matchId is required");
   }
   if (!Number.isInteger(settle.round) || settle.round < 1) throw new ServiceError(400, "round must be a positive integer");
-  if (!Array.isArray(settle.winnerIds) || settle.winnerIds.length === 0) {
-    throw new ServiceError(400, "winnerIds must name the Round's winners");
-  }
+  if (!Array.isArray(settle.winnerIds)) throw new ServiceError(400, "winnerIds must list the Round's winners");
   const bettingRound = getBetRound(db, settle.matchId, settle.round);
   if (!bettingRound) throw new ServiceError(404, "no betting round for this Match and Round");
   for (const winnerId of settle.winnerIds) {
@@ -182,4 +203,26 @@ export const settleBettingRound = (
     markSettled(db, settle.matchId, settle.round, [...winners], nowMs);
   }
   return { matchId: settle.matchId, round: settle.round, settled: true, payouts };
+};
+
+/**
+ * What `accountId`'s bets won across one Match (ADR 0110) — the Rewards
+ * screen's BET WON. Recomputed from the settled boards with the same pure
+ * `settlePayouts` the settle credited, so it always equals what landed. A void
+ * Round (no winner) refunds stakes; a refund is not a win, so it is left out.
+ */
+export const betWinningsFor = (db: ApiDb, matchId: string, accountId: string): number => {
+  let won = 0;
+  for (const round of listSettledBetRounds(db, matchId)) {
+    const winners = new Set(round.winnerIds ?? []);
+    if (winners.size === 0) continue;
+    const placed = listBets(db, matchId, round.round);
+    const totalPool = placed.reduce((sum, bet) => sum + bet.amount, 0);
+    const payouts = settlePayouts(
+      placed.map((bet) => ({ bettorId: bet.accountId, stake: bet.amount, won: winners.has(bet.targetId) })),
+      totalPool,
+    );
+    won += payouts.find((payout) => payout.bettorId === accountId)?.payout ?? 0;
+  }
+  return won;
 };

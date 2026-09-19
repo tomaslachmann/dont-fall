@@ -31,6 +31,15 @@ const countdown = (calls: MatchCalls, firstSeenMs: number, stepMs = 16, over: Pa
   return heard;
 };
 
+/** COUNTDOWN frames at 144 Hz from `fromMs` until `untilMs` (server clock), each carrying the end `endsAtMs`. */
+const countdownFrames = (calls: MatchCalls, fromMs: number, untilMs: number, endsAtMs: number): string[] => {
+  const heard: string[] = [];
+  for (let now = fromMs; now < untilMs; now += 1000 / 144) {
+    heard.push(...calls.update(frame({ phase: "COUNTDOWN", serverNowMs: now, countdownEndsAtMs: endsAtMs })));
+  }
+  return heard;
+};
+
 const RESULTS = (over: Partial<MatchResultsFrame> = {}): MatchResultsFrame => ({
   matchOver: false,
   won: false,
@@ -56,6 +65,34 @@ describe("MatchCalls (M14 ticket 10, ADR 0087)", () => {
     calls.update(frame({ phase: "COUNTDOWN", serverNowMs: 10_050, countdownEndsAtMs: 13_000 }));
     expect(calls.update(frame({ phase: "COUNTDOWN", serverNowMs: 12_500, countdownEndsAtMs: 13_000 }))).toEqual(["match.count_1"]);
     expect(calls.update(frame({ phase: "RUNNING", serverNowMs: 13_010, countdownEndsAtMs: null }))).toEqual(["match.go"]);
+  });
+
+  it("says go once while the snapshots still read COUNTDOWN past its end (ADR 0109)", () => {
+    // Stamped on the Tick grid, the end is the Tick RUNNING starts on, and that
+    // snapshot is a one-way trip plus the Tick's own work away.
+    const calls = new MatchCalls();
+    calls.update(frame({ serverNowMs: 9_000 }));
+    const heard: string[] = [];
+    for (let now = 12_950; now < 13_060; now += 1000 / 144) {
+      const phase = now < 13_000 + (3 * 1000) / 144 ? "COUNTDOWN" : "RUNNING";
+      heard.push(...calls.update(frame({ phase, serverNowMs: now, countdownEndsAtMs: phase === "COUNTDOWN" ? 13_000 : null })));
+    }
+    expect(heard.filter((slot) => slot === "match.go")).toEqual(["match.go"]);
+  });
+
+  it("never says go twice when a stall moves the end later after it played", () => {
+    const calls = new MatchCalls();
+    calls.update(frame({ serverNowMs: 9_000 }));
+    const heard = countdownFrames(calls, 12_950, 13_020, 13_000);
+    // The server stalled over the end and rebased its clock: its next
+    // COUNTDOWN snapshots carry an end 350 ms later, and RUNNING comes after.
+    heard.push(...countdownFrames(calls, 13_020, 13_420, 13_350));
+    heard.push(...calls.update(frame({ phase: "RUNNING", serverNowMs: 13_420 })));
+    expect(heard.filter((slot) => slot === "match.go")).toEqual(["match.go"]);
+
+    // The next Round's Countdown is entered afresh.
+    calls.update(frame({ phase: "ROUND_END", serverNowMs: 20_000 }));
+    expect(countdownFrames(calls, 29_950, 30_020, 30_000)).toEqual(["match.go"]);
   });
 
   it("stays quiet without a server clock, and while spectating", () => {

@@ -144,6 +144,8 @@ const lobbyIn = (phase: string, extra: Record<string, unknown> = {}): Record<str
   loaded: ["me", "p2", "p3"],
   timeLimitMs: 180_000,
   matchLength: 3,
+  // The server's Round number (ADR 0110): none yet in LOBBY, Round 1 after.
+  round: phase === "LOBBY" ? 0 : 1,
   roundType: "race",
   roundPicks: [],
   ...extra,
@@ -155,15 +157,17 @@ const resultsRows = [
   { id: "p3", nickname: "Third", qualified: false, placement: 3, checkpointIndex: 1, fallCount: 5, dnf: false },
 ];
 
-const standingsIn = (roundsRemaining: boolean): Record<string, unknown> => ({
+const standingsIn = (roundsRemaining: boolean, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
   results: resultsRows,
   roundsRemaining,
   standings: [
-    { id: "me", nickname: "Mushy", score: 300, placement: 1, gone: false, confirmed: false },
-    { id: "p2", nickname: "Rival", score: 200, placement: 2, gone: false, confirmed: false },
-    { id: "p3", nickname: "Third", score: 100, placement: 3, gone: false, confirmed: false },
+    { id: "me", nickname: "Mushy", score: 300, placement: 1, gone: false, confirmed: false, gained: 300, previousPlacement: null },
+    { id: "p2", nickname: "Rival", score: 200, placement: 2, gone: false, confirmed: false, gained: 200, previousPlacement: null },
+    { id: "p3", nickname: "Third", score: 100, placement: 3, gone: false, confirmed: false, gained: 100, previousPlacement: null },
   ],
   winners: [{ id: "me", score: 300 }],
+  autoStartAtMs: null,
+  ...extra,
 });
 
 
@@ -261,6 +265,7 @@ const runEndOut = {
   raceTimeMs: null,
   survivedMs: 272_000,
   checkpointIndex: 1,
+  outBy: { nickname: "Rival", how: "grabbed" },
 };
 
 const runEndFinished = {
@@ -272,6 +277,7 @@ const runEndFinished = {
   raceTimeMs: 82_104,
   survivedMs: null,
   checkpointIndex: 2,
+  outBy: null,
 };
 
 const spectateIn = {
@@ -284,6 +290,7 @@ const spectateIn = {
   ],
   beansLeft: 2,
   freeCam: false,
+  aliveForMs: 65_000,
 };
 
 describe("GameCanvas", () => {
@@ -446,6 +453,40 @@ describe("GameCanvas", () => {
     expect(screen.queryByText("LOBBY")).not.toBeInTheDocument();
   });
 
+  it("the Countdown's grid spot is your place in the line among those here, never above the field (ADR 0110)", async () => {
+    const seen = freshSeen();
+    stubMatchApi(seen);
+    const { reportLobby } = await bootMatch();
+    await act(async () => {
+      reportLobby(
+        lobbyIn("COUNTDOWN", {
+          countdownMsLeft: 2900,
+          players: [
+            { id: "p2", nickname: "Rival", ready: true, joinOrder: 2, accountId: null, color: null },
+            { id: "me", nickname: "Mushy", ready: true, joinOrder: 9, accountId: "acc-me", color: 2 },
+          ],
+        }),
+      );
+    });
+    expect(await screen.findByText("02")).toBeInTheDocument();
+    // ADR 0110: the line draws each Player's own Account picture.
+    expect(document.querySelector('img[src$="/avatars/acc-me"]')).not.toBeNull();
+    expect(screen.getByText("/2")).toBeInTheDocument();
+    // Two on the line, both drawn: no "+0" bubble.
+    expect(screen.queryByText("+0")).not.toBeInTheDocument();
+  });
+
+  it("a Survival Countdown shows no Checkpoint row and wears Survival's chip (ADR 0110)", async () => {
+    const seen = freshSeen();
+    stubMatchApi(seen);
+    const { reportLobby } = await bootMatch();
+    await act(async () => {
+      reportLobby(lobbyIn("COUNTDOWN", { countdownMsLeft: 2900, roundType: "survival" }));
+    });
+    expect(await screen.findByText("SURVIVAL")).toBeInTheDocument();
+    expect(screen.queryByText(/CHECKPOINT/)).not.toBeInTheDocument();
+  });
+
   it("shows the Countdown overlay over the live canvas while the Round loads", async () => {
     const seen = freshSeen();
     stubMatchApi(seen);
@@ -507,7 +548,7 @@ describe("GameCanvas", () => {
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   });
 
-  it("BetweenRounds SCOREBOARD opens the carried table as AFTER ROUND 1", async () => {
+  it("BetweenRounds SCOREBOARD opens the table over the Match, and BACK returns to it (ADR 0110)", async () => {
     const seen = freshSeen();
     stubMatchApi(seen);
     const { reportLobby, reportStandings } = await bootMatch();
@@ -525,6 +566,44 @@ describe("GameCanvas", () => {
     expect(await screen.findByText("AFTER ROUND 1")).toBeInTheDocument();
     expect(screen.getByText("Mushy")).toBeInTheDocument();
     expect(screen.getByText("Rival")).toBeInTheDocument();
+    // BACK lands on the same Standings: the canvas (and its socket) never unmounted.
+    fireEvent.click(screen.getByRole("button", { name: "BACK" }));
+    expect(await screen.findByText("ROUND 1 DONE")).toBeInTheDocument();
+  });
+
+  it("BetweenRounds keeps this Round's gains, counts only who is still here, and counts down to the server's deadline (ADR 0110)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const seen = freshSeen();
+      stubMatchApi(seen);
+      const { reportLobby, reportStandings } = await bootMatch();
+      await act(async () => {
+        reportLobby(lobbyIn("RESULTS"));
+        reportStandings(
+          standingsIn(true, {
+            standings: [
+              { id: "me", nickname: "Mushy", score: 166.67, placement: 1, gone: false, confirmed: true, gained: 66.67, previousPlacement: 2 },
+              { id: "p2", nickname: "Rival", score: 150, placement: 2, gone: false, confirmed: false, gained: 50, previousPlacement: 1 },
+              { id: "p3", nickname: "Third", score: 100, placement: 3, gone: true, confirmed: false, gained: 0, previousPlacement: 3 },
+            ],
+            autoStartAtMs: Date.now() + 14_000,
+          }),
+        );
+      });
+      expect(await screen.findByText("+67")).toBeInTheDocument();
+      expect(screen.getByText("167")).toBeInTheDocument();
+      expect(screen.getByText("1 OF 2 READY")).toBeInTheDocument();
+      expect(screen.getByText("AUTO-START IN 0:14")).toBeInTheDocument();
+
+      // The half-second clock re-renders: the gains stay what the server says.
+      await act(async () => {
+        vi.advanceTimersByTime(2_000);
+      });
+      expect(screen.getByText("+67")).toBeInTheDocument();
+      expect(screen.getByText("AUTO-START IN 0:12")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("navigates to the results page once the server saved the finished Match", async () => {
@@ -681,6 +760,10 @@ describe("GameCanvas", () => {
     checkpoints: 7,
     splitMs: 2478,
     threat: { id: "p2", nickname: "Rival" },
+    dashCharge: 0.4,
+    dashReady: false,
+    dashRechargeS: 9,
+    dashKey: "SHIFT",
   };
 
   it("draws the Race HUD over a running Race once GO! has had its beat (ADR 0088)", async () => {
@@ -698,6 +781,9 @@ describe("GameCanvas", () => {
     expect(screen.getByText("CHECKPOINT 04 / 07")).toBeInTheDocument();
     expect(screen.getByText("/3")).toBeInTheDocument();
     expect(await screen.findByText("PB 01:19.904")).toBeInTheDocument();
+    // ADR 0110: the Dash as the design's charge card.
+    expect(screen.getByText("RECHARGES IN 9s")).toBeInTheDocument();
+    expect(screen.getByText("PRESS SHIFT")).toBeInTheDocument();
   });
 
   it("gives the Race HUD's place to the verdict once your run ends", async () => {
@@ -733,7 +819,12 @@ describe("GameCanvas", () => {
         youAlive: true,
         survivedMs: 272_000,
         lastOut: "Third",
+        lastOutLeft: false,
         critical: true,
+        dashCharge: 1,
+        dashReady: true,
+        dashRechargeS: 0,
+        dashKey: "Shift",
       });
     });
 
@@ -742,6 +833,7 @@ describe("GameCanvas", () => {
     expect(screen.getByText("4:32")).toBeInTheDocument();
     expect(screen.getByText("THIRD WAS ELIMINATED")).toBeInTheDocument();
     expect(screen.getByText("CRITICAL ZONE")).toBeInTheDocument();
+    expect(screen.getByText("READY")).toBeInTheDocument();
   });
 
   it("flashes YOU GOT HIT mid-Round on a landing, then drops it after one beat", async () => {
@@ -828,7 +920,10 @@ describe("GameCanvas", () => {
     expect(screen.getByText("SURVIVED")).toBeInTheDocument();
     expect(screen.getByText("4:32")).toBeInTheDocument();
     expect(screen.getByText("+137")).toBeInTheDocument();
-    expect(screen.getByText("NEXT ROUND IN 3:00")).toBeInTheDocument();
+    expect(screen.getByText("ROUND ENDS IN 3:00")).toBeInTheDocument();
+    // ADR 0110: who put you out, off the server's credit.
+    expect(screen.getByText("GRABBED BY")).toBeInTheDocument();
+    expect(screen.getByText("RIVAL")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "SPECTATE" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "LEAVE" })).toBeInTheDocument();
     // Mid-Round there is no standings table yet — no button to a nowhere.
@@ -853,6 +948,9 @@ describe("GameCanvas", () => {
     expect(screen.getByText("1ST")).toBeInTheDocument();
     expect(screen.getByText("01:22.104")).toBeInTheDocument();
     expect(screen.getByText("+242")).toBeInTheDocument();
+    // Against the Personal Best the Round started with: 82.104 s vs 79.904 s.
+    expect(await screen.findByText("+2.2")).toBeInTheDocument();
+    expect(screen.getByText("OFF YOUR PB")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "SPECTATE" }));
     expect(enterSpectate).toHaveBeenCalledOnce();
@@ -883,6 +981,8 @@ describe("GameCanvas", () => {
     expect(screen.queryByText("KNOCKED OUT")).not.toBeInTheDocument();
     expect(screen.getByText("#2")).toBeInTheDocument();
     expect(screen.getByText("YOU WENT OUT #2")).toBeInTheDocument();
+    // ALIVE FOR is the server's Round clock, not a stopwatch this page started.
+    expect(screen.getByText("1:05")).toBeInTheDocument();
     expect(screen.getByText("02 BEANS LEFT")).toBeInTheDocument();
     expect(screen.getByText("ROUND 1 \u00b7 RACE")).toBeInTheDocument();
     // Live board, not mock runners: pools, pari-mutuel odds, ticker, close.
@@ -891,13 +991,34 @@ describe("GameCanvas", () => {
     expect(screen.getByText("FAVOURITE")).toBeInTheDocument();
     expect(screen.getByText("MRBEANO STAKED 500 ON RIVAL")).toBeInTheDocument();
     expect(screen.getByText("14 SPECTATORS BETTING")).toBeInTheDocument();
-    expect(screen.getByText(/CLOSES 0:/)).toBeInTheDocument();
+    expect(screen.getByText("CLOSES AT 1 LEFT")).toBeInTheDocument();
     expect(screen.getByText("1 240")).toBeInTheDocument();
 
     // The button's accessible name carries its sub-line ("STAKE 100 ON RIVAL · WINS 200").
     fireEvent.click(screen.getByRole("button", { name: /^STAKE 100/ }));
     await waitFor(() => expect(seen.betBodies).toHaveLength(1));
     expect(seen.betBodies[0]).toEqual({ matchId: "match-1", round: 1, targetId: "p2", amount: 100 });
+  });
+
+  it("a client that joins mid-Match reads the server's Round, and bets on it (ADR 0110)", async () => {
+    const seen = freshSeen();
+    stubMatchApi(seen);
+    const { reportLobby, reportRunEnd, reportSpectate } = await bootMatch();
+
+    // No COUNTDOWN was ever seen here — the first snapshot is Round 2 RUNNING.
+    await act(async () => {
+      reportLobby(lobbyIn("RUNNING", { round: 2 }));
+      reportRunEnd(runEndOut);
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "SPECTATE" }));
+    await act(async () => {
+      reportSpectate(spectateIn);
+    });
+    expect(await screen.findByText("ROUND 2 \u00b7 RACE")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^STAKE 100/ }));
+    await waitFor(() => expect(seen.betBodies).toHaveLength(1));
+    expect(seen.betBodies[0]).toEqual({ matchId: "match-1", round: 2, targetId: "p2", amount: 100 });
   });
 
   it("the panel follows beans and holds the camera through the handle", async () => {

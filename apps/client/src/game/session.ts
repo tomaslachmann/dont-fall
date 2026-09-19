@@ -1,4 +1,12 @@
-import type { ClientMessage, MatchPhase, SimState, Vec3, WelcomeMessage } from "@dont-fall/shared";
+import {
+  initialLeadState,
+  type ClientMessage,
+  type LeadState,
+  type MatchPhase,
+  type SimState,
+  type Vec3,
+  type WelcomeMessage,
+} from "@dont-fall/shared";
 import { PredictionLoop } from "../net/predictionLoop.js";
 import { PropPredictionController } from "../net/propPrediction.js";
 import { SnapshotInterpolator } from "../net/snapshotInterpolation.js";
@@ -60,9 +68,19 @@ export interface NetState {
   readonly timeSync: TimeSync;
   /** The raw latest snapshot, kept for `reconcile` (tick-aligned replay) and every authoritative read. */
   latestSnapshot: SimState | null;
-  /** Prediction LEAD feedback (ADR 0021) — see `LEAD_ADJUST_FRAMES` in the frame loop. */
-  smoothedQueueDepth: number;
-  framesSinceLeadAdjust: number;
+  /**
+   * The Tick of the first Snapshot that had the local Character Held after a
+   * Grab took it on its feet, or null (ADR 0104, ADR 0109): what the drawn
+   * world has to reach before the Held body is drawn from it. Kept by
+   * `heldSinceTickAfter`, read by `ownDrawnFromServer`.
+   */
+  heldSinceTick: number | null;
+  /**
+   * The prediction LEAD (ADR 0021, ADR 0109): the server's queue-depth
+   * feedback as it arrives, and the controller's own cooldown — see
+   * `leadAdjustMs`. Replaced with the `PredictionLoop` it steers.
+   */
+  lead: LeadState;
   /**
    * Set once the socket drops (tab still open, network/server gone). The loop
    * freezes on the last frame and the HUD says so — there is no reconnect in
@@ -78,10 +96,16 @@ export interface MatchView {
   /** The server's Round clock (ADR 0038), held as it arrived and never advanced locally between snapshots. */
   timeLeftMs: number | null;
   countdownEndsAtServerMs: number | null;
-  /** Anchors both run stopwatches (race time, survived) to the server's clock; set on RUNNING entry. */
-  roundStartedAtServerMs: number;
   /** Whether this Round eliminates on a Fall — what the Spectator panel shows places for (ADR 0042). */
   survival: boolean;
+  /**
+   * How far into the Round the server is, off its own clock (the Time Limit
+   * less the time left, ADR 0110) — `null` outside RUNNING. Every bean still
+   * in the Round has been in it this long.
+   */
+  roundElapsedMs: number | null;
+  /** Every Character's live Race placement, as the server computed it (ADR 0088) — `null` outside a running Race. */
+  livePlaces: Record<string, number> | null;
   resultsCall: MatchResultsFrame | null;
   /** The phase this game last handed the music, when it owns its own socket (M14 ticket 11). */
   musicPhase: MatchPhase | null;
@@ -157,7 +181,7 @@ export class ChangeGate<T> {
 /** The shell-facing callbacks a session raises — {@link GameConfig}'s own half of ADR 0008's boundary. */
 export type GameCallbacks = Pick<
   GameConfig,
-  "onExit" | "onLobbyState" | "onStandings" | "onRunEnd" | "onHitTaken" | "onSpectate" | "onRoundHud" | "onWorldReady"
+  "onExit" | "onLobbyState" | "onStandings" | "onRunEnd" | "onHitTaken" | "onSpectate" | "onRoundHud" | "onWorldReady" | "onPause"
 >;
 
 export interface GameSession {
@@ -242,6 +266,10 @@ export const swapTrack = async (session: GameSession, ref: TrackRef, spawn: Vec3
     // Carried, not cleared: the caller that set it owns clearing it.
     reloadInFlight: previous.reloadInFlight,
   };
+  // A new loop re-seeds its own lead (ADR 0027), so the old average — the
+  // queue the old loop's lead made — says nothing about it: the controller
+  // starts over, and waits for a report before it adjusts anything (ADR 0109).
+  session.net.lead = initialLeadState();
   session.net.serverInterp = new SnapshotInterpolator();
   session.net.serverInterp.setSnapshotHz(session.welcome.config.snapshotHz);
   session.net.propPrediction = new PropPredictionController();

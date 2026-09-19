@@ -37,6 +37,26 @@ const toRoundRow = (row: typeof betRounds.$inferSelect): BetRoundRow => ({
 });
 
 /**
+ * Closes a Round's board early (ADR 0110) — only ever earlier: a close can
+ * never reopen a board or push its ceiling out. Returns whether a Round was there.
+ */
+export const closeBetRound = (db: ApiDb, matchId: string, round: number, nowMs: number): boolean => {
+  const row = db
+    .select({ closesAtMs: betRounds.closesAtMs })
+    .from(betRounds)
+    .where(and(eq(betRounds.matchId, matchId), eq(betRounds.round, round)))
+    .get();
+  if (!row) return false;
+  if (nowMs < row.closesAtMs) {
+    db.update(betRounds)
+      .set({ closesAtMs: nowMs })
+      .where(and(eq(betRounds.matchId, matchId), eq(betRounds.round, round)))
+      .run();
+  }
+  return true;
+};
+
+/**
  * Opens a Round for betting (ticket 14) — first write wins. A retried open
  * (same `(matchId, round)`) can't move the close or swap the board, so a
  * duplicated server notification is a no-op, not a reopened window.
@@ -66,6 +86,15 @@ export const getBetRound = (db: ApiDb, matchId: string, round: number): BetRound
     .get();
   return row === undefined ? undefined : toRoundRow(row);
 };
+
+/** Every settled betting Round of one Match — what a Player's bet winnings are recomputed from (ADR 0110). */
+export const listSettledBetRounds = (db: ApiDb, matchId: string): BetRoundRow[] =>
+  db
+    .select()
+    .from(betRounds)
+    .where(and(eq(betRounds.matchId, matchId), eq(betRounds.settled, 1)))
+    .all()
+    .map(toRoundRow);
 
 export const insertBet = (
   db: ApiDb,

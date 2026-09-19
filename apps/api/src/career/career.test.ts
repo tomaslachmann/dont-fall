@@ -23,6 +23,8 @@ const MATCH_WIN = {
   accountIds: { p1: "acc-1", p2: "acc-2" },
   colors: {},
   totalFalls: { p1: 0, p2: 2 },
+  survivalMs: { p1: 41_000 },
+  grabsBroken: { p1: 2 },
   endedAtMs: 60_000,
 };
 
@@ -43,6 +45,8 @@ const MATCH_PODIUM = {
   accountIds: { p1: "acc-1", p2: "acc-2" },
   colors: {},
   totalFalls: { p1: 5, p2: 1, px: 9 },
+  survivalMs: { p1: 73_500 },
+  grabsBroken: { p1: 1 },
   endedAtMs: 120_000,
 };
 
@@ -61,7 +65,7 @@ describe("career service", () => {
     const { dir, db } = openTestDb();
     try {
       expect(getCareer(db, "acc-nobody")).toEqual({
-        stats: { matches: 0, wins: 0, podiums: 0, falls: 0, bestPlacement: null, cleanMatches: 0 },
+        stats: { matches: 0, wins: 0, podiums: 0, falls: 0, bestPlacement: null, cleanMatches: 0, bestSurvivalMs: null, grabsBroken: 0 },
         badges: { earned: [], total: 6 },
         matches: [],
       });
@@ -78,7 +82,17 @@ describe("career service", () => {
       saveMatchResult(db, MATCH_PODIUM);
 
       const career = getCareer(db, "acc-1");
-      expect(career.stats).toEqual({ matches: 2, wins: 1, podiums: 2, falls: 5, bestPlacement: 1, cleanMatches: 1 });
+      // ADR 0110: the longest single Survival stay, and every Struggle won.
+      expect(career.stats).toEqual({
+        matches: 2,
+        wins: 1,
+        podiums: 2,
+        falls: 5,
+        bestPlacement: 1,
+        cleanMatches: 1,
+        bestSurvivalMs: 73_500,
+        grabsBroken: 3,
+      });
       expect(career.badges).toEqual({ earned: ["first-steps", "podium", "winner", "flawless"], total: 6 });
 
       // Newest first, with the exact numbers the results page showed.

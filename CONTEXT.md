@@ -98,6 +98,12 @@ Fall never eliminates, it only costs time through Respawn with a penalty; in
 Survival it is exactly what does.
 _Avoid_: death, KO
 
+**Elimination credit**:
+Who put an Eliminated Player out, and how — the last other Character to Grab,
+Hurl or Hit them shortly before the Fall that eliminated them. Nobody, when
+their own Fall was theirs alone.
+_Avoid_: knockout (a Knockdown is what a hard Hit does), kill
+
 **Time Limit**:
 The countdown for a Round. When it hits zero, every Player not yet Qualified is
 eliminated. Preferred over a fixed "first N players" cutoff. Each Revision carries
@@ -635,7 +641,11 @@ Commands (ADR 0013).
 **Interpolation Delay**:
 How far in the past the client renders everything it does *not* predict —
 remote Characters, Props, ragdoll bones — so it always has two Snapshots to
-interpolate between (ADR 0017, 0020).
+interpolate between (ADR 0017, 0020). Counted back from the Playout Floor.
+
+**Playout Floor**:
+How late the least-delayed recent Snapshot arrived, measured against its own
+Tick — the point the Interpolation Delay is counted back from (ADR 0109).
 
 **Authority**:
 Who decides the true value of something. The server has Authority over all

@@ -282,6 +282,51 @@ describe("Email/password auth + linking (M9 ticket 11 follow-up, ADR 0053)", () 
   });
 });
 
+describe("avatars (ADR 0110)", () => {
+  const signup = () => app.inject({ method: "POST", url: "/auth/signup", payload: SIGNUP });
+  const auth = (token: string) => ({ authorization: `Bearer ${token}` });
+  /** The smallest thing whose header reads as a WebP — the API trusts only the header. */
+  const webp = (extra = 0): string => {
+    const bytes = Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WEBPVP8 "), Buffer.alloc(extra)]);
+    return `data:image/webp;base64,${bytes.toString("base64")}`;
+  };
+
+  it("stores an upload, serves it at the Account's address, and removes it again", async () => {
+    const { token, account } = (await signup()).json() as { token: string; account: { id: string } };
+    expect((await app.inject({ method: "GET", url: `/avatars/${account.id}` })).statusCode).toBe(404);
+
+    const put = await app.inject({ method: "PUT", url: "/auth/me/avatar", headers: auth(token), payload: { image: webp(8) } });
+    expect(put.statusCode).toBe(200);
+    const version = (put.json() as { avatarUploadedAt: number | null }).avatarUploadedAt;
+    expect(version).toEqual(expect.any(Number));
+
+    const got = await app.inject({ method: "GET", url: `/avatars/${account.id}?v=${version}` });
+    expect(got.statusCode).toBe(200);
+    expect(got.headers["content-type"]).toBe("image/webp");
+    expect(got.headers["cache-control"]).toContain("immutable");
+    expect(got.rawPayload.subarray(8, 12).toString("ascii")).toBe("WEBP");
+
+    const removed = await app.inject({ method: "DELETE", url: "/auth/me/avatar", headers: auth(token) });
+    expect(removed.json()).toMatchObject({ avatarUploadedAt: null });
+    expect((await app.inject({ method: "GET", url: `/avatars/${account.id}` })).statusCode).toBe(404);
+  });
+
+  it("refuses anything that is not a small WebP, and anyone not logged in", async () => {
+    const { token } = (await signup()).json() as { token: string };
+    const put = (image: unknown, headers = auth(token)) =>
+      app.inject({ method: "PUT", url: "/auth/me/avatar", headers, payload: { image } as Record<string, unknown> });
+
+    expect((await put("data:image/png;base64,iVBORw0KGgo=")).statusCode).toBe(400);
+    expect((await put(`data:image/webp;base64,${Buffer.from("not a webp at all").toString("base64")}`)).statusCode).toBe(400);
+    expect((await put(webp(210_000))).statusCode).toBe(400);
+    expect((await put(webp(), {} as ReturnType<typeof auth>)).statusCode).toBe(401);
+  });
+
+  it("an unknown Account has no avatar", async () => {
+    expect((await app.inject({ method: "GET", url: "/avatars/nobody" })).statusCode).toBe(404);
+  });
+});
+
 describe("PUT /auth/me/cosmetics (M9 ticket 15)", () => {
   const signup = () => app.inject({ method: "POST", url: "/auth/signup", payload: SIGNUP });
   const save = (token: string | undefined, body: unknown) =>

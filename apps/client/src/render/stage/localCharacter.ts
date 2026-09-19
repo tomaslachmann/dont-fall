@@ -104,7 +104,7 @@ export const createLocalCharacter = (
   { floorBelow, inUpdraft, onIce, onFootstep, speedLines, wardrobe, closet }: LocalCharacterWorld,
 ): LocalCharacter => {
   // `character` is the runtime placement handle: its position is the capsule's
-  // ground-contact point (feet), its rotation.y is the cosmetic facing.
+  // ground-contact point (feet), its yaw the cosmetic facing (`bodyYaw`).
   // `wobblePivot` sits between it and the model for the procedural Wobble lean
   // (ticket 07) — rotating in `character`'s local frame so "lean forward"
   // always means forward relative to the current facing, at whatever yaw.
@@ -166,6 +166,17 @@ export const createLocalCharacter = (
   let lastSpinRate = 0;
   /** Whether the previous frame's yaw was pinned by a Spin — the release edge seeds the momentum. */
   let wasSpinPinned = false;
+  /**
+   * The body's yaw (model convention, `atan2(x, z)`) — what every branch
+   * turns, what the rig is written from, and what {@link LocalCharacter.facing}
+   * sends (ADR 0085). Kept here rather than read back off `character.rotation.y`
+   * (ADR 0109): a carry sets the rig's orientation whole, and three.js then
+   * reads its Euler angles back off the quaternion with y in [−π/2, π/2] —
+   * past a quarter turn as (π, π − yaw, π). Read back, a body held at facing
+   * 0.3 sent 2.84 for the whole carry and was let go of facing the mirror of
+   * where it had hung, on the server and every other screen too.
+   */
+  let bodyYaw = 0;
 
   let wobbleState = initialWobbleState;
   // Seeded lazily on the first `animate` call (null here would otherwise
@@ -283,8 +294,10 @@ export const createLocalCharacter = (
         carriedHang = null;
         spinMomentum = 0;
         wasSpinPinned = false;
-        character.rotation.x = 0;
-        character.rotation.z = 0;
+        // Written whole, not by zeroing a carry's tilt off x/z: those Euler
+        // angles were read back off the carry's quaternion (see `bodyYaw`),
+        // and zeroing them mirrored the yaw of a body hurled into a knockdown.
+        character.rotation.set(0, bodyYaw, 0);
         blendFloatStruggle(actions, 0, activeAction);
         if (knockdownPose) {
           activeAction = crossfadeLocomotion(knockdownPose.action, activeAction, KNOCKDOWN_CROSSFADE_SECONDS);
@@ -399,13 +412,13 @@ export const createLocalCharacter = (
       const spinPinned = hold.role === "grabbing" && hold.pinnedFacing !== null;
       if (hold.pinnedFacing !== null) {
         const pinnedYaw = modelYawFromFacing(hold.pinnedFacing);
-        if (spinPinned) lastSpinRate = measuredYawRate(pinnedYaw, character.rotation.y, deltaSeconds);
-        character.rotation.y = pinnedYaw;
+        if (spinPinned) lastSpinRate = measuredYawRate(pinnedYaw, bodyYaw, deltaSeconds);
+        bodyYaw = pinnedYaw;
         spinMomentum = 0;
       } else {
         if (wasSpinPinned) spinMomentum = clampSpinMomentum(lastSpinRate);
-        character.rotation.y = nextModelYaw({
-          currentYaw: character.rotation.y + spinMomentum * deltaSeconds,
+        bodyYaw = nextModelYaw({
+          currentYaw: bodyYaw + spinMomentum * deltaSeconds,
           moveDirection,
           deltaSeconds,
           turnScale: hold.role === "grabbing" ? GRAB_TURN_SPEED_MULTIPLIER : 1,
@@ -422,25 +435,25 @@ export const createLocalCharacter = (
         const placed = carriedFlail(
           carriedHang,
           { centre: localCentre, facing: hold.pinnedFacing, velocity: localVelocity },
-          character.rotation.y,
+          bodyYaw,
           CAPSULE_BOTTOM_OFFSET,
           deltaSeconds,
         );
         character.position.copy(placed.feet);
         character.quaternion.copy(placed.quaternion);
-      } else if (carriedHang !== null) {
-        // Fresh out of the carry: the hang's tilt still sits on x/z, and
-        // yaw-only writes would keep it forever.
+      } else {
+        // Upright, turned to the body's yaw — written whole every frame, so a
+        // body fresh out of the carry sheds the hang's tilt without its yaw
+        // ever being read back off the tilted rig (see `bodyYaw`).
         carriedHang = null;
-        character.rotation.x = 0;
-        character.rotation.z = 0;
+        character.rotation.set(0, bodyYaw, 0);
       }
 
       if (visualState === "Controlled") {
         if (WOBBLE_ENABLED) {
           // `stepWobble` itself skips a frame where `character.position` jumped
           // metres (a reconciliation snap / Respawn) — see WOBBLE_TELEPORT_DISTANCE.
-          const yaw = character.rotation.y;
+          const yaw = bodyYaw;
           const forward: Vec3 = { x: Math.sin(yaw), y: 0, z: Math.cos(yaw) };
           const right: Vec3 = { x: -Math.cos(yaw), y: 0, z: Math.sin(yaw) };
           wobbleState = stepWobble(wobbleState, currentPosition, previousWobblePosition, forward, right, deltaSeconds);
@@ -473,7 +486,7 @@ export const createLocalCharacter = (
     // first `wear` takes the copied hat off each clone.
     setHat: (hat) => wardrobe.wear(characterModel.scene, hat),
 
-    facing: () => facingFromModelYaw(character.rotation.y),
+    facing: () => facingFromModelYaw(bodyYaw),
 
     centre: () => localCentre,
 

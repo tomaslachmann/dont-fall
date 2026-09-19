@@ -1,5 +1,5 @@
 import { addVec3, dotVec3, lengthVec3, normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
-import type { HeldPhase } from "../state/SimState.js";
+import type { HeldPhase, EliminationHow } from "../state/SimState.js";
 import { CAPSULE_HALF_HEIGHT } from "../tuning/character.js";
 import {
   DIZZY_FLING_FRACTION,
@@ -39,6 +39,8 @@ interface ActiveGrab {
 interface Flight {
   ticksLeft: number;
   hit: Set<string>;
+  /** Who threw it — what anyone it lands on is knocked out by (ADR 0110). */
+  byId: string;
 }
 
 /** What a hold needs from the simulation around it. */
@@ -64,6 +66,10 @@ export interface HoldWorld {
   tick(): number;
   /** A deterministic draw in [0, 1) for `id` this Tick (`slipRoll`) — the direction a dizzy grabber flings its held Character. */
   roll(id: string): number;
+  /** Records that `byId` just grabbed, Hurled or hit `targetId` — what a knockout is credited to (ADR 0110). */
+  credit(targetId: string, byId: string, how: EliminationHow): void;
+  /** Records that `id` just won a Struggle — the career's GRABS BROKEN (ADR 0110). */
+  struggleWon(id: string): void;
 }
 
 /**
@@ -156,6 +162,7 @@ export class GrabHolds {
     });
     held.cancelDash();
     held.beginHeld();
+    this.world.credit(heldId, grabberId, "grabbed");
   }
 
   /**
@@ -195,6 +202,9 @@ export class GrabHolds {
         this.end(grabberId, grab.heldId);
         continue;
       }
+      // Every tick of a hold, not only the catch: a long carry to the edge is
+      // still the grabber's doing when the drop comes (ADR 0110).
+      this.world.credit(grab.heldId, grabberId, "grabbed");
       // You cannot hold onto anything while going down, or falling off the
       // world: the held Character is let go of, however it was being held.
       // Nor carry a body that has fallen off it — let go, it takes its Respawn.
@@ -300,6 +310,7 @@ export class GrabHolds {
       : vec3();
     held.releaseOnFeet(addVec3(shove, fling), false);
     this.release(grabberId, heldId);
+    this.world.struggleWon(heldId);
   }
 
   /** The held Character is thrown (ADR 0104) — a Hurl, or a dizzy grabber's weak fling: a knockdown, and a flight. */
@@ -308,8 +319,9 @@ export class GrabHolds {
     // The tumble: the same chest shove a knockdown's Impact would give, so
     // the body turns over in the air instead of flying rigid.
     held.releaseKnockedDown("Hurl", launch, scaleVec3(normalizeVec3(launch), 1));
-    this.flights.set(heldId, { ticksLeft: HURLED_BODY_FLIGHT_TICKS, hit: new Set([grabberId, heldId]) });
+    this.flights.set(heldId, { ticksLeft: HURLED_BODY_FLIGHT_TICKS, hit: new Set([grabberId, heldId]), byId: grabberId });
     this.release(grabberId, heldId);
+    this.world.credit(heldId, grabberId, "hurled");
   }
 
   /** Every way a hold ends that let go of a Character still in it: the grabber's cooldown, and the held one's immunity. */
@@ -343,6 +355,7 @@ export class GrabHolds {
       if (last !== undefined && this.world.tick() - last < SWUNG_BODY_REHIT_TICKS) continue;
       this.swingHits.set(key, this.world.tick());
       other.applyImpact(bodyImpact(tangent, speed), "Hurl");
+      this.world.credit(id, grabberId, "hit");
     }
   }
 
@@ -367,6 +380,7 @@ export class GrabHolds {
         if (!within(body.position, other.position)) continue;
         flight.hit.add(id);
         other.applyImpact(bodyImpact(vec3(velocity.x, 0, velocity.z), speed), "Hurl");
+        this.world.credit(id, flight.byId, "hit");
       }
     }
     for (const key of [...this.swingHits.keys()]) {

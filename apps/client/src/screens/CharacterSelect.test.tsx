@@ -37,11 +37,11 @@ describe("CharacterSelect", () => {
   it("ROTATE and PLAY EMOTE fire without a renderer — jsdom shows the fallback caption", () => {
     renderScreen();
 
-    expect(screen.getByText(/LIVE 3D CHARACTER RENDER/)).toBeInTheDocument();
+    expect(screen.getByText(/NO 3D PREVIEW/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "ROTATE" }));
     fireEvent.click(screen.getByRole("button", { name: "ROTATE" }));
     fireEvent.click(screen.getByRole("button", { name: "PLAY EMOTE" }));
-    expect(screen.getByText(/LIVE 3D CHARACTER RENDER/)).toBeInTheDocument();
+    expect(screen.getByText(/NO 3D PREVIEW/)).toBeInTheDocument();
   });
 
   it("RANDOMISE reports a different color — never a dead re-roll of the current pick", () => {

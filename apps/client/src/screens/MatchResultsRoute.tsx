@@ -1,6 +1,8 @@
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router";
-import { skinForPlayerId } from "../lib/avatarSkins.js";
+import { avatarLook } from "../lib/avatar.js";
 import { ordinal, toMatchResultsView } from "../lib/matchView.js";
+import { useAccount } from "../lib/hooks/useAccount.js";
+import { useSupportCode } from "../lib/hooks/useSupportCode.js";
 import { useMatchResult } from "../lib/hooks/useMatchResult.js";
 import type { PodiumPlace } from "./MatchOver.js";
 import ErrorScreen from "./ErrorScreen.js";
@@ -14,17 +16,19 @@ import NotFound from "./NotFound.js";
  * socket — all torn down); everything this renders comes from one API fetch,
  * so a refresh shows the same Match instead of losing it.
  *
- * `?me=` names whose page this is (the socket-bound player id, cosmetic —
- * it only picks the "you" line and the claim rows). Without it, or for an
- * id that never raced, the page still shows the podium and the table, just
- * no personal line and no COLLECT.
+ * Whose page this is: the seat the signed-in Account raced in, off the
+ * stored Match (ADR 0110), or `?me=` (the socket-bound player id) for a seat
+ * that had no Account. It only picks the "you" line — what COLLECT pays is the
+ * server's own lookup. For a viewer who never raced, the page still shows the
+ * podium and the table, just no personal line and no COLLECT.
  */
 export function MatchResultsRoute() {
   const navigate = useNavigate();
   const { matchId } = useParams();
   const [searchParams] = useSearchParams();
-  const me = searchParams.get("me") ?? undefined;
+  const { account } = useAccount();
   const { result, error, isPending, retry } = useMatchResult(matchId);
+  const supportCode = useSupportCode("crash", error !== null && error.status !== 404 ? error.message : null);
 
   if (matchId === undefined) return <Navigate to="/" replace />;
   if (isPending || result === null) {
@@ -35,6 +39,7 @@ export function MatchResultsRoute() {
       return (
         <ErrorScreen
           kind="crash"
+          {...(supportCode === undefined ? {} : { code: supportCode })}
           detail={error.message}
           retryIn={0}
           onRetry={retry}
@@ -45,6 +50,9 @@ export function MatchResultsRoute() {
     return <LoadingScreen label="LOADING RESULTS…" />;
   }
 
+  const accountSeat =
+    account === null ? undefined : Object.entries(result.accountIds ?? {}).find(([, owner]) => owner === account.id)?.[0];
+  const me = accountSeat ?? searchParams.get("me") ?? undefined;
   const view = toMatchResultsView(result, me);
   const champion = view.table[0];
   if (champion === undefined) {
@@ -66,8 +74,8 @@ export function MatchResultsRoute() {
       rounds={result.results.length}
       you={
         mine === undefined
-          ? { place: ordinal(champion.placement), points: champion.score, skin: skinForPlayerId(champion.id) }
-          : { place: ordinal(mine.placement), points: mine.score, skin: skinForPlayerId(mine.id) }
+          ? { place: ordinal(champion.placement), points: champion.score, look: avatarLook(champion.accountId, champion.color) }
+          : { place: ordinal(mine.placement), points: mine.score, look: avatarLook(mine.accountId, mine.color) }
       }
       stats={
         view.myStats === null
@@ -86,7 +94,7 @@ export function MatchResultsRoute() {
             : `${champion.score - mine.score} POINTS OFF THE CROWN`
       }
       spectator={spectating}
-      onCollect={() => navigate("/rewards", { state: { matchId, rounds: view.myRounds } })}
+      onCollect={() => navigate("/rewards", { state: { matchId } })}
       onScoreboard={() => navigate("/scoreboard", { state: { rows: view.scoreboard, title: "FINAL STANDINGS" } })}
       onSkip={() => navigate("/")}
     />

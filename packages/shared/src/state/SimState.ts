@@ -257,6 +257,22 @@ export interface CharacterSnapshot {
    * lasted, the same way `finishTick` orders the Qualified.
    */
   eliminatedTick: number | null;
+  /**
+   * Who put this Character out, and how (ADR 0110) — the last other Character
+   * to grab, Hurl or hit it within `ELIMINATION_CREDIT_MS` of the Fall that
+   * eliminated it. `null` while it is still in, when nobody touched it that
+   * recently, and for a disconnect. Set once with `eliminated`, never cleared.
+   */
+  eliminatedBy: EliminationCredit | null;
+}
+
+/** How another Character last put this one in harm's way (ADR 0110) — the knocked-out card's GRABBED / HURLED / HIT BY. */
+export type EliminationHow = "grabbed" | "hurled" | "hit";
+
+/** Who put a Character out, and how (ADR 0110). */
+export interface EliminationCredit {
+  byId: string;
+  how: EliminationHow;
 }
 
 /**
@@ -310,6 +326,7 @@ export interface CharacterSnapshotFields {
   finishTick?: number | null;
   eliminated?: boolean;
   eliminatedTick?: number | null;
+  eliminatedBy?: EliminationCredit | null;
 }
 
 /**
@@ -349,6 +366,7 @@ export type ReconcileBase = Pick<
   // `finishTick`.
   | "eliminated"
   | "eliminatedTick"
+  | "eliminatedBy"
 >;
 
 export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSnapshot => ({
@@ -385,4 +403,5 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   finishTick: fields.finishTick ?? null,
   eliminated: fields.eliminated ?? false,
   eliminatedTick: fields.eliminatedTick ?? null,
+  eliminatedBy: fields.eliminatedBy ? { ...fields.eliminatedBy } : null,
 });

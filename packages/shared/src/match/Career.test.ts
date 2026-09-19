@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BADGES, badgeById, evaluateBadges, type CareerStats } from "./Career.js";
 
-const STATS: CareerStats = { matches: 0, wins: 0, podiums: 0, falls: 0, bestPlacement: null, cleanMatches: 0 };
+const STATS: CareerStats = { matches: 0, wins: 0, podiums: 0, falls: 0, bestPlacement: null, cleanMatches: 0, bestSurvivalMs: null, grabsBroken: 0 };
 
 describe("evaluateBadges", () => {
   it("earns nothing on an empty career", () => {
@@ -45,7 +45,7 @@ describe("evaluateBadges", () => {
 
 describe("badge catalog", () => {
   it("every earned id resolves to a named badge", () => {
-    const everything: CareerStats = { matches: 99, wins: 99, podiums: 99, falls: 0, bestPlacement: 1, cleanMatches: 99 };
+    const everything: CareerStats = { matches: 99, wins: 99, podiums: 99, falls: 0, bestPlacement: 1, cleanMatches: 99, bestSurvivalMs: 600_000, grabsBroken: 99 };
     for (const id of evaluateBadges(everything)) {
       expect(badgeById(id)?.name.length).toBeGreaterThan(0);
     }

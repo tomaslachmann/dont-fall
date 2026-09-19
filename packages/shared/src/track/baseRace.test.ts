@@ -38,6 +38,17 @@ beforeAll(async () => {
   );
 });
 
+describe("the base race's spawn grid is untouched by the avoidance rule (2026-09-19)", () => {
+  it("keeps the exact twelve slots — nothing stands on its Start deck", () => {
+    for (let i = 0; i < 12; i += 1) {
+      const slot = trackSpawn(BASE_RACE_TRACK, i, library);
+      expect(slot.x).toBeCloseTo(-1.8 + (i % 4) * 1.2, 6);
+      expect(slot.y).toBeCloseTo(5.2, 6);
+      expect(slot.z).toBeCloseTo(-10.5 + Math.floor(i / 4) * 1.5, 6);
+    }
+  });
+});
+
 describe("the base race (ADR 0078)", () => {
   it("places Assets only — nothing procedural", () => {
     for (const segment of BASE_RACE_TRACK) expect(ASSET_PLACEMENT_MODULES[segment.moduleId], segment.moduleId).toBeDefined();

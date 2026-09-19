@@ -207,6 +207,25 @@ export class MatchRuntime {
    */
   roundResults: RoundResult[] = [];
   /**
+   * The number of the Round this Match is on, or just finished while in
+   * RESULTS (ADR 0110) — `0` in LOBBY. Set on LOADING entry to
+   * `roundResults.length + 1`, the number its betting pool opens under, and
+   * held until the next Round loads, so an abandoned Round (never pushed to
+   * `roundResults`) still reads as the Round it was.
+   */
+  round = 0;
+  /**
+   * When the current Standings move on without everyone's Ready, on the
+   * server's clock (the grid time snapshots are stamped with, ADR 0109) —
+   * `null` outside RESULTS (ADR 0110). The Standings Screen counts down to it.
+   */
+  standingsDeadlineMs: number | null = null;
+  /**
+   * The last Round whose board this server closed because one runner was
+   * left (ADR 0110) — so the close is sent once per Round, not every Tick.
+   */
+  bettingClosedRound = 0;
+  /**
    * Every Round's Track id, parallel to `roundResults` — the career
    * history's row names. Match-scoped and cleared with it
    * ({@link resetToFreshLobby}); recorded at the Round's actual end from the
@@ -248,6 +267,13 @@ export class MatchRuntime {
    * the current Round's counts). Match-scoped, like `matchNicknames` above.
    */
   totalFalls: Record<string, number> = {};
+  /**
+   * Every racer's longest stay in one Survival Round of this Match, in ms
+   * (ADR 0110) — the career's BEST SURVIVAL. Match-scoped like `totalFalls`.
+   */
+  matchSurvivalMs = new Map<string, number>();
+  /** Every racer's Struggles won across the Match (ADR 0110) — the career's GRABS BROKEN. */
+  matchGrabsBroken = new Map<string, number>();
   /**
    * The Match id whose results landed in the API (ADR 0059) — `null` until
    * the terminal save succeeds, which is exactly what the snapshot's
@@ -803,6 +829,9 @@ export class MatchRuntime {
     this.match = { phase: "LOBBY", phaseStartTick: this.serverTick };
     this.startRequested = false;
     this.roundResults = [];
+    this.round = 0;
+    this.standingsDeadlineMs = null;
+    this.bettingClosedRound = 0;
     this.roundTrackIds = [];
     this.matchNicknames.clear();
     this.matchAccountIds.clear();
@@ -810,6 +839,8 @@ export class MatchRuntime {
     this.matchSkins.clear();
     this.matchHats.clear();
     this.totalFalls = {};
+    this.matchSurvivalMs.clear();
+    this.matchGrabsBroken.clear();
     this.resultsSavedMatchId = null;
     this.resultsSavedAtMs = null;
     this.savingResults = false;

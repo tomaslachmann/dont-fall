@@ -6,14 +6,14 @@ import {
   ROUND_TYPES,
   allReady,
   roundTypeLabel,
+  type LobbyRef,
   type RoundType,
 } from '@dont-fall/shared';
-import { copyText } from '../lib/clipboard.js';
 import Stage from '../ui/Stage';
 import Panel from '../ui/Panel';
 import JellyButton from '../ui/JellyButton';
 import Avatar from '../ui/Avatar';
-import { skinForPlayerId as skinFor } from '../lib/avatarSkins.js';
+import { avatarLook } from '../lib/avatar.js';
 import Chip from '../ui/Chip';
 import Stepper from '../ui/Stepper';
 import ReadySwitch from '../ui/ReadySwitch';
@@ -22,7 +22,9 @@ import type { LobbySnapshot } from '../lib/socket/lobbyConnection.js';
 import { formatRoundClock } from '../lib/utils/roundTimer.js';
 import { useDiscoverTracks } from '../lib/hooks/useDiscoverTracks.js';
 import { TRACK_ART_LAYER, thumbnailFor, trackArtStyle } from '../lib/trackArt.js';
+import { copyText } from '../lib/clipboard.js';
 import Discover from './Discover.js';
+import { FriendsPanel } from './FriendsRoute.js';
 import s from './Lobby.module.css';
 
 export interface LobbyProps {
@@ -33,6 +35,11 @@ export interface LobbyProps {
    * (ADR 0054) — private Lobbies only. A quick-matched public Lobby has none.
    */
   code?: string;
+  /**
+   * Where an invite to this Lobby sends a friend (ADR 0110) — its code, or the
+   * broker's id for a public one. Absent, INVITE FRIENDS has nowhere to send them.
+   */
+  inviteRef?: LobbyRef;
   onSetReady: (ready: boolean) => void;
   onSelectTrack: (trackId: string) => void;
   onSetRoundType: (roundType: RoundType) => void;
@@ -78,6 +85,7 @@ const SwapIcon = () => (
 export default function Lobby({
   lobby,
   code,
+  inviteRef,
   onSetReady,
   onSelectTrack,
   onSetRoundType,
@@ -99,6 +107,13 @@ export default function Lobby({
   const discover = useDiscoverTracks(isHost);
   const tracks = discover.tracks;
   const [browsing, setBrowsing] = useState(false);
+  const [inviting, setInviting] = useState(false);
+  // The code itself copies for sharing outside friends — a tap on it, since
+  // INVITE FRIENDS now sends real invites (ADR 0110).
+  const copyCode = (): void => {
+    if (code === undefined) return;
+    copyText(code, "Invite code copied.", "Couldn't copy the code.");
+  };
 
   const readyCount = lobby.players.filter((p) => p.ready).length;
   const waiting = lobby.players.length - readyCount;
@@ -134,10 +149,6 @@ export default function Lobby({
     return options[(at + 1) % options.length] ?? null;
   };
 
-  const copyInvite = (): void => {
-    if (code === undefined) return;
-    copyText(code, "Invite code copied.", "Couldn't copy the code.");
-  };
 
   /**
    * The inline Track browser (M9 ticket 16) — the same Discover catalogue
@@ -146,6 +157,16 @@ export default function Lobby({
    * connection, and navigating away would drop it. A card selects straight
    * into Round 1 and closes; back closes without picking.
    */
+  /**
+   * INVITE FRIENDS (ADR 0110): the Friends screen, in place like the Track
+   * browser below — leaving this route would drop the socket, and the Player
+   * with it. Its INVITE and INVITE ALL ONLINE send real invites to this Lobby,
+   * each confirmed on the flash stack; BACK returns here.
+   */
+  if (inviting && inviteRef !== undefined) {
+    return <FriendsPanel lobbyRef={inviteRef} onBack={() => setInviting(false)} />;
+  }
+
   if (browsing) {
     return (
       <Discover
@@ -175,7 +196,13 @@ export default function Lobby({
           <span className={s.room}>
             <span className={s.roomLabel}>ROOM</span>
             {/* The broker's own join code (ADR 0054). A quick-matched public Lobby has none to share. */}
-            <span className={s.roomCode}>{code ?? 'QUICK MATCH'}</span>
+            {code === undefined ? (
+              <span className={s.roomCode}>QUICK MATCH</span>
+            ) : (
+              <button type="button" className={[s.roomCode, s.roomCodeCopy].join(' ')} onClick={copyCode} aria-label={`Copy the code ${code}`}>
+                {code}
+              </button>
+            )}
           </span>
         </div>
         <div className={s.topActions}>
@@ -183,8 +210,8 @@ export default function Lobby({
             variant="pill"
             tone="glass"
             centered
-            disabled={code === undefined}
-            onClick={copyInvite}
+            disabled={inviteRef === undefined}
+            onClick={() => setInviting(true)}
           >INVITE FRIENDS</JellyButton>
           <Chip tone="plate" lg>{code === undefined ? 'PUBLIC' : 'PRIVATE'}</Chip>
         </div>
@@ -202,7 +229,7 @@ export default function Lobby({
           {lobby.players.map((p) => (
             <div key={p.id} className={[s.player, !p.ready && s.pending].filter(Boolean).join(' ')}>
               <div className={s.playerHead}>
-                <Avatar skin={skinFor(p.id)} size={4} {...(p.id === lobby.myId ? { ring: 'var(--df-color-accent)' } : {})} />
+                <Avatar look={avatarLook(p.accountId, p.color)} size={4} {...(p.id === lobby.myId ? { ring: 'var(--df-color-accent)' } : {})} />
                 {p.id === lobby.hostId && <Chip tone="host">HOST</Chip>}
               </div>
               <span className={s.playerName}>{p.nickname}</span>

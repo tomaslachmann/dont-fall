@@ -1,6 +1,6 @@
 import Stage from '../ui/Stage';
 import Avatar from '../ui/Avatar';
-import type { Skin } from '../ui/Avatar';
+import type { AvatarLook } from '../lib/avatar.js';
 import Chip from '../ui/Chip';
 import { Pips } from '../ui/Meter';
 import s from './Countdown.module.css';
@@ -16,7 +16,7 @@ export interface CountdownProps {
   track?: string;
   mode?: string;
   /** Beans visible on the start line; the rest roll up into a +N bubble. */
-  onTheLine?: Skin[];
+  onTheLine?: AvatarLook[];
   othersOnTheLine?: number;
   /**
    * ms left on the server's synchronous Countdown (M4 ticket 04, ADR 0040).
@@ -26,6 +26,9 @@ export interface CountdownProps {
    */
   countdownMsLeft: number;
 }
+
+/** A Round type's chip tone, by the label it is shown with — the same map the Lobby's round list uses. */
+const MODE_TONE: Record<string, 'race' | 'survival'> = { RACE: 'race', SURVIVAL: 'survival' };
 
 /** One beat per second: 3, 2, 1, GO!. */
 const BEATS = ['3', '2', '1', 'GO!'] as const;
@@ -37,7 +40,7 @@ const beatIndexFor = (countdownMsLeft: number): number =>
 export default function Countdown({
   gridSpot = 8, field = 16, checkpoints = 7, personalBest = null,
   round = 3, rounds = 3, track = 'THE BIG WOBBLE', mode = 'RACE',
-  onTheLine = ['pink', 'cyan', 'mint', 'gold', 'grape'], othersOnTheLine = 11,
+  onTheLine = [0, 1, 2, 3, 4].map((color) => ({ src: null, color })), othersOnTheLine = 11,
   countdownMsLeft,
 }: CountdownProps) {
   const beatIndex = beatIndexFor(countdownMsLeft);
@@ -55,16 +58,23 @@ export default function Countdown({
         </span>
       </div>
 
-      <div className={[s.checkpoints, s.hud].join(' ')}>
-        <span className={s.cpLabel}>CHECKPOINT 00 / {String(checkpoints).padStart(2, '0')}</span>
-        <Pips total={checkpoints} done={0} />
-        {personalBest && <span className={s.pb}>{personalBest}</span>}
-      </div>
+      {/* A Round with nothing to cross (a Survival arena) has no progress to show. */}
+      {(checkpoints > 0 || personalBest) && (
+        <div className={[s.checkpoints, s.hud].join(' ')}>
+          {checkpoints > 0 && (
+            <>
+              <span className={s.cpLabel}>CHECKPOINT 00 / {String(checkpoints).padStart(2, '0')}</span>
+              <Pips total={checkpoints} done={0} />
+            </>
+          )}
+          {personalBest && <span className={s.pb}>{personalBest}</span>}
+        </div>
+      )}
 
       <div className={s.round}>
         <span className={s.roundNo}>ROUND {round} OF {rounds}</span>
         <span className={s.roundTrack}>{track}</span>
-        <Chip tone="race">{mode}</Chip>
+        <Chip tone={MODE_TONE[mode] ?? 'race'}>{mode}</Chip>
       </div>
 
       <div className={s.counter}>
@@ -79,15 +89,13 @@ export default function Countdown({
         <span key={beat} role="status" aria-label={beat} className={[s.beat, beat === 'GO!' && s.go].filter(Boolean).join(' ')}>{beat}</span>
       </div>
 
-      <p className={s.feed}>GAMEPLAY FEED · BEANS ON THE START LINE</p>
-
       <div className={s.line}>
         <span className={s.lineLabel}>ON THE LINE</span>
         <span className={s.lineBeans}>
-          {onTheLine.map((skin, i) => (
-            <Avatar key={i} skin={skin} size={2.65} ring={i === 0 ? 'var(--df-color-accent)' : undefined} />
+          {onTheLine.map((look, i) => (
+            <Avatar key={i} look={look} size={2.65} ring={i === 0 ? 'var(--df-color-accent)' : undefined} />
           ))}
-          <span className={s.more}>+{othersOnTheLine}</span>
+          {othersOnTheLine > 0 && <span className={s.more}>+{othersOnTheLine}</span>}
         </span>
       </div>
 

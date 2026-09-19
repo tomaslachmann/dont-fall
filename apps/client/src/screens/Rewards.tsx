@@ -28,6 +28,8 @@ export interface RewardsProps {
   unlock?: string | undefined;
   /** Its picture on the card, when there is one. */
   unlockIcon?: string | undefined;
+  /** The level the unlocked item needs — what UNLOCKED AT names (defaults to `level`). */
+  unlockLevel?: number | undefined;
   onPlayAgain?: () => void;
   onLobby?: () => void;
   /** Puts the unlocked hat on — the button hides without one. */
@@ -54,7 +56,7 @@ export default function Rewards({
   level = 43, xpGain = 1240, xpBefore = 0.46, xpEarned = 0.31,
   breakdown = BREAKDOWN, beans = 860, beansSplit = SPLIT,
   color = null, skin = null, hat = null,
-  unlock, unlockIcon, onPlayAgain, onLobby, onEquip, onExit, feel,
+  unlock, unlockIcon, unlockLevel, onPlayAgain, onLobby, onEquip, onExit, feel,
 }: RewardsProps) {
   return (
     <Stage
@@ -75,7 +77,6 @@ export default function Rewards({
         animation={WIN_SEQUENCE}
         autoRotate={false}
         className={s.render}
-        label="3D CHARACTER RENDER"
         sub="LEVEL-UP POSE"
         canvasLabel="3D preview of your bean celebrating"
       />
@@ -124,7 +125,7 @@ export default function Rewards({
 
           {unlock && (
           <div className={s.unlock}>
-            <span className={s.unlockLabel}>UNLOCKED AT {level}</span>
+            <span className={s.unlockLabel}>UNLOCKED AT {unlockLevel ?? level}</span>
             <span className={s.unlockRow}>
               <span
                 className={s.item}

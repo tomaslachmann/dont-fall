@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, count, eq, gt, inArray, isNull, lte, or } from "drizzle-orm";
 import { FRIEND_CODE_LENGTH, type LobbyRef } from "@dont-fall/shared";
 import type { ApiDb } from "../db/db.js";
 import { accounts, friendRequests, friendships, lobbyInvites, matchResults, presenceBeats } from "../db/schema.js";
 import { isUniqueConstraintError } from "../auth/accounts.dao.js";
+import { ONLINE_WINDOW_MS } from "./presence.js";
 
 // Same shape as the lobby broker's join codes (`lobbies.registry.ts`) — a
 // human reading this off a friend's screen is the entire point, so the same
@@ -79,13 +80,21 @@ export const pendingBetween = (db: ApiDb, a: string, b: string): boolean => {
 export const incomingRequests = (
   db: ApiDb,
   accountId: string,
-): { id: string; fromAccountId: string; fromDisplayName: string; fromAvatarUrl: string | null; createdAt: number }[] =>
+): {
+  id: string;
+  fromAccountId: string;
+  fromDisplayName: string;
+  fromAvatarUrl: string | null;
+  fromColor: number;
+  createdAt: number;
+}[] =>
   db
     .select({
       id: friendRequests.id,
       fromAccountId: friendRequests.fromAccountId,
       fromDisplayName: accounts.displayName,
       fromAvatarUrl: accounts.avatarUrl,
+      fromColor: accounts.color,
       createdAt: friendRequests.createdAt,
     })
     .from(friendRequests)
@@ -183,7 +192,7 @@ export const areFriends = (db: ApiDb, a: string, b: string): boolean => {
 export const listFriends = (
   db: ApiDb,
   accountId: string,
-): { accountId: string; displayName: string; avatarUrl: string | null; friendsSince: number }[] => {
+): { accountId: string; displayName: string; avatarUrl: string | null; color: number; friendsSince: number }[] => {
   const rows = db
     .select({
       accountA: friendships.accountA,
@@ -198,7 +207,7 @@ export const listFriends = (
   const otherIds = rows.map((row) => (row.accountA === accountId ? row.accountB : row.accountA));
   const accountsById = new Map(
     db
-      .select({ id: accounts.id, displayName: accounts.displayName, avatarUrl: accounts.avatarUrl })
+      .select({ id: accounts.id, displayName: accounts.displayName, avatarUrl: accounts.avatarUrl, color: accounts.color })
       .from(accounts)
       .where(inArray(accounts.id, otherIds))
       .all()
@@ -209,9 +218,26 @@ export const listFriends = (
     const account = accountsById.get(other);
     return account === undefined
       ? []
-      : [{ accountId: other, displayName: account.displayName, avatarUrl: account.avatarUrl, friendsSince: row.createdAt }];
+      : [
+          {
+            accountId: other,
+            displayName: account.displayName,
+            avatarUrl: account.avatarUrl,
+            color: account.color,
+            friendsSince: row.createdAt,
+          },
+        ];
   });
 };
+
+/**
+ * Beans online (`GET /game-settings`, ADR 0110): every Account whose presence
+ * heartbeat is younger than the same window friends presence reads as online.
+ * Every signed-in client beats app-wide, so a Player in the menu counts, not
+ * only one seated in a Lobby.
+ */
+export const countOnlineAccounts = (db: ApiDb, nowMs: number): number =>
+  db.select({ online: count() }).from(presenceBeats).where(gt(presenceBeats.beatAt, nowMs - ONLINE_WINDOW_MS)).get()?.online ?? 0;
 
 /** Records this Account's presence heartbeat — one row per Account, latest wins. */
 export const recordBeat = (db: ApiDb, accountId: string, nowMs: number): void => {
@@ -257,6 +283,7 @@ export const pendingInvites = (
   id: string;
   fromAccountId: string;
   fromDisplayName: string;
+  fromColor: number;
   lobbyRef: LobbyRef;
   createdAt: number;
 }[] => {
@@ -268,6 +295,7 @@ export const pendingInvites = (
       id: lobbyInvites.id,
       fromAccountId: lobbyInvites.fromAccountId,
       fromDisplayName: accounts.displayName,
+      fromColor: accounts.color,
       lobbyRef: lobbyInvites.lobbyRef,
       createdAt: lobbyInvites.createdAt,
     })
@@ -289,8 +317,7 @@ export const markInvitesDelivered = (db: ApiDb, ids: string[], nowMs: number): v
  * RECENT and the request context ("PLAYED N MATCHES TOGETHER") read. Scans
  * every saved Match's `accountIds` map; pre-2b rows carry none and simply
  * contribute nothing. A full-table scan per call (this project's own
- * established pattern at this scale — `countOnlinePlayers` polls every
- * lobby per call the same way); Match rows are small JSON and few.
+ * established pattern at this scale); Match rows are small JSON and few.
  */
 export const coPlayedWith = (
   db: ApiDb,

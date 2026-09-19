@@ -59,3 +59,7 @@ defect (see ADR 0026):
    which yanks the render-interpolation alpha — a connection-quality-scaled backward pop.
    ADR 0026 changes the drop to a continuous small drain (the inject side stays
    responsive); that part is done there, not deferred.
+
+## Amended by ADR 0109 (2026-09-19)
+
+The LEAD counts time, not frames (`packages/shared/src/net/lead.ts`): it drains 10% of elapsed time over the band, 50% at the server's queue cap, injects at most one Tick per 300 ms, and acts only on a depth report younger than 250 ms. Input starvation turned out to be real on TCP: it was the frame-counted controller hunting.

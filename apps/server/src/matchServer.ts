@@ -91,20 +91,35 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
     void handleConnection(rt, socket, req);
   });
 
+  let port: number;
+  try {
+    port = await listen(httpServer, config);
+  } catch (err) {
+    // No port, no Match. Nothing is ticking yet — the loop starts only once
+    // the bind has succeeded — so what is left to undo is perf's event-loop
+    // monitor and the WebSocket layer. Before, the loop was started first and
+    // kept ticking, a Rapier world and all, for the life of the process: one
+    // per Lobby the API tried to create once its port range was used up
+    // (ADR 0054/0058).
+    perf.stop();
+    wss.close();
+    throw err;
+  }
+  binding = false;
+
   // ADR 0059: a finished server closes itself — everyone left for the results
   // page, or the straggler grace ran out. `closeServer` is only *called* from
-  // a later tick, so referencing it before its definition is safe.
-  const interval = startMatchLoop(rt, { onTerminalClose: () => void closeServer(), perf: perf.perf });
-
-  const port = await listen(httpServer, config);
-  binding = false;
+  // a later tick, so referencing it before its definition is safe (and it
+  // needs `loop` in turn, so one of the two has to come first). `await listen`
+  // resumes in a microtask, so no connection lands between the bind and this.
+  const loop = startMatchLoop(rt, { onTerminalClose: () => void closeServer(), perf: perf.perf });
 
   const closeServer = (): Promise<void> =>
     new Promise((resolve, reject) => {
       // M7 ticket 05: stop any in-flight `buildMatchStructure` from continuing
       // to draw against the API for a Match nothing is listening to any more.
       rt.closed = true;
-      clearInterval(interval);
+      loop.stop();
       perf.stop();
       for (const socket of rt.sockets.values()) socket.close();
       // `wss` was created with `{ server: httpServer }`, so closing it stops

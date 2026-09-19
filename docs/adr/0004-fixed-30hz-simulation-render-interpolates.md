@@ -17,3 +17,7 @@ interpolation used for remote entities in M2 (ADR 0003) is already in place.
   genre.
 - 30 Hz (not 60) is a deliberate cost/consistency choice for the on-demand
   authoritative servers (ADR 0002).
+
+## Amended by ADR 0109 (2026-09-19)
+
+The server's half of the fixed 30 Hz was a `setInterval`, which drifted to 28.8–29.5 Hz natively and 25–27 Hz in Docker. It now ticks on a grid (`tickScheduler.ts`): Tick *n* is due at `anchor + n·TICK_MS`, one Tick per wake, and a wake that finds six or more due runs five and forgives the rest (`MAX_CATCH_UP_TICKS`).

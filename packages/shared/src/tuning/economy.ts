@@ -1,3 +1,5 @@
+import { MAX_TIME_LIMIT_MS } from "./match.js";
+
 /**
  * What a Match pays, and what a spectator may bet on it (ADR 0052) —
  * configuration, not feel. Part of `tuning/` (see `index.ts`).
@@ -33,10 +35,10 @@ export const XP_LEVEL_BASE = 1_000;
 // --- Spectator wagering (ticket 14) -----------------------------------------
 
 /**
- * How long into a Round spectators may stake on it — measured from the
- * Round's start, enforced by the API's `closesAtMs`, shown as the panel's
- * CLOSES countdown. Long enough that an early knockout can still get a bet
- * down, short enough that late-Round odds mean something. A balance value:
- * move it when Rounds get longer or shorter on average.
+ * The latest a Round's board can stay open, from when it opens (ADR 0110) — a
+ * backstop, not the rule. A board stays open while at least two runners are
+ * still in the Round and closes when the Match server says one is left, or
+ * when the Round settles; this only bounds a board whose Match server never
+ * said either. Longer than any Round can run.
  */
-export const BETTING_WINDOW_MS = 60_000;
+export const BETTING_CEILING_MS = MAX_TIME_LIMIT_MS + 5 * 60_000;

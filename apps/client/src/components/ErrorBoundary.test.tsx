@@ -75,4 +75,27 @@ describe("ErrorBoundary", () => {
     expect(onError).toHaveBeenCalledOnce();
     expect(onError.mock.calls[0]![0]).toBeInstanceOf(Error);
   });
+
+  it("files the crash under the support code it shows (ADR 0110)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const reports: { code: string; kind: string; message: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        reports.push(JSON.parse(String(init?.body)));
+        return Response.json({ code: "x" }, { status: 201 });
+      }),
+    );
+
+    render(
+      <ErrorBoundary>
+        <Boom />
+      </ErrorBoundary>,
+    );
+
+    const shown = screen.getByText(/^DF-[A-Z0-9]{4}-[A-Z0-9]{2}$/).textContent;
+    await vi.waitFor(() => expect(reports).toHaveLength(1));
+    expect(reports[0]).toMatchObject({ code: shown, kind: "crash" });
+    expect(reports[0]!.message).toContain("render kaboom");
+  });
 });

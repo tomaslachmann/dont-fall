@@ -5,6 +5,7 @@ import {
   levelForXp,
   parimutuelOdds,
   settlePayouts,
+  stakePayout,
   xpBarFractions,
   xpForRoundScore,
   xpLevelStart,
@@ -138,5 +139,25 @@ describe("spectator wagering", () => {
 
   it("no bets: nothing to pay", () => {
     expect(settlePayouts([], 0)).toEqual([]);
+  });
+});
+
+describe("stakePayout (ADR 0110)", () => {
+  it("quotes what a settle would pay with the stake in both pools", () => {
+    // 100 more on a runner holding 300 of 480: the pot is 580, the runner's 400.
+    expect(stakePayout(100, 300, 480)).toBe(Math.floor((100 * 580) / 400));
+    const settled = settlePayouts(
+      [
+        { bettorId: "old", stake: 300, won: true },
+        { bettorId: "me", stake: 100, won: true },
+        { bettorId: "other", stake: 180, won: false },
+      ],
+      580,
+    );
+    expect(settled.find((row) => row.bettorId === "me")?.payout).toBe(stakePayout(100, 300, 480));
+  });
+
+  it("a lone stake on an unbacked runner is quoted the whole pot plus itself", () => {
+    expect(stakePayout(50, 0, 480)).toBe(530);
   });
 });

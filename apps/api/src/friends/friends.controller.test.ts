@@ -258,7 +258,7 @@ describe("friends routes (M9 ticket 12)", () => {
     const recent = (await app.inject({ method: "GET", url: "/friends/recent", headers: auth(amy.token) })).json();
     expect(recent).toEqual({
       recent: [
-        { accountId: bo.id, displayName: "Bo", avatarUrl: null, matchesTogether: 1, lastPlayedAt: 1_000 },
+        { accountId: bo.id, displayName: "Bo", avatarUrl: null, color: 0, matchesTogether: 1, lastPlayedAt: 1_000 },
       ],
     });
   });

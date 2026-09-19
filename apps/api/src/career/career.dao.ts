@@ -19,6 +19,8 @@ export const getCareerAggregates = (db: ApiDb, accountId: string): CareerStats =
       falls: sql<number>`sum(${matchParticipants.falls})`,
       bestPlacement: sql<number | null>`min(${matchParticipants.placement})`,
       cleanMatches: sql<number>`sum(${matchParticipants.falls} = 0)`,
+      bestSurvivalMs: sql<number | null>`max(${matchParticipants.bestSurvivalMs})`,
+      grabsBroken: sql<number>`sum(${matchParticipants.grabsBroken})`,
     })
     .from(matchParticipants)
     .where(eq(matchParticipants.accountId, accountId))
@@ -32,6 +34,8 @@ export const getCareerAggregates = (db: ApiDb, accountId: string): CareerStats =
     falls: row?.falls ?? 0,
     bestPlacement: row?.bestPlacement ?? null,
     cleanMatches: row?.cleanMatches ?? 0,
+    bestSurvivalMs: row?.bestSurvivalMs ?? null,
+    grabsBroken: row?.grabsBroken ?? 0,
   };
 };
 

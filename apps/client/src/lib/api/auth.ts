@@ -14,6 +14,8 @@ export interface Account {
   email: string | null;
   displayName: string;
   avatarUrl: string | null;
+  /** When this Account last uploaded an avatar (ADR 0110) — the version on its picture's address; `null` for none. */
+  avatarUploadedAt: number | null;
   /** This Account's role — `"player"` for everyone, `"admin"` reserved. Received, never rendered on (yet). */
   role: AccountRole;
   /** Lifetime match earnings — the economy's persisted half. */
@@ -122,3 +124,18 @@ export const saveBindings = async (bindings: KeyBindings): Promise<Account> =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ bindings }),
   });
+
+/**
+ * Uploads the caller's avatar (ADR 0110) — a WebP data URL `avatarFromFile`
+ * made — and returns the updated Account, whose `avatarUploadedAt` versions
+ * the picture's address. A 400 for anything but a small WebP, 401 for a dead token.
+ */
+export const uploadAvatar = async (image: string): Promise<Account> =>
+  apiJson<Account>("/auth/me/avatar", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image }),
+  });
+
+/** Removes the caller's uploaded avatar (ADR 0110): back to the Discord picture, or the disc. */
+export const removeAvatar = async (): Promise<Account> => apiJson<Account>("/auth/me/avatar", { method: "DELETE" });

@@ -44,3 +44,7 @@ input LEAD (ADR 0021) is the cheap 80 % version.
   this handshake instead of a first-snapshot anchor, and a mid-match latency step is
   absorbed by the slew instead of a multi-second freeze.
 - `INTERP_DELAY_MS` stops being a function of `TICK_MS` — see ADR 0020.
+
+## Amended by ADR 0109 (2026-09-19)
+
+The ping/pong offset now feeds only `estimatedServerTick` (ADR 0027's prediction-Tick seed). What is drawn follows the playout floor instead: rendering at *server-now − delay* counted transit time against the buffer and underran above ~33 ms one way. Both failure modes this ADR fixed stay fixed. `serverTimeMs` is now the Tick's grid time, not when it ran.

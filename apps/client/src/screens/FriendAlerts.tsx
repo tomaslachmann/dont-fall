@@ -2,7 +2,7 @@ import type { FriendRequestView, LobbyInviteView } from "@dont-fall/shared";
 import { CrossIcon, TickIcon } from "../ui/AnswerIcons";
 import Avatar from "../ui/Avatar";
 import JellyButton from "../ui/JellyButton";
-import { skinForPlayerId } from "../lib/avatarSkins.js";
+import { avatarLook } from "../lib/avatar.js";
 import s from "./FriendAlerts.module.css";
 
 export interface FriendAlertsProps {
@@ -35,7 +35,7 @@ export default function FriendAlerts({
     <div className={s.alerts} aria-live="polite">
       {requests.map((request) => (
         <div key={request.id} className={s.toast}>
-          <Avatar skin={skinForPlayerId(request.fromAccountId)} size={3.75} />
+          <Avatar look={avatarLook(request.fromAccountId, request.fromColor)} size={3.75} />
           <span className={s.toastText}>
             <span className={s.toastKicker}>FRIEND REQUEST</span>
             <span className={s.toastTitle}>{request.fromDisplayName.toUpperCase()} WANTS IN</span>
@@ -62,7 +62,7 @@ export default function FriendAlerts({
       ))}
       {invites.map((invite) => (
         <div key={invite.id} className={[s.toast, s.toastDark].join(" ")}>
-          <Avatar skin={skinForPlayerId(invite.fromAccountId)} size={3.1} />
+          <Avatar look={avatarLook(invite.fromAccountId, invite.fromColor)} size={3.1} />
           <span className={s.toastText}>
             <span className={s.toastKicker}>LOBBY INVITE</span>
             <span className={s.toastTitle}>{invite.fromDisplayName.toUpperCase()} INVITED YOU</span>

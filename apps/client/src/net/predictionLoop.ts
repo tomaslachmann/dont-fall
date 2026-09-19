@@ -23,6 +23,7 @@ import {
   type Vec3,
 } from "@dont-fall/shared";
 import type { PropPredictionController } from "./propPrediction.js";
+import type { TickInput } from "./tickInput.js";
 
 /**
  * Tuning this class defaults to the real shipped values for (M4.5 ticket
@@ -48,6 +49,23 @@ export interface PredictionLoopConfig {
    */
   keepAckedInHistory?: boolean;
 }
+
+/**
+ * Where tick `k` of the `steps` one advance runs fell within it: one minus the
+ * time still to accumulate after its boundary (the ticks after it, then the
+ * banked remainder) over the whole advance. In an ordinary frame that is
+ * exactly where the accumulator crossed the boundary, in (0, 1]. An injected
+ * LEAD tick is part of the advance, so a frame that carries one spreads the
+ * same span over one more tick. A backlog the MAX_STEPS clamp discards is
+ * dropped from the start of the advance, never the end, so the last tick run
+ * sits where the next frame carries on. Clamped to [0, 1]: 0 only for a tick
+ * already due before the advance began (the epsilon slack can leave one), 1
+ * for any tick of an advance that added no time.
+ */
+const tickFraction = (k: number, steps: number, remainderMs: number, advanceMs: number): number => {
+  if (advanceMs <= 0) return 1;
+  return Math.min(1, Math.max(0, 1 - (remainderMs + (steps - k) * TICK_MS) / advanceMs));
+};
 
 /** What a `reconcile()` call did, for the caller's own metrics/HUD — a display concern this class doesn't own. */
 export interface ReconcileResult {
@@ -141,8 +159,13 @@ export class PredictionLoop {
    * combined with this frame's own LEAD adjustment by the caller) and run the
    * fixed-timestep prediction to catch up, buffering each tick's `input` by
    * tick number for reconciliation and resend. A stall longer than
-   * {@link MAX_STEPS_PER_FRAME} ticks' worth drops its backlog rather than
-   * spiralling trying to catch up.
+   * {@link MAX_STEPS_PER_FRAME} ticks' worth skips its backlog rather than
+   * spiralling trying to catch up: {@link tick} still advances by the whole
+   * elapsed time, only the simulation of the skipped ticks is dropped.
+   *
+   * `input` is either one {@link SimInputs} every tick this call runs shares,
+   * or a {@link TickInput} asked once per tick for that tick's own (ADR 0109).
+   * Whichever it returns is what the tick buffers, sends and later replays.
    *
    * `onBuffered`, if given, runs immediately after each tick's input is
    * pushed to {@link inputBuffer} but *before* that tick is simulated —
@@ -161,15 +184,17 @@ export class PredictionLoop {
    *
    * Returns how many ticks this frame simulated (M13 ticket 01's overlay).
    */
-  step(input: SimInputs, advanceMs: number, onBuffered?: () => void, phase: MatchPhase = "RUNNING"): number {
-    this.accumulatorMs += advanceMs;
+  step(input: SimInputs | TickInput, advanceMs: number, onBuffered?: () => void, phase: MatchPhase = "RUNNING"): number {
+    // How many ticks this advance covers and what it leaves banked, settled
+    // before any of them runs: a tick's fraction is measured back from where
+    // the advance ends up, so each needs the whole frame's arithmetic first.
+    let remainderMs = this.accumulatorMs + advanceMs;
     let steps = 0;
-    while (this.accumulatorMs + FIXED_STEP_EPSILON_MS >= TICK_MS && steps < MAX_STEPS_PER_FRAME) {
-      this.recordTick(this.tick + 1, input, onBuffered, phase);
-      this.accumulatorMs -= TICK_MS;
+    while (remainderMs + FIXED_STEP_EPSILON_MS >= TICK_MS && steps < MAX_STEPS_PER_FRAME) {
+      remainderMs -= TICK_MS;
       steps += 1;
     }
-    if (this.accumulatorMs < 0) this.accumulatorMs = 0;
+    if (remainderMs < 0) remainderMs = 0;
     // A stall so long that hitting the MAX_STEPS_PER_FRAME clamp above still
     // leaves a whole tick or more banked discards that backlog rather than
     // springing it on the very next frame (code review: pre-clamping
@@ -178,9 +203,39 @@ export class PredictionLoop {
     // just a genuine multi-second stall — losing banked time on sustained
     // low frame rates the deleted `advanceFixed` never lost). A frame whose
     // leftover is under one tick keeps it, exactly like any ordinary frame.
-    if (this.accumulatorMs + FIXED_STEP_EPSILON_MS >= TICK_MS) {
-      this.accumulatorMs = this.accumulatorMs % TICK_MS;
+    //
+    // It discards the backlog's *simulation*, never its tick numbers (ADR
+    // 0109): the server's Tick ran on through the stall, so those ticks are
+    // skipped, before the ticks that do run — where `tickFraction` already
+    // puts a discarded backlog. Dropping the numbers too left the prediction
+    // tick behind the server's by the whole backlog: every input it sent was
+    // then for a Tick the server had already run and was refused, and only the
+    // LEAD's one tick per cooldown could win them back — 3 s after a 500 ms
+    // hitch, 90 s after a tab hidden for 10 s. Skipped, the lead survives any
+    // stall and input is live again within a frame. The server spent those
+    // Ticks repeating the last input it had; the next reconcile brings the
+    // local sim to where that left it. Only when the lead is longer than the
+    // MAX_STEPS_PER_FRAME ticks that do run (one-way latency past ~100 ms) is
+    // part of the skipped span still unacknowledged: for about a round trip a
+    // reconcile then replays only the ticks that ran, that part short, until
+    // an ack past it arrives. Buffering the span with the last input, as the
+    // server runs it, settled no sooner (measured, ADR 0109) and replays the
+    // whole span — up to MAX_BUFFERED_INPUT_TICKS a Snapshot — after a long
+    // task.
+    const skipped = Math.floor((remainderMs + FIXED_STEP_EPSILON_MS) / TICK_MS);
+    if (skipped > 0) {
+      remainderMs = Math.max(0, remainderMs - skipped * TICK_MS);
+      this.tick += skipped;
+      // Moving Segments are posed from the Tick (ADR 0061): the ticks that run
+      // next must sweep against where the skipped ones left them.
+      this.sim.syncTick(this.tick);
     }
+
+    for (let k = 1; k <= steps; k += 1) {
+      const tickInput = typeof input === "function" ? input(tickFraction(k, steps, remainderMs, advanceMs)) : input;
+      this.recordTick(this.tick + 1, tickInput, onBuffered, phase);
+    }
+    this.accumulatorMs = remainderMs;
     // No trim here: `recordTick` trims after every tick it runs, and nothing
     // else grows the buffers, so a second pass over up to 120 history keys
     // per frame would only ever be a no-op repeat.

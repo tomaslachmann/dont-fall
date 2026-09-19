@@ -306,5 +306,6 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     spectatePrev: notInPractice,
     setFreeCam: notInPractice,
     enterSpectate: notInPractice,
+    resume: notInPractice,
   };
 };

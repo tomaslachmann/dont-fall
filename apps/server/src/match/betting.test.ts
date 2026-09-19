@@ -1,6 +1,6 @@
-import { BETTING_WINDOW_MS } from "@dont-fall/shared";
+import { BETTING_CEILING_MS } from "@dont-fall/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { httpBettingNotifier, openBettingArgs, roundWinners } from "./betting.js";
+import { httpBettingNotifier, openBettingArgs, roundWinners, runnersLeft } from "./betting.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -32,6 +32,19 @@ describe("roundWinners", () => {
   });
 });
 
+describe("runnersLeft (ADR 0110)", () => {
+  it("counts only who is neither out nor across the line", () => {
+    expect(
+      runnersLeft({
+        running: { eliminated: false, finishTick: null },
+        alsoRunning: { eliminated: false, finishTick: null },
+        out: { eliminated: true, finishTick: null },
+        home: { eliminated: false, finishTick: 400 },
+      }),
+    ).toBe(2);
+  });
+});
+
 describe("openBettingArgs", () => {
   const players = new Map([
     ["a", { nickname: "Ann" }],
@@ -45,7 +58,7 @@ describe("openBettingArgs", () => {
     ).toEqual({
       matchId: "m1",
       round: 1,
-      closesAtMs: 1_000 + BETTING_WINDOW_MS,
+      closesAtMs: 1_000 + BETTING_CEILING_MS,
       runners: [
         { playerId: "a", nickname: "Ann" },
         { playerId: "b", nickname: "Bob" },
@@ -67,12 +80,14 @@ describe("httpBettingNotifier", () => {
     const notifier = httpBettingNotifier("http://api:9999", fetchMock as unknown as typeof fetch);
 
     await notifier.openRound({ matchId: "m1", round: 1, closesAtMs: 5_000, runners: [] });
+    await notifier.closeRound({ matchId: "m1", round: 1 });
     await notifier.settleRound({ matchId: "m1", round: 1, winnerIds: ["a"] });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[0]![0]).toBe("http://api:9999/bets/rounds/open");
-    expect(fetchMock.mock.calls[1]![0]).toBe("http://api:9999/bets/rounds/settle");
-    expect(JSON.parse(String(fetchMock.mock.calls[1]![1]?.body))).toEqual({
+    expect(fetchMock.mock.calls[1]![0]).toBe("http://api:9999/bets/rounds/close");
+    expect(fetchMock.mock.calls[2]![0]).toBe("http://api:9999/bets/rounds/settle");
+    expect(JSON.parse(String(fetchMock.mock.calls[2]![1]?.body))).toEqual({
       matchId: "m1",
       round: 1,
       winnerIds: ["a"],

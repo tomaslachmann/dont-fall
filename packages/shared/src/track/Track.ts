@@ -240,6 +240,12 @@ export const MAX_TRACK_THUMBNAIL_CHARS = 1_000_000;
  * consumer) so the two never silently drift apart (code review, ticket 09 —
  * this used to be declared separately in each).
  */
+/** How far back Discover's TRENDING counts plays (ADR 0110): a week. */
+export const TRENDING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** How far back TODAY'S FEATURED CHAOS counts plays (ADR 0110): a day. */
+export const FEATURED_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export interface TrackListing {
   id: string;
   name: string | null;
@@ -262,6 +268,10 @@ export interface TrackListing {
    * no per-Account data. Feeds TRENDING's sort and nothing else.
    */
   plays: number;
+  /** Rounds started on this Track in the last {@link TRENDING_WINDOW_MS} — what TRENDING ranks by (ADR 0110). */
+  playsThisWeek: number;
+  /** Rounds started on this Track in the last {@link FEATURED_WINDOW_MS} — TODAY'S FEATURED CHAOS (ADR 0110). */
+  playsToday: number;
   /**
    * Whether the latest Revision carries a Finish Zone (M9 ticket 16) — the
    * same derived fact `roundStartBlockedReason` already reads, computed
@@ -454,8 +464,34 @@ export const trackSpawn = (track: Track, index: number, modules?: Record<string,
     const deck = segmentDeckFrame(start, startModule, segmentScale(start), segmentOrientation(start));
     const across = Math.min(SPAWN_SPACING_ACROSS, Math.max(SPAWN_SPACING_MIN, (2 * deck.halfX) / 4));
     const back = Math.min(SPAWN_SPACING_BACK, Math.max(SPAWN_SPACING_MIN, (2 * deck.halfZ) / 3));
-    const offset = rotateVec3ByQuat({ x: (col - 1.5) * across, y: 0, z: (row - 1) * back }, yawQuat(start.rotation));
-    return { x: deck.center.x + offset.x, y: deck.center.y + SPAWN_ABOVE_DECK, z: deck.center.z + offset.z };
+    // The grid's cells in slot order, then fallback cells between and beside
+    // them (still on the deck) — see the avoidance rule below.
+    const cells: { x: number; z: number }[] = [];
+    for (let r = 0; r < 3; r += 1) for (let c = 0; c < 4; c += 1) cells.push({ x: (c - 1.5) * across, z: (r - 1) * back });
+    for (const shift of [-0.5, 0.5]) {
+      for (let r = 0; r < 3; r += 1) {
+        for (let c = 0; c < 5; c += 1) {
+          const cell = { x: (c - 2) * across, z: (r - 1 + shift) * back };
+          if (Math.abs(cell.x) <= deck.halfX - SPAWN_DECK_MARGIN && Math.abs(cell.z) <= deck.halfZ - SPAWN_DECK_MARGIN) cells.push(cell);
+        }
+      }
+    }
+    // A slot never sits inside anything standing ON the Start deck — a flag,
+    // a rail, whatever an author dressed it with (found live 2026-09-18/19:
+    // "spawnul jsem se v assetu"). Everything the Track places is tested by
+    // its collision bounds (its footprint when it has none), in the band a
+    // standing Character occupies, so decorative cloth counts too. With
+    // nothing in the way the twelve slots are exactly the grid above; a
+    // blocked cell hands its index to the next free one, deterministically,
+    // so every renderer and both simulations seat the same twelve spots.
+    const yaw = yawQuat(start.rotation);
+    const obstructions = spawnObstructions(track, startIndex!, deck.center.y, modules ?? {});
+    const worldOf = (cell: { x: number; z: number }): Vec3 => {
+      const turned = rotateVec3ByQuat({ x: cell.x, y: 0, z: cell.z }, yaw);
+      return { x: deck.center.x + turned.x, y: deck.center.y + SPAWN_ABOVE_DECK, z: deck.center.z + turned.z };
+    };
+    const open = obstructions.length === 0 ? cells.slice(0, 12) : cells.filter((cell) => !spawnBlocked(worldOf(cell), obstructions));
+    return worldOf(open[slot] ?? cells[slot]!);
   }
   const local: Vec3 = { x: -1.8 + col * 1.2, y: 1.2, z: 0.5 - row * 1.5 };
   const first = start ?? track[0];
@@ -466,10 +502,95 @@ export const trackSpawn = (track: Track, index: number, modules?: Record<string,
   return addVec3(first.position, rotateVec3ByQuat(scaled, segmentOrientation(first)));
 };
 
+/** Cached asset-local collision AABB per Module (its footprint when it carries no meshes) — the spawn avoidance's read. */
+const moduleBoundsCache = new WeakMap<Module, { min: Vec3; max: Vec3 }>();
+
+const moduleCollisionBounds = (module: Module): { min: Vec3; max: Vec3 } => {
+  const cached = moduleBoundsCache.get(module);
+  if (cached) return cached;
+  let bounds: { min: Vec3; max: Vec3 } | undefined;
+  for (const mesh of module.asset?.meshes ?? []) {
+    for (const v of mesh.positions) {
+      if (!bounds) bounds = { min: { ...v }, max: { ...v } };
+      else {
+        bounds.min = { x: Math.min(bounds.min.x, v.x), y: Math.min(bounds.min.y, v.y), z: Math.min(bounds.min.z, v.z) };
+        bounds.max = { x: Math.max(bounds.max.x, v.x), y: Math.max(bounds.max.y, v.y), z: Math.max(bounds.max.z, v.z) };
+      }
+    }
+  }
+  if (!bounds) {
+    const { center, halfExtents } = module.footprint.bounds;
+    bounds = {
+      min: { x: center.x - halfExtents.x, y: center.y - halfExtents.y, z: center.z - halfExtents.z },
+      max: { x: center.x + halfExtents.x, y: center.y + halfExtents.y, z: center.z + halfExtents.z },
+    };
+  }
+  moduleBoundsCache.set(module, bounds);
+  return bounds;
+};
+
+/** One thing standing over the Start deck, as a world-space XZ box already inflated by a Character's clearance. */
+interface SpawnObstruction {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+/**
+ * Everything the Track stands ON the Start deck in the band a spawning
+ * Character occupies — from {@link SPAWN_OBSTRUCTION_ABOVE} over the deck top
+ * (so a neighbouring floor's own top face never counts) up to standing head
+ * height. World-axis AABBs are deliberately conservative: a Character keeps a
+ * little extra distance from a turned piece, never too little.
+ */
+const spawnObstructions = (track: Track, startIndex: number, deckTopY: number, modules: Record<string, Module>): SpawnObstruction[] => {
+  const out: SpawnObstruction[] = [];
+  track.forEach((segment, i) => {
+    if (i === startIndex) return;
+    const module = modules[segment.moduleId];
+    if (!module) return;
+    const { min, max } = moduleCollisionBounds(module);
+    const scale = segmentScale(segment);
+    const orientation = segmentOrientation(segment);
+    let [minX, maxX, minZ, maxZ, minY, maxY] = [Infinity, -Infinity, Infinity, -Infinity, Infinity, -Infinity];
+    for (const x of [min.x, max.x]) {
+      for (const y of [min.y, max.y]) {
+        for (const z of [min.z, max.z]) {
+          const world = addVec3(segment.position, rotateVec3ByQuat(scaleVec3({ x, y, z }, scale), orientation));
+          [minX, maxX] = [Math.min(minX, world.x), Math.max(maxX, world.x)];
+          [minZ, maxZ] = [Math.min(minZ, world.z), Math.max(maxZ, world.z)];
+          [minY, maxY] = [Math.min(minY, world.y), Math.max(maxY, world.y)];
+        }
+      }
+    }
+    if (maxY < deckTopY + SPAWN_OBSTRUCTION_ABOVE || minY > deckTopY + SPAWN_OBSTRUCTION_HEAD) return;
+    out.push({
+      minX: minX - SPAWN_CLEARANCE,
+      maxX: maxX + SPAWN_CLEARANCE,
+      minZ: minZ - SPAWN_CLEARANCE,
+      maxZ: maxZ + SPAWN_CLEARANCE,
+    });
+  });
+  return out;
+};
+
+const spawnBlocked = (at: Vec3, obstructions: readonly SpawnObstruction[]): boolean =>
+  obstructions.some((o) => at.x >= o.minX && at.x <= o.maxX && at.z >= o.minZ && at.z <= o.maxZ);
+
 /** The spawn grid's spacing on a Start (ADR 0068): M1's own, squeezed no tighter than a Player's width. */
 const SPAWN_SPACING_ACROSS = 1.2;
 const SPAWN_SPACING_BACK = 1.5;
 const SPAWN_SPACING_MIN = 0.8;
+/** How far a spawn slot keeps from anything standing on the deck: a capsule's radius plus breathing room. */
+const SPAWN_CLEARANCE = 0.55;
+/** Obstructions start this far over the deck top — a neighbouring floor's own top face never counts, a rail or a flag does. */
+const SPAWN_OBSTRUCTION_ABOVE = 0.3;
+/** ...and end at standing head height over the deck. */
+const SPAWN_OBSTRUCTION_HEAD = 2.2;
+/** A fallback cell keeps this far inside the deck's edge. */
+const SPAWN_DECK_MARGIN = 0.45;
+
 /** A spawned capsule centre above the deck — M1's 1.2. */
 const SPAWN_ABOVE_DECK = 1.2;
 

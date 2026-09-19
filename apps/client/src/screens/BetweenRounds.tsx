@@ -3,7 +3,7 @@ import Stage from '../ui/Stage';
 import Panel from '../ui/Panel';
 import JellyButton from '../ui/JellyButton';
 import Avatar from '../ui/Avatar';
-import type { Skin } from '../ui/Avatar';
+import type { AvatarLook } from '../lib/avatar.js';
 import Chip from '../ui/Chip';
 import ReadySwitch from '../ui/ReadySwitch';
 import type { Feel } from '../tokens';
@@ -12,7 +12,7 @@ import s from './BetweenRounds.module.css';
 
 export interface StandingRow {
   name: string;
-  skin: Skin;
+  look: AvatarLook;
   /** Points earned this round. */
   gained: number;
   total: number;
@@ -33,9 +33,12 @@ export interface BetweenRoundsProps {
   nextMode?: string;
   /** The next Track's screenshot (ADR 0085, 0105) — absent while unrevealed or when it has none; the stripes stay. */
   nextThumbnail?: string;
+  /** Time left before the next Round starts without everyone (ADR 0110) — absent, the hint is not shown. */
   autoStart?: string;
   /** How many Players have confirmed Ready (the tally's numerator). */
   readyCount?: number;
+  /** How many Players the next Round waits on — everyone still connected (the tally's denominator). */
+  readyOf?: number;
   onScoreboard?: () => void;
   onLeave?: () => void;
   /** Fires once, when the Player flips their own switch on (never on off). */
@@ -43,20 +46,23 @@ export interface BetweenRoundsProps {
   feel?: Feel;
 }
 
+/** A Round type's chip tone, by the label it is shown with — the same map the Lobby's round list uses. */
+const MODE_TONE: Record<string, 'race' | 'survival'> = { RACE: 'race', SURVIVAL: 'survival' };
+
 const STANDINGS: StandingRow[] = [
-  { name: 'GOOPY', skin: 'mint', gained: 180, total: 340, moved: 2 },
-  { name: 'NOODLEBEAN', skin: 'pink', gained: 140, total: 315, moved: -1, you: true },
-  { name: 'FLOPPO', skin: 'cyan', gained: 120, total: 280 },
-  { name: 'SPLATTO', skin: 'gold', gained: 90, total: 205 },
-  { name: 'BONK', skin: 'pink', gained: 60, total: 150 },
-  { name: 'MRBEANO', skin: 'grape', gained: 40, total: 95, out: true },
+  { name: 'GOOPY', look: { src: null, color: 2 }, gained: 180, total: 340, moved: 2 },
+  { name: 'NOODLEBEAN', look: { src: null, color: 0 }, gained: 140, total: 315, moved: -1, you: true },
+  { name: 'FLOPPO', look: { src: null, color: 1 }, gained: 120, total: 280 },
+  { name: 'SPLATTO', look: { src: null, color: 3 }, gained: 90, total: 205 },
+  { name: 'BONK', look: { src: null, color: 0 }, gained: 60, total: 150 },
+  { name: 'MRBEANO', look: { src: null, color: 4 }, gained: 40, total: 95, out: true },
 ];
 
 export default function BetweenRounds({
   round = 2, rounds = 3, justPlayed = 'JELLY GAUNTLET · SURVIVAL',
   standings = STANDINGS, nextTrack = 'THE BIG WOBBLE',
   nextNote = 'Final round pays double. 25 points behind is nothing.', nextMode, nextThumbnail,
-  autoStart = '0:14', readyCount = 0, onScoreboard, onLeave, onReady, feel,
+  autoStart, readyCount = 0, readyOf, onScoreboard, onLeave, onReady, feel,
 }: BetweenRoundsProps) {
   const [ready, setReady] = useState(false);
 
@@ -89,7 +95,7 @@ export default function BetweenRounds({
               className={[s.row, p.you && s.you, p.out && s.eliminated].filter(Boolean).join(' ')}
             >
               <span className={s.rank}>{i + 1}</span>
-              <Avatar skin={p.skin} size={3.1} ring={p.you ? 'var(--df-color-accent)' : undefined} />
+              <Avatar look={p.look} size={3.1} ring={p.you ? 'var(--df-color-accent)' : undefined} />
               <span className={s.name}>
                 <span className={s.nameText}>{p.name}</span>
                 {p.you && <span className={s.tagYou}>YOU</span>}
@@ -120,13 +126,11 @@ export default function BetweenRounds({
             ...trackArtStyle(nextThumbnail),
             background: `${TRACK_ART_LAYER}, repeating-linear-gradient(115deg,#FFC9E4 0 calc(var(--df-u) * .95),#FFB4DC calc(var(--df-u) * .95) calc(var(--df-u) * 1.9))`,
           }}
-        >{nextThumbnail ? null : <>EXISTING TRACK<br />THUMBNAIL</>}</span>
+        >{nextThumbnail ? null : '?'}</span>
         <span className={s.nextName}>{nextTrack}</span>
-        {nextMode && (
         <span className={s.nextTags}>
-          <Chip tone="race">{nextMode}</Chip>
+          <Chip tone={nextMode === undefined ? 'any' : (MODE_TONE[nextMode] ?? 'race')}>{nextMode ?? 'ANY MODE'}</Chip>
         </span>
-        )}
         <span className={s.nextNote}>{nextNote}</span>
       </div>
 
@@ -138,8 +142,8 @@ export default function BetweenRounds({
             if (next) onReady?.();
           }}
           label="READY"
-          tally={`${readyCount} OF ${standings.length} READY`}
-          hint={`AUTO-START IN ${autoStart}`}
+          tally={`${readyCount} OF ${readyOf ?? standings.length} READY`}
+          {...(autoStart === undefined ? {} : { hint: `AUTO-START IN ${autoStart}` })}
         />
       </div>
 

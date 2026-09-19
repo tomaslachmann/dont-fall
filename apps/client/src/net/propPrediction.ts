@@ -18,6 +18,9 @@
  *
  * The offset is only ever *added to* — on entry, on hand-back, and on every
  * reconcile while predicted — never used to move the rendered pose directly.
+ * While SERVER-MOVING it decays no faster along the server pose's own motion
+ * than that pose advances ({@link decayHandedBackError}), so a Prop handed
+ * back still sliding is drawn pausing, never moving backward.
  */
 
 import {
@@ -32,6 +35,7 @@ import {
   PROP_ERR_ROT_HARDSNAP_DOT,
   PROP_ERR_ROT_SETTLED_DOT,
   PROP_ERR_SETTLED_M,
+  PROP_HANDBACK_MIN_SPEED,
   PROP_PREDICT_GRACE_MAX_TICKS,
   PROP_PREDICT_GRACE_MIN_TICKS,
   PROP_PREDICT_GRACE_TICKS,
@@ -39,8 +43,10 @@ import {
   addVec3,
   conjugateQuat,
   decayPositionOffset,
+  dotVec3,
   lengthVec3,
   mulQuat,
+  scaleVec3,
   slerpQuat,
   subVec3,
   type PropSnapshot,
@@ -129,10 +135,61 @@ export const decayPropError = (error: PropError, dtMs: number): PropError => {
 };
 
 /**
+ * One render frame of a handed-back Prop's decay (SERVER-MOVING — ADR 0022,
+ * amended by ADR 0109): {@link decayPropError}, except that the offset's part
+ * along the server Prop's own motion (the direction of its replicated
+ * `serverVelocity`) shrinks no faster than the drawn server pose advanced
+ * that way this frame (`serverAdvance`).
+ *
+ * The hand-back seeds the offset at where the prediction has the Prop less
+ * where the drawn server world has it, and a Prop still sliding at v puts
+ * those ~v × (RTT + ~100 ms) apart ({@link graceTicksForRtt}) — 0.6 m at
+ * 3 u/s over RTT 80. Decayed freely, an offset that size shrinks faster than
+ * the server pose under it moves, and the Prop was drawn sliding backward: in
+ * ADR 0109's harness (RTT 20–120 ms, 2–6 u/s) on half the hand-backs at
+ * 60 Hz and two thirds at 144 Hz, at up to −12 u/s. Held to the pose's own
+ * advance, it is drawn standing still instead until the decay is slow enough
+ * to let it move on, then eases onto the server pose as before — on none of
+ * them, for at most ~100 ms longer to converge. A frame the interpolation
+ * buffer runs dry advances the pose not at all, so it holds the offset too,
+ * rather than drawing the Prop back. Only the component along the motion is
+ * held; the rest, and the rotation offset, decay as ever.
+ *
+ * It holds nothing when the server has the Prop slower than
+ * {@link PROP_HANDBACK_MIN_SPEED} — or at rest, which carries no velocity at
+ * all — and never past {@link PROP_ERR_HARDSNAP_M}, where the offset is
+ * dropped as it always was.
+ */
+export const decayHandedBackError = (
+  error: PropError,
+  dtMs: number,
+  serverVelocity: Vec3 | undefined,
+  serverAdvance: Vec3,
+): PropError => {
+  const decayed = decayPropError(error, dtMs);
+  const speed = serverVelocity ? lengthVec3(serverVelocity) : 0;
+  if (!serverVelocity || speed < PROP_HANDBACK_MIN_SPEED) return decayed;
+  if (lengthVec3(error.position) > PROP_ERR_HARDSNAP_M) return decayed;
+  const along = scaleVec3(serverVelocity, 1 / speed);
+  const allowedM = Math.max(0, dotVec3(serverAdvance, along));
+  const shrinkM = dotVec3(subVec3(error.position, decayed.position), along);
+  if (shrinkM <= allowedM) return decayed;
+  return { ...decayed, position: addVec3(decayed.position, scaleVec3(along, shrinkM - allowedM)) };
+};
+
+/**
  * Ticks a Prop stays predicted after last contact:
  * `clamp(ceil(RTT / TICK_MS), 2, 8)` — long enough that the server's
  * acknowledgement of the push is already in the interpolation buffer by
- * hand-back. Falls back to {@link PROP_PREDICT_GRACE_TICKS} before RTT is known.
+ * hand-back. Not yet *drawn*, though: the drawn server pose trails the
+ * prediction Tick by the LEAD (one-way latency plus the server's command
+ * queue), the one-way latency back and the Interpolation Delay — ADR 0109's
+ * playout clock counts that delay from the Snapshot's arrival, so the one-way
+ * latency back is on top of it now — ~RTT + 100 ms, 140–250 ms at RTT
+ * 20–120 ms. A Prop still sliding is handed back that far ahead of its drawn
+ * server pose, and {@link decayHandedBackError} closes the gap without
+ * drawing it backward. Falls back to {@link PROP_PREDICT_GRACE_TICKS} before
+ * RTT is known.
  */
 export const graceTicksForRtt = (rttMs: number): number => {
   if (!Number.isFinite(rttMs) || rttMs <= 0) return PROP_PREDICT_GRACE_TICKS;
@@ -148,6 +205,8 @@ interface PropEntry {
   state: PropPredictState;
   lastContactTick: number;
   error: PropError;
+  /** The interpolated server position drawn under this Prop last frame — what {@link decayHandedBackError} measures its advance from. */
+  serverPosition: Vec3 | null;
 }
 
 /** True once a handed-back Prop's residual offset (position and rotation) is small enough to re-pin. */
@@ -163,7 +222,13 @@ export interface PropFrameParams {
   graceTicks: number;
   /** Real elapsed wall-clock since the last frame (ms). */
   dtMs: number;
-  /** Local sim pose per Prop index (`localSim.snapshot().props`). */
+  /**
+   * Local sim pose per Prop index as it is drawn — the same poses
+   * {@link PropPredictionController.renderPoses} draws a PREDICTED Prop from,
+   * interpolated to the sub-tick alpha. Not `localSim.snapshot().props`: the
+   * hand-back seeds its offset from this, and that newest tick runs up to a
+   * tick of motion ahead of what was on screen (ADR 0109).
+   */
   simProps: readonly PropSnapshot[];
   /** Interpolated server pose per Prop index (`serverInterp.sample().props`). */
   serverProps: readonly PropSnapshot[];
@@ -179,7 +244,7 @@ export class PropPredictionController {
   private entry(i: number): PropEntry {
     let e = this.entries.get(i);
     if (!e) {
-      e = { state: "pinned", lastContactTick: Number.NEGATIVE_INFINITY, error: zeroPropError() };
+      e = { state: "pinned", lastContactTick: Number.NEGATIVE_INFINITY, error: zeroPropError(), serverPosition: null };
       this.entries.set(i, e);
     }
     return e;
@@ -231,22 +296,35 @@ export class PropPredictionController {
     }
 
     for (const [i, e] of this.entries) {
+      const srv = serverProps[i];
+      let handedBack = false;
       if (e.state === "predicted" && predictionTick - e.lastContactTick > graceTicks) {
         // Grace lapsed: hand back to interpolation. Seed the offset from where
         // the predicted body sits vs where the server has it, so the rendered
         // pose does not jump on the switch.
         const sim = simProps[i];
-        const srv = serverProps[i];
         if (sim && srv) e.error = poseDelta(applyError(sim, e.error), srv);
         e.state = "server-moving";
+        handedBack = true;
       }
 
-      if (e.state === "server-moving" && serverProps[i]?.atRest && offsetSettled(e.error)) {
+      if (e.state === "server-moving" && srv?.atRest && offsetSettled(e.error)) {
         e.state = "pinned";
         e.error = zeroPropError();
       }
 
-      if (e.state !== "pinned") e.error = decayPropError(e.error, dtMs);
+      if (e.state === "predicted") {
+        e.error = decayPropError(e.error, dtMs);
+      } else if (e.state === "server-moving" && !handedBack) {
+        // The hand-back frame draws exactly the predicted pose the offset was
+        // seeded from — decaying it on the same frame drew a Prop that was
+        // slowing down behind where the prediction had just drawn it — and
+        // the decay starts on the next, held to the server pose's advance
+        // since this one (ADR 0109).
+        const advance = srv && e.serverPosition ? subVec3(srv.position, e.serverPosition) : ZERO_VEC;
+        e.error = decayHandedBackError(e.error, dtMs, srv?.velocity, advance);
+      }
+      e.serverPosition = srv ? { ...srv.position } : null;
     }
   }
 

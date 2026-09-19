@@ -111,5 +111,7 @@ export const resolveLobbyRef = (ref: LobbyRef): Promise<BrokeredLobby> =>
 export const lobbyPath = (lobby: BrokeredLobby): string => {
   const params = new URLSearchParams({ port: String(lobby.port) });
   if (lobby.code !== undefined) params.set("code", lobby.code);
+  // The broker's own id — what an invite to a public Lobby names (ADR 0110).
+  params.set("id", lobby.id);
   return `/lobby?${params.toString()}`;
 };

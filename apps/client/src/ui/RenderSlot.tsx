@@ -14,7 +14,7 @@ export interface RenderSlotProps {
 }
 
 export default function RenderSlot({
-  label = 'EXISTING CHARACTER RENDER', sub, grounded, wobble, className, style,
+  label = 'NO 3D PREVIEW', sub, grounded, wobble, className, style,
 }: RenderSlotProps) {
   return (
     <div

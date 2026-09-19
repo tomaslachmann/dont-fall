@@ -39,14 +39,23 @@ describe("RewardsRoute", () => {
     const fetchMock = vi.fn().mockImplementation(
       async () =>
         new Response(
-          JSON.stringify({ gainedXp: 300, gainedCoins: 40, xpBefore: 760, xpAfter: 1060, coinsBefore: 0, coinsAfter: 40 }),
+          JSON.stringify({
+            gainedXp: 300,
+            gainedCoins: 40,
+            xpBefore: 760,
+            xpAfter: 1060,
+            coinsBefore: 0,
+            coinsAfter: 40,
+            rounds: ROWS,
+            betWinnings: 120,
+          }),
           { status: 200 },
         ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
     render(
-      <MemoryRouter initialEntries={[{ pathname: "/rewards", state: { matchId: "m1", rounds: ROWS } }]}>
+      <MemoryRouter initialEntries={[{ pathname: "/rewards", state: { matchId: "m1" } }]}>
         <Routes>
           <Route path="/" element={<div>Main Menu</div>} />
           <Route
@@ -65,7 +74,9 @@ describe("RewardsRoute", () => {
 
     expect(await screen.findByText("MATCH REWARDS")).toBeInTheDocument();
     expect(screen.getByText("+300")).toBeInTheDocument();
-    expect(screen.getByText("+40")).toBeInTheDocument();
+    // ADR 0110: the Match's coins and what bets won, split as the design shows.
+    expect(screen.getByText("+160")).toBeInTheDocument();
+    expect(screen.getByText("BET WON")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://localhost:8081/rewards/claim");
   });
@@ -75,7 +86,7 @@ describe("RewardsRoute", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "down" }), { status: 500 })));
 
     render(
-      <MemoryRouter initialEntries={[{ pathname: "/rewards", state: { matchId: "m1", rounds: ROWS } }]}>
+      <MemoryRouter initialEntries={[{ pathname: "/rewards", state: { matchId: "m1" } }]}>
         <Routes>
           <Route path="/" element={<div>Main Menu</div>} />
           <Route
@@ -103,7 +114,15 @@ describe("RewardsRoute hat unlocks (ADR 0083)", () => {
     let hat: string | null = null;
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/rewards/claim")) {
-        return Response.json({ gainedXp: claim.xpAfter - claim.xpBefore, gainedCoins: 10, coinsBefore: 0, coinsAfter: 10, ...claim });
+        return Response.json({
+          gainedXp: claim.xpAfter - claim.xpBefore,
+          gainedCoins: 10,
+          coinsBefore: 0,
+          coinsAfter: 10,
+          rounds: ROWS,
+          betWinnings: 0,
+          ...claim,
+        });
       }
       if (url.endsWith("/auth/me/cosmetics") && init?.method === "PUT") {
         hat = (JSON.parse(init.body as string) as { hat: string | null }).hat;
@@ -114,7 +133,7 @@ describe("RewardsRoute hat unlocks (ADR 0083)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(
-      <MemoryRouter initialEntries={[{ pathname: "/rewards", state: { matchId: "m1", rounds: ROWS } }]}>
+      <MemoryRouter initialEntries={[{ pathname: "/rewards", state: { matchId: "m1" } }]}>
         <Routes>
           <Route
             path="/rewards"

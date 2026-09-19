@@ -91,7 +91,6 @@ export default function Profile({
           hat={hat}
           animation={WIN_SEQUENCE}
           autoRotate={false}
-          label="3D CHARACTER RENDER"
           sub="SIGNATURE VICTORY POSE"
           canvasLabel={`3D preview of ${name}`}
           className={s.render}

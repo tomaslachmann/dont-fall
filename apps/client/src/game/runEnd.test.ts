@@ -25,6 +25,7 @@ describe("detectRunEnd", () => {
       myId: "me",
       raceTimeMs: 82_104,
       survivedMs: 82_104,
+      nicknameOf: (id) => id,
     });
     expect(event).toEqual({
       outcome: "finished",
@@ -35,6 +36,7 @@ describe("detectRunEnd", () => {
       raceTimeMs: 82_104,
       survivedMs: null,
       checkpointIndex: null,
+      outBy: null,
     });
   });
 
@@ -53,6 +55,7 @@ describe("detectRunEnd", () => {
       myId: "me",
       raceTimeMs: 272_000,
       survivedMs: 272_000,
+      nicknameOf: (id) => id,
     });
     expect(event).toEqual({
       outcome: "out",
@@ -63,12 +66,31 @@ describe("detectRunEnd", () => {
       raceTimeMs: null,
       survivedMs: 272_000,
       checkpointIndex: null,
+      outBy: null,
     });
+  });
+
+  it("names who put you out, off the server's credit (ADR 0110)", () => {
+    const characters = {
+      me: { finishTick: null, eliminated: true, checkpointIndex: null, eliminatedBy: { byId: "a", how: "hurled" as const } },
+      a: { finishTick: null, eliminated: false, checkpointIndex: null },
+    };
+    const event = detectRunEnd({
+      wasFinished: false,
+      wasEliminated: false,
+      character: characters.me,
+      characters,
+      myId: "me",
+      raceTimeMs: 0,
+      survivedMs: 40_000,
+      nicknameOf: (id) => (id === "a" ? "Floppo" : id),
+    });
+    expect(event?.outBy).toEqual({ nickname: "Floppo", how: "hurled" });
   });
 
   it("stays silent mid-run, after the edge, and for a joiner with no Character", () => {
     const characters = chars([["me", null, false]]);
-    const base = { character: characters["me"]!, characters, myId: "me", raceTimeMs: 0, survivedMs: 0 };
+    const base = { character: characters["me"]!, characters, myId: "me", raceTimeMs: 0, survivedMs: 0, nicknameOf: (id: string) => id };
     expect(detectRunEnd({ ...base, wasFinished: false, wasEliminated: false })).toBeNull();
     expect(
       detectRunEnd({

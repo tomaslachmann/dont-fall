@@ -382,3 +382,7 @@ Still open from the same review, deliberately not in this pass: the pickup
 is a one-tick teleport to the carry point while the reach takes 0.67 s, and
 the Limp pose is still `KO_B`'s last frame lying flat (plus its 0.34-unit
 root offset) — a carried-limp treatment needs its own decision.
+
+## Amended by ADR 0109 (2026-09-19)
+
+A Held own body is drawn from the server only once the interpolated world shows the hold (`ownDrawnFromServer`); until then the reconciled prediction. Remote rigs are drawn at the exact facing through a hold and a Spin (no follow), and a body let go of into a knockdown no longer goes down at a mirrored yaw.

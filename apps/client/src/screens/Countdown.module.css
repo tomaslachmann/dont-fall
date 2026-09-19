@@ -178,15 +178,3 @@
   color: var(--df-color-on-brand);
   font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
 }
-
-/* bottom band, left */
-.feed {
-  grid-row: 4;
-  grid-column: 1;
-  align-self: end;
-  justify-self: start;
-  max-width: 100%;
-  font: var(--df-weight-display) var(--df-text-2xs) / 2 var(--df-font-mono);
-  letter-spacing: var(--df-tracking-wide);
-  color: rgba(255, 255, 255, .45);
-}

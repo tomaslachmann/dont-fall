@@ -116,3 +116,7 @@ stale pre-shove pose before it was ever visible. Most noticeable during a Dash, 
 (`this.predictedProps.has(i) || this.contactedProps.has(i)`). Regression test:
 `RapierSimulation.test.ts` › "a shove on the very tick a Prop is first contacted survives
 that tick...".
+
+## Amended by ADR 0109 (2026-09-19)
+
+The hand-back gap is now ~v × (LEAD + one-way + Interpolation Delay). While SERVER-MOVING, the offset's part along the Prop's motion shrinks no faster than the drawn server pose advances (`decayHandedBackError`), and the hand-back frame draws exactly the prediction, so a still-sliding Prop is never drawn moving backward.

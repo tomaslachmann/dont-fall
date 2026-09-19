@@ -25,7 +25,10 @@ import { registerMatchesRoutes } from "./matches/matches.controller.js";
 import { registerRewardsRoutes } from "./rewards/rewards.controller.js";
 import { registerBetsRoutes } from "./bets/bets.controller.js";
 import { registerFriendsRoutes } from "./friends/friends.controller.js";
+import { countOnlineAccounts } from "./friends/friends.dao.js";
 import { registerPersonalBestRoutes } from "./personalBests/personalBests.controller.js";
+import { registerClientErrorRoutes } from "./clientErrors/clientErrors.controller.js";
+import { registerLeaderboardRoutes } from "./leaderboards/leaderboards.controller.js";
 import { ServiceError } from "./http/errors.js";
 
 export interface BuildAppOptions {
@@ -139,13 +142,16 @@ export const buildApp = async (options: BuildAppOptions = {}): Promise<FastifyIn
     discordFetch: options.discordFetch ?? fetch,
   });
   registerLobbyRoutes(app, lobbies);
-  registerSettingsRoutes(app, { maxPlayers, countOnlinePlayers: () => lobbies.countOnlinePlayers() });
+  // ADR 0110: beans online are signed-in Accounts by presence heartbeat.
+  registerSettingsRoutes(app, { maxPlayers, countOnlinePlayers: async () => countOnlineAccounts(db, Date.now()) });
   registerRewardsRoutes(app, db);
   registerBetsRoutes(app, db, options.serviceToken);
   registerMatchesRoutes(app, db, options.serviceToken);
   registerCareerRoutes(app, db);
   registerFriendsRoutes(app, db, lobbies);
   registerPersonalBestRoutes(app, db, options.serviceToken);
+  registerClientErrorRoutes(app, db, options.serviceToken);
+  registerLeaderboardRoutes(app, db);
 
   return app;
 };

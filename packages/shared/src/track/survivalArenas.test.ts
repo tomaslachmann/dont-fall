@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Module } from "./Module.js";
 import { resolveTrack } from "./resolveTrack.js";
-import { type Track } from "./Track.js";
+import { trackSpawn, type Segment, type Track } from "./Track.js";
 import { loadAssetLibrary } from "./assetModules.js";
 import { invalidTrackCourseReason, startSegmentIndex } from "./Course.js";
 import { MAX_PLAYERS } from "../tuning/match.js";
@@ -78,6 +78,26 @@ const polar = (radius: number, degrees: number, extra: Partial<Waypoint> = {}): 
   s: radius * Math.cos((degrees * Math.PI) / 180),
   radius: 0.5,
   ...extra,
+});
+
+const startOf = (track: Track): Segment => track.find((segment) => segment.start === true) ?? track[0]!;
+
+describe("trackSpawn avoids what stands on the Start deck (2026-09-19)", () => {
+  it("keeps all 12 Cog Arena slots distinct and clear of the Start tooth's flags", () => {
+    const flags = COG_ARENA_TRACK.filter(
+      (segment) => segment.moduleId.startsWith("kaykit_flag") && COG_ARENA_TRACK.some((other) => other.start === true) &&
+        Math.hypot(segment.position.x - startOf(COG_ARENA_TRACK).position.x, segment.position.z - startOf(COG_ARENA_TRACK).position.z) < 4,
+    );
+    expect(flags.length).toBeGreaterThanOrEqual(2);
+    const slots = Array.from({ length: 12 }, (_, i) => trackSpawn(COG_ARENA_TRACK, i, library));
+    const keys = new Set(slots.map((s) => `${s.x.toFixed(3)},${s.z.toFixed(3)}`));
+    expect(keys.size).toBe(12);
+    for (const slot of slots) {
+      for (const flag of flags) {
+        expect(Math.hypot(slot.x - flag.position.x, slot.z - flag.position.z)).toBeGreaterThan(0.9);
+      }
+    }
+  });
 });
 
 describe("Cog Arena's levels", () => {

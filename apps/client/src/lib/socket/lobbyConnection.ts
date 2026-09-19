@@ -78,6 +78,11 @@ export interface LobbySnapshot {
   /** How many Rounds this Match will run (M7 ticket 05, ADR 0049) — the host's own setting. */
   matchLength: number;
   /**
+   * The Round this Match is on, or has just finished while in RESULTS; `0` in
+   * LOBBY (ADR 0110). The server's count, never one kept here.
+   */
+  round: number;
+  /**
    * How many connections this server accepts before refusing the next one
    * outright (grilling session, 2026-09) — `welcome.config.maxPlayers`
    * echoed here so a Lobby Screen's "N slots open" reads the server's own
@@ -117,6 +122,7 @@ export const toLobbySnapshot = (myId: string, maxPlayers: number, message: Snaps
   survivorTarget: message.roundRules.survivorTarget,
   startBlockedReason: message.lobby.startBlockedReason,
   matchLength: message.lobby.matchLength,
+  round: message.round,
   roundPicks: message.lobby.roundPicks,
   maxPlayers,
 });

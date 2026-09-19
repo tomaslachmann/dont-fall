@@ -10,9 +10,23 @@ import { resolveEndpoints } from "../socket/connection.js";
 
 const TOKEN_STORAGE_KEY = "df_auth_token";
 
-export const getStoredToken = (): string | null => localStorage.getItem(TOKEN_STORAGE_KEY);
-export const setStoredToken = (token: string): void => localStorage.setItem(TOKEN_STORAGE_KEY, token);
-export const clearStoredToken = (): void => localStorage.removeItem(TOKEN_STORAGE_KEY);
+export const getStoredToken = (): string | null =>
+  localStorage.getItem(TOKEN_STORAGE_KEY) ?? sessionStorage.getItem(TOKEN_STORAGE_KEY);
+
+/**
+ * Keeps the session token (ADR 0110): past this tab when `remember` (KEEP ME
+ * LOGGED IN, and every Discord sign-in), or only for this tab otherwise —
+ * closing it signs the Player out.
+ */
+export const setStoredToken = (token: string, remember = true): void => {
+  clearStoredToken();
+  (remember ? localStorage : sessionStorage).setItem(TOKEN_STORAGE_KEY, token);
+};
+
+export const clearStoredToken = (): void => {
+  localStorage.removeItem(TOKEN_STORAGE_KEY);
+  sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+};
 
 /** This API's HTTP origin — `resolveEndpoints` without the Match-server socket half, which stays in `connection.ts`. */
 export const apiBaseUrl = (host: string = location.hostname): string =>

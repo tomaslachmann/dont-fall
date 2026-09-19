@@ -2,15 +2,16 @@ import {
   IDLE_INPUTS,
   INITIAL_LEAD_TICKS_MAX,
   INITIAL_LEAD_TICKS_MIN,
-  LEAD_DRAIN_FRACTION,
   TICK_MS,
   addVec3,
   interpolateState,
   isDownMotionState,
   isEliminated,
   isPlayerDrivenMotionState,
+  leadAdjustMs,
   movementDirection,
   phaseLocksInput,
+  type CharacterMotionState,
   type PropSnapshot,
   type RenderCharacter,
   type RenderState,
@@ -21,7 +22,10 @@ import {
 import { matchBanner } from "../hud/matchBanner.js";
 import { localHoldOf } from "../render/grabAnimation.js";
 import { carriedPose } from "./carriedPose.js";
+import type { PredictionLoop } from "../net/predictionLoop.js";
 import { graceTicksForRtt } from "../net/propPrediction.js";
+import type { SnapshotInterpolator } from "../net/snapshotInterpolation.js";
+import { inputPerTick } from "../net/tickInput.js";
 import { isMatchSpectator, isSpectating, livingIds, type SpectateSnapshot } from "./spectator.js";
 import type { GameSession } from "./session.js";
 
@@ -42,16 +46,6 @@ import type { GameSession } from "./session.js";
  * facing or jump the clip.
  */
 const MAX_ANIMATION_DELTA_MS = 100;
-
-/**
- * Prediction LEAD (ADR 0021): keep the server's command buffer near ~1.5 so it
- * never starves. Pure feedback on the server-reported `commandQueueDepth` — at
- * most one prediction tick injected or dropped per window, so it converges over
- * ~1 s with no jerk. Self-limiting (the condition stops firing once the queue
- * is healthy), so a tick lost to the MAX_STEPS clamp just retries on the next
- * window — there is no tracked counter to drift.
- */
-const LEAD_ADJUST_FRAMES = 12;
 
 /**
  * Sampled unconditionally — whether it actually drives the Character is the
@@ -76,6 +70,35 @@ const sampleInput = (session: GameSession): SimInputs => ({
   // model itself (ADR 0009).
   facing: session.world.stage.characterFacing(),
 });
+
+/**
+ * ADR 0027: seed the prediction tick into the server's own tick space, once,
+ * as soon as both estimates are available. Ongoing drift is corrected by the
+ * LEAD feedback afterwards — this only needs the right ballpark.
+ *
+ * Seeded where this frame *starts* on the server's clock, not where it ends:
+ * the `step` that follows advances the tick by the frame's whole elapsed time,
+ * as on every frame (a clamped stall skips its tick numbers rather than
+ * dropping them, ADR 0109). Seeded at the frame's end, a long seeding frame —
+ * the game booted, or a Round's Track swapped in, while the tab was hidden —
+ * counted twice: after a 10 s one the prediction led the server by 300 ticks
+ * too many, the server ignored this Player's input for 20 s, and every
+ * Snapshot meanwhile replayed the whole input buffer.
+ */
+export const seedPredictionTick = (
+  predictionLoop: PredictionLoop,
+  timeSync: { readonly ready: boolean; readonly rttMs: number },
+  serverInterp: Pick<SnapshotInterpolator, "ready" | "estimatedServerTick">,
+  now: number,
+  elapsedMs: number,
+): void => {
+  if (predictionLoop.isSeeded || !timeSync.ready || !serverInterp.ready) return;
+  const leadTicks = Math.max(
+    INITIAL_LEAD_TICKS_MIN,
+    Math.min(INITIAL_LEAD_TICKS_MAX, Math.ceil(timeSync.rttMs / 2 / TICK_MS) + 1),
+  );
+  predictionLoop.seed(serverInterp.estimatedServerTick(now - elapsedMs), leadTicks);
+};
 
 /**
  * Refresh the obstacles this client's prediction slides against — other
@@ -108,27 +131,6 @@ const pinObstacles = (session: GameSession, serverRender: RenderState | null): v
   localSim.setPredictedProps(serverRender ? session.net.propPrediction.predictedIndices : []);
 };
 
-/**
- * How much to stretch or shrink this frame's time, in ms (ADR 0021, gentle
- * drain per ADR 0026). Inject at most one prediction tick per window when the
- * queue is starving — responsive, since an empty queue means the server is
- * about to repeat a stale input. Draining a fat queue never jumps a whole tick
- * at once (that yanks the render-interpolation alpha in a single frame, a
- * second backward pop distinct from the position correction); instead it
- * bleeds off a small fraction of a tick every frame for as long as the queue
- * stays over the band.
- */
-const leadStepMs = (session: GameSession): number => {
-  const net = session.net;
-  net.framesSinceLeadAdjust += 1;
-  if (!net.timeSync.ready) return 0;
-  if (net.framesSinceLeadAdjust >= LEAD_ADJUST_FRAMES && net.smoothedQueueDepth < 1) {
-    net.framesSinceLeadAdjust = 0;
-    return TICK_MS;
-  }
-  return net.smoothedQueueDepth > 2.5 ? -TICK_MS * LEAD_DRAIN_FRACTION : 0;
-};
-
 /** Everything this frame draws, composed once and then handed to the Stage. */
 interface DrawnFrame {
   /** The local simulation's own latest state. */
@@ -148,16 +150,76 @@ interface DrawnFrame {
   props: PropSnapshot[];
 }
 
+/**
+ * Whether the local Character is drawn from the interpolated server world this
+ * frame instead of from its own prediction. Only a body the server moves —
+ * down, or Held (ADR 0104) — ever is, and only once the drawn world shows it
+ * so: a knockdown once its ragdoll bones are there, a hold once the drawn
+ * world has the Character out of its Player's hands too. The prediction turns
+ * Held on the newest Snapshot, and the drawn world trails that by the
+ * Interpolation Delay — at every latency, since ADR 0109's playout clock
+ * stopped running the buffer dry over the internet — so switching at once drew
+ * the caught Character (and aimed its camera) back where the server had it
+ * before the catch, for a few frames, before lifting it into the grabber's
+ * hands. Until the hold shows, the reconciled prediction is drawn: already
+ * where the newest Snapshot carries it, its input dead (`syncOwnHold`), and
+ * with no correction offset, as for any body the server moves.
+ *
+ * The drawn row's own state cannot say when a hold taken on the feet shows:
+ * it is the later Snapshot's, so it reads Held over the whole Tick before the
+ * one the hold began on, while its position is still lerped up from where the
+ * Character stood. Drawn then, the body dropped out of the hands the
+ * prediction had just drawn it in, and rose back into them over that Tick. So
+ * such a hold waits for the drawn tick (`hold.drawnTick`, the render tick the
+ * drawn world was sampled at) to reach the Tick it began on
+ * (`hold.heldSinceTick`, {@link heldSinceTickAfter}). A hold taken on a
+ * Character already down has none: it was drawn from the server while down, a
+ * ragdoll turning into a capsule is a body swap interpolation never blends
+ * through, and it stays drawn from there throughout.
+ */
+export const ownDrawnFromServer = (
+  ownMotionState: CharacterMotionState,
+  serverOwn: RenderCharacter | undefined,
+  hold: { drawnTick: number; heldSinceTick: number | null },
+): serverOwn is RenderCharacter => {
+  if (serverOwn === undefined || isPlayerDrivenMotionState(ownMotionState)) return false;
+  if (isDownMotionState(ownMotionState)) return serverOwn.bones.length > 0;
+  if (isPlayerDrivenMotionState(serverOwn.motionState)) return false;
+  return !(serverOwn.motionState === "Held" && hold.heldSinceTick !== null && hold.drawnTick < hold.heldSinceTick);
+};
+
+/**
+ * What `heldSinceTick` — the Tick {@link ownDrawnFromServer} waits for — is
+ * after one more Snapshot: the Tick of the first Snapshot to have the local
+ * Character Held when the one before had it on its feet, kept while the hold
+ * lasts. Null outside a hold, and through a hold taken on a Character already
+ * down, which is drawn from the server throughout. Fed every Snapshot in
+ * arrival order, so it is the first Held Tick the server sent, whatever the
+ * snapshot rate.
+ */
+export const heldSinceTickAfter = (
+  heldSinceTick: number | null,
+  previous: CharacterMotionState | undefined,
+  current: CharacterMotionState | undefined,
+  tick: number,
+): number | null => {
+  if (current !== "Held") return null;
+  if (previous === "Held") return heldSinceTick;
+  return previous !== undefined && isPlayerDrivenMotionState(previous) ? tick : null;
+};
+
+/** The local simulation's half of a frame, composed before the Prop state machine runs (see the frame loop). */
+type LocalFrame = Pick<DrawnFrame, "snapshot" | "render" | "localAlpha">;
+
 const composeDraw = (
   session: GameSession,
-  snapshot: SimState,
+  local: LocalFrame,
   serverRender: RenderState | null,
   elapsedMs: number,
+  now: number,
 ): DrawnFrame => {
   const { predictionLoop } = session.world;
-  const previous = predictionLoop.previousSnapshot ?? snapshot;
-  const localAlpha = predictionLoop.accumulatorMs / TICK_MS;
-  const render = interpolateState(previous, snapshot, localAlpha);
+  const { snapshot, render } = local;
   const own = snapshot.characters[session.myId]!;
 
   // While down, draw the local Character exactly like a remote one: from the
@@ -175,10 +237,16 @@ const composeDraw = (
   //
   // A Held body is the same case (ADR 0104): its own client never moves it —
   // the grabber carries it, on the server — so it is drawn from there too.
+  // Either way only once the drawn server world agrees (`ownDrawnFromServer`);
+  // until then the prediction is drawn, with no correction offset.
   const drawnFromServer = !isPlayerDrivenMotionState(own.motionState);
   const serverOwn = serverRender?.characters[session.myId];
-  const fromServer =
-    serverOwn !== undefined && (isDownMotionState(own.motionState) ? serverOwn.bones.length > 0 : drawnFromServer);
+  const fromServer = ownDrawnFromServer(own.motionState, serverOwn, {
+    // Asked at the `now` the drawn world was sampled at, which the playout
+    // clock answers with the same tick.
+    drawnTick: session.net.serverInterp.renderTick(now),
+    heldSinceTick: session.net.heldSinceTick,
+  });
   const renderCharacter = fromServer ? serverOwn : render.characters[session.myId]!;
 
   // ADR 0026: decay the local Character's own render-time correction offset one
@@ -226,7 +294,7 @@ const composeDraw = (
     ? session.net.propPrediction.renderPoses(render.props, serverRender.props)
     : [];
 
-  return { snapshot, render, localAlpha, own, drawnFromServer, serverOwn, visual, remote, props };
+  return { ...local, own, drawnFromServer, serverOwn, visual, remote, props };
 };
 
 /** Everything the Stage is told this frame, in the order it must hear it. */
@@ -241,6 +309,7 @@ const drawWorld = (session: GameSession, frame: DrawnFrame, input: SimInputs, el
   // frame already wears its skin (or its color), and the local model follows
   // the own row's bind. Hats the same way (ADR 0083).
   stage.setPlayerColors(new Map(Object.entries(roster.colors)));
+  stage.setPlayerNames(new Map(Object.entries(roster.names)));
   stage.setPlayerSkins(new Map(Object.entries(roster.skins)));
   stage.setLocalLook(roster.colors[myId] ?? null, roster.skins[myId] ?? null);
   stage.setPlayerHats(new Map(Object.entries(roster.hats)));
@@ -269,6 +338,8 @@ const drawWorld = (session: GameSession, frame: DrawnFrame, input: SimInputs, el
     heldPhase: latestOwn?.heldPhase ?? null,
   };
   stage.applyCharacterSounds({ ...frame.remote, [myId]: heardOwn }, myId, now);
+  // ADR 0110: what you hear yourself take, the camera feels.
+  stage.applyShake(heardOwn, myId, now);
   // Air columns (ADR 0075) — the flow every Volume on the Track promises, streamed every frame.
   stage.updateAirColumns(now);
 
@@ -394,21 +465,15 @@ const aimCamera = (
       const runners = living
         .filter((id) => latest.characters[id]?.finishTick === null)
         .map((id) => ({ id, nickname: roster.names[id] ?? roster.known.get(id) ?? "Player" }));
-      const targetCp = targetId === null ? null : (latest.characters[targetId]?.checkpointIndex ?? null);
       const snapshot: SpectateSnapshot = {
         followingId: targetId,
         followingNickname: targetId === null ? "—" : (roster.names[targetId] ?? roster.known.get(targetId) ?? "Player"),
-        // Race rank by progress (higher checkpoint = further ahead); Survival
-        // has no mid-Round places, only beans left.
-        followedPlace:
-          match.survival || targetCp === null
-            ? null
-            : 1 +
-              Object.entries(latest.characters).filter(
-                ([id, character]) => id !== myId && (character.checkpointIndex ?? -1) > targetCp,
-              ).length,
+        // The server's own live Race placement (ADR 0088, 0110); Survival has
+        // no mid-Round places, only beans left.
+        followedPlace: match.survival || targetId === null ? null : (match.livePlaces?.[targetId] ?? null),
         runners,
         beansLeft: runners.length,
+        aliveForMs: Math.floor((match.roundElapsedMs ?? 0) / 1000) * 1000,
         freeCam: spectate.freeCamPose !== null,
       };
       session.gates.spectate.raise(snapshot, onSpectate);
@@ -475,6 +540,10 @@ const speak = (
 export const createFrameLoop = (session: GameSession, sendInput: () => void): { start: () => void; stop: () => void } => {
   let lastFrame = performance.now();
   let handle = 0;
+  // Last frame's pointer lock — a release mid-Match is the pause (ADR 0110).
+  let wasLocked = false;
+  /** The facing sampled last frame, which this frame's first tick eases from (ADR 0109). */
+  let previousFacing: number | null = null;
 
   const frame = (now: number): void => {
     const elapsedMs = now - lastFrame;
@@ -500,27 +569,29 @@ export const createFrameLoop = (session: GameSession, sendInput: () => void): { 
     // are placed from it.
     const serverRender = net.serverInterp.ready ? net.serverInterp.sample(now) : null;
 
-    // ADR 0027: seed the prediction tick into the server's own tick space,
-    // once, as soon as both estimates are available. Ongoing drift is corrected
-    // by the LEAD feedback afterwards — this only needs the right ballpark.
-    if (!world.predictionLoop.isSeeded && net.timeSync.ready && net.serverInterp.ready) {
-      const leadTicks = Math.max(
-        INITIAL_LEAD_TICKS_MIN,
-        Math.min(INITIAL_LEAD_TICKS_MAX, Math.ceil(net.timeSync.rttMs / 2 / TICK_MS) + 1),
-      );
-      world.predictionLoop.seed(net.serverInterp.estimatedServerTick(now), leadTicks);
-    }
+    seedPredictionTick(world.predictionLoop, net.timeSync, net.serverInterp, now, elapsedMs);
 
     pinObstacles(session, serverRender);
 
     // Fixed-timestep prediction: one shared sim step per tick, each fed — and
-    // sent to the server, from `onBuffered` — with the input sampled for that
-    // tick, and each buffered by tick number for reconciliation (ADR 0005,
+    // sent to the server, from `onBuffered` — with that tick's own input (ADR
+    // 0109), and each buffered by tick number for reconciliation (ADR 0005,
     // 0013, 0021). The phase is what lets the shared step gate it (M5 ticket
     // 01): real input still goes over the wire while locked, same as the server
     // has always had; only whether it moves the Character is decided, on both
     // sides identically.
-    world.predictionLoop.step(input, elapsedMs + leadStepMs(session), sendInput, session.match.phase);
+    const leadMs = leadAdjustMs(net.lead, elapsedMs, net.timeSync.ready);
+    world.predictionLoop.step(inputPerTick(input, previousFacing), elapsedMs + leadMs, sendInput, session.match.phase);
+    previousFacing = input.facing;
+
+    // The local world as it is drawn: the prediction's newest tick, blended
+    // back toward the one before by the sub-tick alpha. Composed before the
+    // Prop state machine, which seeds a handed-back Prop's offset from where it
+    // is drawn (ADR 0109) — the newest tick raw runs up to a tick of motion
+    // ahead of that, and the hand-back frame drew the jump.
+    const snapshot = world.localSim.snapshot();
+    const localAlpha = world.predictionLoop.accumulatorMs / TICK_MS;
+    const render = interpolateState(world.predictionLoop.previousSnapshot ?? snapshot, snapshot, localAlpha);
 
     // Advance the pushed-Prop state machine (ADR 0022) for this frame: which
     // Props the local capsule just touched, grace expiry, and one render frame
@@ -528,7 +599,6 @@ export const createFrameLoop = (session: GameSession, sendInput: () => void): { 
     // current. The contact set is drained either way, so it cannot accumulate a
     // stale burst while the interpolated world is briefly unavailable — in that
     // window the machine is reset to all-pinned.
-    const snapshot = world.localSim.snapshot();
     const contacted = world.localSim.consumeContactedProps();
     if (serverRender) {
       net.propPrediction.frame({
@@ -536,13 +606,13 @@ export const createFrameLoop = (session: GameSession, sendInput: () => void): { 
         predictionTick: world.predictionLoop.tick,
         graceTicks: graceTicksForRtt(net.timeSync.rttMs),
         dtMs: Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS),
-        simProps: snapshot.props,
+        simProps: render.props,
         serverProps: serverRender.props,
       });
     } else {
       net.propPrediction.reset();
     }
-    const drawn = composeDraw(session, snapshot, serverRender, elapsedMs);
+    const drawn = composeDraw(session, { snapshot, render, localAlpha }, serverRender, elapsedMs, now);
 
     drawWorld(session, drawn, input, elapsedMs, now);
     const { spectating, spectatingNickname } = aimCamera(session, drawn, serverRender, elapsedMs);
@@ -550,6 +620,11 @@ export const createFrameLoop = (session: GameSession, sendInput: () => void): { 
 
     world.stage.render();
     session.hud.setLockPromptVisible(!world.look.locked);
+    // ADR 0110: letting go of the mouse mid-Match pauses — the sheet, never the
+    // Round. Only on the release itself: a Player who never took the mouse (the
+    // start of a Round) is asked to click, not paused.
+    if (wasLocked && !world.look.locked && session.match.phase !== "LOBBY") session.callbacks.onPause?.();
+    wasLocked = world.look.locked;
 
     handle = requestAnimationFrame(frame);
   };

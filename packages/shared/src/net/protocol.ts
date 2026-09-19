@@ -82,9 +82,11 @@ export interface SnapshotMessage {
   /** The authoritative world state; carries `tick`. */
   state: SimState;
   /**
-   * The server's own `performance.now()` when this snapshot was built — the
-   * client's clock reference for time sync (ADR 0019). `tick` alone assumes a
-   * perfect `setInterval` cadence.
+   * When this snapshot's tick was due on the server's own `performance.now()`
+   * timeline (ADR 0109) — the client's clock reference for time sync (ADR
+   * 0019). The tick's grid time, not the moment it happened to run, so no
+   * timer lateness rides on it; `tick` alone cannot say when a stall was
+   * forgiven and the grid moved on.
    */
   serverTimeMs: number;
   /**
@@ -224,6 +226,21 @@ export interface SnapshotMessage {
    * already follows for a single Round's own placement.
    */
   roundResults: RoundResult[];
+  /**
+   * The number of the Round this Match is on, or has just finished while in
+   * RESULTS (ADR 0110) — `0` in LOBBY. The server's own count, the one its
+   * betting pools are keyed by. A client never counts Rounds itself: one that
+   * joined mid-Match or reloaded would count from wherever it came in.
+   */
+  round: number;
+  /**
+   * When these Standings move on without everyone's Ready, on the server's
+   * clock (the one `serverTimeMs` reads) — `null` outside a RESULTS that
+   * leads to another Round (ADR 0110). Fixed for the whole phase, so an idle
+   * RESULTS broadcast (ADR 0057) stays idle; the client converts it through
+   * its time sync and counts down locally.
+   */
+  standingsDeadlineMs: number | null;
   /**
    * Whether this Match can actually continue into another Round (M7
    * ticket 10, ADR 0051, code review) — `MatchRuntime.canContinueMatch()`:

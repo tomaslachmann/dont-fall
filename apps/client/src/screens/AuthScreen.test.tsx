@@ -59,6 +59,25 @@ describe("AuthScreen", () => {
     expect(getStoredToken()).toBe("tok-1");
   });
 
+  it("KEEP ME LOGGED IN off keeps the session to this tab only (ADR 0110)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ account: { id: "a1", discordId: null, email: "a@b.com", displayName: "Wobbleton", avatarUrl: null, xp: 0, coins: 0 }, token: "tok-2" }), { status: 200 })),
+    );
+
+    renderAt("/auth");
+    fireEvent.click(screen.getByRole("button", { name: "KEEP ME LOGGED IN" }));
+    fireEvent.change(screen.getByLabelText("EMAIL"), { target: { value: "a@b.com" } });
+    fireEvent.change(screen.getByLabelText("PASSWORD"), { target: { value: "correct horse battery staple" } });
+    fireEvent.click(screen.getByRole("button", { name: "JUMP IN" }));
+
+    await waitFor(() => expect(screen.getByText("Main Menu landed")).toBeInTheDocument());
+    expect(localStorage.getItem("df_auth_token")).toBeNull();
+    expect(sessionStorage.getItem("df_auth_token")).toBe("tok-2");
+    expect(getStoredToken()).toBe("tok-2");
+    sessionStorage.clear();
+  });
+
   it("shows the server's error message on a failed login, without storing a token", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "invalid email or password" }), { status: 401 })));
 

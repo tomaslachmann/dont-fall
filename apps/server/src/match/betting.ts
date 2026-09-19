@@ -1,4 +1,4 @@
-import { BETTING_WINDOW_MS, type RoundResult } from "@dont-fall/shared";
+import { BETTING_CEILING_MS, type RoundResult } from "@dont-fall/shared";
 
 /**
  * The match server's half of spectator wagering (ticket 14): it opens each
@@ -25,10 +25,25 @@ export interface BettingRoundSettle {
   winnerIds: string[];
 }
 
+/** Closes a Round's board before it settles — one runner is left, so nothing is left to bet on (ADR 0110). */
+export interface BettingRoundClose {
+  matchId: string;
+  round: number;
+}
+
 export interface BettingNotifier {
   openRound: (round: BettingRoundOpen) => Promise<void>;
+  closeRound: (close: BettingRoundClose) => Promise<void>;
   settleRound: (settle: BettingRoundSettle) => Promise<void>;
 }
+
+/**
+ * How many Characters are still running this Round — neither out nor across
+ * the line. A board stays open while this is at least two (ADR 0110): with one
+ * left there is no race to call.
+ */
+export const runnersLeft = (characters: Record<string, { eliminated: boolean; finishTick: number | null }>): number =>
+  Object.values(characters).filter((character) => !character.eliminated && character.finishTick === null).length;
 
 /**
  * Placement-1 rows take the Round — ties share the crown, and their backers
@@ -41,7 +56,7 @@ export const roundWinners = (result: RoundResult): string[] =>
 /**
  * The COUNTDOWN-entry hook's arguments, pure so tests pin them without a
  * loop: the Round number counts finished Rounds (round 1 opens with none
- * finished), the close lands `BETTING_WINDOW_MS` after now, and sidelined
+ * finished), the ceiling lands `BETTING_CEILING_MS` after now, and sidelined
  * mid-Match spectators (M7 ticket 08 — in the Lobby's list, not in the
  * Round) are not runners anyone can back.
  */
@@ -54,7 +69,7 @@ export const openBettingArgs = (args: {
 }): BettingRoundOpen => ({
   matchId: args.matchId,
   round: args.finishedRounds + 1,
-  closesAtMs: args.nowMs + BETTING_WINDOW_MS,
+  closesAtMs: args.nowMs + BETTING_CEILING_MS,
   runners: [...args.players.entries()]
     .filter(([id]) => !args.sidelined.has(id))
     .map(([playerId, player]) => ({ playerId, nickname: player.nickname })),
@@ -84,6 +99,7 @@ export const httpBettingNotifier = (
   };
   return {
     openRound: (round) => post("/bets/rounds/open", round),
+    closeRound: (close) => post("/bets/rounds/close", close),
     settleRound: (settle) => post("/bets/rounds/settle", settle),
   };
 };

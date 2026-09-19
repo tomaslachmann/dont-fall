@@ -63,3 +63,7 @@ keeping camera aim and adding a second field).
 - **Derive a remote body's direction from its velocity.** Undefined while
   standing still, and wrong while pushing into a wall or sliding on ice (ADR
   0045 rejected it for the same reasons).
+
+## Amended by ADR 0109 (2026-09-19)
+
+The turn still runs at render rate, but each Tick's input now carries the body's yaw at that Tick's time (eased between the last two samples). The local body yaw is one tracked value (`bodyYaw`), never read back off Euler angles: after a carry's quaternion write, half of all holds used to send the mirrored facing.

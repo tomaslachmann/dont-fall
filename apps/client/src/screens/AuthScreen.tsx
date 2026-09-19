@@ -73,7 +73,9 @@ export function AuthScreen() {
     setError(null);
     try {
       const result = mode === 'login' ? await login({ email, password }) : await signup({ email, password, displayName: name });
-      setStoredToken(result.token);
+      // KEEP ME LOGGED IN decides whether the session outlives this tab; a
+      // brand-new bean is always kept (its box is a different one).
+      setStoredToken(result.token, mode === 'signup' || consent);
       // The gate's ["account"] answer (unauthenticated) is cached — drop it
       // outright so the authed tree resolves the fresh token, remount or not.
       await queryClient.invalidateQueries({ queryKey: ["account"] });
@@ -109,7 +111,6 @@ export function AuthScreen() {
           color={BASE_BODY_COLOR_ID}
           animation={[{ clip: "Idle", seconds: 4 }, { clip: "Wobble", seconds: 3.2 }]}
           autoRotate={false}
-          label="3D CHARACTER RENDER"
           sub="SAYING HELLO"
           canvasLabel="3D bean greeting you"
           className={s.greeter}

@@ -48,6 +48,8 @@ const saveRuntime = (saveResult: (result: unknown) => Promise<boolean>): SaveRun
   matchSkins: new Map([["a", "tiger"]]),
   matchHats: new Map([["a", "crown"]]),
   totalFalls: { a: 2 },
+  matchSurvivalMs: new Map([["a", 64_000]]),
+  matchGrabsBroken: new Map([["a", 3]]),
   matchResults: { saveResult: saveResult as SaveRuntime["matchResults"]["saveResult"] },
 });
 
@@ -75,6 +77,8 @@ describe("saveMatchResultIfDue (ADR 0059)", () => {
       skins: { a: "tiger" },
       hats: { a: "crown" },
       totalFalls: { a: 2 },
+      survivalMs: { a: 64_000 },
+      grabsBroken: { a: 3 },
     });
     expect(rt.savingResults).toBe(false);
     expect(rt.resultsSavedMatchId).toBe("m1");

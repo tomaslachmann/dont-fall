@@ -5,7 +5,7 @@ import Stage from '../ui/Stage';
 import Panel from '../ui/Panel';
 import JellyButton from '../ui/JellyButton';
 import Avatar from '../ui/Avatar';
-import type { Skin } from '../ui/Avatar';
+import type { AvatarLook } from '../lib/avatar.js';
 import type { Feel } from '../tokens';
 import type { FriendsTab } from '../lib/friendsView';
 import s from './Friends.module.css';
@@ -13,7 +13,7 @@ import s from './Friends.module.css';
 export interface FriendRequestRow {
   id: string;
   name: string;
-  skin: Skin;
+  look: AvatarLook;
   /** Why you'd know them — `null` hides the line rather than inventing one. */
   note: string | null;
 }
@@ -21,7 +21,7 @@ export interface FriendRequestRow {
 export interface FriendRowView {
   accountId: string;
   name: string;
-  skin: Skin;
+  look: AvatarLook;
   status: string;
   tab: Exclude<FriendsTab, 'RECENT'>;
   /** Joinable right now. */
@@ -34,7 +34,7 @@ export interface FriendRowView {
 export interface RecentRowView {
   accountId: string;
   name: string;
-  skin: Skin;
+  look: AvatarLook;
   note: string;
   /** Already friends, or ADDed this session — the row reads SENT, never ADD again. */
   requested: boolean;
@@ -105,7 +105,8 @@ export default function Friends({
             <svg viewBox="0 0 18 18"><path d="M11 3L5 9l6 6" /></svg>
           </button>
           <span className={s.title}>FRIENDS</span>
-          <JellyButton variant="pill" tone="glass" centered>{online} ONLINE · {total} TOTAL</JellyButton>
+          {/* The design's count pill, as a button that does what it says: shows who is online (ADR 0110). */}
+          <JellyButton variant="pill" tone="glass" centered onClick={() => setTab('ONLINE')}>{online} ONLINE · {total} TOTAL</JellyButton>
         </div>
         <div className={s.topActions}>
           <JellyButton variant="pill" centered onClick={onInviteAll}>INVITE ALL ONLINE</JellyButton>
@@ -158,7 +159,7 @@ export default function Friends({
               <div className={s.list}>
                 {requests.map((r, i) => (
                   <div key={r.id} className={[s.request, i === 0 && s.newest].filter(Boolean).join(' ')}>
-                    <Avatar skin={r.skin} size={3.4} />
+                    <Avatar look={r.look} size={3.4} />
                     <span className={s.who}>
                       <span className={s.whoName}>{r.name}</span>
                       {r.note !== null && <span className={s.whoNote}>{r.note}</span>}
@@ -193,7 +194,7 @@ export default function Friends({
                 {visible.map((f) => (
                   <div key={f.accountId} className={[s.friend, f.offline && s.dim].filter(Boolean).join(' ')}>
                     <Avatar
-                      skin={f.skin}
+                      look={f.look}
                       size={3.6}
                       ring={f.joinable ? 'var(--df-color-go)' : undefined}
                     />
@@ -221,7 +222,7 @@ export default function Friends({
                 {recent.length === 0 && <p className={s.empty}>FINISH A MATCH TO MEET BEANS.</p>}
                 {recent.map((r) => (
                   <div key={r.accountId} className={s.friend}>
-                    <Avatar skin={r.skin} size={3.6} />
+                    <Avatar look={r.look} size={3.6} />
                     <span className={s.friendText}>
                       <span className={s.friendName}>{r.name}</span>
                       <span className={s.friendStatus}>{r.note}</span>

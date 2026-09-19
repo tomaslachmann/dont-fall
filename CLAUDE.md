@@ -452,6 +452,30 @@ and a real Lobby `welcome` through `/api/match/<port>`. Kept from ADR 0107: the 
 `BASE_URL`-aware URLs, the Pages workflow (still deploys, no longer the way to play). **Waiting on the
 user:** the first session in a Codespace (see `README.md`).
 
+**A remote Character turns smoothly online, done on tests** — **ADR 0109**, the user's report on
+2026-09-19 after playing the online stack against a real player: the other Character's turning was
+jerky. Measured before anything changed, on harnesses around the real classes. There were four
+causes, and each is now fixed where it starts:
+- The Match server ticked at 25–29 Hz on a drifting `setInterval`. It now runs on a grid
+  (`tickScheduler.ts`), one Tick per wake, and stamps each Snapshot with its Tick's grid time.
+- The LEAD counted frames: it drained 72% of a 144 Hz frame and hunted into input starvation.
+  It now counts time, lives in `packages/shared/src/net/lead.ts`, and acts only on fresh feedback.
+- Facing was stamped once per frame on every Tick. Each Tick now carries the yaw at its own time,
+  and a clamped hitch skips its Tick numbers instead of leaving the server ignoring input for seconds.
+- The viewer's clock counted transit time against the Interpolation Delay. It now counts from the
+  **Playout Floor**, the least recent arrival lag.
+
+On top of that, remote rigs follow their facing through a 25 ms critically damped follow, exact
+during holds and Spins. Found and fixed on the way:
+- a carried body's yaw read back mirrored off Euler angles, on both rigs; the local one *sent* it
+  as facing;
+- a Held own body drawn from its pre-catch pose;
+- a handed-back Prop drawn running backward.
+
+End to end, at RTT 80 with the other player on 144 Hz, the drawn turn rate's variation fell from
+146% to 18% and still frames from 30/s to 0.8/s. The cost: everything remote is drawn about one-way
+latency further in the past. **Waiting on the user:** all of it, live.
+
 **One seat per Account, done on tests** — signing in on a second tab takes the seat and closes the
 first, with a reason the Screen shows (**ADR 0090**, the user's call on 2026-09-17). Found while
 playtesting: two tabs on one Account used to take two seats, two sets of Score, and one
@@ -503,6 +527,18 @@ target out of the harder contact that was coming — a Dash stopped knocking any
 Hit/Bump throw (throwing on every cause made the base race uncompletable — its spinning squares threw
 the walker off). **Waiting on the user:** how it all plays, and whether a three-second drag is too
 long to be on the receiving end of.
+
+**M15 planned, in progress** — What the Screens show is real (`docs/milestones/M15.md`, **ADR 0110**,
+audit in `docs/research/ui-mock-audit-2026-09.md`). The user's ask on 2026-09-19: resolve every mocked
+value on the Screens ("beans online" and the like). Settled in three question rounds the same day:
+beans online counts signed-in Accounts by presence heartbeat; the Round number and rewards become the
+server's; every avatar is the Player's own; BEST SURVIVAL and GRABS BROKEN get recorded; plus
+Leaderboards (wins, per-Track Race times, Survival), emotes and a victory pose outside a Round, the Dash
+meter as the mock's charge card, a pause menu with real screen shake and nameplates, private Lobby
+setup (ROUNDS, FRIENDS / INVITE ONLY), matchmade public Lobbies with a real queue and a SURVIVAL queue,
+parties, voice chat and drafts. The last four are settled with the user before their tickets are built.
+Not now: password reset, the shop, the Ragdoll overlay, the Elimination card. Tickets 01–18 in
+`.scratch/m15-real-screens/issues/`.
 
 **Also open: M9** — Design screens reconciliation (`.scratch/m9-design-screens-reconciliation/issues/`).
 A new design-screens drop (`apps/client/src/test_components/`) turned out to assume six systems
@@ -590,6 +626,7 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 | **M12** | The Environment — a sky, cloud floor, clouds, fog, light and real shadows a Track's author picks (`day`/`sunset`/`night`), render-only, shared by game and builder via `packages/render` (ADR 0074). |
 | **M13** | Smooth on a weaker PC — measured before/after, Track-only Asset loading, far plane at the fog, player-picked graphics quality (ADR 0079), shader warm-up; physics activation only if the numbers ask. |
 | **M14** | The game has sound — Character, moving Assets, Environment, music and UI; spatial, budgeted, presentation only (ADR 0087). Done on tests. |
+| **M15** | What the Screens show is real — no mock value on any Screen, plus the systems the design assumes: Leaderboards, emotes, pause, parties, voice chat, a real queue, drafts (ADR 0110). |
 | later | Accounts (mandatory Discord login) → XP/currency → Betting (dynamic pari-mutuel) → Friends (full presence) → Track discovery (browsing + filters) — scope decided in ADR 0052, one milestone each, build order TBD per milestone. Also: collapsing terrain, Power-ups, reconnection, level themes, the Skyfall final. |
 
 ## Working agreements

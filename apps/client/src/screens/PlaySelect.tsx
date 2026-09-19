@@ -9,7 +9,9 @@ import Stepper from '../ui/Stepper';
 import Avatar from '../ui/Avatar';
 import type { Feel } from '../tokens';
 import { MAX_PLAYERS } from '@dont-fall/shared';
-import { createLobby, lobbyByCode, quickMatch, type BrokeredLobby } from '../lib/api/lobbyBroker.js';
+import { createLobby, lobbyByCode, lobbyPath, quickMatch, resolveLobbyRef, type BrokeredLobby } from '../lib/api/lobbyBroker.js';
+import { avatarLook } from '../lib/avatar.js';
+import { useFriends } from '../lib/hooks/useFriends';
 import { useGameSettings } from '../lib/hooks/useGameSettings';
 import { formatBeansOnline } from '../lib/api/settings';
 import s from './PlaySelect.module.css';
@@ -62,6 +64,11 @@ export default function PlaySelect({
   const settings = useGameSettings();
   const beansOnline = online ?? (settings ? formatBeansOnline(settings.onlinePlayers) : undefined);
   const lobbySize = settings?.maxPlayers ?? MAX_PLAYERS;
+  // Friends waiting in a Lobby you could join right now (ADR 0110), off the
+  // same presence the Friends screen reads.
+  const friendsInALobby = useFriends().friends.filter(
+    (friend) => friend.presence.status === 'in-lobby' && friend.presence.joinable && friend.presence.lobby,
+  );
   const navigate = useNavigate();
   const [mode, setMode] = useState<PlayMode>(defaultMode);
   const [privacy, setPrivacy] = useState('INVITE ONLY');
@@ -95,11 +102,9 @@ export default function PlaySelect({
           privacy,
           rounds,
         });
-        const params = new URLSearchParams({ port: String(lobby.port) });
         // Only a Lobby that actually has a join code carries one — a
         // quick-matched public Lobby has none to show.
-        if (lobby.code) params.set('code', lobby.code);
-        navigate(`/lobby?${params.toString()}`);
+        navigate(lobbyPath(lobby));
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : String(err));
@@ -167,7 +172,7 @@ export default function PlaySelect({
               <>
                 <div className={s.detailHead}>
                   <span className={s.kicker}>FASTEST WAY IN</span>
-                  <h2 className={s.title}>Drop into the next race with 31 strangers.</h2>
+                  <h2 className={s.title}>Drop into the next race with {lobbySize - 1} strangers.</h2>
                 </div>
                 <div className={s.rows}>
                   <div className={s.row}>
@@ -182,9 +187,9 @@ export default function PlaySelect({
                 <div className={s.party}>
                   <span className={s.rowLabel}>BRINGING</span>
                   <span className={s.faces}>
-                    <Avatar skin="pink" />
-                    <Avatar skin="mint" />
-                    <Avatar skin="cyan" />
+                    <Avatar look={{ src: null, color: 0 }} />
+                    <Avatar look={{ src: null, color: 2 }} />
+                    <Avatar look={{ src: null, color: 1 }} />
                   </span>
                   <span className={s.partyNote}>2 friends in your party</span>
                 </div>
@@ -252,17 +257,36 @@ export default function PlaySelect({
                   ))}
                 </div>
 
+                {friendsInALobby.length > 0 && (
                 <div className={s.recent}>
                   <span className={s.rowLabel}>FRIENDS IN A LOBBY</span>
-                  <button type="button" className={s.recentRow} onClick={() => typeCell(0, 'PLUMJAM')}>
-                    <Avatar skin="mint" />
-                    <span className={s.recentText}>
-                      <span className={s.recentName}>WOBBLETOAST</span>
-                      <span className={s.recentSub}>PLUMJA · 6 / 16 · waiting</span>
-                    </span>
-                    <span className={s.recentJoin}>USE CODE</span>
-                  </button>
+                  {friendsInALobby.map((friend) => {
+                    const lobby = friend.presence.lobby!;
+                    const open = friend.presence.slotsOpen ?? 0;
+                    return (
+                      <button
+                        key={friend.accountId}
+                        type="button"
+                        className={s.recentRow}
+                        onClick={() =>
+                          lobby.kind === 'private'
+                            ? typeCell(0, lobby.code)
+                            : enterLobby('join', () => resolveLobbyRef(lobby))
+                        }
+                      >
+                        <Avatar look={avatarLook(friend.accountId, friend.color)} />
+                        <span className={s.recentText}>
+                          <span className={s.recentName}>{friend.displayName.toUpperCase()}</span>
+                          <span className={s.recentSub}>
+                            {lobby.kind === 'private' ? lobby.code : 'PUBLIC'} · {open} {open === 1 ? 'SLOT' : 'SLOTS'} OPEN · waiting
+                          </span>
+                        </span>
+                        <span className={s.recentJoin}>{lobby.kind === 'private' ? 'USE CODE' : 'JOIN'}</span>
+                      </button>
+                    );
+                  })}
                 </div>
+                )}
 
                 {/* GET /lobbies/code/:code — 404/409 come back as the broker's own reason, shown below. */}
                 <JellyButton

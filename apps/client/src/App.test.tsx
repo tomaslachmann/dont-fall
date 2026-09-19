@@ -11,7 +11,14 @@ import { parseLobbyParams, parsePlayParams } from "./lib/utils/routeParams.js";
 const { startGame } = vi.hoisted(() => ({ startGame: vi.fn() }));
 vi.mock("./game/index.js", () => ({ startGame }));
 
-const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, role: "player", xp: 0, coins: 0, color: 0, skin: null, hat: null, bindings: null };
+/** The main menu and the Profile share one `/career` cache (ADR 0110) — the stub answers it for real. */
+const CAREER = {
+  stats: { matches: 0, wins: 0, podiums: 0, falls: 0, bestPlacement: null, cleanMatches: 0, bestSurvivalMs: null, grabsBroken: 0 },
+  badges: { earned: [], total: 6 },
+  matches: [],
+};
+
+const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, avatarUploadedAt: null, role: "player", xp: 0, coins: 0, color: 0, skin: null, hat: null, bindings: null };
 
 // Every existing test below exercises the gated (post-login) routes — a
 // stored token that resolves is the default here, same as any real Player
@@ -27,7 +34,9 @@ beforeEach(() => {
         ? new Response(JSON.stringify(ACCOUNT), { status: 200 })
         : String(url).endsWith("/tracks")
           ? new Response(JSON.stringify([]), { status: 200 })
-          : new Response(JSON.stringify({ maxPlayers: 10, onlinePlayers: 3244 }), { status: 200 }),
+          : String(url).endsWith("/career")
+            ? new Response(JSON.stringify(CAREER), { status: 200 })
+            : new Response(JSON.stringify({ maxPlayers: 10, onlinePlayers: 3244 }), { status: 200 }),
     ),
   );
 });

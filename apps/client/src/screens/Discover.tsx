@@ -25,8 +25,8 @@ export const formatPlays = (plays: number): string =>
  * One tab's view of the catalogue (M9 ticket 16) — pure, so the tabs' own
  * contract is pinned without rendering:
  *
- * - TRENDING ranks the whole catalogue by heat (plays desc, newest first on
- *   ties).
+ * - TRENDING ranks the whole catalogue by heat: plays in the last 7 days
+ *   (ADR 0110), then all-time plays, newest first on ties.
  * - SURVIVAL is the whole catalogue A–Z: every Track supports Survival
  *   (the round draw's own rule), so this tab is the browseable full list,
  *   not a second TRENDING. Unnamed Tracks sort last.
@@ -36,7 +36,7 @@ export const formatPlays = (plays: number): string =>
  */
 export const filterDiscoverTracks = (tracks: TrackListing[], filter: DiscoverFilter): TrackListing[] => {
   const byHeat = (a: TrackListing, b: TrackListing): number =>
-    b.plays - a.plays || b.createdAt - a.createdAt;
+    b.playsThisWeek - a.playsThisWeek || b.plays - a.plays || b.createdAt - a.createdAt;
   switch (filter) {
     case 'TRENDING':
       return [...tracks].sort(byHeat);
@@ -54,9 +54,15 @@ export const filterDiscoverTracks = (tracks: TrackListing[], filter: DiscoverFil
   }
 };
 
-/** The featured band plays the catalogue's hottest Track (ties go to the newest). */
-export const featuredTrack = (tracks: TrackListing[]): TrackListing | null =>
-  tracks.length === 0 ? null : filterDiscoverTracks(tracks, 'TRENDING')[0] ?? null;
+/**
+ * TODAY'S FEATURED CHAOS (ADR 0110): the Track played most in the last 24
+ * hours — or, on a day nothing was played, TRENDING's top.
+ */
+export const featuredTrack = (tracks: TrackListing[]): TrackListing | null => {
+  const trending = filterDiscoverTracks(tracks, 'TRENDING');
+  const today = [...trending].sort((a, b) => b.playsToday - a.playsToday)[0];
+  return today !== undefined && today.playsToday > 0 ? today : (trending[0] ?? null);
+};
 
 export interface DiscoverProps {
   /** The catalogue as the API listed it — filtering and sorting happen here, per tab. */
@@ -161,7 +167,6 @@ export default function Discover({ tracks, isLoading, error, onRetry, selectedId
                 aria-label={`${name}, ${formatPlays(t.plays)} ${t.plays === 1 ? 'play' : 'plays'}, ${t.hasFinishZone ? 'race' : 'survival'}`}
               >
                 <span className={s.thumb} style={{ background: stripe(THUMBS[t.hasFinishZone ? 'race' : 'survival']) }}>
-                  <span className={s.thumbCaption}>EXISTING<br />TRACK THUMBNAIL</span>
                   {t.hasThumbnail && (
                     <img
                       className={s.thumbImg}

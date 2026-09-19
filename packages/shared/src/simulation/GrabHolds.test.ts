@@ -302,6 +302,18 @@ describe("GrabHolds — the Struggle (ADR 0104, ticket 02)", () => {
     expect(lengthVec3(flat(subVec3(of(sim, HELD).position, of(sim, GRABBER).position)))).toBeGreaterThan(apart);
   });
 
+  it("counts a won Struggle for the career's GRABS BROKEN, and a lost one not at all (ADR 0110)", () => {
+    const won = caught();
+    for (let ticks = 0; of(won, HELD).motionState === "Held" && ticks < GRAB_STRUGGLE_WINDOW_TICKS; ticks += 1) {
+      wiggle(won, 1 + (ticks % 2));
+    }
+    expect(won.strugglesWon()).toEqual({ [HELD]: 1 });
+
+    const lost = caught();
+    for (let n = 0; n < GRAB_STRUGGLE_WINDOW_TICKS + 2; n += 1) lost.tick({});
+    expect(lost.strugglesWon()).toEqual({});
+  });
+
   it("goes Limp when the window runs out, and the grabber's own window starts", () => {
     const sim = pair();
     sim.tick({ [GRABBER]: reach }); // the window's first tick

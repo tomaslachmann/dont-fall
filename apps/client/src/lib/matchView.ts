@@ -1,17 +1,15 @@
 import { matchPlacements, roundScore, type PersistedMatchResult } from "@dont-fall/shared";
-import { skinForPlayerId } from "./avatarSkins.js";
+import { avatarLook, type AvatarLook } from "./avatar.js";
 
 /**
  * View mappers: replicated match data in, designed-screen props out. Pure
  * (no sockets, no React), so the shell's tests pin them directly.
  *
  * Two disciplines this module holds. First, it never re-derives what the
- * server already decided: totals, ranks, and winners come off the snapshot
- * as sent (`StandingsRow.score/placement`, `MatchWinner`), and per-Round
- * gains come from score *deltas* against the previous snapshot — never from
- * re-running `roundScore` on a placement the client would have to guess
- * (tier placements aren't continuous, so that would drift from the
- * server's own books). Second, its inputs are structural, not the game's
+ * server already decided: totals, ranks, gains and winners come off the
+ * snapshot as sent (`StandingsRow`, `MatchWinner`), all of them folds over the
+ * server's own `roundResults`. Scores are rounded here, where they are drawn,
+ * and nowhere earlier (ADR 0110). Second, its inputs are structural, not the game's
  * own `StandingsSnapshot`: `lib` must stay neutral in the shell/game split
  * (`codeSplitBoundary.test.ts`), so importing `game/index.ts` types here
  * would be a boundary violation — the shapes below accept them without
@@ -24,11 +22,13 @@ export interface StandingRowInput {
   score: number;
   placement: number;
   gone: boolean;
+  gained: number;
+  previousPlacement: number | null;
 }
 
 export interface StandingRowView {
   name: string;
-  skin: ReturnType<typeof skinForPlayerId>;
+  look: AvatarLook;
   gained: number;
   total: number;
   moved?: number;
@@ -37,29 +37,26 @@ export interface StandingRowView {
 }
 
 /**
- * One BetweenRounds table: this snapshot's ranked rows against the previous
- * snapshot's totals. `gained` is the exact Score delta (newcomers start from
- * 0); `moved` is the rank climb since last Round (newcomers get none rather
- * than a fake one); `out` is gone-only — a bad Round never eliminates
- * anyone in M7, only a dropped connection takes a Player out of the Match.
+ * One BetweenRounds table from the snapshot's ranked rows. `gained` is this
+ * Round's Score; `moved` is the rank climb since the Round before (a Player
+ * with no Score then gets none rather than a fake one); `out` is gone-only —
+ * a bad Round never eliminates anyone in M7, only a dropped connection takes
+ * a Player out of the Match.
  */
 export const toStandingRows = (
   current: readonly StandingRowInput[],
-  previous: ReadonlyMap<string, { score: number; placement: number }>,
   myId: string | undefined,
+  lookOf: (id: string) => AvatarLook,
 ): StandingRowView[] =>
-  current.map((row) => {
-    const prev = previous.get(row.id);
-    return {
-      name: row.nickname,
-      skin: skinForPlayerId(row.id),
-      gained: row.score - (prev?.score ?? 0),
-      total: row.score,
-      ...(prev === undefined ? {} : { moved: prev.placement - row.placement }),
-      ...(myId !== undefined && row.id === myId ? { you: true as const } : {}),
-      ...(row.gone ? { out: true as const } : {}),
-    };
-  });
+  current.map((row) => ({
+    name: row.nickname,
+    look: lookOf(row.id),
+    gained: Math.round(row.gained),
+    total: Math.round(row.score),
+    ...(row.previousPlacement === null ? {} : { moved: row.previousPlacement - row.placement }),
+    ...(myId !== undefined && row.id === myId ? { you: true as const } : {}),
+    ...(row.gone ? { out: true as const } : {}),
+  }));
 
 export interface ClaimedRoundRow {
   placement: number;
@@ -84,6 +81,8 @@ export interface MatchTableRow {
   skin: string | null;
   /** Equipped hat at Match end (ADR 0083) — null for none, and for pre-hats results. */
   hat: string | null;
+  /** The Account that played this seat — null for an anonymous one; what its avatar is drawn from (ADR 0110). */
+  accountId: string | null;
 }
 
 export interface MatchResultsView {
@@ -111,11 +110,12 @@ export const toMatchResultsView = (
   const table: MatchTableRow[] = matchPlacements(result.results).map((row) => ({
     id: row.id,
     nickname: result.nicknames[row.id] ?? row.id,
-    score: row.score,
+    score: Math.round(row.score),
     placement: row.placement,
     color: (result.colors ?? {})[row.id] ?? null,
     skin: (result.skins ?? {})[row.id] ?? null,
     hat: (result.hats ?? {})[row.id] ?? null,
+    accountId: (result.accountIds ?? {})[row.id] ?? null,
   }));
 
   const myRounds: ClaimedRoundRow[] = [];
@@ -139,8 +139,8 @@ export const toMatchResultsView = (
     const last = lastRound?.rows.find((r) => r.id === row.id);
     return {
       name: row.nickname,
-      skin: skinForPlayerId(row.id),
-      gained: last === undefined ? 0 : roundScore(last.placement, lastRound!.rows.length, last.qualified),
+      look: avatarLook(row.accountId, row.color),
+      gained: last === undefined ? 0 : Math.round(roundScore(last.placement, lastRound!.rows.length, last.qualified)),
       total: row.score,
       ...(myId !== undefined && row.id === myId ? { you: true as const } : {}),
     };

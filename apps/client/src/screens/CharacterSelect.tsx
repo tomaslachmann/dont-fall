@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { BASE_BODY_COLOR_ID, HATS, SKINS } from '@dont-fall/shared';
+import { BODY_COLOR_STRIPES as COLORS } from '../lib/bodyColors.js';
 import { hatIconUrl } from '../lib/hatAssets.js';
 import { skinIconUrl } from '../lib/skinAssets.js';
 import Stage from '../ui/Stage';
@@ -12,22 +13,6 @@ import s from './CharacterSelect.module.css';
 export type CosmeticTab = 'COLOR' | 'SKIN' | 'HAT' | 'EMOTES';
 
 const TABS: CosmeticTab[] = ['COLOR', 'SKIN', 'HAT', 'EMOTES'];
-
-/**
- * The body colors as stripe pairs — the flat tint a bean wears when it has
- * no skin on. In `color` id order, base (`BASE_BODY_COLOR_ID`) last: its
- * stripes are BLIP's own authored cream.
- */
-const COLORS: Array<[string, string]> = [
-  ['#FFB4DC', '#FF8AC6'],
-  ['#7FE3FF', '#3FC4FF'],
-  ['#B6F5A0', '#7FE07F'],
-  ['#FFD9A0', '#FFB25E'],
-  ['#D9C9F5', '#C4AFEF'],
-  ['#FFC0C0', '#FF9E9E'],
-  ['#C9F0FF', '#A8E4FF'],
-  ['#F3DFC3', '#D3C2AA'],
-];
 
 export interface CharacterSelectProps {
   equipped?: string;
@@ -48,7 +33,7 @@ export interface CharacterSelectProps {
   level?: number;
 }
 
-const stripe = ([a, b]: [string, string]) =>
+const stripe = ([a, b]: readonly [string, string]) =>
   `repeating-linear-gradient(45deg,${a} 0 calc(var(--df-u) * .62),${b} calc(var(--df-u) * .62) calc(var(--df-u) * 1.25))`;
 
 const LockIcon = () => (

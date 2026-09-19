@@ -77,7 +77,7 @@ describe("friend requests", () => {
     expect(areFriends(db, a, b)).toBe(false);
 
     expect(incomingRequests(db, b)).toEqual([
-      { id, fromAccountId: a, fromDisplayName: "Amy", fromAvatarUrl: null, createdAt: 1_000 },
+      { id, fromAccountId: a, fromDisplayName: "Amy", fromAvatarUrl: null, fromColor: 0, createdAt: 1_000 },
     ]);
     expect(incomingRequests(db, a)).toEqual([]);
 
@@ -158,8 +158,8 @@ describe("friendships", () => {
     const id = sendRequest(db, a, b, 1_000);
     acceptRequest(db, id, b, 2_000);
 
-    expect(listFriends(db, a)).toEqual([{ accountId: b, displayName: "Bo", avatarUrl: null, friendsSince: 2_000 }]);
-    expect(listFriends(db, b)).toEqual([{ accountId: a, displayName: "Amy", avatarUrl: null, friendsSince: 2_000 }]);
+    expect(listFriends(db, a)).toEqual([{ accountId: b, displayName: "Bo", avatarUrl: null, color: 0, friendsSince: 2_000 }]);
+    expect(listFriends(db, b)).toEqual([{ accountId: a, displayName: "Amy", avatarUrl: null, color: 0, friendsSince: 2_000 }]);
   });
 
   it("removes either way around, and reports strangers as not removed", () => {
@@ -244,6 +244,7 @@ describe("lobby invites", () => {
         id,
         fromAccountId: a,
         fromDisplayName: "Amy",
+        fromColor: 0,
         lobbyRef: { kind: "private", code: "ABC123" },
         createdAt: 1_000,
       },

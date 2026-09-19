@@ -1,4 +1,4 @@
-import { roundScore } from "@dont-fall/shared";
+import { roundScore, type EliminationCredit, type EliminationHow } from "@dont-fall/shared";
 
 /**
  * Your run just ended, mid-Round (ticket 14) — the FinishedOrOut verdict's
@@ -34,12 +34,15 @@ export interface RunEndEvent {
    * verdict's progress pips for a run that didn't finish them all.
    */
   checkpointIndex: number | null;
+  /** Who put you out, and how — knocked-out runs only, and only when someone did (ADR 0110). */
+  outBy: { nickname: string; how: EliminationHow } | null;
 }
 
 interface RunCharacter {
   finishTick: number | null;
   eliminated: boolean;
   checkpointIndex: number | null;
+  eliminatedBy?: EliminationCredit | null;
 }
 
 /**
@@ -58,6 +61,8 @@ export const detectRunEnd = (args: {
   /** Server-clock stopwatches, measured by the caller from the Round's start — the event only picks. */
   raceTimeMs: number;
   survivedMs: number;
+  /** Names whoever put you out — anyone ever seen this Match, including those since gone. */
+  nicknameOf: (id: string) => string;
 }): RunEndEvent | null => {
   const me = args.character;
   if (me === undefined) return null;
@@ -79,6 +84,7 @@ export const detectRunEnd = (args: {
       raceTimeMs: args.raceTimeMs,
       survivedMs: null,
       checkpointIndex: me.checkpointIndex,
+      outBy: null,
     };
   }
   if (outEdge) {
@@ -93,6 +99,7 @@ export const detectRunEnd = (args: {
       raceTimeMs: null,
       survivedMs: args.survivedMs,
       checkpointIndex: me.checkpointIndex,
+      outBy: me.eliminatedBy ? { nickname: args.nicknameOf(me.eliminatedBy.byId), how: me.eliminatedBy.how } : null,
     };
   }
   return null;

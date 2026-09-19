@@ -1,0 +1,95 @@
+/* Leaderboards (ADR 0110) — no design screen of its own, so it is the
+   Scoreboard's table with the Friends screen's tabs over it, and the Lobby's
+   pill pair to walk the Race board's Tracks. */
+.screen {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: var(--df-space-5);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.title {
+  font: var(--df-weight-display) var(--df-text-lg) / 1 var(--df-font-display);
+  color: var(--df-color-on-brand);
+  text-shadow: 0 var(--df-bevel-1) 0 var(--df-color-drop);
+}
+
+/* the Friends screen's tabs */
+.tabs { display: flex; flex-wrap: wrap; gap: var(--df-space-3); }
+.tab {
+  padding: var(--df-space-4) var(--df-space-6);
+  border-radius: var(--df-radius-chip);
+  background: var(--df-color-on-brand-18);
+  color: var(--df-color-on-brand);
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-label);
+}
+.tab:hover { background: rgba(255, 255, 255, .24); }
+.tabOn, .tabOn:hover { background: var(--df-color-surface-0); color: var(--df-color-ink); }
+
+.track { display: flex; align-items: center; gap: var(--df-space-4); margin-left: auto; }
+.trackName {
+  font: var(--df-weight-label) var(--df-text-xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-on-brand);
+}
+
+/* the Scoreboard's table */
+.table { gap: var(--df-space-4); padding: var(--df-space-6); border-radius: calc(var(--df-u) * 2.5); min-height: 0; }
+.tableHead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--df-space-7);
+  padding-inline: var(--df-space-4);
+}
+.tableTitle { font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display); }
+.colLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-45);
+  text-align: right;
+}
+
+.rows { display: flex; flex-direction: column; gap: var(--df-space-3); min-height: 0; overflow-y: auto; }
+
+/* rank | avatar | name | value */
+.row {
+  display: grid;
+  grid-template-columns: calc(var(--df-u) * 2.3) auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-3) var(--df-space-4);
+  border: calc(var(--df-u) * 0.16) solid transparent;
+  border-radius: var(--df-radius-tile);
+  background: var(--df-color-surface-1);
+}
+.you { background: #FFF8E0; border-color: var(--df-color-accent); }
+.gap { margin-top: var(--df-space-4); }
+
+.rank { font: var(--df-weight-display) var(--df-text-base) / 1 var(--df-font-display); color: var(--df-color-ink-35); }
+.you .rank { color: var(--df-color-ink); }
+.name { display: flex; align-items: baseline; gap: var(--df-space-4); min-width: 0; }
+.nameText { font: var(--df-weight-label) var(--df-text-xs) / 1.2 var(--df-font-ui); overflow-wrap: anywhere; }
+.tagYou {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-brand);
+}
+.value {
+  text-align: right;
+  font: var(--df-weight-display) var(--df-text-md) / 1 var(--df-font-display);
+}
+.empty {
+  padding: var(--df-space-8);
+  text-align: center;
+  font: var(--df-weight-label) var(--df-text-2xs) / 1.4 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  color: var(--df-color-ink-45);
+}
+
+.actions { display: flex; justify-content: center; }

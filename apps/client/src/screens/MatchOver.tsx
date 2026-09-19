@@ -1,7 +1,7 @@
 import Stage from '../ui/Stage';
 import JellyButton from '../ui/JellyButton';
 import Avatar from '../ui/Avatar';
-import type { Skin } from '../ui/Avatar';
+import type { AvatarLook } from '../lib/avatar.js';
 import type { Feel } from '../tokens';
 import { CharacterPreview, SHRUG_SEQUENCE, SULK_SEQUENCE, WIN_SEQUENCE, type PreviewAnimation } from './CharacterPreview.js';
 import s from './MatchOver.module.css';
@@ -27,7 +27,7 @@ export interface MatchOverProps {
   /** Finishing order, at least 1st — the podium renders only the places present, so a two-Player Match simply has no 3rd. */
   podium?: [PodiumPlace, ...PodiumPlace[]];
   rounds?: number;
-  you?: { place: string; points: number; skin: Skin };
+  you?: { place: string; points: number; look: AvatarLook };
   stats?: Array<[string, string]>;
   gapNote?: string;
   /** This viewer never raced (ADR 0059) — no "you" line to show and no claim rows to bank, so both hide. */
@@ -73,7 +73,7 @@ function Place({ place, rank, index, first }: { place: PodiumPlace; rank: string
 
 export default function MatchOver({
   podium = PODIUM, rounds = 3,
-  you = { place: '2ND', points: 495, skin: 'pink' },
+  you = { place: '2ND', points: 495, look: { src: null, color: 0 } },
   stats = STATS, gapNote = '25 POINTS OFF THE CROWN',
   spectator = false,
   onCollect, onScoreboard, onSkip, feel,
@@ -96,7 +96,7 @@ export default function MatchOver({
       {!spectator && (
         <div className={s.yourRun}>
           <span className={s.you}>
-            <Avatar skin={you.skin} size={2.65} />
+            <Avatar look={you.look} size={2.65} />
             <span className={s.youText}>YOU FINISHED {you.place} · {you.points} PTS</span>
           </span>
           <span className={s.sep} />

@@ -136,17 +136,6 @@ export class LobbiesService {
     if (server) await server.close();
   }
 
-  /**
-   * Beans online (`GET /game-settings`): every Player seated in any live
-   * Lobby, public or private — the in-memory registry the settings endpoint
-   * reads, nothing persisted. A dead/unreachable Lobby contributes 0, never
-   * a throw — the same leniency as the status reads above.
-   */
-  async countOnlinePlayers(): Promise<number> {
-    const statuses = await Promise.all(this.registry.all().map((entry) => this.fetchLobbyStatus(entry.port)));
-    return statuses.reduce((sum, status) => sum + (status?.playerCount ?? 0), 0);
-  }
-
   /** Every currently-tracked public Lobby with live occupancy/phase — the quick-match/browse candidate pool. */
   async listPublic(): Promise<PublicLobbyInfo[]> {
     const withStatus = await Promise.all(

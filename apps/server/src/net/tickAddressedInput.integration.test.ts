@@ -2,13 +2,15 @@ import {
   FIXED_STEP_EPSILON_MS,
   INITIAL_LEAD_TICKS_MAX,
   INITIAL_LEAD_TICKS_MIN,
-  LEAD_DRAIN_FRACTION,
   M1_TRACK,
   MAX_STEPS_PER_FRAME,
   RECONCILE_POSITION_EPSILON,
   RapierSimulation,
   TICK_MS,
   initPhysics,
+  initialLeadState,
+  leadAdjustMs,
+  leadReceiveQueueDepth,
   type ClientMessage,
   type ServerMessage,
   type SimInputs,
@@ -48,12 +50,13 @@ import { startServer, type MatchServer } from "../matchServer.js";
  * server tick by one inbound transit delay — an arrival timestamp always
  * includes that delay, baking it in as a permanent bias. The real client
  * never does this: `SnapshotInterpolator.estimatedServerTick` anchors off the
- * *snapshot's own embedded* `serverTimeMs` (the server's clock the instant it
- * built the snapshot, carried on the wire) plus the ping-derived offset —
- * arrival time never enters the formula. Porting that exact formula here (and
- * sizing the initial LEAD from the measured RTT, exactly `main.ts`'s
- * production seeding) fixed a real, reproducible test failure — this was not
- * a case of loosening the assertion to match the implementation.
+ * *snapshot's own embedded* `serverTimeMs` (the server's clock at the instant
+ * that snapshot's tick was due, ADR 0109, carried on the wire) plus the
+ * ping-derived offset — arrival time never enters the formula. Porting that
+ * exact formula here (and sizing the initial LEAD from the measured RTT,
+ * exactly `main.ts`'s production seeding) fixed a real, reproducible test
+ * failure — this was not a case of loosening the assertion to match the
+ * implementation.
  *
  * It also skips ADR 0026's render-time offset on purpose — the metric here is
  * the raw same-tick `positionError` ticket 12 was built to hide, not the
@@ -187,8 +190,8 @@ class FaithfulClient {
   // permanent bias: it anchors off *when the snapshot arrived*, so the
   // estimate is always low by ~one inbound transit. The real client instead
   // anchors off the snapshot's own embedded `serverTimeMs` (the server's
-  // clock at the instant it built the snapshot, carried on the wire) plus
-  // the ping-derived offset — no arrival time involved. A same-clock test
+  // clock at the instant that snapshot's tick was due, carried on the wire)
+  // plus the ping-derived offset — no arrival time involved. A same-clock test
   // process (client and server share one `performance.now()`) makes the true
   // offset ~0, so this mainly measures RTT for the initial LEAD; the formula
   // is kept identical to production so what's proven here is the real path.
@@ -201,9 +204,8 @@ class FaithfulClient {
   private predictionTick = 0;
   private predictionTickSeeded = false;
   private predictionAccumulatorMs = 0;
-  private smoothedQueueDepth = 1.5;
-  private framesSinceLeadAdjust = 12;
-  private readonly LEAD_ADJUST_FRAMES = 12;
+  /** The client's own LEAD controller (ADR 0109), from shared — the shipped one, not a copy. */
+  private readonly lead = initialLeadState();
   private readonly inputBuffer: { tick: number; input: SimInputs }[] = [];
   private readonly positionHistory = new Map<number, Vec3>();
 
@@ -297,7 +299,7 @@ class FaithfulClient {
       this.serverPhase = message.phase;
       this.latestTickMs = message.state.tick * TICK_MS;
       this.latestServerTimeMs = message.serverTimeMs;
-      this.smoothedQueueDepth += (message.commandQueueDepth - this.smoothedQueueDepth) * 0.2;
+      leadReceiveQueueDepth(this.lead, message.commandQueueDepth);
       const serverChar = this.myId ? message.state.characters[this.myId] : undefined;
       if (serverChar) this.reconcile(serverChar.position, serverChar.lastInputTick, message.state.tick);
     }
@@ -338,6 +340,7 @@ class FaithfulClient {
       finishTick: null, // this harness's Track has no Finish Zone
       eliminated: false,
       eliminatedTick: null,
+      eliminatedBy: null,
       escapeProgress: 0,
       lastWiggleYaw: null,
       spinMs: 0,
@@ -382,14 +385,8 @@ class FaithfulClient {
       this.predictionTickSeeded = true;
     }
 
-    this.framesSinceLeadAdjust += 1;
-    let leadStepMs = 0;
-    if (this.framesSinceLeadAdjust >= this.LEAD_ADJUST_FRAMES && this.smoothedQueueDepth < 1) {
-      leadStepMs = TICK_MS;
-      this.framesSinceLeadAdjust = 0;
-    } else if (this.smoothedQueueDepth > 2.5) {
-      leadStepMs = -TICK_MS * LEAD_DRAIN_FRACTION;
-    }
+    // Always "ready", as before: this client has no clock-sync gate of its own.
+    const leadStepMs = leadAdjustMs(this.lead, elapsedMs, true);
 
     this.predictionAccumulatorMs = Math.min(this.predictionAccumulatorMs + elapsedMs + leadStepMs, TICK_MS * MAX_STEPS_PER_FRAME);
     while (this.predictionAccumulatorMs + FIXED_STEP_EPSILON_MS >= TICK_MS) {

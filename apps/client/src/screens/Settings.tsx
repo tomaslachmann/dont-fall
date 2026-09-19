@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   BINDING_ACTIONS,
@@ -8,6 +8,7 @@ import {
   DEFAULT_BINDINGS,
   findConflicts,
   isBindableControl,
+  levelForXp,
   type BindingAction,
   type KeyBindings,
 } from '@dont-fall/shared';
@@ -16,10 +17,13 @@ import Panel from '../ui/Panel';
 import JellyButton from '../ui/JellyButton';
 import Slider, { type SliderTone } from '../ui/Slider';
 import Toggle from '../ui/Toggle';
+import Avatar from '../ui/Avatar';
 import s from './Settings.module.css';
 import { useAccount } from '../lib/hooks/useAccount';
 import { flash } from '../lib/flash.js';
-import { logout, saveBindings } from '../lib/api/auth';
+import { logout, removeAvatar, saveBindings, uploadAvatar, type Account } from '../lib/api/auth';
+import { avatarLook } from '../lib/avatar.js';
+import { AVATAR_ACCEPT, avatarFromFile } from '../lib/avatarImage.js';
 import { resolveEffectiveBindings, writeStoredBindings } from '../lib/bindingsStore';
 import {
   DEFAULT_GRAPHICS_QUALITY,
@@ -191,6 +195,75 @@ function ControlsPane({
   );
 }
 
+/**
+ * Settings → ACCOUNT (ADR 0110): the Player's avatar, with UPLOAD and REMOVE,
+ * their name and whether Discord is linked. Composed from the sheet's own row
+ * vocabulary; the picture is cropped and scaled in the browser before it goes.
+ */
+function AccountPane({ account, onChanged }: { account: Account; onChanged: (account: Account) => void }) {
+  const input = useRef<HTMLInputElement | null>(null);
+  const [busy, setBusy] = useState(false);
+  const run = (work: () => Promise<Account>, failure: string) => {
+    setBusy(true);
+    work()
+      .then(onChanged)
+      .catch((err: unknown) => flash(`${failure}: ${err instanceof Error ? err.message : String(err)}`, 'error'))
+      .finally(() => setBusy(false));
+  };
+  const uploaded = account.avatarUploadedAt !== null;
+  return (
+    <div className={s.groups}>
+      <div className={s.rows}>
+        <div className={s.row}>
+          <span className={s.rowText}>
+            <span className={s.rowLabel}>AVATAR</span>
+            <span className={s.rowSub}>
+              {uploaded
+                ? 'Your picture, shown to everyone you play'
+                : account.discordId
+                  ? 'Your Discord picture · upload one of your own to change it'
+                  : 'Your bean’s colour · upload a picture to change it'}
+            </span>
+          </span>
+          <span className={s.rowControls}>
+            <Avatar look={avatarLook(account.id, account.color, account.avatarUploadedAt)} size={4.4} />
+            <JellyButton variant="pill" centered disabled={busy} onClick={() => input.current?.click()}>UPLOAD</JellyButton>
+            {uploaded && (
+              <JellyButton variant="pill" tone="glass" centered disabled={busy} onClick={() => run(removeAvatar, 'Couldn’t remove your picture')}>
+                REMOVE
+              </JellyButton>
+            )}
+            <input
+              ref={input}
+              type="file"
+              accept={AVATAR_ACCEPT}
+              hidden
+              aria-label="Avatar picture"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (file) run(async () => uploadAvatar(await avatarFromFile(file)), 'Couldn’t upload that picture');
+              }}
+            />
+          </span>
+        </div>
+        <div className={s.row}>
+          <span className={s.rowText}>
+            <span className={s.rowLabel}>NAME</span>
+            <span className={s.rowSub}>{account.displayName}</span>
+          </span>
+        </div>
+        <div className={s.row}>
+          <span className={s.rowText}>
+            <span className={s.rowLabel}>DISCORD</span>
+            <span className={s.rowSub}>{account.discordId ? 'Linked' : 'Not linked'}</span>
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** What each graphics quality level trades (ADR 0079), under its row. */
 const QUALITY_NOTES: Record<GraphicsQuality, string> = {
   high: 'Sharpest picture, soft shadows',
@@ -299,7 +372,7 @@ export default function Settings() {
 
           <button type="button" className={s.logout} onClick={onLogOut}>
             <span className={s.logoutLabel}>LOG OUT</span>
-            <span className={s.logoutWho}>{account?.displayName} · LVL {42}</span>
+            <span className={s.logoutWho}>{account?.displayName} · LVL {levelForXp(account?.xp ?? 0)}</span>
           </button>
         </div>
 
@@ -361,6 +434,11 @@ export default function Settings() {
               onCommit={commitControl}
               onRemove={removeControl}
             />
+          ) : tab === 'ACCOUNT' && account ? (
+            <AccountPane
+              account={account}
+              onChanged={(updated) => queryClient.setQueryData(['account'], updated)}
+            />
           ) : (
             <div className={s.groups}>
               <div className={s.empty}>{tab} PANE · SAME ROW VOCABULARY<br />SLIDERS, SWITCHES, SEGMENTED TOGGLES</div>
@@ -370,7 +448,7 @@ export default function Settings() {
           <div className={s.foot}>
             <button type="button" className={s.reset} onClick={resetTab}>RESET</button>
             <button type="button" className={s.reset} onClick={() => navigate("/credits")}>CREDITS</button>
-            <JellyButton variant="tile" centered sound="confirm" onClick={() => console.log("onclose")}>DONE</JellyButton>
+            <JellyButton variant="tile" centered sound="confirm" onClick={() => navigate("/")}>DONE</JellyButton>
           </div>
         </div>
       </Panel>

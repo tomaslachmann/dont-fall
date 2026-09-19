@@ -30,21 +30,33 @@ const SETTINGS = { maxPlayers: 10, onlinePlayers: 3244 };
  * fetch with a Lobby (or vice versa), so the broker answer is scripted per
  * test while settings always answer for real.
  */
+/** Friends presence (ADR 0110) — nobody in a Lobby unless a test says so. */
+let friendsOverview: unknown = { friends: [], online: 0, total: 0, requests: [] };
+const isFriends = (url: unknown): boolean => /\/friends(\/|$)/.test(String(url));
+
 const respond = (status: number, body: unknown) => {
   const broker = { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) };
   const settings = { ok: true, status: 200, json: () => Promise.resolve(SETTINGS) };
-  return vi.fn(async (url: unknown) => (String(url).endsWith("/game-settings") ? settings : broker));
+  const friendsAnswer = (url: unknown) => {
+    const path = String(url);
+    const payload = path.endsWith("/friends") ? friendsOverview : path.endsWith("/friends/recent") ? { recent: [] } : { code: "ABC123" };
+    return { ok: true, status: 200, json: () => Promise.resolve(payload) };
+  };
+  return vi.fn(async (url: unknown) =>
+    String(url).endsWith("/game-settings") ? settings : isFriends(url) ? friendsAnswer(url) : broker,
+  );
 };
 
-/** Every broker call the mock saw, in order — the settings fetch filtered out. */
+/** Every broker call the mock saw, in order — the settings and friends fetches filtered out. */
 const brokerCalls = (fetchMock: ReturnType<typeof respond>): unknown[][] =>
-  fetchMock.mock.calls.filter(([url]) => !String(url).endsWith("/game-settings"));
+  fetchMock.mock.calls.filter(([url]) => !String(url).endsWith("/game-settings") && !isFriends(url));
 
 beforeEach(() => {
   vi.stubGlobal("fetch", respond(200, { id: "l1", port: 51234 }));
 });
 afterEach(() => {
   vi.unstubAllGlobals();
+  friendsOverview = { friends: [], online: 0, total: 0, requests: [] };
 });
 
 const typeCode = (code: string): void => {
@@ -60,7 +72,7 @@ describe("PlaySelect (ADR 0054 — every way in goes through the API's lobbies)"
     renderPlaySelect();
     fireEvent.click(screen.getByRole("button", { name: /FIND A MATCH/ }));
 
-    expect(await screen.findByText("landed:/lobby?port=61000")).toBeInTheDocument();
+    expect(await screen.findByText("landed:/lobby?port=61000&id=l7")).toBeInTheDocument();
     expect(brokerCalls(fetchMock).map(([url]) => url)).toEqual([
       `http://localhost:${DEFAULT_API_PORT}/lobbies/quick-match`,
     ]);
@@ -74,7 +86,7 @@ describe("PlaySelect (ADR 0054 — every way in goes through the API's lobbies)"
     fireEvent.click(screen.getByRole("tab", { name: /CREATE PRIVATE LOBBY/ }));
     fireEvent.click(screen.getByRole("button", { name: /CREATE LOBBY/ }));
 
-    expect(await screen.findByText("landed:/lobby?port=51234&code=PLUMJA")).toBeInTheDocument();
+    expect(await screen.findByText("landed:/lobby?port=51234&code=PLUMJA&id=l1")).toBeInTheDocument();
     const bodies = brokerCalls(fetchMock).map(([, init]) => JSON.parse((init as RequestInit).body as string));
     expect(bodies).toEqual([{ isPrivate: true }]);
   });
@@ -88,7 +100,7 @@ describe("PlaySelect (ADR 0054 — every way in goes through the API's lobbies)"
     typeCode("PLUMJA");
     fireEvent.click(screen.getByRole("button", { name: /JOIN LOBBY/ }));
 
-    expect(await screen.findByText("landed:/lobby?port=51234&code=PLUMJA")).toBeInTheDocument();
+    expect(await screen.findByText("landed:/lobby?port=51234&code=PLUMJA&id=l1")).toBeInTheDocument();
     expect(brokerCalls(fetchMock).map(([url]) => url)).toEqual([
       `http://localhost:${DEFAULT_API_PORT}/lobbies/code/PLUMJA`,
     ]);
@@ -126,7 +138,33 @@ describe("PlaySelect (ADR 0054 — every way in goes through the API's lobbies)"
     fireEvent.click(button);
     fireEvent.click(button);
 
-    await screen.findByText("landed:/lobby?port=61000");
+    await screen.findByText("landed:/lobby?port=61000&id=l7");
     expect(brokerCalls(fetchMock)).toHaveLength(1);
+  });
+
+  it("lists friends waiting in a Lobby, and USE CODE fills their code (ADR 0110)", async () => {
+    friendsOverview = {
+      friends: [
+        {
+          accountId: "acc-w",
+          displayName: "Wobbletoast",
+          avatarUrl: null,
+          color: 2,
+          friendsSince: 0,
+          presence: { status: "in-lobby", slotsOpen: 3, joinable: true, lobby: { kind: "private", code: "PLUMJA" } },
+        },
+      ],
+      online: 1,
+      total: 1,
+      requests: [],
+    };
+    renderPlaySelect();
+    // The cap less yourself, off /game-settings.
+    expect(await screen.findByText("Drop into the next race with 9 strangers.")).toBeDefined();
+    fireEvent.click(screen.getByRole("tab", { name: /JOIN PRIVATE LOBBY/ }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /WOBBLETOAST/ }));
+    const cells = screen.getAllByLabelText(/Code character/) as HTMLInputElement[];
+    expect(cells.map((cell) => cell.value).join("")).toBe("PLUMJA");
   });
 });

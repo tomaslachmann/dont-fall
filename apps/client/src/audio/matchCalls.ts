@@ -67,6 +67,10 @@ export interface MatchResultsFrame {
  * - **Countdown:** "three, two, one, go" (ADR 0040), each at its instant on
  *   the server's clock. The end comes from the snapshot, and the time now is
  *   `TimeSync`'s estimate, never a local timer started on the phase change.
+ *   Once its "go" is due, a Countdown is over until the next is entered: the
+ *   snapshots still reading COUNTDOWN in the meantime (RUNNING is a one-way
+ *   trip away, or a stall rebased the server's clock and moved the end later)
+ *   never count it again.
  * - **Hurry up:** once, when the clock passes {@link HURRY_UP_AT_MS}.
  *   **Time over:** when the Round ends with the clock at zero.
  * - **Checkpoint** and **Qualified:** your own, as predicted, the moment the
@@ -82,6 +86,8 @@ export class MatchCalls {
   private phase: MatchPhase | null = null;
   private lastServerMs: number | null = null;
   private countdownEnd: number | null = null;
+  /** This Countdown's "go" has been due: its end is not taken up again. */
+  private countdownDone = false;
   private lastTimeLeft: number | null = null;
   private hurried = false;
   private qualified = false;
@@ -99,11 +105,12 @@ export class MatchCalls {
       this.hurried = false;
       this.qualified = false;
       this.finalRoundAt = null;
+      this.countdownDone = false;
     }
     if (frame.phase === "LOBBY" || frame.phase === "RESULTS") this.countdownEnd = null;
 
     // The Countdown, until its "go", even on the frame RUNNING has already begun.
-    if (frame.phase === "COUNTDOWN" && frame.countdownEndsAtMs !== null) {
+    if (frame.phase === "COUNTDOWN" && frame.countdownEndsAtMs !== null && !this.countdownDone) {
       if (this.countdownEnd === null) this.lastServerMs = null;
       this.countdownEnd = frame.countdownEndsAtMs;
     }
@@ -115,7 +122,10 @@ export class MatchCalls {
       });
       const stale = now - from > MAX_CALL_STEP_MS;
       calls.push(...(stale ? due.slice(-1) : due).map((call) => call.slot));
-      if (this.countdownEnd <= now) this.countdownEnd = null;
+      if (this.countdownEnd <= now) {
+        this.countdownEnd = null;
+        this.countdownDone = true;
+      }
     }
     if (now !== null) this.lastServerMs = now;
 

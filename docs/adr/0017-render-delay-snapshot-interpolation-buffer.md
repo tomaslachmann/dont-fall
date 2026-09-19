@@ -56,3 +56,7 @@ interpolator holds the latest pose — never extrapolates, never jumps backward.
   *snapshot* rate: `clamp(INTERP_RATIO / snapshotHz * 1000, min, 250)` with `INTERP_RATIO = 2`
   (Valve `cl_interp_ratio`). At 30 Hz snapshots → 66.7 ms.
 - The buffer mechanism (tick-keyed, render-delay, hold-latest on underrun) is unchanged.
+
+## Amended by ADR 0109 (2026-09-19)
+
+The render target is no longer the server's *now* minus the delay. It is counted from when Snapshots actually arrive, the **playout floor** (the least recent arrival lag), so one-way latency no longer eats the buffer, which now absorbs jitter only. Still never extrapolates; still holds the latest pose on an underrun.

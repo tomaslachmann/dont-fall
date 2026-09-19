@@ -35,7 +35,7 @@ export default function Scoreboard({ title = 'STANDINGS', rows = [], onBack }: S
           {rows.map((p, i) => (
             <div key={p.name} className={[s.row, p.you && s.you, p.out && s.eliminated].filter(Boolean).join(' ')}>
               <span className={s.rank}>{i + 1}</span>
-              <Avatar skin={p.skin} size={3.1} ring={p.you ? 'var(--df-color-accent)' : undefined} />
+              <Avatar look={p.look} size={3.1} ring={p.you ? 'var(--df-color-accent)' : undefined} />
               <span className={s.name}>
                 <span className={s.nameText}>{p.name}</span>
                 {p.you && <span className={s.tagYou}>YOU</span>}

@@ -71,11 +71,7 @@
   aspect-ratio: 16 / 10;
   text-align: center;
 }
-.thumbCaption {
-  font: var(--df-weight-display) var(--df-text-3xs) / 1.8 var(--df-font-mono);
-  letter-spacing: var(--df-tracking-kicker);
-  color: var(--df-color-ink-55);
-}
+
 /* the captured screenshot, over the stripes — a failed load hides it and the stripes show through */
 .thumbImg {
   position: absolute;

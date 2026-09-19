@@ -28,6 +28,10 @@ export interface MatchParticipantRow {
   placement: number;
   score: number;
   falls: number;
+  /** The longest this Account stayed in one Survival Round of the Match, ms (ADR 0110) — null without one. */
+  bestSurvivalMs: number | null;
+  /** Struggles won across the Match (ADR 0110). */
+  grabsBroken: number;
   endedAtMs: number;
 }
 

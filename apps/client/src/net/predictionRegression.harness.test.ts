@@ -17,13 +17,16 @@
 
 import {
   CAPSULE_ERR_HALFLIFE_MS,
-  LEAD_DRAIN_FRACTION,
+  LEAD_DRAIN_TIME_FRACTION,
   MAX_STEPS_PER_FRAME,
   RECONCILE_HARDSNAP_M,
   RECONCILE_POSITION_EPSILON,
   RapierSimulation,
   TICK_MS,
+  initialLeadState,
   isDownMotionState,
+  leadAdjustMs,
+  leadReceiveQueueDepth,
   type CharacterSnapshot,
   type PropSnapshot,
   type SimInputs,
@@ -82,7 +85,7 @@ interface HarnessOpts {
   spawnOverride?: { x: number; y: number; z: number };
   /** Bypass every ticket-11.8 code path (prop prediction) — the differential for "did 11.8 regress this?". */
   disable118: boolean;
-  /** LEAD feedback band [injectBelow, dropAbove] on smoothed commandQueueDepth. Current code: [1, 2.5]. */
+  /** LEAD feedback band [injectBelow, dropAbove] on smoothed commandQueueDepth, for the retired frame-counted variants only — the shipped controller (`gentleLeadDrain`) holds its own [1, 2.5]. */
   leadBand: [number, number];
   /** Override the (harness-local) legacy correct-or-ignore threshold. */
   reconcileThreshold: number;
@@ -107,11 +110,14 @@ interface HarnessOpts {
   capsuleErrorOffset: boolean;
   /** 5e: position half-life (ms) of that offset. */
   capsuleHalfLifeMs: number;
-  /** 5f: inject a LEAD tick the moment smoothedQueueDepth < 1, not once per LEAD_ADJUST_FRAMES. */
+  /** 5f: inject a LEAD tick the moment smoothedQueueDepth < 1, not once per the retired 12-frame window. */
   immediateLeadInject: boolean;
   /** 5f: generate + send an input every render frame (stamped for the next tick) even on a 0-step frame. */
   sendInputEveryFrame: boolean;
-  /** 5f: drain a fat command queue by a small fraction of a tick per frame (continuous), instead of −1 tick per 12 frames (which yanks the render alpha). */
+  /**
+   * 5f: drain a fat command queue continuously, instead of −1 tick per 12 frames (which yanks the render alpha).
+   * With `immediateLeadInject` off this is the shipped controller itself, `leadAdjustMs` (ADR 0109), not a copy of it.
+   */
   gentleLeadDrain: boolean;
 }
 
@@ -182,9 +188,12 @@ class Harness {
   // own doc for why production never needs these overrides.
   private readonly predictionLoop: PredictionLoop;
   private renderAlpha = 0;
+  /** The retired frame-counted LEAD's window (the variants below that are not the shipped controller). */
   private readonly LEAD_ADJUST_FRAMES = 12;
   private smoothedQueueDepth = 1.5;
   private framesSinceLeadAdjust = 12;
+  /** The shipped controller's own state (ADR 0109), driven through the real `leadAdjustMs`. */
+  private readonly leadState = initialLeadState();
   private lastPingAt = -1000;
   // legacy LEAD state (pre-code-review)
   private targetLead = 2;
@@ -396,7 +405,10 @@ class Harness {
           const nudge = this.smoothedQueueDepth < 1 ? 0.08 : this.smoothedQueueDepth > 2 ? -0.08 : 0;
           this.targetLead = Math.max(1, Math.min(3, this.targetLead + nudge));
         } else {
-          this.smoothedQueueDepth += (m.commandQueueDepth - this.smoothedQueueDepth) * 0.2;
+          // The shipped controller hears it (ADR 0109: its average and how
+          // fresh it is); the retired variants below read the same average.
+          leadReceiveQueueDepth(this.leadState, m.commandQueueDepth);
+          this.smoothedQueueDepth = this.leadState.smoothedQueueDepth;
         }
         const sc = m.state.characters[this.myId];
         if (sc) this.reconcile(sc, m.state.tick, m.state.props);
@@ -490,8 +502,13 @@ class Harness {
         leadStepMs = -TICK_MS;
         this.appliedLead -= 1;
       }
+    } else if (this.o.lead && this.o.gentleLeadDrain && !this.o.immediateLeadInject) {
+      // The shipped controller (ADR 0109), called rather than copied — this
+      // branch used to be a hand-kept port of `frameLoop.ts`'s own.
+      leadStepMs = leadAdjustMs(this.leadState, elapsedMs, this.timeSync.ready);
     } else if (this.o.lead && this.timeSync.ready) {
-      // 5f: inject immediately when the queue is starving; rate-limit only the drop side.
+      // Retired variants, kept for the comparisons below. 5f: inject
+      // immediately when the queue is starving; rate-limit only the drop side.
       const injectNow = this.o.immediateLeadInject
         ? this.smoothedQueueDepth < this.o.leadBand[0]
         : this.framesSinceLeadAdjust >= this.LEAD_ADJUST_FRAMES && this.smoothedQueueDepth < this.o.leadBand[0];
@@ -501,7 +518,7 @@ class Harness {
       } else if (this.o.gentleLeadDrain) {
         // drain a fat queue continuously by a small slice — never a full-tick
         // jump that yanks the render alpha (the bad-connection backward pop).
-        if (this.smoothedQueueDepth > this.o.leadBand[1]) leadStepMs = -TICK_MS * LEAD_DRAIN_FRACTION;
+        if (this.smoothedQueueDepth > this.o.leadBand[1]) leadStepMs = -elapsedMs * LEAD_DRAIN_TIME_FRACTION;
       } else if (
         this.framesSinceLeadAdjust >= this.LEAD_ADJUST_FRAMES &&
         this.smoothedQueueDepth > this.o.leadBand[1]
@@ -512,9 +529,9 @@ class Harness {
     }
     // The production-representative path (M4.5 ticket 02): the real
     // PredictionLoop's own accumulator, buffering and reconcile — this file
-    // no longer ports a second copy of it. `leadStepMs` above is this
-    // harness's own LEAD algorithm (current or, under `legacyLead`, the
-    // pre-code-review one); the accumulator it feeds is the shared class's.
+    // no longer ports a second copy of it. `leadStepMs` above is the shipped
+    // LEAD controller or one of the retired variants it is compared with; the
+    // accumulator it feeds is the shared class's.
     let steps = 0;
     this.predictionLoop.step(input, elapsedMs + leadStepMs, () => {
       steps += 1;
@@ -946,7 +963,12 @@ describe("60 fps render cap — proposal must hold here", () => {
       // "bad" (90ms OWD / 45ms jitter) still pops ~9.7-9.2cm — see the finding
       // above; every gentler profile still holds the original <2.5cm bar.
       expect(m.worstBackCm).toBeLessThan(label.startsWith("bad/") ? 10.5 : 2.5);
-      expect(m.backPops).toBeLessThanOrEqual(2);
+      // ADR 0109 moved "bad/weak" from 1 back pop to 3, each the same
+      // no-history-for-acked reset (9.1, 2.3 and 5.7 cm here). The LEAD now
+      // counts time, not frames: which snapshots land on a starved ack shifts
+      // with it, and across drain fractions 0.05–0.3 and inject cooldowns of
+      // 200–300 ms this profile shows 1 to 3. The gentler profiles hold 2.
+      expect(m.backPops).toBeLessThanOrEqual(label.startsWith("bad/") ? 3 : 2);
     }
   });
 

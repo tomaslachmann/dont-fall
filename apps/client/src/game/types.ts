@@ -41,6 +41,13 @@ export interface StandingsRow {
   placement: number;
   gone: boolean;
   confirmed: boolean;
+  /**
+   * This Round's Score: the total now less the total before the Round that
+   * just ended, both off `roundResults` (ADR 0110). `0` for anyone who sat it out.
+   */
+  gained: number;
+  /** Where this Player stood before the Round that just ended, or `null` if they had no Score then. */
+  previousPlacement: number | null;
 }
 
 /**
@@ -55,6 +62,12 @@ export interface StandingsSnapshot {
   roundsRemaining: boolean;
   standings: StandingsRow[];
   winners: MatchWinner[];
+  /**
+   * When these Standings move on without everyone's Ready, on this page's
+   * `Date.now()` clock: the server's deadline through time sync (ADR 0110).
+   * `null` when there is none, or before the clock has synced.
+   */
+  autoStartAtMs: number | null;
 }
 
 /**
@@ -176,6 +189,12 @@ export interface GameConfig {
    * from a phase whether *this* client is the one still loading.
    */
   onWorldReady?: (ready: boolean) => void;
+  /**
+   * The Player let go of the mouse mid-Match — Esc, or the window lost focus
+   * (ADR 0110). The shell shows the pause sheet; the Round runs on underneath,
+   * and {@link GameHandle.resume} takes the mouse back.
+   */
+  onPause?: () => void;
 }
 
 export interface GameHandle {
@@ -234,4 +253,6 @@ export interface GameHandle {
    * it. Lasts until the Round ends.
    */
   enterSpectate: () => void;
+  /** Takes the mouse back after the pause sheet closes (ADR 0110) — call it from the click that closed it. */
+  resume: () => void;
 }

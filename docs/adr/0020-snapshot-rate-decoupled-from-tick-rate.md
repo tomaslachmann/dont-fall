@@ -35,3 +35,7 @@ treats simulation tick, snapshot rate, and command rate as three independent num
   server's send accumulator.
 - ADR 0017's fixed `1.5 × TICK_MS` (≈ 50 ms, ≈ ratio 1.5 — thin) is superseded by the
   formula above.
+
+## Amended by ADR 0109 (2026-09-19)
+
+`INTERP_DELAY_MS` is unchanged, but it is now counted from the playout floor (the least recent arrival lag) rather than from the server's *now*, so remote objects sit about one-way latency further in the past than this ADR's figures (116 vs 81 ms at RTT 80).

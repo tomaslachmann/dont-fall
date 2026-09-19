@@ -1,6 +1,6 @@
 import Stage from '../ui/Stage';
 import Avatar from '../ui/Avatar';
-import type { Skin } from '../ui/Avatar';
+import type { AvatarLook } from '../lib/avatar.js';
 import Chip from '../ui/Chip';
 import DashMeter from './DashMeter';
 import type { Feel } from '../tokens';
@@ -10,7 +10,7 @@ export interface SurvivalHudProps {
   remaining: number;
   startedWith: number;
   /** Who's still in — you first, ringed, while you are. */
-  alive: Skin[];
+  alive: AvatarLook[];
   /** Whether the first entry of `alive` is you. */
   youAlive: boolean;
   /** m:ss */
@@ -23,6 +23,9 @@ export interface SurvivalHudProps {
   dashCharge: number;
   /** Whether the Dash can fire right now. */
   dashReady: boolean;
+  /** Whole seconds until the Dash is back, and its key — the charge card (ADR 0110). */
+  dashRechargeS: number;
+  dashKey: string;
   feel?: Feel;
 }
 
@@ -33,7 +36,7 @@ export interface SurvivalHudProps {
  * the game shows through.
  */
 export default function SurvivalHud({
-  remaining, startedWith, alive, youAlive, survived, lastOut, critical, dashCharge, dashReady, feel,
+  remaining, startedWith, alive, youAlive, survived, lastOut, critical, dashCharge, dashReady, dashRechargeS, dashKey, feel,
 }: SurvivalHudProps) {
   return (
     <Stage feel={feel} className={s.screen} overlay={critical ? <div className={s.danger} /> : undefined}>
@@ -51,8 +54,8 @@ export default function SurvivalHud({
           </span>
         </div>
         <div className={s.alive}>
-          {alive.map((skin, i) => (
-            <Avatar key={i} skin={skin} size={3} ring={youAlive && i === 0 ? 'var(--df-color-accent)' : undefined} />
+          {alive.map((look, i) => (
+            <Avatar key={i} look={look} size={3} ring={youAlive && i === 0 ? 'var(--df-color-accent)' : undefined} />
           ))}
         </div>
       </div>
@@ -65,7 +68,7 @@ export default function SurvivalHud({
       )}
 
       <div className={s.dash}>
-        <DashMeter charge={dashCharge} ready={dashReady} />
+        <DashMeter charge={dashCharge} ready={dashReady} rechargeS={dashRechargeS} dashKey={dashKey} />
       </div>
 
       {lastOut !== null && (

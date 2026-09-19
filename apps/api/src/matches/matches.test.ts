@@ -25,6 +25,8 @@ const RESULT = {
   skins: { p1: "tiger" },
   hats: { p1: "crown" },
   totalFalls: { p1: 1, p2: 3 },
+  survivalMs: { p1: 30_000 },
+  grabsBroken: { p1: 1 },
   endedAtMs: 60_000,
 };
 
@@ -104,6 +106,19 @@ describe("match results service", () => {
 
       expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
       expect(getMatchResult(db, "m1")).toEqual({ ...legacy, skins: {} });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults missing survivalMs and grabsBroken maps — earlier saves carry neither (ADR 0110)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "api-matches-test-"));
+    try {
+      const db = openDb(join(dir, "test.sqlite"));
+      const { survivalMs: _survival, grabsBroken: _grabs, ...legacy } = RESULT;
+
+      expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
+      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, survivalMs: {}, grabsBroken: {} });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

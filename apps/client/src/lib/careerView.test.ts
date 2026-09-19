@@ -3,7 +3,7 @@ import { toCareerMatchRows, toCareerStatTiles, toEarnedBadgeNames } from "./care
 
 describe("toCareerStatTiles", () => {
   it("maps a career onto six tiles — wins heroed, best and win rate honest at zero", () => {
-    const tiles = toCareerStatTiles({ matches: 4, wins: 1, podiums: 2, falls: 7, bestPlacement: 1, cleanMatches: 1 });
+    const tiles = toCareerStatTiles({ matches: 4, wins: 1, podiums: 2, falls: 7, bestPlacement: 1, cleanMatches: 1, bestSurvivalMs: null, grabsBroken: 0 });
 
     expect(tiles).toEqual([
       { label: "MATCHES", value: "4" },
@@ -16,7 +16,7 @@ describe("toCareerStatTiles", () => {
   });
 
   it("an empty career is zeros with em-dashes, never NaN or Infinity", () => {
-    const tiles = toCareerStatTiles({ matches: 0, wins: 0, podiums: 0, falls: 0, bestPlacement: null, cleanMatches: 0 });
+    const tiles = toCareerStatTiles({ matches: 0, wins: 0, podiums: 0, falls: 0, bestPlacement: null, cleanMatches: 0, bestSurvivalMs: null, grabsBroken: 0 });
 
     expect(tiles).toContainEqual({ label: "BEST", value: "—" });
     expect(tiles).toContainEqual({ label: "WIN RATE", value: "—" });

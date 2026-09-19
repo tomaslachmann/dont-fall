@@ -106,8 +106,8 @@ describe("lobbyById / resolveLobbyRef", () => {
 });
 
 describe("lobbyPath", () => {
-  it("carries the port always, the code only when the Lobby has one", () => {
-    expect(lobbyPath({ id: "l1", port: 61000 })).toBe("/lobby?port=61000");
-    expect(lobbyPath({ id: "l1", port: 61000, code: "PLUMJA" })).toBe("/lobby?port=61000&code=PLUMJA");
+  it("carries the port and the broker's id always, the code only when the Lobby has one", () => {
+    expect(lobbyPath({ id: "l1", port: 61000 })).toBe("/lobby?port=61000&id=l1");
+    expect(lobbyPath({ id: "l1", port: 61000, code: "PLUMJA" })).toBe("/lobby?port=61000&code=PLUMJA&id=l1");
   });
 });

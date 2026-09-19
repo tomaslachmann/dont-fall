@@ -19,6 +19,10 @@ export interface CareerStats {
   bestPlacement: number | null;
   /** Matches finished without a single fall. */
   cleanMatches: number;
+  /** The longest this Account stayed in one Survival Round, in ms (ADR 0110) — null before its first. */
+  bestSurvivalMs: number | null;
+  /** Struggles won across every Match (ADR 0104, 0110) — the menu's GRABS BROKEN. */
+  grabsBroken: number;
 }
 
 export interface BadgeDef {

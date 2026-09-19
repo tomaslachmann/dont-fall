@@ -28,6 +28,7 @@ import type { IceFootingQuery } from "./iceFooting.js";
 import { Footsteps, steppingClip, type SteppingClip } from "./footsteps.js";
 import { selectLocomotion } from "./locomotionAnimation.js";
 import { tintHueForColor } from "./playerTint.js";
+import { RemoteYaws } from "./remoteYaw.js";
 import { createSkinCloset, type SkinCloset } from "./skins.js";
 
 /**
@@ -176,6 +177,8 @@ export const createRemoteCharacterPool = (
   const jumpSequences = new JumpSequences();
   const footsteps = new Footsteps();
   const knockdowns = new Knockdowns();
+  /** The yaw every rig is drawn at (ADR 0109) — see `RemoteYaws`. */
+  const yaws = new RemoteYaws();
   /** The damped hang of every carried body (ADR 0104's drawn hold) — see `carriedFlail`. */
   const carriedHangs = new Map<string, CarriedHang>();
 
@@ -219,6 +222,7 @@ export const createRemoteCharacterPool = (
       grounded,
       dashing,
       facing,
+      respawnCount,
       hitEpoch,
       hitReactEpoch,
       grabEpoch,
@@ -258,9 +262,13 @@ export const createRemoteCharacterPool = (
       grabAnimations.forget(id);
       carriedHangs.delete(id);
       // The knockdown keeps the yaw it went down with, never a carry's tilt:
-      // the KO clips animate the fall from an upright root.
-      rig.root.rotation.x = 0;
-      rig.root.rotation.z = 0;
+      // the KO clips animate the fall from an upright root. Written whole from
+      // the drawn yaw rather than by zeroing the tilt's x/z: a carried rig's
+      // Euler angles are read back off its quaternion, and past a quarter
+      // turn that reading puts π on x and z, so zeroing them mirrored the yaw
+      // of a body let go of into a knockdown (turned it right round, held
+      // facing straight back).
+      rig.root.rotation.set(0, Math.PI + MODEL_YAW_OFFSET - yaws.rest(id, { facing, respawnCount }), 0);
       blendFloatStruggle(rig.actions, 0, rig.activeAction);
       // Standing where the Character is, on the floor under it or with the
       // body in the air, and keeping the yaw it went down with. A rig that
@@ -281,6 +289,24 @@ export const createRemoteCharacterPool = (
 
     rig.origin.reset();
     rig.root.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
+
+    // ADR 0045: oriented by the Character's own replicated facing, drawn
+    // through ADR 0109's light follow (`RemoteYaws`). The interpolated facing
+    // is only as even as the Ticks that carried it: one the server ran on a
+    // repeated input holds it still for 33 ms and the next steps it twice as
+    // far. Position hides that, being integrated inside the step, but a turn
+    // shows it, so the follow evens it into one turn a few tens of ms behind.
+    // A hold, in either role, is drawn exactly: the Held body is placed at
+    // its grabber's carry point from the server's facing, and a smoothed
+    // grabber would turn away from its own hands. Its first frame closes the
+    // follow's lag in one step, a pop the catch itself hides (`RemoteYaws.draw`).
+    // `MODEL_YAW_OFFSET` is folded in here rather than inherited: `cloneRig`
+    // makes the model's own group the rig *root*, whose yaw is overwritten
+    // every frame — so a remote rig cannot pick the rig's forward correction
+    // up from the clone the way the local Character does (ADR 0071). Miss it
+    // and every other Player runs backwards.
+    const pinned = grabbingId !== null || heldByGrabberId !== null;
+    const modelYaw = Math.PI + MODEL_YAW_OFFSET - yaws.draw(id, { facing, respawnCount, pinned, deltaSeconds });
 
     // The jump sequence reads off replicated state, exactly as it does
     // locally (ADR 0071) — `velocity`, `grounded` and `position` are already
@@ -315,7 +341,7 @@ export const createRemoteCharacterPool = (
       footsteps.forget(id);
       rig.activeAction = reacting;
       rig.mixer.update(deltaSeconds);
-      rig.root.rotation.set(0, Math.PI + MODEL_YAW_OFFSET - facing, 0);
+      rig.root.rotation.set(0, modelYaw, 0);
       return;
     }
 
@@ -364,17 +390,6 @@ export const createRemoteCharacterPool = (
     const feetDown = footsteps.update(id, stepping ? rig.activeAction : null);
     if (stepping && onFootstep) for (let foot = 0; foot < feetDown; foot += 1) onFootstep(stepping, position);
 
-    // ADR 0045: oriented by the Character's own replicated facing, already
-    // smoothly interpolated (shortest-arc) upstream — no extra turn-rate
-    // clamp here, unlike the local Character's cosmetic turn easing, which
-    // exists for a different reason (weighty *predicted* turning feel, not
-    // smoothing across snapshots).
-    // `MODEL_YAW_OFFSET` is folded in here rather than inherited: `cloneRig`
-    // makes the model's own group the rig *root*, whose yaw this line
-    // overwrites every frame — so a remote rig cannot pick the rig's forward
-    // correction up from the clone the way the local Character does (ADR
-    // 0071). Miss it and every other Player runs backwards.
-    const modelYaw = Math.PI + MODEL_YAW_OFFSET - facing;
     if (heldByGrabberId !== null && motionState === "Held") {
       // Carried: the body hangs from the grip and streams with the carry's
       // speed (ADR 0104's drawn hold) — placement and tilt from `carriedFlail`.
@@ -432,6 +447,7 @@ export const createRemoteCharacterPool = (
         jumpSequences.forget(id);
         knockdowns.forget(id);
         footsteps.forget(id);
+        yaws.forget(id);
       }
     },
     dispose: () => {
@@ -442,6 +458,7 @@ export const createRemoteCharacterPool = (
       carriedHangs.clear();
       jumpSequences.reset();
       knockdowns.reset();
+      yaws.reset();
     },
   };
 };

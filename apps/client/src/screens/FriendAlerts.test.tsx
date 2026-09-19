@@ -7,7 +7,7 @@ const REQUEST = {
   id: "r1",
   fromAccountId: "a5",
   fromDisplayName: "Goopy",
-  fromAvatarUrl: null,
+  fromAvatarUrl: null, fromColor: 0,
   sentAt: 1,
   matchesTogether: 4,
 };
@@ -15,7 +15,7 @@ const REQUEST = {
 const INVITE = {
   id: "i1",
   fromAccountId: "a2",
-  fromDisplayName: "Floppo",
+  fromDisplayName: "Floppo", fromColor: 0,
   lobby: { kind: "public", lobbyId: "l1" } as const,
   sentAt: 1,
 };

@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import {
   DEFAULT_ENVIRONMENT_ID,
   DEFAULT_SURVIVOR_TARGET,
   DEFAULT_TIME_LIMIT_MS,
+  FEATURED_WINDOW_MS,
+  TRENDING_WINDOW_MS,
   resolveEnvironmentId,
   trackHasFinishZone,
   type EnvironmentId,
@@ -13,7 +15,7 @@ import {
   type TrackListing,
 } from "@dont-fall/shared";
 import type { ApiDb } from "../db/db.js";
-import { trackPlays, tracks } from "../db/schema.js";
+import { trackPlayLog, trackPlays, tracks } from "../db/schema.js";
 
 export type { StoredTrack, TrackListing };
 
@@ -213,7 +215,9 @@ export const getAnyTrack = (db: ApiDb): StoredTrack | undefined => {
  * publish library in production) — computed on read, not stored, so a
  * listing can never disagree with what the server would refuse today.
  */
-export const listTracks = (db: ApiDb, modules: Record<string, Module>): TrackListing[] => {
+export const listTracks = (db: ApiDb, modules: Record<string, Module>, nowMs = Date.now()): TrackListing[] => {
+  const weekAgo = nowMs - TRENDING_WINDOW_MS;
+  const dayAgo = nowMs - FEATURED_WINDOW_MS;
   // Code review (ticket 10): the previous version sorted by `createdAt` and
   // deduped in JS, which (a) ties can misorder on millisecond collisions —
   // "latest" must mean highest `revision`, not latest `createdAt` — and
@@ -232,10 +236,14 @@ export const listTracks = (db: ApiDb, modules: Record<string, Module>): TrackLis
     revision: number;
     data: string;
     plays: number;
+    playsThisWeek: number;
+    playsToday: number;
     hasThumbnail: number;
   }>(sql`
     SELECT track_id as trackId, name, author_id as authorId, created_at as createdAt, revision, data,
       COALESCE((SELECT plays FROM track_plays WHERE track_plays.track_id = t1.track_id), 0) as plays,
+      (SELECT COUNT(*) FROM track_play_log l WHERE l.track_id = t1.track_id AND l.played_at > ${weekAgo}) as playsThisWeek,
+      (SELECT COUNT(*) FROM track_play_log l WHERE l.track_id = t1.track_id AND l.played_at > ${dayAgo}) as playsToday,
       thumbnail IS NOT NULL as hasThumbnail
     FROM tracks t1
     WHERE revision = (SELECT MAX(revision) FROM tracks t2 WHERE t2.track_id = t1.track_id)
@@ -250,6 +258,8 @@ export const listTracks = (db: ApiDb, modules: Record<string, Module>): TrackLis
     revision: row.revision,
     hasThumbnail: row.hasThumbnail === 1,
     plays: row.plays,
+    playsThisWeek: row.playsThisWeek,
+    playsToday: row.playsToday,
     // Latest Revision's own Segments, against today's library — a republish
     // can gain or lose the Zone, and the listing follows it. Lenient on
     // unknown Modules (shared's own contract): one unparseable Track must
@@ -274,13 +284,16 @@ export const getTrackPlays = (db: ApiDb, trackId: string): number =>
  * Returns false (recording nothing) for a `trackId` with no stored
  * Revision — a play on nothing is a caller bug, not a row.
  */
-export const recordTrackPlay = (db: ApiDb, trackId: string): boolean => {
+export const recordTrackPlay = (db: ApiDb, trackId: string, nowMs = Date.now()): boolean => {
   const existing = db.select({ trackId: tracks.trackId }).from(tracks).where(eq(tracks.trackId, trackId)).limit(1).get();
   if (!existing) return false;
   db.insert(trackPlays)
     .values({ trackId, plays: 1 })
     .onConflictDoUpdate({ target: trackPlays.trackId, set: { plays: sql`${trackPlays.plays} + 1` } })
     .run();
+  // ADR 0110: the play's time for Discover's windows, and a week's pruning.
+  db.insert(trackPlayLog).values({ trackId, playedAt: nowMs }).run();
+  db.delete(trackPlayLog).where(lt(trackPlayLog.playedAt, nowMs - TRENDING_WINDOW_MS)).run();
   return true;
 };
 

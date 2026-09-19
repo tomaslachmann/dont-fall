@@ -68,6 +68,14 @@ export interface RoundHudCommon {
    * would promise a Dash the simulation would refuse.
    */
   dashReady: boolean;
+  /**
+   * Whole seconds until the Dash is back, rounded up — the charge card's
+   * RECHARGES IN (ADR 0110). Whole seconds for the same reason as
+   * {@link dashCharge}: a tenth would raise React ten times a second.
+   */
+  dashRechargeS: number;
+  /** The Dash's key, as the charge card names it. */
+  dashKey: string;
   /** The hold you are in, either end, or `null` (ADR 0104). */
   hold: HoldHud | null;
 }
@@ -102,6 +110,8 @@ export interface SurvivalHudSnapshot extends RoundHudCommon {
   survivedMs: number;
   /** The nickname of whoever was Eliminated last, or `null` before anyone was. */
   lastOut: string | null;
+  /** Whether that Player left the Match rather than fell out of the Round (ADR 0110) — a disconnect eliminates too. */
+  lastOutLeft: boolean;
   critical: boolean;
 }
 
@@ -137,6 +147,8 @@ export interface RoundHudInput {
   /** How many Checkpoints the loaded Track has. */
   checkpoints: number;
   nicknameOf: (id: string) => string;
+  /** Who dropped out of this Round by leaving the Match (the snapshot's `dnf`). */
+  leftIds: readonly string[];
   /** The snapshot's Tick — what a hold's `holdEndsTick` counts down to. */
   tick: number;
   predicted: PredictedHold;
@@ -200,6 +212,8 @@ export const buildRoundHud = (input: RoundHudInput): RoundHudSnapshot | null => 
   const common: RoundHudCommon = {
     dashCharge: Math.round((1 - Math.min(1, Math.max(0, me.dashCooldownMs / DASH_COOLDOWN_MS))) * 20) / 20,
     dashReady: me.dashCooldownMs <= 0,
+    dashRechargeS: Math.ceil(Math.max(0, me.dashCooldownMs) / 1000),
+    dashKey: keyOf(input.bindings.dash),
     hold: buildHoldHud(input, me),
   };
 
@@ -219,6 +233,7 @@ export const buildRoundHud = (input: RoundHudInput): RoundHudSnapshot | null => 
       youAlive: !me.eliminated,
       survivedMs: Math.floor(elapsedMs / 1000) * 1000,
       lastOut: lastOut === null ? null : input.nicknameOf(lastOut.id),
+      lastOutLeft: lastOut !== null && input.leftIds.includes(lastOut.id),
       critical: survivalCritical(alive.length, roundRules.survivorTarget, input.timeLeftMs),
     };
   }

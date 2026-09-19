@@ -50,6 +50,7 @@ const lobby = (phase: LobbySnapshot["phase"]): LobbySnapshot =>
     startBlockedReason: undefined,
   countdownMsLeft: 0,
     matchLength: 1,
+    round: 0,
     roundPicks: [],
     maxPlayers: 4,
   }) as LobbySnapshot;

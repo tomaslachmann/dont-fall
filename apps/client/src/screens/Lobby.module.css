@@ -48,6 +48,8 @@
   letter-spacing: var(--df-tracking-kicker);
   color: var(--df-color-accent);
 }
+/* The code as a button that copies it — reads exactly as the plain code. */
+.roomCodeCopy { padding: 0; border: 0; background: none; cursor: pointer; }
 .topActions { display: flex; gap: var(--df-space-3); }
 
 /* ---- left: the room ---- */

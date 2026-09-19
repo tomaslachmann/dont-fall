@@ -1,0 +1,26 @@
+/* In-game pause settings: a compact card over the paused frame.
+   The main settings surface is Settings (1o) — this is deliberately smaller. */
+.screen { place-items: center; }
+
+.card { width: min(58%, 100%); gap: var(--df-space-7); }
+
+.close {
+  display: grid;
+  place-items: center;
+  width: calc(var(--df-u) * 3.4);
+  aspect-ratio: 1;
+  border-radius: var(--df-radius-chip);
+  background: var(--df-color-surface-1);
+  box-shadow: 0 var(--df-bevel-1) 0 var(--df-color-shadow);
+  font: var(--df-weight-label) var(--df-text-base) / 1 var(--df-font-ui);
+}
+.close:hover { background: var(--df-color-surface-2); }
+
+.rowText { display: flex; flex-direction: column; gap: var(--df-space-3); min-width: 0; }
+.rowLabel { font: var(--df-weight-label) var(--df-text-xs) / 1.2 var(--df-font-ui); }
+.rowSub {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1.4 var(--df-font-ui);
+  color: var(--df-color-ink-55);
+}
+
+.foot { display: flex; justify-content: space-between; gap: var(--df-space-4); }

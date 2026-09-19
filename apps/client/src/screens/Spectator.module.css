@@ -40,13 +40,7 @@
 
 .tags { justify-self: start; display: flex; flex-wrap: wrap; gap: var(--df-space-3); }
 
-.feed {
-  place-self: center;
-  text-align: center;
-  font: var(--df-weight-display) var(--df-text-2xs) / 2 var(--df-font-mono);
-  letter-spacing: var(--df-tracking-wide);
-  color: var(--df-color-on-brand-60);
-}
+.feed { place-self: center; }
 
 /* live betting ticker */
 .ticker {

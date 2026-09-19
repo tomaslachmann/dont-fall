@@ -4,7 +4,7 @@ import { IDENTITY_QUAT, pitchQuat, yawQuat } from "../math/quat.js";
 import { rotateVec3ByQuat } from "../math/vec3.js";
 import { CAPSULE_BOTTOM_OFFSET, CAPSULE_RADIUS, GROUND_STICK_SPEED, WALK_SPEED } from "../tuning/character.js";
 import { TICK_MS, TICK_RATE_HZ } from "../tuning/clock.js";
-import { HIT_CHARGE_MAX_TICKS, HIT_COOLDOWN_MS, HIT_RANGE } from "../tuning/fight.js";
+import { HIT_CHARGE_MAX_TICKS, HIT_COOLDOWN_MS, HIT_RANGE, ELIMINATION_CREDIT_TICKS } from "../tuning/fight.js";
 import { IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, RAGDOLL_MAX_MS, RESPAWN_WOBBLE_TICKS, STAGGER_TICKS } from "../tuning/knockdown.js";
 import { DASH_COOLDOWN_MS, DASH_COOLDOWN_TICKS, DASH_DURATION_MS, DASH_SPEED, SLIDE_INPUT_SCALE } from "../tuning/movement.js";
 import { ICE_TOP_SPEED_MULTIPLIER } from "../tuning/surfaces.js";
@@ -116,6 +116,22 @@ describe("RapierSimulation — physics only steps for COUNTDOWN/RUNNING (grillin
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.velocity.y).toBe(0);
     for (let n = 0; n < 90; n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS }, "COUNTDOWN");
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y).toBeCloseTo(rested, 6);
+  });
+});
+
+describe("RapierSimulation — a seat is never inside anything solid (2026-09-19)", () => {
+  it("lifts a blocked seat above the obstruction and leaves a clear one exactly where it was asked", () => {
+    // A solid box parked over the spawn: seat rises above it, gravity lands on top.
+    const roof: Box = { center: { x: 0, y: 1.5, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } };
+    const sim = new RapierSimulation({ spawn: { x: 0, y: 1.5, z: 0 }, statics: [GROUND, roof] });
+    for (let t = 0; t < 90; t += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    const seated = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(seated.grounded).toBe(true);
+    expect(seated.position.y).toBeGreaterThan(2.5); // standing ON the box (top 2.5), never inside it
+    expect(seated.fallCount).toBe(0);
+
+    const clear = new RapierSimulation({ spawn: { x: 5, y: 1.5, z: 5 }, statics: [GROUND] });
+    expect(clear.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.y).toBeCloseTo(1.5, 6);
   });
 });
 
@@ -1660,6 +1676,7 @@ describe("RapierSimulation — dash", () => {
       finishTick: midBurst.finishTick,
       eliminated: midBurst.eliminated,
       eliminatedTick: midBurst.eliminatedTick,
+      eliminatedBy: midBurst.eliminatedBy,
       escapeProgress: midBurst.escapeProgress,
       lastWiggleYaw: midBurst.lastWiggleYaw,
       spinMs: midBurst.spinMs,
@@ -1720,6 +1737,7 @@ describe("RapierSimulation — dash", () => {
       finishTick: ackedSnapshot.finishTick,
       eliminated: ackedSnapshot.eliminated,
       eliminatedTick: ackedSnapshot.eliminatedTick,
+      eliminatedBy: ackedSnapshot.eliminatedBy,
       escapeProgress: ackedSnapshot.escapeProgress,
       lastWiggleYaw: ackedSnapshot.lastWiggleYaw,
       spinMs: ackedSnapshot.spinMs,
@@ -1805,6 +1823,7 @@ describe("RapierSimulation — dash", () => {
           finishTick: acked.finishTick,
           eliminated: acked.eliminated,
           eliminatedTick: acked.eliminatedTick,
+          eliminatedBy: acked.eliminatedBy,
           escapeProgress: acked.escapeProgress,
           lastWiggleYaw: acked.lastWiggleYaw,
           spinMs: acked.spinMs,
@@ -2653,6 +2672,7 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
         finishTick: null,
         eliminated: false,
         eliminatedTick: null,
+        eliminatedBy: null,
         escapeProgress: 0,
         lastWiggleYaw: null,
         spinMs: 0,
@@ -2735,6 +2755,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     finishTick: null,
     eliminated: false,
     eliminatedTick: null,
+    eliminatedBy: null,
     escapeProgress: 0,
     lastWiggleYaw: null,
     spinMs: 0,
@@ -2759,6 +2780,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       finishTick: null,
       eliminated: false,
       eliminatedTick: null,
+      eliminatedBy: null,
       escapeProgress: 0,
       lastWiggleYaw: null,
       spinMs: 0,
@@ -2795,6 +2817,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       finishTick: null,
       eliminated: false,
       eliminatedTick: null,
+      eliminatedBy: null,
       escapeProgress: 0,
       lastWiggleYaw: null,
       spinMs: 0,
@@ -2889,6 +2912,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
         finishTick: null,
         eliminated: false,
         eliminatedTick: null,
+        eliminatedBy: null,
         escapeProgress: 0,
         lastWiggleYaw: null,
         spinMs: 0,
@@ -2957,6 +2981,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       finishTick: null,
       eliminated: false,
       eliminatedTick: null,
+      eliminatedBy: null,
       escapeProgress: 0,
       lastWiggleYaw: null,
       spinMs: 0,
@@ -3141,6 +3166,56 @@ describe("RapierSimulation — Character-to-Character Bump (ticket 04)", () => {
   });
 });
 
+describe("RapierSimulation — who put a Character out (ADR 0110)", () => {
+  const STRIKER = DEFAULT_CHARACTER_ID;
+  const TARGET = "target";
+  const PLATFORM: Box = { center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 4, y: 0.5, z: 4 } };
+  const onGround = (z: number) => ({ x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z });
+  const pair = (targetZ: number): RapierSimulation => {
+    const sim = new RapierSimulation({
+      spawn: onGround(0),
+      statics: [PLATFORM],
+      killPlaneY: -8,
+      roundRules: { timeLimitMs: 60_000, fallBehavior: "eliminate", survivorTarget: 1 },
+    });
+    sim.addCharacter(TARGET, onGround(targetZ));
+    for (let n = 0; n < 10; n += 1) sim.tick({});
+    return sim;
+  };
+  const target = (sim: RapierSimulation) => sim.snapshot().characters[TARGET]!;
+  const untilOut = (sim: RapierSimulation, inputs: Record<string, SimInputs> = {}): void => {
+    for (let n = 0; n < 600 && !target(sim).eliminated; n += 1) sim.tick(inputs);
+  };
+
+  it("credits the Hit that put it over the edge", () => {
+    // In reach (HIT_RANGE); the knockdown throws it toward the edge, and it
+    // walks the rest of the way inside the credit window.
+    const sim = pair(-1.3);
+    for (let n = 0; n < HIT_CHARGE_MAX_TICKS; n += 1) sim.tick({ [STRIKER]: input({ facing: 0, hitHeld: true }) });
+    sim.tick({ [STRIKER]: input({ facing: 0, hitHeld: false }) });
+    untilOut(sim, { [TARGET]: NORTH });
+    expect(target(sim).eliminated).toBe(true);
+    expect(target(sim).eliminatedBy).toEqual({ byId: STRIKER, how: "hit" });
+  });
+
+  it("credits nobody for walking off alone", () => {
+    const sim = pair(-3.2);
+    untilOut(sim, { [TARGET]: NORTH });
+    expect(target(sim).eliminated).toBe(true);
+    expect(target(sim).eliminatedBy).toBeNull();
+  });
+
+  it("forgets a Hit older than the credit window", () => {
+    const sim = pair(-1);
+    sim.tick({ [STRIKER]: input({ facing: 0, hitHeld: true }) });
+    sim.tick({ [STRIKER]: input({ facing: 0, hitHeld: false }) }); // a tap: a Stagger, credited
+    for (let n = 0; n < ELIMINATION_CREDIT_TICKS + 30; n += 1) sim.tick({});
+    untilOut(sim, { [TARGET]: NORTH });
+    expect(target(sim).eliminated).toBe(true);
+    expect(target(sim).eliminatedBy).toBeNull();
+  });
+});
+
 describe("RapierSimulation — Hit (M6 ticket 03)", () => {
   const STRIKER = DEFAULT_CHARACTER_ID;
   const TARGET = "target";
@@ -3293,6 +3368,7 @@ describe("RapierSimulation — Hit (M6 ticket 03)", () => {
       finishTick: base.finishTick,
       eliminated: base.eliminated,
       eliminatedTick: base.eliminatedTick,
+      eliminatedBy: base.eliminatedBy,
       escapeProgress: base.escapeProgress,
       lastWiggleYaw: base.lastWiggleYaw,
       spinMs: base.spinMs,
@@ -3343,6 +3419,7 @@ describe("RapierSimulation — Hit (M6 ticket 03)", () => {
         finishTick: ackedSnapshot.finishTick,
         eliminated: ackedSnapshot.eliminated,
         eliminatedTick: ackedSnapshot.eliminatedTick,
+        eliminatedBy: ackedSnapshot.eliminatedBy,
         escapeProgress: ackedSnapshot.escapeProgress,
         lastWiggleYaw: ackedSnapshot.lastWiggleYaw,
         spinMs: ackedSnapshot.spinMs,
@@ -3393,6 +3470,7 @@ describe("RapierSimulation — Hit (M6 ticket 03)", () => {
         finishTick: ackedSnapshot.finishTick,
         eliminated: ackedSnapshot.eliminated,
         eliminatedTick: ackedSnapshot.eliminatedTick,
+        eliminatedBy: ackedSnapshot.eliminatedBy,
         escapeProgress: ackedSnapshot.escapeProgress,
         lastWiggleYaw: ackedSnapshot.lastWiggleYaw,
         spinMs: ackedSnapshot.spinMs,
@@ -3942,6 +4020,7 @@ describe("RapierSimulation — launch pads (M3.7 ticket 02, ADR 0069): vertical 
       finishTick: firedSnap.finishTick,
       eliminated: firedSnap.eliminated,
       eliminatedTick: firedSnap.eliminatedTick,
+      eliminatedBy: firedSnap.eliminatedBy,
       escapeProgress: firedSnap.escapeProgress,
       lastWiggleYaw: firedSnap.lastWiggleYaw,
       spinMs: firedSnap.spinMs,
@@ -4516,6 +4595,7 @@ describe("RapierSimulation — Character facing (M6 ticket 01, ADR 0045)", () =>
       finishTick: ackedSnapshot.finishTick,
       eliminated: ackedSnapshot.eliminated,
       eliminatedTick: ackedSnapshot.eliminatedTick,
+      eliminatedBy: ackedSnapshot.eliminatedBy,
       escapeProgress: ackedSnapshot.escapeProgress,
       lastWiggleYaw: ackedSnapshot.lastWiggleYaw,
       spinMs: ackedSnapshot.spinMs,

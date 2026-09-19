@@ -16,6 +16,8 @@ const RESULT = {
   skins: { a: "tiger" },
   hats: { a: "crown" },
   totalFalls: { a: 2 },
+  survivalMs: {},
+  grabsBroken: {},
   endedAtMs: 60_000,
 };
 

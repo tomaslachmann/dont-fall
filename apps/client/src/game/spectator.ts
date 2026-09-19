@@ -45,6 +45,12 @@ export interface SpectateSnapshot {
   runners: SpectateRunner[];
   /** Beans still racing — neither out nor finished. */
   beansLeft: number;
+  /**
+   * How long the followed bean has been in the Round, whole seconds, off the
+   * server's Round clock (ADR 0110) — everyone still in it has been in it
+   * since it started. Whole seconds so the panel is raised once a second.
+   */
+  aliveForMs: number;
   /** The camera stopped following and holds its pose (FREE CAM). */
   freeCam: boolean;
 }

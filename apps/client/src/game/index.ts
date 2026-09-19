@@ -1,4 +1,4 @@
-import { INPUT_REDUNDANCY, initPhysics, type ClientMessage, type ServerMessage } from "@dont-fall/shared";
+import { INPUT_REDUNDANCY, initPhysics, initialLeadState, type ClientMessage, type ServerMessage } from "@dont-fall/shared";
 import { gameAudioContext } from "../audio/gameAudio.js";
 import { MatchCalls } from "../audio/matchCalls.js";
 import { setMusicPhase } from "../audio/music.js";
@@ -166,6 +166,7 @@ const boot = async (config: GameConfig, teardown: Teardown): Promise<GameHandle>
     ...(config.onSpectate === undefined ? {} : { onSpectate: config.onSpectate }),
     ...(config.onRoundHud === undefined ? {} : { onRoundHud: config.onRoundHud }),
     ...(config.onWorldReady === undefined ? {} : { onWorldReady: config.onWorldReady }),
+    ...(config.onPause === undefined ? {} : { onPause: config.onPause }),
   };
 
   const session: GameSession = {
@@ -192,16 +193,17 @@ const boot = async (config: GameConfig, teardown: Teardown): Promise<GameHandle>
       // clock and the net-graph RTT.
       timeSync: new TimeSync(),
       latestSnapshot: null,
-      smoothedQueueDepth: 1.5,
-      framesSinceLeadAdjust: 12,
+      heldSinceTick: null,
+      lead: initialLeadState(),
       connectionLost: false,
     },
     match: {
       phase: "LOBBY",
       timeLeftMs: null,
       countdownEndsAtServerMs: null,
-      roundStartedAtServerMs: 0,
       survival: false,
+      roundElapsedMs: null,
+      livePlaces: null,
       resultsCall: null,
       musicPhase: null,
     },
@@ -309,5 +311,6 @@ const boot = async (config: GameConfig, teardown: Teardown): Promise<GameHandle>
     enterSpectate: () => {
       session.spectate.requested = true;
     },
+    resume: () => session.world.look.relock(),
   };
 };

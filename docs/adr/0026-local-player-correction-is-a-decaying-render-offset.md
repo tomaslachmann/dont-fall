@@ -169,3 +169,7 @@ mirror/obstacle sync and gameplay reads still use the raw pose. Harness-document
 into `main.ts` itself to assert the wiring directly):
 `predictionRegression.harness.test.ts` › "the raw stream (what the camera used to follow)
 still pops even where the mesh is clean".
+
+## Amended by ADR 0109 (2026-09-19)
+
+The gentle drain is a fraction of elapsed time (`LEAD_DRAIN_TIME_FRACTION` = 0.1), not 5 ms per frame, which drained 72% of a 144 Hz frame and stopped the owner's simulation at 240 Hz.

@@ -1,6 +1,7 @@
 import { Component, Fragment, type ReactNode } from "react";
 import ErrorScreen from "../screens/ErrorScreen.js";
 import { ConnectionError } from "../lib/errors.js";
+import { newSupportCode, reportClientError } from "../lib/errorReport.js";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -10,6 +11,8 @@ interface ErrorBoundaryProps {
 
 interface ErrorBoundaryState {
   error: Error | null;
+  /** The support code this failure is filed under (ADR 0110) — what the screen shows. */
+  code: string;
   /** Bumped on every retry so the tree remounts from scratch below. */
   attempt: number;
 }
@@ -30,14 +33,20 @@ interface ErrorBoundaryState {
  * untrustworthy, so this is a fresh boot, not a router push.
  */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  override state: ErrorBoundaryState = { error: null, attempt: 0 };
+  override state: ErrorBoundaryState = { error: null, code: newSupportCode(), attempt: 0 };
 
   static getDerivedStateFromError(error: unknown): Partial<ErrorBoundaryState> {
-    return { error: error instanceof Error ? error : new Error(String(error)) };
+    return { error: error instanceof Error ? error : new Error(String(error)), code: newSupportCode() };
   }
 
   override componentDidCatch(error: unknown): void {
     console.error("DON'T FALL: render crash caught by ErrorBoundary", error);
+    // ADR 0110: filed under the code the screen shows, so support can find it.
+    reportClientError({
+      code: this.state.code,
+      kind: error instanceof ConnectionError ? "connection" : "crash",
+      message: error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : String(error),
+    });
     this.props.onError?.(error);
   }
 
@@ -55,6 +64,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       return (
         <ErrorScreen
           kind={error instanceof ConnectionError ? "connection" : "crash"}
+          code={this.state.code}
           retryIn={0}
           detail={error.message}
           onRetry={this.retry}

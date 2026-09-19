@@ -9,7 +9,7 @@ import {
 } from "@dont-fall/shared";
 import type { ApiDb } from "../db/db.js";
 import { hashPassword, verifyPassword } from "./password.js";
-import { accounts, sessions } from "../db/schema.js";
+import { accountAvatars, accounts, sessions } from "../db/schema.js";
 
 export interface Account {
   id: string;
@@ -17,6 +17,8 @@ export interface Account {
   email: string | null;
   displayName: string;
   avatarUrl: string | null;
+  /** When this Account last uploaded an avatar (ADR 0110) — the version on its picture's address; `null` for none. */
+  avatarUploadedAt: number | null;
   /** This Account's role — `"player"` for everyone, `"admin"` reserved for future administration tooling. No writer yet. */
   role: AccountRole;
   /** Lifetime match earnings — the economy's persisted half. */
@@ -69,6 +71,7 @@ const toAccount = (row: typeof accounts.$inferSelect): Account => ({
   email: row.email,
   displayName: row.displayName,
   avatarUrl: row.avatarUrl,
+  avatarUploadedAt: row.avatarUploadedAt,
   role: resolveAccountRole(row.role),
   xp: row.xp,
   coins: row.coins,
@@ -344,4 +347,40 @@ export const getAccountsByIds = (db: ApiDb, accountIds: readonly string[]): Map<
       ? []
       : db.select().from(accounts).where(inArray(accounts.id, [...accountIds])).all();
   return new Map(rows.map((row) => [row.id, toAccount(row)]));
+};
+
+/** Stores `accountId`'s uploaded avatar (ADR 0110), replacing any before it. Returns the updated Account. */
+export const setAccountAvatar = (db: ApiDb, accountId: string, image: Buffer, nowMs: number): Account | undefined => {
+  db.insert(accountAvatars)
+    .values({ accountId, image, updatedAt: nowMs })
+    .onConflictDoUpdate({ target: accountAvatars.accountId, set: { image, updatedAt: nowMs } })
+    .run();
+  const row = db.update(accounts).set({ avatarUploadedAt: nowMs }).where(eq(accounts.id, accountId)).returning().get();
+  return row ? toAccount(row) : undefined;
+};
+
+/** Removes `accountId`'s uploaded avatar, falling back to its Discord picture or its disc. Returns the updated Account. */
+export const clearAccountAvatar = (db: ApiDb, accountId: string): Account | undefined => {
+  db.delete(accountAvatars).where(eq(accountAvatars.accountId, accountId)).run();
+  const row = db.update(accounts).set({ avatarUploadedAt: null }).where(eq(accounts.id, accountId)).returning().get();
+  return row ? toAccount(row) : undefined;
+};
+
+/**
+ * What `GET /avatars/:accountId` serves (ADR 0110): the uploaded picture, else
+ * the Discord one to redirect to, else nothing. `undefined` for no such Account.
+ */
+export const getAccountAvatar = (
+  db: ApiDb,
+  accountId: string,
+): { image: Buffer; updatedAt: number } | { discordUrl: string } | null | undefined => {
+  const account = db.select({ avatarUrl: accounts.avatarUrl }).from(accounts).where(eq(accounts.id, accountId)).get();
+  if (!account) return undefined;
+  const uploaded = db
+    .select({ image: accountAvatars.image, updatedAt: accountAvatars.updatedAt })
+    .from(accountAvatars)
+    .where(eq(accountAvatars.accountId, accountId))
+    .get();
+  if (uploaded) return uploaded;
+  return account.avatarUrl ? { discordUrl: account.avatarUrl } : null;
 };

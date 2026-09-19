@@ -31,7 +31,8 @@ export interface FinishedOrOutProps {
   checkpointsDone?: number;
   /** Null while no persisted best exists — the line hides instead of mocking one. */
   personalBest?: string | null;
-  nextRoundIn?: string;
+  /** The Round's time left — the latest it can end (ADR 0110). Absent, no timer. */
+  roundEndsIn?: string;
   onSpectate?: () => void;
   /** Mid-Round there is no standings table yet — rendered only when provided. */
   onScoreboard?: () => void;
@@ -63,7 +64,7 @@ const OUTCOMES: Outcome[] = [
 
 export default function FinishedOrOut({
   outcomes = OUTCOMES, position = 3, field = 16, checkpoints = 7,
-  checkpointsDone, personalBest = null, nextRoundIn = '0:09',
+  checkpointsDone, personalBest = null, roundEndsIn,
   onSpectate, onScoreboard, onLeave, feel,
 }: FinishedOrOutProps) {
   const done = checkpointsDone ?? checkpoints;
@@ -106,19 +107,24 @@ export default function FinishedOrOut({
 
       <span />
 
-      <div className={[s.checkpoints, s.hud].join(' ')}>
-        <span className={s.cpLabel}>CHECKPOINT {String(done).padStart(2, '0')} / {String(checkpoints).padStart(2, '0')}</span>
-        <Pips total={checkpoints} done={done} />
-        {personalBest && <span className={s.pb}>{personalBest}</span>}
-      </div>
-
-      <p className={s.feed}>GAMEPLAY FEED · RUN ENDING</p>
+      {/* A Round with nothing to cross (a Survival arena) has no progress to show. */}
+      {checkpoints > 0 || personalBest ? (
+        <div className={[s.checkpoints, s.hud].join(' ')}>
+          {checkpoints > 0 && (
+            <>
+              <span className={s.cpLabel}>CHECKPOINT {String(done).padStart(2, '0')} / {String(checkpoints).padStart(2, '0')}</span>
+              <Pips total={checkpoints} done={done} />
+            </>
+          )}
+          {personalBest && <span className={s.pb}>{personalBest}</span>}
+        </div>
+      ) : <span />}
 
       <div className={s.actions}>
         {onSpectate && <JellyButton variant="tile" centered onClick={onSpectate}>SPECTATE</JellyButton>}
         {onScoreboard && <JellyButton variant="pill" tone="glass" centered onClick={onScoreboard}>SCOREBOARD</JellyButton>}
         {onLeave && <JellyButton variant="pill" tone="glass" centered onClick={onLeave}>LEAVE</JellyButton>}
-        <span className={s.timer}>NEXT ROUND IN {nextRoundIn}</span>
+        {roundEndsIn !== undefined && <span className={s.timer}>ROUND ENDS IN {roundEndsIn}</span>}
       </div>
     </Stage>
   );

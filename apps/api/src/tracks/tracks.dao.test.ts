@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -226,6 +227,23 @@ describe("recordTrackPlay (M9 ticket 16)", () => {
 
     expect(getTrackPlays(db, id)).toBe(2);
     expect(listTracks(db, MODULE_LIBRARY).find((t) => t.id === id)?.plays).toBe(2);
+  });
+
+  it("counts each play in the week and day windows, and forgets plays older than a week (ADR 0110)", () => {
+    const { id } = saveTrack(db, { track: SAMPLE_TRACK });
+    const DAY = 24 * 60 * 60 * 1000;
+    const now = 30 * DAY;
+    recordTrackPlay(db, id, now - 10 * DAY); // older than a week: all-time only
+    recordTrackPlay(db, id, now - 3 * DAY); // this week
+    recordTrackPlay(db, id, now - 1_000); // today
+
+    expect(listTracks(db, MODULE_LIBRARY, now).find((t) => t.id === id)).toMatchObject({
+      plays: 3,
+      playsThisWeek: 2,
+      playsToday: 1,
+    });
+    const logged = db.all<{ n: number }>(sql`SELECT COUNT(*) as n FROM track_play_log`)[0]!.n;
+    expect(logged).toBe(2);
   });
 
   it("returns false for an unknown trackId and records nothing", () => {

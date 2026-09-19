@@ -1,4 +1,4 @@
-import { integer, primaryKey, real, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
+import { blob, integer, primaryKey, real, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
 import { DEFAULT_ACCOUNT_ROLE, type LobbyRef, type PersistedMatchResult } from "@dont-fall/shared";
 
 /**
@@ -75,6 +75,12 @@ export const accounts = sqliteTable("accounts", {
   passwordHash: text("password_hash"),
   displayName: text("display_name").notNull(),
   avatarUrl: text("avatar_url"),
+  /**
+   * When this Account last uploaded an avatar (ADR 0110), or NULL for none —
+   * the version clients put on its address, so a new picture shows at once.
+   * The bytes live in `account_avatars`.
+   */
+  avatarUploadedAt: integer("avatar_uploaded_at"),
   /**
    * This Account's role (shared's `AccountRole`) — `"player"` for everyone,
    * `"admin"` reserved for future administration tooling. No writer yet:
@@ -209,6 +215,10 @@ export const matchParticipants = sqliteTable(
     placement: integer("placement").notNull(),
     score: real("score").notNull(),
     falls: integer("falls").notNull(),
+    /** The longest stay in one Survival Round of this Match, ms (ADR 0110) — NULL when it had none. */
+    bestSurvivalMs: integer("best_survival_ms"),
+    /** Struggles won across this Match (ADR 0110). */
+    grabsBroken: integer("grabs_broken").notNull().default(0),
     endedAtMs: integer("ended_at_ms").notNull(),
   },
   (table) => [primaryKey({ columns: [table.matchId, table.accountId] })],
@@ -247,6 +257,17 @@ export const rewardClaims = sqliteTable(
 export const trackPlays = sqliteTable("track_plays", {
   trackId: text("track_id").primaryKey(),
   plays: integer("plays").notNull(),
+});
+
+/**
+ * One row per play in the last week (ADR 0110) — what Discover's TRENDING
+ * and TODAY'S FEATURED count in their windows. Pruned past
+ * `TRENDING_WINDOW_MS` on every write, so it never grows beyond a week of
+ * Rounds; the all-time count stays in `track_plays`.
+ */
+export const trackPlayLog = sqliteTable("track_play_log", {
+  trackId: text("track_id").notNull(),
+  playedAt: integer("played_at").notNull(),
 });
 
 /**
@@ -325,4 +346,31 @@ export const lobbyInvites = sqliteTable("lobby_invites", {
 export const presenceBeats = sqliteTable("presence_beats", {
   accountId: text("account_id").primaryKey(),
   beatAt: integer("beat_at").notNull(),
+});
+
+/**
+ * Each Account's uploaded avatar (ADR 0110): a 256² WebP, at most
+ * `MAX_AVATAR_BYTES`. Apart from `accounts` so reading an Account never loads
+ * a picture; `GET /avatars/:accountId` is the only reader.
+ */
+export const accountAvatars = sqliteTable("account_avatars", {
+  accountId: text("account_id").primaryKey(),
+  image: blob("image", { mode: "buffer" }).notNull().$type<Buffer>(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+/**
+ * Client errors the error screen reported (ADR 0110), filed under the support
+ * code it showed the Player — so "we logged it with the code below" is true,
+ * and the code finds it. First report of a code wins.
+ */
+export const clientErrors = sqliteTable("client_errors", {
+  code: text("code").primaryKey(),
+  kind: text("kind").notNull(),
+  message: text("message").notNull(),
+  page: text("page").notNull(),
+  userAgent: text("user_agent").notNull(),
+  /** The signed-in Account, when there was one. */
+  accountId: text("account_id"),
+  reportedAt: integer("reported_at").notNull(),
 });

@@ -38,3 +38,7 @@ most likely to be used — the one case this field exists to serve.
 is turned, not its camera's look-yaw. Other players see the body as its owner sees it, and Hit and
 Grab aim where the body is turned. The local Character's turn easing is therefore no longer purely
 cosmetic.
+
+## Amended by ADR 0109 (2026-09-19)
+
+Each Tick carries the facing at its own time, eased between the last two frame samples, instead of one sample stamped on every Tick a frame steps. A remote rig follows its facing through a 25 ms critically damped follow, exact during a hold or a Spin.

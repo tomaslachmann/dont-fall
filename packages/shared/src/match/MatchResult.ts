@@ -55,5 +55,18 @@ export interface PersistedMatchResult {
   hats: Record<string, string>;
   /** `playerId` → falls across every Round they raced. */
   totalFalls: Record<string, number>;
+  /**
+   * `playerId` → the longest they stayed in one Survival Round of this Match,
+   * in ms (ADR 0110) — the career's BEST SURVIVAL. Only Players who raced a
+   * Survival Round have an entry. Rows persisted before this carry no map;
+   * readers default `{}`.
+   */
+  survivalMs: Record<string, number>;
+  /**
+   * `playerId` → Struggles they won across the Match (ADR 0104, 0110) — the
+   * career's GRABS BROKEN. Sparse: absent key, none. Rows persisted before
+   * this carry no map; readers default `{}`.
+   */
+  grabsBroken: Record<string, number>;
   endedAtMs: number;
 }

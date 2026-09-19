@@ -4,10 +4,10 @@ import { conjugateQuat, IDENTITY_QUAT } from "../math/quat.js";
 import { addVec3, dotVec3, lengthVec3, normalizeVec3, rotateVec3ByQuat, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
 import { phaseLocksInput, phaseNeedsPhysicsStep, type MatchPhase } from "../match/MatchPhase.js";
 import { DEFAULT_ROUND_RULES, type RoundRules } from "../match/RoundRules.js";
-import { characterSnapshot, type CharacterSnapshot, type HeldPhase, type RagdollCause, type ReconcileBase, type SimState } from "../state/SimState.js";
-import { CAPSULE_BOTTOM_OFFSET, GROUND_SNAP_DISTANCE, GRAVITY_Y, SURFACE_GROUND_NORMAL_MIN_Y } from "../tuning/character.js";
+import { characterSnapshot, type CharacterSnapshot, type HeldPhase, type EliminationCredit, type EliminationHow, type RagdollCause, type ReconcileBase, type SimState } from "../state/SimState.js";
+import { CAPSULE_BOTTOM_OFFSET, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, GROUND_SNAP_DISTANCE, GRAVITY_Y, SEAT_CLEAR_MAX_LIFT, SEAT_CLEAR_STEP, SURFACE_GROUND_NORMAL_MIN_Y } from "../tuning/character.js";
 import { TICK_DT } from "../tuning/clock.js";
-import { BUMP_IMPULSE_SCALE, BUMP_LIFT_RATIO, HIT_FACING_COS_MIN, HIT_LIFT_RATIO, HIT_RANGE } from "../tuning/fight.js";
+import { BUMP_IMPULSE_SCALE, BUMP_LIFT_RATIO, HIT_FACING_COS_MIN, HIT_LIFT_RATIO, HIT_RANGE, ELIMINATION_CREDIT_TICKS } from "../tuning/fight.js";
 import { DEFAULT_KILL_PLANE_Y, MOVING_SEGMENT_LIFT_RATIO, SPIKED_IMPACT_MAGNITUDE, SPIKED_LIFT_RATIO } from "../tuning/world.js";
 import { DEFAULT_SURFACE, surfaceConfig, type SurfaceId } from "../track/Surface.js";
 import { passesThroughGate } from "../track/Gate.js";
@@ -89,6 +89,16 @@ interface CharacterProgress {
    * as `eliminated` itself.
    */
   eliminatedTick: number | null;
+  /**
+   * The last other Character to grab, throw or hit this one, and when (ADR
+   * 0110) — authoritative bookkeeping, read only when an eliminating Fall
+   * marks {@link eliminatedBy}. Never replicated itself.
+   */
+  lastTouch: (EliminationCredit & { tick: number }) | null;
+  /** Who put this Character out — `lastTouch`, if it was recent enough when it Fell out (ADR 0110). */
+  eliminatedBy: EliminationCredit | null;
+  /** Struggles this Character won in this world (ADR 0110) — read by the Match server at the Round's end. */
+  strugglesWon: number;
 }
 
 export interface SimulationConfig {
@@ -320,6 +330,11 @@ export class RapierSimulation {
       this.findNearestInCone(fromId, fromPos, facing, range, facingCosMin, exclude),
     tick: () => this.tickCount,
     roll: (id) => slipRoll(id, this.tickCount),
+    credit: (targetId, byId, how) => this.credit(targetId, byId, how),
+    struggleWon: (id) => {
+      const progress = this.progress.get(id);
+      if (progress) progress.strugglesWon += 1;
+    },
   });
   /**
    * Client-only (ADR 0104): the hold the server last said the local Character
@@ -474,10 +489,44 @@ export class RapierSimulation {
    * making it its own first respawn point. Wires up the same Spinner/Prop
    * collision resolution every Character gets, scoped to this one.
    */
+  /**
+   * Where `point` can actually seat a Character (see `SEAT_CLEAR_STEP`'s own
+   * doc): overlapping anything solid that is not a Character, the seat rises
+   * step by step until the capsule stands clear. A pure read of the world at
+   * seat time, so the client's own simulation seats its Character at the
+   * same height the server did. Roofed all the way up, the authored point is
+   * kept — a spawn that broken is the Track author's to see, not this
+   * method's to hide.
+   */
+  private clearSeat(point: Vec3): Vec3 {
+    // Colliders join the query structures on the next step — a seat taken
+    // before the world ever stepped (the constructor's own) would probe an
+    // empty scene. A zero-dt step refreshes them while integrating nothing:
+    // no gravity, no motion, and seating always happens between real ticks,
+    // so no queued kinematic target is waiting to be applied.
+    const timestep = this.world.timestep;
+    this.world.timestep = 0;
+    this.world.step();
+    this.world.timestep = timestep;
+    // A hair under the real capsule, so a seat resting exactly ON a floor —
+    // the ordinary case — never reads as inside it; only true penetration lifts.
+    const shape = new RAPIER.Capsule(CAPSULE_HALF_HEIGHT - 0.02, CAPSULE_RADIUS - 0.02);
+    for (let lift = 0; lift <= SEAT_CLEAR_MAX_LIFT; lift += SEAT_CLEAR_STEP) {
+      let blocked = false;
+      this.world.intersectionsWithShape({ x: point.x, y: point.y + lift, z: point.z }, IDENTITY_QUAT, shape, (collider) => {
+        if (!collider.isSensor() && !this.characterIdByHandle.has(collider.handle)) blocked = true;
+        return !blocked;
+      });
+      if (!blocked) return lift === 0 ? point : { x: point.x, y: point.y + lift, z: point.z };
+    }
+    return point;
+  }
+
   addCharacter(id: string, point: Vec3): void {
     // Guard against orphaning the previous Character's Rapier bodies if `id`
     // is reused (e.g. a reconnect) before it was explicitly removed.
     this.removeCharacter(id);
+    point = this.clearSeat(point);
 
     const onCollision: CollisionListener = (colliderHandle, hitPoint, velocity, normal) => {
       if (this.spikedHandles.has(colliderHandle)) {
@@ -521,7 +570,16 @@ export class RapierSimulation {
       finishTick: null,
       eliminated: false,
       eliminatedTick: null,
+      lastTouch: null,
+      eliminatedBy: null,
+      strugglesWon: 0,
     });
+  }
+
+  /** Records that `byId` just grabbed, threw or hit `targetId` — what a knockout is credited to (ADR 0110). */
+  private credit(targetId: string, byId: string, how: EliminationHow): void {
+    const progress = this.progress.get(targetId);
+    if (progress && targetId !== byId) progress.lastTouch = { byId, how, tick: this.tickCount };
   }
 
   /**
@@ -655,6 +713,7 @@ export class RapierSimulation {
     const direction = normalizeVec3(vec3(-normal.x, BUMP_LIFT_RATIO, -normal.z));
     const magnitude = closingSpeed * BUMP_IMPULSE_SCALE;
     bumped.applyImpact(scaleVec3(direction, magnitude), "Bump");
+    this.credit(bumpedId, moverId, "hit");
   }
 
   /**
@@ -763,6 +822,7 @@ export class RapierSimulation {
     target.applyImpact(scaleVec3(direction, hitImpactMagnitude(striker.hitChargeFraction)), "Hit");
     target.registerHitReceived();
     target.cancelDash();
+    this.credit(bestId, strikerId, "hit");
   }
 
   /** Remove a Character from the Match and free its Rapier bodies (ticket 01). */
@@ -899,6 +959,7 @@ export class RapierSimulation {
       // must not stay locally "still in it" for the rest of the Round.
       progress.eliminated = base.eliminated;
       progress.eliminatedTick = base.eliminatedTick;
+      progress.eliminatedBy = base.eliminatedBy;
     }
   }
 
@@ -1382,8 +1443,23 @@ export class RapierSimulation {
       // it: the kill plane can fire one or more Ticks late, and ranking by
       // when it was marked is the honest read of "how long they lasted."
       progress.eliminatedTick = this.tickCount;
+      // ADR 0110: whoever last grabbed, threw or hit it, if recently enough.
+      const touch = progress.lastTouch;
+      progress.eliminatedBy =
+        touch !== null && this.tickCount - touch.tick <= ELIMINATION_CREDIT_TICKS ? { byId: touch.byId, how: touch.how } : null;
     }
     character.fall(eliminates ? null : progress.respawnPoint, progress.fallCount);
+  }
+
+  /**
+   * Struggles each Character won in this world, by id (ADR 0110) — only the
+   * ones that won any. The Match server adds them up across a Match's Rounds
+   * for the career's GRABS BROKEN; it never rides a snapshot.
+   */
+  strugglesWon(): Record<string, number> {
+    const won: Record<string, number> = {};
+    for (const [id, progress] of this.progress) if (progress.strugglesWon > 0) won[id] = progress.strugglesWon;
+    return won;
   }
 
   snapshot(): SimState {
@@ -1398,6 +1474,7 @@ export class RapierSimulation {
         finishTick: progress.finishTick,
         eliminated: progress.eliminated,
         eliminatedTick: progress.eliminatedTick,
+        eliminatedBy: progress.eliminatedBy,
       });
     }
     return {

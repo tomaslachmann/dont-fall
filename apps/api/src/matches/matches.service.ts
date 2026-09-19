@@ -57,6 +57,10 @@ const invalidMatchResultReason = (body: unknown): string | undefined => {
     return "roundTrackIds must be a list of Track ids";
   }
   if (!isRecord(body.totalFalls)) return "totalFalls must be an object";
+  // ADR 0110: the career's BEST SURVIVAL and GRABS BROKEN. Older saves carry
+  // neither map (readers default them) — but a present non-object is malformed.
+  if (body.survivalMs !== undefined && !isRecord(body.survivalMs)) return "survivalMs must be an object";
+  if (body.grabsBroken !== undefined && !isRecord(body.grabsBroken)) return "grabsBroken must be an object";
   if (typeof body.endedAtMs !== "number" || !Number.isFinite(body.endedAtMs)) {
     return "endedAtMs must be a number";
   }
@@ -85,6 +89,8 @@ export const saveMatchResult = (db: ApiDb, body: unknown): { matchId: string } =
     colors: result.colors ?? {},
     skins: result.skins ?? {},
     hats: result.hats ?? {},
+    survivalMs: result.survivalMs ?? {},
+    grabsBroken: result.grabsBroken ?? {},
   };
   storeMatchResult(db, stored);
   insertMatchParticipants(
@@ -97,6 +103,8 @@ export const saveMatchResult = (db: ApiDb, body: unknown): { matchId: string } =
         placement: row.placement,
         score: row.score,
         falls: stored.totalFalls[row.id] ?? 0,
+        bestSurvivalMs: stored.survivalMs[row.id] ?? null,
+        grabsBroken: stored.grabsBroken[row.id] ?? 0,
         endedAtMs: stored.endedAtMs,
       })),
   );
@@ -121,5 +129,7 @@ export const getMatchResult = (db: ApiDb, matchId: string): PersistedMatchResult
     colors: result.colors ?? {},
     skins: result.skins ?? {},
     hats: result.hats ?? {},
+    survivalMs: result.survivalMs ?? {},
+    grabsBroken: result.grabsBroken ?? {},
   };
 };

@@ -104,6 +104,7 @@ const withMatchesTogether = (db: ApiDb, accountId: string): FriendRequestView[] 
     fromAccountId: request.fromAccountId,
     fromDisplayName: request.fromDisplayName,
     fromAvatarUrl: request.fromAvatarUrl,
+    fromColor: request.fromColor,
     sentAt: request.createdAt,
     matchesTogether: together.get(request.fromAccountId)?.matchesTogether ?? 0,
   }));
@@ -174,6 +175,7 @@ export const heartbeat = (
       id: invite.id,
       fromAccountId: invite.fromAccountId,
       fromDisplayName: invite.fromDisplayName,
+      fromColor: invite.fromColor,
       lobby: invite.lobbyRef,
       sentAt: invite.createdAt,
     })),
@@ -204,6 +206,7 @@ export const friendsOverview = async (
       accountId: row.accountId,
       displayName: row.displayName,
       avatarUrl: row.avatarUrl,
+      color: row.color,
       friendsSince: row.friendsSince,
       presence,
     };
@@ -283,6 +286,7 @@ export const recentPlayers = (db: ApiDb, accountId: string): { recent: RecentPla
       accountId: id,
       displayName: account.displayName,
       avatarUrl: account.avatarUrl,
+      color: account.color,
       matchesTogether: stats.matchesTogether,
       lastPlayedAt: stats.lastPlayedAt,
     });

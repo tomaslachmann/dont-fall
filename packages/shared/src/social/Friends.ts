@@ -33,6 +33,8 @@ export interface FriendView {
   accountId: string;
   displayName: string;
   avatarUrl: string | null;
+  /** The friend's bean Colour — what their avatar's disc wears without a picture (ADR 0110). */
+  color: number;
   /** When the friendship formed (ms epoch). */
   friendsSince: number;
   presence: FriendPresence;
@@ -43,6 +45,8 @@ export interface FriendRequestView {
   fromAccountId: string;
   fromDisplayName: string;
   fromAvatarUrl: string | null;
+  /** The sender's bean Colour — what their avatar's disc wears without a picture (ADR 0110). */
+  fromColor: number;
   /** When the request was sent (ms epoch). */
   sentAt: number;
   /** Finished matches you shared — the request's honest context (0 hides the line). */
@@ -53,6 +57,8 @@ export interface LobbyInviteView {
   id: string;
   fromAccountId: string;
   fromDisplayName: string;
+  /** The inviter's bean Colour — what their avatar's disc wears without a picture (ADR 0110). */
+  fromColor: number;
   lobby: LobbyRef;
   /** When the invite was sent (ms epoch). */
   sentAt: number;
@@ -62,6 +68,8 @@ export interface RecentPlayerView {
   accountId: string;
   displayName: string;
   avatarUrl: string | null;
+  /** Their bean Colour — what their avatar's disc wears without a picture (ADR 0110). */
+  color: number;
   /** Finished matches you shared. */
   matchesTogether: number;
   /** When you last shared one (ms epoch). */

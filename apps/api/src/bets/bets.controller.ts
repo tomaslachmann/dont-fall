@@ -3,7 +3,7 @@ import type { ApiDb } from "../db/db.js";
 import { bearerToken } from "../http/cookies.js";
 import { ServiceError } from "../http/errors.js";
 import { whoAmI } from "../auth/auth.service.js";
-import { getBettingState, openBettingRound, placeBet, settleBettingRound } from "./bets.service.js";
+import { closeBettingRound, getBettingState, openBettingRound, placeBet, settleBettingRound } from "./bets.service.js";
 
 /**
  * Betting routes — thin by contract, split by caller the same way the
@@ -13,8 +13,8 @@ import { getBettingState, openBettingRound, placeBet, settleBettingRound } from 
  *   `GET /bets/:matchId/:round` reads the board, live pools/odds and the
  *   ticker for the Spectator panel's poll.
  * - The match server (`X-Service-Token`, the `SERVICE_TOKEN` env both sides
- *   share) opens each Round when its Countdown starts and settles it when
- *   the Round ends. No token configured — or the wrong one — and both
+ *   share) opens each Round when it starts loading, closes its board when one
+ *   runner is left (ADR 0110), and settles it when the Round ends. No token configured — or the wrong one — and both
  *   calls are refused: betting stays closed rather than running unauthenticated.
  */
 export const registerBetsRoutes = (app: FastifyInstance, db: ApiDb, serviceToken: string | undefined): void => {
@@ -30,6 +30,12 @@ export const registerBetsRoutes = (app: FastifyInstance, db: ApiDb, serviceToken
     return reply
       .code(200)
       .send(openBettingRound(db, body as { matchId: string; round: number; closesAtMs: number; runners: [] }));
+  });
+
+  app.post("/bets/rounds/close", async (request, reply) => {
+    requireServiceToken(request.headers["x-service-token"]);
+    const body = (request.body ?? {}) as { matchId?: unknown; round?: unknown };
+    return reply.code(200).send(closeBettingRound(db, body as { matchId: string; round: number }, Date.now()));
   });
 
   app.post("/bets/rounds/settle", async (request, reply) => {

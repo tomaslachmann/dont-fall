@@ -6,6 +6,8 @@ import { DEFAULT_BINDINGS, type KeyBindings } from "@dont-fall/shared";
 import { sql } from "drizzle-orm";
 import { openDb, type ApiDb } from "../db/db.js";
 import {
+  getAccountAvatar,
+  setAccountAvatar,
   createAccountWithPassword,
   createSession,
   deleteSession,
@@ -321,5 +323,15 @@ describe("setBindings (M9 controls)", () => {
     db.run(sql`UPDATE accounts SET bindings = 'not-json{' WHERE id = ${account.id}`);
 
     expect(getAccountById(db, account.id)!.bindings).toBeNull();
+  });
+});
+
+describe("getAccountAvatar (ADR 0110)", () => {
+  it("serves the upload over the Discord picture, and the Discord picture over nothing", () => {
+    const account = upsertAccountFromDiscord(db, IDENTITY);
+    expect(getAccountAvatar(db, account.id)).toEqual({ discordUrl: IDENTITY.avatarUrl });
+    setAccountAvatar(db, account.id, Buffer.from("RIFF0000WEBP"), 5_000);
+    expect(getAccountAvatar(db, account.id)).toEqual({ image: Buffer.from("RIFF0000WEBP"), updatedAt: 5_000 });
+    expect(getAccountAvatar(db, "nobody")).toBeUndefined();
   });
 });

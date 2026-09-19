@@ -8,10 +8,12 @@ import {
   initPhysics,
   type CharacterSnapshotFields,
   type SimInputs,
+  wrapAngle,
 } from "@dont-fall/shared";
 import { beforeAll, describe, expect, it } from "vitest";
 import { PredictionLoop } from "./predictionLoop.js";
 import { PropPredictionController } from "./propPrediction.js";
+import { inputPerTick } from "./tickInput.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -87,7 +89,24 @@ describe("PredictionLoop — step (the fixed-timestep accumulator)", () => {
   it("clamps a long stall to MAX_STEPS_PER_FRAME rather than spiralling to catch up", () => {
     const loop = new PredictionLoop(newSim(), DEFAULT_CHARACTER_ID);
     expect(loop.step(IDLE, TICK_MS * (MAX_STEPS_PER_FRAME + 50))).toBe(MAX_STEPS_PER_FRAME);
-    expect(loop.tick).toBe(MAX_STEPS_PER_FRAME);
+    // Only the simulation is clamped (ADR 0109): the tick still covers the
+    // whole stall, the 50 ticks it could not run skipped.
+    expect(loop.tick).toBe(MAX_STEPS_PER_FRAME + 50);
+  });
+
+  it("advances the tick by the whole elapsed time through a stall, simulating only the ticks after the skip (ADR 0109)", () => {
+    const sim = newSim();
+    const loop = new PredictionLoop(sim, DEFAULT_CHARACTER_ID);
+    loop.seed(1000, 3);
+    loop.step(IDLE, TICK_MS * 2);
+    // A 30.5-tick stall: 25 skipped, the last 5 run, half a tick banked.
+    expect(loop.step(IDLE, TICK_MS * 30.5)).toBe(MAX_STEPS_PER_FRAME);
+    expect(loop.tick).toBe(1005 + 30);
+    expect(loop.accumulatorMs).toBeCloseTo(TICK_MS / 2, 6);
+    expect(loop.inputBuffer.map((e) => e.tick)).toEqual([1004, 1005, 1031, 1032, 1033, 1034, 1035]);
+    // The local sim's own Tick follows, so a Moving Segment is posed where the
+    // server has it rather than 25 ticks behind.
+    expect(sim.snapshot().tick).toBe(loop.tick);
   });
 
   it(
@@ -128,6 +147,103 @@ describe("PredictionLoop — step (the fixed-timestep accumulator)", () => {
     expect(loop.inputBuffer.map((e) => e.tick)).toEqual([1, 2, 3]);
     expect(loop.inputBuffer.every((e) => e.input === EAST)).toBe(true);
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position.x).toBeCloseTo(SPAWN.x, 5);
+  });
+});
+
+describe("PredictionLoop — step with each tick's own input (ADR 0109)", () => {
+  const facingOf = (loop: PredictionLoop): number[] => loop.inputBuffer.map((e) => e.input.facing);
+
+  it("hands the ticks of one frame increasing fractions, so each carries its own facing", () => {
+    const loop = new PredictionLoop(newSim(), DEFAULT_CHARACTER_ID);
+    const fractions: number[] = [];
+    const perTick = inputPerTick({ ...IDLE, facing: 0.7 }, 0);
+    loop.step((fraction) => {
+      fractions.push(fraction);
+      return perTick(fraction);
+    }, TICK_MS * 3.5);
+    // Boundaries at 1, 2 and 3 ticks into a 3.5-tick advance.
+    expect(fractions.map((f) => f * 3.5)).toEqual([1, 2, 3].map((k) => expect.closeTo(k, 9)));
+    expect(facingOf(loop)).toEqual([0.2, 0.4, 0.6].map((f) => expect.closeTo(f, 9)));
+  });
+
+  it("puts a tick where the accumulator crossed its boundary, carrying time from the frame before", () => {
+    const loop = new PredictionLoop(newSim(), DEFAULT_CHARACTER_ID);
+    loop.step(IDLE, TICK_MS * 0.75);
+    const fractions: number[] = [];
+    loop.step((fraction) => {
+      fractions.push(fraction);
+      return IDLE;
+    }, TICK_MS);
+    expect(fractions).toEqual([expect.closeTo(0.25, 9)]);
+  });
+
+  it("drops a clamped stall's backlog from the start of the advance, so its last tick meets the next frame", () => {
+    const loop = new PredictionLoop(newSim(), DEFAULT_CHARACTER_ID);
+    const advanceMs = TICK_MS * (MAX_STEPS_PER_FRAME + 50.25);
+    const fractions: number[] = [];
+    loop.step((fraction) => {
+      fractions.push(fraction);
+      return IDLE;
+    }, advanceMs);
+    expect(fractions).toHaveLength(MAX_STEPS_PER_FRAME);
+    expect(fractions.at(-1)! * advanceMs + loop.accumulatorMs).toBeCloseTo(advanceMs, 6);
+    for (let i = 1; i < fractions.length; i += 1) expect((fractions[i]! - fractions[i - 1]!) * advanceMs).toBeCloseTo(TICK_MS, 6);
+  });
+
+  it("gives every tick the current facing on the first frame, before there is a previous one", () => {
+    const loop = new PredictionLoop(newSim(), DEFAULT_CHARACTER_ID);
+    loop.step(inputPerTick({ ...IDLE, facing: 0.7 }, null), TICK_MS * 3);
+    expect(facingOf(loop)).toEqual([0.7, 0.7, 0.7]);
+  });
+
+  it("eases the facing across the ±π seam the short way", () => {
+    const loop = new PredictionLoop(newSim(), DEFAULT_CHARACTER_ID);
+    loop.step(inputPerTick({ ...IDLE, facing: -Math.PI + 0.1 }, Math.PI - 0.1), TICK_MS * 2);
+    expect(facingOf(loop)).toEqual([expect.closeTo(Math.PI, 9), expect.closeTo(-Math.PI + 0.1, 9)]);
+  });
+
+  /**
+   * A steady turn, sampled the way the frame loop samples it: once per frame,
+   * the body's yaw as the previous frame left it, on rAF timestamps with half a
+   * millisecond of noise and a dropped frame every couple of seconds.
+   */
+  const steadyTurnIncrements = (hz: number, perTick: boolean): number[] => {
+    const loop = new PredictionLoop(newSim(), DEFAULT_CHARACTER_ID);
+    const RAD_PER_S = 3;
+    let seed = 7;
+    const noise = (): number => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296;
+      return seed / 4294967296 - 0.5;
+    };
+    const period = 1000 / hz;
+    let nominal = 0;
+    let lastMs = 0;
+    let drawnFacing = 0;
+    let previousFacing: number | null = null;
+    const sent: number[] = [];
+    for (let frame = 0; frame < hz * 5; frame += 1) {
+      nominal += frame % 300 === 299 ? 2 * period : period;
+      const nowMs = nominal + noise();
+      const input = { ...IDLE, facing: drawnFacing };
+      loop.step(perTick ? inputPerTick(input, previousFacing) : input, nowMs - lastMs, () => {
+        sent.push(loop.inputBuffer.at(-1)!.input.facing);
+      });
+      previousFacing = input.facing;
+      drawnFacing = wrapAngle((RAD_PER_S * nowMs) / 1000);
+      lastMs = nowMs;
+    }
+    return sent.slice(5).map((facing, i) => wrapAngle(facing - sent[i + 4]!));
+  };
+  const cv = (xs: number[]): number => {
+    const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+    return Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / xs.length) / mean;
+  };
+
+  it("turns a steady turn sampled at 144 Hz into even per-tick steps", () => {
+    // One sample stamped on every tick of its frame: each tick carries 4 or 5
+    // frames' worth of turn. Eased per tick, the steps stay within a few %.
+    expect(cv(steadyTurnIncrements(144, false))).toBeGreaterThan(0.05);
+    expect(cv(steadyTurnIncrements(144, true))).toBeLessThan(0.05);
   });
 });
 

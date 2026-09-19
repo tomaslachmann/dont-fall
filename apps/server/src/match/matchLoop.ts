@@ -10,6 +10,7 @@ import {
   checkpointSplits,
   countdownMsLeft,
   liveRacePlaces,
+  msToTicks,
   recordCheckpointArrivals,
   resolveHostId,
   roundTimeLeftMs,
@@ -21,9 +22,11 @@ import {
   type SimState,
 } from "@dont-fall/shared";
 import { trySend } from "../net/wire.js";
-import { openBettingArgs, roundWinners } from "./betting.js";
+import { openBettingArgs, roundWinners, runnersLeft } from "./betting.js";
+import { survivalTimesMs } from "./career.js";
 import type { MatchRuntime } from "./matchRuntime.js";
 import type { TickPerf } from "./tickPerf.js";
+import { startTickScheduler, type TickScheduler } from "./tickScheduler.js";
 
 /**
  * The idle-phase broadcast decision (ADR 0057) — pure, so tests can pin the
@@ -57,6 +60,8 @@ export interface SaveRuntime {
   matchSkins: Map<string, string>;
   matchHats: Map<string, string>;
   totalFalls: Record<string, number>;
+  matchSurvivalMs: Map<string, number>;
+  matchGrabsBroken: Map<string, number>;
   matchResults: MatchRuntime["matchResults"];
 }
 
@@ -93,6 +98,8 @@ export const saveMatchResultIfDue = (rt: SaveRuntime, thisTick: number): void =>
     skins: Object.fromEntries(rt.matchSkins),
     hats: Object.fromEntries(rt.matchHats),
     totalFalls: { ...rt.totalFalls },
+    survivalMs: Object.fromEntries(rt.matchSurvivalMs),
+    grabsBroken: Object.fromEntries(rt.matchGrabsBroken),
     endedAtMs: Date.now(),
   };
   void rt.matchResults.saveResult(result).then((saved) => {
@@ -124,7 +131,8 @@ export const terminalCloseDue = (rt: CloseRuntime, nowMs: number): boolean => {
 };
 
 /**
- * The Match's fixed 30 Hz loop (ADR 0004): advance the phase, apply each
+ * The Match's fixed 30 Hz loop (ADR 0004; `tickScheduler.ts` holds it to a
+ * true 30 Hz, ADR 0109): advance the phase, apply each
  * client's input for *this* tick number (ADR 0027), step the shared
  * simulation, then broadcast a snapshot at the snapshot rate (ADR 0020).
  *
@@ -133,7 +141,7 @@ export const terminalCloseDue = (rt: CloseRuntime, nowMs: number): boolean => {
  * connection handler and the Lobby handlers sit in other files and still be
  * talking about the same Match.
  *
- * Returns the interval handle so the server can clear it on close.
+ * Returns the scheduler so the server can stop it on close.
  */
 export interface MatchLoopHooks {
   /** Fired once when a finished server should close itself (ADR 0059) — the server owns the actual close. */
@@ -142,7 +150,7 @@ export interface MatchLoopHooks {
   perf?: TickPerf | null;
 }
 
-export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS.Timeout => {
+export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): TickScheduler => {
   let consecutiveTickFailures = 0;
   // Snapshot rate is decoupled from the tick rate (ADR 0020): the sim steps
   // every tick, but a snapshot goes out only every `1000 / SNAPSHOT_HZ` ms of
@@ -151,7 +159,8 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
   const SNAPSHOT_INTERVAL_MS = 1000 / SNAPSHOT_HZ;
   let snapshotAccumulatorMs = 0;
   const perf = hooks?.perf ?? null;
-  const runTick = (): void => {
+  /** `dueMs` is the tick's own grid time from the scheduler (ADR 0109) — what its snapshot is stamped with. */
+  const runTick = (dueMs: number): void => {
     // The Match loop must survive a bad tick (a physics edge case, a NaN) —
     // one hiccup crashing the process would drop every connected player. Log
     // and carry on; the next tick usually recovers (ADR 0011).
@@ -249,12 +258,15 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
       // is either "RESULTS" or "COUNTDOWN", never both), so `rt.simulation`
       // is still the identical, unmutated world by the time `state` is read.
       if (nextMatch.phase === "RESULTS" && rt.match.phase === "ROUND_END") {
+        // ADR 0110: when these Standings move on without everyone's Ready —
+        // the Tick `advanceMatchPhase` times out on, on this Tick's grid.
+        rt.standingsDeadlineMs = dueMs + msToTicks(rt.config.standingsReadyTimeoutMs) * TICK_MS;
         precomputedState = rt.simulation.snapshot();
         const finished = buildRoundResult(precomputedState.characters, [...rt.lobbyPlayers.values()], rt.dnf);
         // This Round's number for betting — the pool it opened as
-        // (`finishedRounds + 1`), whether or not the Round below turns out
-        // to have been played at all.
-        const roundNumber = rt.roundResults.length + 1;
+        // (`rt.round`, set on LOADING entry), whether or not the Round below
+        // turns out to have been played at all.
+        const roundNumber = rt.round;
         // A Round every racer left mid-run (all rows DNF — found live
         // 2026-09-18) is not a result: persisting its `rows: []` is exactly
         // what the API's own validation refuses, which left the terminal
@@ -326,6 +338,19 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
           if (hat) rt.matchHats.set(row.id, hat);
           rt.totalFalls[row.id] = (rt.totalFalls[row.id] ?? 0) + row.fallCount;
         }
+        // ADR 0110: the career's GRABS BROKEN and BEST SURVIVAL, off the world
+        // this Round was played in. Time alive runs from the Round's start to
+        // its elimination, or to the Round's end for whoever was still in it.
+        for (const [id, won] of Object.entries(rt.simulation.strugglesWon())) {
+          rt.matchGrabsBroken.set(id, (rt.matchGrabsBroken.get(id) ?? 0) + won);
+        }
+        if (played && isSurvival) {
+          // `rt.match` is still ROUND_END here: its start is the Round's end.
+          const times = survivalTimesMs(precomputedState.characters, rt.roundStartTick, rt.match.phaseStartTick);
+          for (const [id, aliveMs] of Object.entries(times)) {
+            rt.matchSurvivalMs.set(id, Math.max(rt.matchSurvivalMs.get(id) ?? 0, aliveMs));
+          }
+        }
         if (rt.canContinueMatch()) {
           // The whole Match's structure was already kicked off back when
           // `start` fired (`lobby.ts`) — Round 1 alone almost always
@@ -356,6 +381,8 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
         // Nobody has this Round's world yet (ADR 0089) — including whoever
         // reported for the Round that just ended.
         rt.loaded.clear();
+        rt.round = rt.roundResults.length + 1;
+        rt.standingsDeadlineMs = null;
         // Ticket 14: a fresh Countdown opens a fresh betting Round — roster,
         // Round number and close time go to the API, which owns pools from
         // here. Fire-and-forget: no round row reads as closed, never as open.
@@ -496,6 +523,12 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
         allQualified: isSurvival ? survivorTargetReached(state.characters, rt.roundRules.survivorTarget) : allQualified(state.characters),
         timeExpired: rt.match.phase === "RUNNING" && timeLeftMs === 0,
       };
+      // ADR 0110: the board stays open while two or more are still running,
+      // and closes the Tick only one is left. Fire-and-forget, once a Round.
+      if (rt.match.phase === "RUNNING" && rt.bettingClosedRound !== rt.round && runnersLeft(state.characters) <= 1) {
+        rt.bettingClosedRound = rt.round;
+        void rt.betting.closeRound({ matchId: rt.config.matchId, round: rt.round });
+      }
 
       snapshotAccumulatorMs += TICK_MS;
       if (snapshotAccumulatorMs < SNAPSHOT_INTERVAL_MS) return;
@@ -504,8 +537,19 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
       // is this client's own un-applied input backlog (feeds its LEAD, ADR 0021).
       // One `JSON.stringify` per client — negligible at M2 scale, and the shape
       // binary + delta encoding will need anyway.
-      const serverTimeMs = performance.now();
+      //
+      // `serverTimeMs` is when this tick was *due*, not `performance.now()`
+      // here (ADR 0109): the moment it happened to run carries the timer's
+      // lateness and this tick's own work, a few ms that differ every
+      // snapshot, and the client anchors its server clock, the Countdown's end
+      // and the run stopwatches on it. Same `performance.now()` timeline as
+      // the pong, so TimeSync's offset (ADR 0019) and ADR 0027's tick estimate
+      // still hold.
+      const serverTimeMs = dueMs;
       const countdown = countdownMsLeft(rt.match, rt.serverTick, rt.config.countdownMs);
+      // Only while these Standings can actually move on: a terminal RESULTS
+      // never starts another Round.
+      const standingsDeadline = rt.match.phase === "RESULTS" && rt.canContinueMatch() ? rt.standingsDeadlineMs : null;
       // Idle phases (ADR 0057) — LOBBY and RESULTS, where input is locked,
       // the world doesn't step, and the clock doesn't run: the full payload
       // below would be byte-identical 15× a second, so broadcast only when
@@ -569,6 +613,8 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
           dnf: rt.dnf,
           standingsReady: [...rt.standingsReady],
           loaded: [...rt.loaded],
+          round: rt.round,
+          standingsDeadlineMs: standingsDeadline,
           roundResults: rt.roundResults,
           roundsRemaining: rt.canContinueMatch(),
           matchOver: rt.resultsSavedMatchId === null ? null : { matchId: rt.resultsSavedMatchId },
@@ -603,6 +649,8 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
             trackId: rt.fetched.id,
             trackRevision: rt.fetched.revision,
             lobby: lobbySnapshot,
+            round: rt.round,
+            standingsDeadlineMs: standingsDeadline,
             roundResults: rt.roundResults,
             // Recomputed here, not reused from the `advanceMatchPhase` call
             // above (code review): that one deliberately reads the
@@ -627,10 +675,10 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): NodeJS
       consecutiveTickFailures += 1;
     }
   };
-  if (!perf) return setInterval(runTick, TICK_MS);
-  return setInterval(() => {
+  if (!perf) return startTickScheduler(runTick);
+  return startTickScheduler((dueMs) => {
     const started = performance.now();
-    runTick();
+    runTick(dueMs);
     perf.recordTick(performance.now() - started, rt.match.phase, rt.sockets.size, rt.simulation.lastTickTimings());
-  }, TICK_MS);
+  });
 };

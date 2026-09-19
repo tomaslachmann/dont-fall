@@ -1,19 +1,21 @@
 import {
+  TICK_MS,
   buildResults,
-  matchScore,
+  leadReceiveQueueDepth,
   matchWinner,
-  rankWithTies,
   type ServerMessage,
   type SnapshotMessage,
 } from "@dont-fall/shared";
 import { setMusicPhase } from "../audio/music.js";
 import { toLobbySnapshot, type LobbySnapshot } from "../lib/socket/lobbyConnection.js";
+import { heldSinceTickAfter } from "./frameLoop.js";
 import { detectHitTaken } from "./hitTaken.js";
 import { buildRoundHud } from "./roundHud.js";
 import { needsTrackReload } from "./roundTrack.js";
 import { detectRunEnd } from "./runEnd.js";
 import { sendLoaded, swapTrack, type GameSession } from "./session.js";
-import type { StandingsRow, StandingsSnapshot } from "./types.js";
+import { localDeadline, standingsRows } from "./standings.js";
+import type { StandingsSnapshot } from "./types.js";
 
 /**
  * What the server says, applied.
@@ -30,13 +32,17 @@ import type { StandingsRow, StandingsSnapshot } from "./types.js";
  * *previous* phase while this runs, which is what makes RUNNING entry an edge
  * rather than a level.
  */
+/** How far into the Round this snapshot's Tick is, on the server's clock: the Time Limit less the time left. */
+const roundElapsedMs = (message: SnapshotMessage): number =>
+  Math.max(0, message.roundRules.timeLimitMs - message.timeLeftMs);
+
 const applyRoundClock = (session: GameSession, message: SnapshotMessage): void => {
   const { match, run } = session;
   match.timeLeftMs = message.timeLeftMs;
-  // Ticket 14: RUNNING entry anchors the run stopwatches to the server's own
-  // clock and re-arms the once-per-Round verdict.
+  match.roundElapsedMs = message.phase === "RUNNING" ? roundElapsedMs(message) : null;
+  match.livePlaces = message.liveRace?.places ?? null;
+  // Ticket 14: RUNNING entry re-arms the once-per-Round verdict.
   if (message.phase === "RUNNING" && match.phase !== "RUNNING") {
-    match.roundStartedAtServerMs = message.serverTimeMs;
     run.verdictFired = false;
     run.wasFinished = false;
     run.wasEliminated = false;
@@ -101,15 +107,21 @@ const applyOwnRun = (session: GameSession, message: SnapshotMessage): void => {
   }
   const myChar = message.state.characters[myId];
   if (callbacks.onRunEnd && !run.verdictFired && myChar !== undefined) {
-    const elapsed = message.serverTimeMs - session.match.roundStartedAtServerMs;
+    // Off the server's Ticks, not arrival (ADR 0110): the finish is the
+    // Tick it happened on, however many snapshots later this one is — the
+    // same count Personal Bests are stored from.
+    const elapsed = roundElapsedMs(message);
+    const raceTimeMs =
+      myChar.finishTick === null ? elapsed : Math.max(0, elapsed - (message.state.tick - myChar.finishTick) * TICK_MS);
     const event = detectRunEnd({
       wasFinished: run.wasFinished,
       wasEliminated: run.wasEliminated,
       character: myChar,
       characters: message.state.characters,
       myId,
-      raceTimeMs: elapsed,
+      raceTimeMs,
       survivedMs: elapsed,
+      nicknameOf: (id) => session.roster.known.get(id) ?? "Player",
     });
     if (event) {
       run.verdictFired = true;
@@ -142,6 +154,7 @@ const raiseRoundHud = (session: GameSession, message: SnapshotMessage): void => 
     liveRace: message.liveRace,
     checkpoints: session.world.checkpointCount,
     nicknameOf: (id) => session.roster.known.get(id) ?? id,
+    leftIds: message.dnf.map((entry) => entry.id),
     tick: message.state.tick,
     // ADR 0104: a hold's meter and wind-up move on the press, not a round trip later.
     predicted: session.world.localSim.snapshot().characters[session.myId] ?? { escapeProgress: 0, spinMs: 0 },
@@ -170,31 +183,17 @@ const raiseStandings = (session: GameSession, message: SnapshotMessage): void =>
   // alone (code review): that ignores the population half of the gate, and
   // used to show a "Ready for next Round" button the server would never honour.
   const roundsRemaining = message.roundsRemaining;
-
-  // `matchScore` (packages/shared, ADR 0049) is the only place this arithmetic
-  // lives — never re-derived here, only laid out for display. `connectedIds`
-  // covers a Player who has joined but not yet raced (score 0, still worth
-  // listing); `gone` is ticket 08's contract: scored in some Round, absent
-  // from `lobby.players` now.
-  const totals = matchScore(message.roundResults);
-  const connectedIds = new Set(message.lobby.players.map((player) => player.id));
-  const confirmedIds = new Set(message.standingsReady);
-  const rowIds = new Set([...Object.keys(totals), ...connectedIds]);
-  const unranked = Array.from(rowIds, (id) => ({
-    id,
-    nickname: session.roster.known.get(id) ?? id,
-    score: totals[id] ?? 0,
-    gone: !connectedIds.has(id),
-    confirmed: confirmedIds.has(id),
-  })).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
-  const placements = rankWithTies(unranked, (prev, curr) => prev.score === curr.score);
-  const standings: StandingsRow[] = unranked.map((row, i) => ({ ...row, placement: placements[i]! }));
-
+  const { timeSync } = session.net;
   const snapshot: StandingsSnapshot = {
     results,
     roundsRemaining,
-    standings,
+    standings: standingsRows(message, (id) => session.roster.known.get(id) ?? id),
     winners: roundsRemaining ? [] : matchWinner(message.roundResults),
+    autoStartAtMs: localDeadline(
+      message.standingsDeadlineMs,
+      timeSync.ready ? performance.now() + timeSync.serverClockOffsetMs : null,
+      Date.now(),
+    ),
   };
   session.gates.standings.raise(snapshot, onStandings);
 };
@@ -288,6 +287,16 @@ export const handleServerMessage = (session: GameSession, message: ServerMessage
   }
   if (message.type !== "snapshot") return;
 
+  // ADR 0109: the Tick a hold taken on the feet began on, off the edge between
+  // this Snapshot and the one before — every Snapshot, not every frame, so a
+  // frame that brings two cannot move it a Tick late.
+  const myId = session.myId;
+  session.net.heldSinceTick = heldSinceTickAfter(
+    session.net.heldSinceTick,
+    session.net.latestSnapshot?.characters[myId]?.motionState,
+    message.state.characters[myId]?.motionState,
+    message.state.tick,
+  );
   session.net.latestSnapshot = message.state;
   session.net.serverInterp.receive(message.state, receivedAtMs, message.serverTimeMs);
   applyRoundClock(session, message);
@@ -297,7 +306,7 @@ export const handleServerMessage = (session: GameSession, message: ServerMessage
   raiseLobby(session, message);
   raiseStandings(session, message);
   answerLoadingGate(session, message);
-  session.net.smoothedQueueDepth += (message.commandQueueDepth - session.net.smoothedQueueDepth) * 0.2;
+  leadReceiveQueueDepth(session.net.lead, message.commandQueueDepth);
   followTrack(session, message);
   reconcile(session, message);
 };

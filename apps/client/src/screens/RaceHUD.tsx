@@ -1,6 +1,6 @@
 import Stage from '../ui/Stage';
 import Avatar from '../ui/Avatar';
-import type { Skin } from '../ui/Avatar';
+import type { AvatarLook } from '../lib/avatar.js';
 import Pill from '../ui/Pill';
 import DashMeter from './DashMeter';
 import { Pips } from '../ui/Meter';
@@ -24,11 +24,14 @@ export interface RaceHUDProps {
   /** "PB 01:19.904"; `null` (no record, or an anonymous seat) hides the line. */
   personalBest: string | null;
   /** Who is right behind you; `null` hides the callout. */
-  threat: { name: string; skin: Skin } | null;
+  threat: { name: string; look: AvatarLook } | null;
   /** Dash recharge, 0–1 (ADR 0092). */
   dashCharge: number;
   /** Whether the Dash can fire right now. */
   dashReady: boolean;
+  /** Whole seconds until the Dash is back, and its key — the charge card (ADR 0110). */
+  dashRechargeS: number;
+  dashKey: string;
   feel?: Feel;
 }
 
@@ -39,7 +42,7 @@ export interface RaceHUDProps {
  */
 export default function RaceHUD({
   position, field, time, ms, delta, deltaAhead, checkpoint, checkpoints, personalBest, threat,
-  dashCharge, dashReady, feel,
+  dashCharge, dashReady, dashRechargeS, dashKey, feel,
 }: RaceHUDProps) {
   return (
     <Stage feel={feel} className={s.screen}>
@@ -72,12 +75,12 @@ export default function RaceHUD({
       </div>
 
       <div className={s.dash}>
-        <DashMeter charge={dashCharge} ready={dashReady} />
+        <DashMeter charge={dashCharge} ready={dashReady} rechargeS={dashRechargeS} dashKey={dashKey} />
       </div>
 
       {threat && (
         <div className={s.threat}>
-          <Avatar skin={threat.skin} size={2.65} />
+          <Avatar look={threat.look} size={2.65} />
           <span>{threat.name} IS RIGHT BEHIND YOU</span>
           <svg viewBox="0 0 14 14" aria-hidden="true"><path d="M7 14L0 4h14z" /></svg>
         </div>

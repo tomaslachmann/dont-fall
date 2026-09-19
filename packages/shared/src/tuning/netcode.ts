@@ -31,6 +31,82 @@ export const GRACE_WINDOW_MS = 90_000;
 export const INTERP_RATIO = 2;
 
 /**
+ * How fast the viewer's playout floor may rise on its own, in ms per ms of
+ * local time (ADR 0109). The floor is the least-delayed Snapshot arrival — the
+ * Interpolation Delay is counted from it, not from the server's "now", so
+ * one-way latency no longer eats it — and it drops at once to any arrival
+ * that lags less. 3%: in steady play it rides a few ms above the least lag,
+ * and a server ticking up to 3% slow is kept up with rather than run ahead of
+ * (a bare `setInterval` ran ~2% slow natively, far more in Docker — which is
+ * why ADR 0109 also gives the server a scheduler that holds a true 30 Hz).
+ * A step up in lag is not left to this rate, which took ~10 s to follow
+ * +300 ms: {@link PLAYOUT_FLOOR_WINDOW_MS} catches the floor up within a
+ * window's length.
+ */
+export const PLAYOUT_FLOOR_RISE_RATE = 0.03;
+
+/**
+ * How far back (ms of local time) the playout floor's lower bound looks (ADR
+ * 0109): the floor is never below the least lag of the Snapshots that arrived
+ * in this long. A lag that steps up — a Wi-Fi roam, a route change, a server
+ * stall its scheduler forgave, which shifts every later Snapshot for good — is
+ * then taken up once the window has seen only the new lag, where the rise
+ * alone kept the drawn world past the newest Snapshot, stepping at the
+ * snapshot rate, for 3 s after +100 ms. A step up is now followed within
+ * this long plus the slew ({@link PLAYOUT_SLEW_MAX_RATE}) — it stops holding
+ * 1.4 s after +100 ms and 2.5–2.9 s after +200–260 ms — and one big enough
+ * to pass {@link PLAYOUT_SNAP_MS} (~280 ms) in ~1.4 s, through one backward
+ * jump. One second: the harness's steady-state numbers are identical with and
+ * without it at RTT 2–120 ms, 60 and 144 Hz, since the rise already sits
+ * above a second's least lag.
+ */
+export const PLAYOUT_FLOOR_WINDOW_MS = 1000;
+
+/**
+ * Longest gap (ms) between two Snapshot arrivals across which
+ * {@link PLAYOUT_FLOOR_WINDOW_MS}'s bound still holds (ADR 0109). Past it the
+ * window does not count until arrivals have covered a whole one again, and the
+ * floor is {@link PLAYOUT_FLOOR_RISE_RATE}'s alone. Two cases need that: the
+ * burst that lands when a transport stall clears, whose Snapshots lag by up to
+ * the stall — a window of little else would pull the floor up by that much
+ * and draw the world back — and an idle phase's sparse Snapshots (ADR 0057).
+ * 200 ms is six Snapshot intervals at 30 Hz, far past any jitter.
+ */
+export const PLAYOUT_FLOOR_WINDOW_MAX_GAP_MS = 200;
+
+/**
+ * Time constant (ms) of the playout clock's correction toward its target
+ * (ADR 0109): each frame it closes `elapsed / this` of the gap. In steady play
+ * the floor moves a few ms at a time, so the drawn world runs within ~2% of
+ * real time on any frame (250 ms let that reach ~4%).
+ */
+export const PLAYOUT_SLEW_TIME_MS = 500;
+
+/**
+ * The most the playout clock may run fast or slow while it corrects, as a
+ * fraction of elapsed wall time (ADR 0109). Reached only past a 75 ms gap
+ * (`PLAYOUT_SLEW_TIME_MS × this`), so in practice only when the floor has
+ * moved a long way at once: dropped — a first Snapshot received 200 ms late is
+ * within a third of a Tick in 2 s — or risen through
+ * {@link PLAYOUT_FLOOR_WINDOW_MS} after a step up in lag, which it then
+ * follows at this rate. Valve's clock correction goes to 20%.
+ */
+export const PLAYOUT_SLEW_MAX_RATE = 0.15;
+
+/**
+ * Gap (ms) past which the playout clock jumps to its target instead of
+ * slewing (ADR 0109): when the target moves this far at once. In practice
+ * that is the floor dropping because the first Snapshot landed late, and the
+ * drawn world jumps forward. It jumps backward — the only way it ever does —
+ * when the lag steps up by more than this plus the few tens of ms the floor
+ * rose meanwhile: once {@link PLAYOUT_FLOOR_WINDOW_MS} has seen the new lag,
+ * or across an arrival gap over ~8 s, long enough for the rise alone. At
+ * {@link PLAYOUT_SLEW_MAX_RATE} this much would take seconds of visible slow
+ * or fast motion, which costs more than one jump.
+ */
+export const PLAYOUT_SNAP_MS = 250;
+
+/**
  * How many of the last unacknowledged inputs the client re-sends in every
  * packet (ADR 0021) — a fixed count, not RTT-adaptive (Quake `cl_packetdup`).
  * The packet always carries the current tick's input plus this many older ones.
@@ -109,6 +185,21 @@ export const PROP_ERR_SETTLED_M = 0.02;
 /** `|error.rotation.w|` above which the residual rotation offset counts as settled (≈3.6°). */
 export const PROP_ERR_ROT_SETTLED_DOT = 0.9995;
 
+/**
+ * Least speed (units/s) the server gives a handed-back Prop for its error
+ * offset to shrink along that motion only as fast as the drawn server pose
+ * advances (ADR 0022, amended by ADR 0109; `decayHandedBackError`), so a Prop
+ * still sliding is drawn pausing rather than moving backward while the
+ * server's past catches up with where the prediction left it. Below it the
+ * offset decays freely: a Prop that slow is settling, and an offset that is a
+ * real mispredict (the server's stopped short) is let go back rather than held
+ * for as long as the body creeps — Rapier only sleeps one after half a second
+ * under ~0.1 u/s. Nothing is lost under it: the offset a hand-back leaves on a
+ * Prop that slow is under {@link PROP_ERR_NEAR_M} at any RTT to 120 ms, and at
+ * the near half-life that never shrinks faster than the Prop moves.
+ */
+export const PROP_HANDBACK_MIN_SPEED = 0.5;
+
 // --- Client reconciliation (M2 ticket 05, ADR 0013) -------------------------
 
 /**
@@ -144,21 +235,157 @@ export const RECONCILE_HARDSNAP_M = PROP_ERR_HARDSNAP_M;
 export const CAPSULE_ERR_HALFLIFE_MS = 100;
 
 /**
+ * How far behind (ms) a remote rig's drawn yaw trails its Character's
+ * interpolated `facing` through a steady turn — the smoothing time of the
+ * critically damped follow every remote rig is turned through (ADR 0109,
+ * `remoteYaw.ts`). Render-only smoothing of a network artefact, like
+ * {@link CAPSULE_ERR_HALFLIFE_MS}: a Tick the server ran on a repeated input
+ * holds the facing still for 33 ms and the next steps it twice as far, and a
+ * turn shows that where a run does not. ADR 0109's source fixes make such
+ * Ticks rare; this evens out the rest.
+ *
+ * Measured end to end, on the real integrated classes with every ADR 0109
+ * fix in: the smallest value that keeps a turning rig's still time (frames
+ * turning at under a tenth of the turn's mean speed) under 0.5 frame/s on
+ * typical links. It costs 17 ms of turn lag on a 60 Hz screen and 21.5 ms
+ * on a 144 Hz one (the trail is this less half a frame). After the facing
+ * stops, the drawn turn stays above a tenth of its speed for 49 ms — longer
+ * than a one-Tick hold's 33 ms — where 20 ms keeps it for only 39. The
+ * one-Tick-hold tests (`remoteYaw.test.ts`, the pool's) run at the worst
+ * frame phase and fail below ~24.8 ms, so they bound this value from below.
+ */
+export const REMOTE_YAW_SMOOTH_MS = 25;
+
+/**
  * Below this magnitude (units) the local Character's render-time correction
  * offset (ADR 0026) is floored to exactly zero instead of left to fade forever
  * at diminishing, invisible fractions — a few millimetres.
  */
 export const CAPSULE_ERR_FLAT_EPSILON_M = 0.0005;
 
+// --- The prediction LEAD (ADR 0021, ADR 0026, ADR 0109; `net/lead.ts`) ------
+
 /**
- * Fraction of a tick the client's LEAD feedback drains per frame while the
- * server's command queue sits over the target band (ADR 0026, ADR 0021's
- * gentle-drain amendment) — continuous and small, never a full tick at once,
- * which would yank the render-interpolation alpha in a single frame (a second,
- * connection-quality-scaled backward pop, distinct from the position
- * correction {@link RECONCILE_POSITION_EPSILON} governs).
+ * The low edge of the band the client's LEAD feedback holds the server's
+ * smoothed `commandQueueDepth` in (ADR 0021): under it the queue is starving —
+ * the server is about to run a Tick no input has arrived for and repeat the
+ * last one — so a tick is injected, at most once per
+ * {@link LEAD_INJECT_COOLDOWN_MS}.
  */
-export const LEAD_DRAIN_FRACTION = 0.15;
+export const QUEUE_DEPTH_LOW = 1;
+
+/**
+ * The high edge of the LEAD band (ADR 0021): over it the queue is fat — every
+ * input waits longer than it has to before the server runs it — so the
+ * prediction clock drains by {@link LEAD_DRAIN_TIME_FRACTION}. Between the two
+ * edges nothing is adjusted, which is what holds the queue near ~1.5 without
+ * hunting.
+ */
+export const QUEUE_DEPTH_HIGH = 2.5;
+
+/**
+ * The smoothed depth a fresh LEAD controller starts from (ADR 0021): inside
+ * the band, where the controller holds the queue, so the average begins at
+ * "healthy" and the first reports move it from there. Nothing acts on it
+ * before one arrives ({@link LEAD_FEEDBACK_FRESH_MS}).
+ */
+export const QUEUE_DEPTH_START = 1.5;
+
+/**
+ * How far each reported `commandQueueDepth` moves the LEAD's moving average,
+ * as a share of the way to it (ADR 0021): a fifth, so five reports — ~170 ms
+ * at {@link SNAPSHOT_HZ} — move it two-thirds of the way. A single report is
+ * one Tick's queue, which jitter alone swings by a tick or two; the average is
+ * what the band is judged on. Only the end of
+ * {@link LEAD_DRAIN_SATURATED_FRACTION}'s drain reads the newest report.
+ */
+export const QUEUE_DEPTH_REPORT_WEIGHT = 0.2;
+
+/**
+ * Share of each frame's elapsed time the client's LEAD feedback gives up while
+ * the server's command queue sits over the target band (ADR 0026, ADR 0021's
+ * gentle-drain amendment, counted in time per ADR 0109) — continuous and
+ * small, never a full tick at once, which would yank the render-interpolation
+ * alpha in a single frame (a second, connection-quality-scaled backward pop,
+ * distinct from the position correction {@link RECONCILE_POSITION_EPSILON}
+ * governs).
+ *
+ * It is time dilation of the owner's own prediction: while it runs, the local
+ * Character is drawn this much slower, and each tick sent carries 1/(1 − this)
+ * of the body's usual turn. So the gentlest value that still converges (ADR
+ * 0109's harness: a true 30 Hz server, 60–240 Hz displays, RTT 40–120 ms). At
+ * 0.1 a surplus tick is gone after 333 ms of draining, 0.8–1 s after it
+ * appears once the feedback has seen it. 0.3 recovered 0.3 s sooner but
+ * slowed the owner by 30% and left the per-tick turn less even (CV 5–13%
+ * against 3–8%). 0.05 was a little smoother but took 1.3–1.5 s. The 3 ticks a
+ * second 0.1 can drain is far more than a server on its true 30 Hz leaves
+ * over, though not enough for the 25 Hz a `setInterval` server drifted to in
+ * Docker before ADR 0109. It is too slow to climb out of a surplus the size of
+ * the server's whole queue, which is what {@link LEAD_DRAIN_SATURATED_FRACTION}
+ * is for.
+ */
+export const LEAD_DRAIN_TIME_FRACTION = 0.1;
+
+/**
+ * The LEAD's drain once the server's queue is at its cap — a smoothed depth of
+ * {@link MAX_QUEUED_INPUTS} − 1 or more, and the newest report there too (ADR
+ * 0109). There the server keeps only the newest inputs and sheds the oldest,
+ * which is the one it was about to run, so none of this Player's input is
+ * applied until the lead comes back down. At {@link LEAD_DRAIN_TIME_FRACTION}'s
+ * 3 ticks a second that took 2.2 s after a 500 ms server stall and 7.3 s after
+ * a 1 s one, where the frame-counted controller before ADR 0109 took 0.8 s and
+ * 3.5 s at 60 Hz.
+ *
+ * The trade: the owner's own Character is drawn at half speed while it runs,
+ * and each tick it sends carries twice the body's usual turn — but the server
+ * is already discarding those inputs, so a brief half-speed owner costs less
+ * than a second of ignored input. Measured (real `PredictionLoop`,
+ * `InputRouter` and controller; a true 30 Hz server sending a Snapshot every
+ * other Tick, 40 ms one-way, 60 and 144 Hz alike): 0.5 takes the 500 ms stall
+ * to 0.77 s and the 1 s one to 1.8 s, and a 3 s spike of +200 ms one-way from
+ * 1.4 s to 0.8 s. 0.3 left 2.7 s on the 1 s stall; 0.75 saved another 0.5 s
+ * there for a quarter-speed owner. It never fires in steady play: nothing
+ * reaches the cap without a stall or a spike.
+ *
+ * How fast it gets out depends on latency: the drain runs on for a round trip
+ * after the queue is back under the cap, and a long enough round trip carries
+ * the queue on into starvation. With a Snapshot every Tick, as
+ * {@link SNAPSHOT_HZ} sends them, the two stalls take 0.6 s and 1.6 s at 40 ms
+ * one-way (2.6 s and 7.6 s at the ordinary drain), and 1.6 s and 2.6 s at
+ * 150 ms, starving 7–10 Ticks after the queue is back under the cap. Left on
+ * the average rather than the newest report, the drain starved 21 there and
+ * took 1.9 s and 2.9 s.
+ */
+export const LEAD_DRAIN_SATURATED_FRACTION = 0.5;
+
+/**
+ * Least time (ms) between two ticks the client's LEAD feedback injects while
+ * the server's command queue is starving (ADR 0021, ADR 0109). An inject shows
+ * in the reported depth a round trip later, plus the time the per-snapshot
+ * moving average takes to move, so a shorter cooldown fires a second tick
+ * before the first is seen: after a 200 ms jump in RTT, 200 ms overshot to a
+ * smoothed depth of 2.95 where 300 ms held 2.5, and every surplus tick then
+ * costs a second of {@link LEAD_DRAIN_TIME_FRACTION} to drain. The ticks
+ * starved on the way were the same at 100–400 ms.
+ */
+export const LEAD_INJECT_COOLDOWN_MS = 300;
+
+/**
+ * How recent (ms) the server's last queue-depth report must be for the LEAD to
+ * act on it (ADR 0109). The depth only changes when a Snapshot arrives, and
+ * outside COUNTDOWN, RUNNING and ROUND_END a Snapshot is sent only when
+ * something in it changed (ADR 0057) while the server keeps consuming inputs
+ * every Tick — so an average left outside the band on the last live Snapshot
+ * used to go on injecting or draining blind through the whole of RESULTS (up
+ * to 30 ticks of lead in its 10 s), and the next Round on the same Track could
+ * start with the server ignoring this Player's input for seconds. A stalled
+ * link is the same case.
+ *
+ * Several Snapshot intervals at {@link SNAPSHOT_HZ}, so ordinary jitter never
+ * gates a live Round, and shorter than {@link LEAD_INJECT_COOLDOWN_MS}, so one
+ * idle-phase report can buy at most one inject.
+ */
+export const LEAD_FEEDBACK_FRESH_MS = 250;
 
 /**
  * Cap on how many recent prediction ticks the client keeps buffered inputs /

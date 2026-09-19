@@ -149,9 +149,11 @@ export class FreeLookCamera {
   private isLocked = false;
   private readonly detach: () => void;
   private readonly doc: Document;
+  private readonly element: HTMLElement;
 
   constructor(element: HTMLElement, doc: Document = document) {
     this.doc = doc;
+    this.element = element;
     const onClick: EventListener = () => {
       // Rejects if clicked during the browser's post-Esc cooldown; pointerlockerror
       // keeps isLocked correct, so we just swallow the noise.
@@ -185,6 +187,15 @@ export class FreeLookCamera {
   /** Whether the pointer is currently locked (drives the "click to look" prompt). */
   get locked(): boolean {
     return this.isLocked;
+  }
+
+  /**
+   * Takes the pointer back (ADR 0110) — the pause sheet's resume. Needs the
+   * user gesture it is called from; a refusal leaves the "click to look"
+   * prompt up, as after any lost lock.
+   */
+  relock(): void {
+    if (!this.isLocked) void this.element.requestPointerLock()?.catch(() => {});
   }
 
   /**

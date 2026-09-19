@@ -4,7 +4,7 @@ import type { LobbyRef } from "@dont-fall/shared";
 import { lobbyPath, resolveLobbyRef } from "../lib/api/lobbyBroker.js";
 import { flash } from "../lib/flash.js";
 import { useFriends } from "../lib/hooks/useFriends.js";
-import { skinForPlayerId } from "../lib/avatarSkins.js";
+import { avatarLook } from "../lib/avatar.js";
 import { recentNote, requestNote, tabOf, toFriendRow } from "../lib/friendsView.js";
 import Friends from "./Friends.js";
 
@@ -24,9 +24,19 @@ import Friends from "./Friends.js";
 export function FriendsRoute() {
   const navigate = useNavigate();
   const location = useLocation();
-  const friends = useFriends();
-
   const lobbyRef = (location.state as { lobbyRef?: LobbyRef } | null)?.lobbyRef ?? null;
+  return <FriendsPanel lobbyRef={lobbyRef} onBack={() => navigate("/")} />;
+}
+
+/**
+ * The Friends screen with its handlers — the route's, and the Lobby's own
+ * INVITE FRIENDS (ADR 0110), which opens it in place with its Lobby to invite
+ * to: leaving the Lobby's route would close its socket. Every invite reports
+ * on the flash stack either way.
+ */
+export function FriendsPanel({ lobbyRef, onBack }: { lobbyRef: LobbyRef | null; onBack: () => void }) {
+  const navigate = useNavigate();
+  const friends = useFriends();
 
   const rows = useMemo(() => {
     const now = Date.now();
@@ -35,7 +45,7 @@ export function FriendsRoute() {
       requests: friends.requests.map((request) => ({
         id: request.id,
         name: request.fromDisplayName,
-        skin: skinForPlayerId(request.fromAccountId),
+        look: avatarLook(request.fromAccountId, request.fromColor),
         note: requestNote(request.matchesTogether),
       })),
       friends: friends.friends.map((friend) => {
@@ -43,7 +53,7 @@ export function FriendsRoute() {
         return {
           accountId: row.accountId,
           name: row.displayName,
-          skin: skinForPlayerId(row.accountId),
+          look: avatarLook(friend.accountId, friend.color),
           status: row.status,
           tab: tabOf(friend),
           ...(row.joinable ? { joinable: true as const } : {}),
@@ -54,7 +64,7 @@ export function FriendsRoute() {
       recent: friends.recent.map((player) => ({
         accountId: player.accountId,
         name: player.displayName,
-        skin: skinForPlayerId(player.accountId),
+        look: avatarLook(player.accountId, player.color),
         note: recentNote(player, now),
         requested: friendIds.has(player.accountId) || friends.requestedIds.includes(player.accountId),
       })),
@@ -123,7 +133,7 @@ export function FriendsRoute() {
       ownCode={friends.code}
       isLoading={friends.isLoading}
       error={friends.error}
-      onBack={() => navigate("/")}
+      onBack={onBack}
       onInviteAll={inviteAll}
       onAccept={(id) => friends.acceptRequest(id).then(
         ({ displayName }) => flash(`${displayName} is now your friend.`),

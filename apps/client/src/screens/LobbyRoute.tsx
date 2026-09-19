@@ -1,4 +1,5 @@
 import { Navigate, useNavigate, useSearchParams } from "react-router";
+import type { LobbyRef } from "@dont-fall/shared";
 import { GameCanvas } from "../components/GameCanvas.js";
 import { ConnectionError } from "../lib/errors.js";
 import { useLobbyConnection } from "../lib/hooks/useLobbyConnection.js";
@@ -18,14 +19,24 @@ import { LoadingScreen } from "./LoadingScreen.js";
  */
 export function LobbyRoute() {
   const [searchParams] = useSearchParams();
-  const { port, code } = parseLobbyParams(searchParams);
+  const { port, code, id } = parseLobbyParams(searchParams);
   // With no `?port=` there is no Lobby to connect to — back to `/play` to
   // pick a way in rather than guessing at one.
   if (port === undefined) return <Navigate to="/play" replace />;
-  return <BrokeredLobby serverPort={port} {...(code === undefined ? {} : { code })} />;
+  // Where an invite sends a friend (ADR 0110): a private Lobby by its code, a
+  // public one by the broker's id.
+  const inviteRef: LobbyRef | undefined =
+    code !== undefined ? { kind: "private", code } : id !== undefined ? { kind: "public", lobbyId: id } : undefined;
+  return (
+    <BrokeredLobby
+      serverPort={port}
+      {...(code === undefined ? {} : { code })}
+      {...(inviteRef === undefined ? {} : { inviteRef })}
+    />
+  );
 }
 
-function BrokeredLobby({ serverPort, code }: { serverPort: number; code?: string }) {
+function BrokeredLobby({ serverPort, code, inviteRef }: { serverPort: number; code?: string; inviteRef?: LobbyRef }) {
   const navigate = useNavigate();
   const { connection, lobby, actions, error, closed } = useLobbyConnection(serverPort);
   // The music follows the Match for the whole visit (M14 ticket 11), Lobby and game alike.
@@ -56,6 +67,7 @@ function BrokeredLobby({ serverPort, code }: { serverPort: number; code?: string
       <Lobby
         lobby={lobby}
         {...(code === undefined ? {} : { code })}
+        {...(inviteRef === undefined ? {} : { inviteRef })}
         onSetReady={actions.setReady}
         onSelectTrack={actions.selectTrack}
         onSetRoundType={actions.setRoundType}

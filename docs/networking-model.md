@@ -123,8 +123,8 @@ interface WelcomeMessage {
 interface SnapshotMessage {
   type: "snapshot";
   state: SimState;              // carries `tick`
-  /** The server's own `performance.now()` when this snapshot was built — the client's
-   *  clock reference (§4). `tick` alone assumes a perfect setInterval cadence. */
+  /** The server's own `performance.now()` at which this snapshot's tick was due on the
+   *  server's tick grid (ADR 0109) — the client's clock reference (§4). */
   serverTimeMs: number;
   /** How many of this client's commands the server has buffered but not yet applied.
    *  Feeds the client's LEAD adjustment (§4.3). */
@@ -182,11 +182,15 @@ type ClientMessage = InputMessage | PingMessage | ReclaimMessage;
 
 ### 4.1 Interpolation buffer (ADR 0017, refined by ADR 0019/0020)
 
-The non-predicted world (remote Characters, Props, ragdoll bones, Spinner phase, and the
-Prop/mirror obstacle poses fed into local prediction) is rendered `INTERP_DELAY_MS` of
-*server time* in the past, lerping between the two buffered snapshots that bracket that
-moment. Snapshots keyed by `tick · TICK_MS`, so jitter in *arrival* doesn't reach the
-output.
+The non-predicted world (remote Characters, Props, ragdoll bones, and the Prop/mirror
+obstacle poses fed into local prediction) is rendered `INTERP_DELAY_MS` behind the
+**playout floor** — the least recent arrival lag, `arrival − tick · TICK_MS` (ADR 0109) —
+lerping between the two buffered snapshots that bracket that moment. Snapshots keyed by
+`tick · TICK_MS`, so jitter in *arrival* doesn't reach the output, and because the delay is
+counted from arrivals, not from the server's *now*, one-way latency doesn't eat it: it
+absorbs jitter only. The floor drops at once to a lower lag, rises at most 3 %, and is
+bounded below by the last second's least lag; what is drawn slews toward it (≤ 15 %
+fast or slow) and jumps only past 250 ms.
 
 ```
 INTERP_DELAY_MS = clamp(  INTERP_RATIO / snapshotHz * 1000,  minimum, 250 )
@@ -222,8 +226,11 @@ estimatedServerTick(now) ≈ lastTickReceived + (now - lastSnapshotArrivedAt) / 
 - `serverTimeMs` on every snapshot lets the client detect a *biased-slow* server (GC, 12-client
   JSON load makes sim-time fall behind wall-time) that "tick alone" would read as unbounded drift.
 
-Overwatch-style time dilation (servoing client sim speed) is **not** needed — it fights
-packet-loss starvation, which TCP doesn't have.
+The offset now feeds only `estimatedServerTick` (the prediction-Tick seed, §4.3); what is
+drawn follows the playout floor (§4.1, ADR 0109).
+
+The LEAD's drain *is* a small time dilation of the client's own prediction (§4.3, ADR
+0109): a frame-counted controller hunted into real input starvation even on TCP.
 
 ### 4.3 Input LEAD (ADR 0021; ADR 0026; ADR 0027)
 
@@ -238,9 +245,13 @@ buffer never starves.
   unmatched by the server (repeat-filled), at no cost.
 - Then a **feedback loop** (unchanged from ADR 0021): the server reports `commandQueueDepth`
   in every snapshot; the client nudges `LEAD` toward "queue depth ≈ 1–2" **gradually**. The
-  *inject* side (queue starving) is responsive; the *drop* side drains a fat queue by a small
-  fraction of a tick per frame — never a full `TICK_MS` at once, which yanks the render alpha
-  (ADR 0026).
+  *inject* side (queue starving) adds one `TICK_MS`, at most every 300 ms; the *drop* side
+  drains a fat queue by 10 % of elapsed time (50 % once the server's queue is at its cap) —
+  never a full `TICK_MS` at once, which yanks the render alpha (ADR 0026). Counted in time,
+  not frames, and only on a depth report younger than 250 ms (ADR 0109).
+- Each tick carries the body's facing at its own time, eased between the last two frame
+  samples; a stall too long to catch up skips its tick numbers rather than falling behind
+  the server's tick space (ADR 0109).
 - The server applies `input[serverTick]` (ADR 0027), not FIFO next-in-queue — so
   "physics steps == inputs applied by tick number" holds by construction, and a momentarily
   starved tick no longer biases the server's reported position ahead of the client's own
@@ -383,7 +394,6 @@ depth · extrapolating? · predicted-Props count.
 | **Priority accumulator** | when networked object count grows past ~dozens | not needed at 6–10 Props / 12 players |
 | **`permessage-deflate`** | only as a stopgap *while still on JSON* | pointless once binary lands (low-entropy data, adds CPU) |
 | **Transport binding for `sessionToken`** | if token theft is observed | needs a stable client fingerprint we don't have over plain WS |
-| **Overwatch time dilation** | if input starvation is measured (won't happen on TCP) | the fixed LEAD (§4.3) is the 80% version |
 | **WebRTC DataChannel transport** | if fast competitive PvP is added *and* WS head-of-line blocking is measured as perceptible on real lossy links | signaling cost not worth it before then |
 | **Ragdoll: pelvis-only / key-bones wire shape** | if the profiling pass (§6) shows a problem | schema already carries it (sparse list) — not a break |
 | **Lag compensation (targeted capsule rewind)** | only for a future Punch/Grab-style precise mechanic; never a full Rapier-world rewind | M2's Bump/Fall/Prop contacts are Rapier-solver contact events, not raycasts |

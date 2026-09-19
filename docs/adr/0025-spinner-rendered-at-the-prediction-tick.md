@@ -47,3 +47,7 @@ same Spinner see different offsets. Record the observed distribution in playtest
 - No wire or authority change — the Spinner stays out of `SimState`.
 - This is the concrete rule for the "kinematic pure-function" category in ADR 0018's entity
   table; future entities of that kind (e.g. a Pendulum) follow it.
+
+## Amended by ADR 0109 (2026-09-19)
+
+The revision criterion becomes `spinnerAngularSpeed × (LEAD + one-way + INTERP_DELAY)`: the drawn world is now counted from Snapshot arrivals, one-way latency further behind the prediction Tick.

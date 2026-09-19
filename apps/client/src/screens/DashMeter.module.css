@@ -1,35 +1,53 @@
-/* The Dash recharge (ADR 0092), bottom-right on both Round HUDs. Sized to the
-   word it carries rather than to the viewport: it sits over live gameplay and
-   should read at a glance without taking the corner over. */
-.dash {
+/* The Dash recharge (ADR 0092), bottom-right on both Round HUDs: the design's
+   DashFeedback charge card (ADR 0110), sized to sit over live gameplay
+   without taking the corner over. */
+.charge {
+  position: relative;
+  display: grid;
+  grid-template-areas: 'charge';
+  width: calc(var(--df-u) * 15);
+}
+.charge > * { grid-area: charge; }
+
+/* Blinks while the Dash is ready — the one state that changes what you do next. */
+.halo {
+  margin: calc(var(--df-u) * -1.1);
+  border-radius: calc(var(--df-u) * 2.5);
+  background: var(--df-color-speed);
+  animation: global(df-charge) 1.4s ease-in-out infinite;
+}
+.chargeCard {
   display: flex;
   flex-direction: column;
-  gap: var(--df-space-3);
-  width: calc(var(--df-u) * 13);
-  padding: var(--df-space-4) var(--df-space-5);
-  border-radius: var(--df-radius-card);
-  background: var(--df-color-plate);
-  box-shadow: 0 var(--df-bevel-2) 0 var(--df-color-shadow);
+  gap: var(--df-space-4);
+  padding: var(--df-space-6) var(--df-space-7);
+  border-radius: var(--df-radius-panel);
+  background: rgba(43, 27, 77, .6);
+  color: var(--df-color-on-brand);
 }
-.label {
-  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+.ready .chargeCard { background: rgba(43, 27, 77, .72); }
+.chargeHead { display: flex; align-items: center; justify-content: space-between; gap: var(--df-space-4); }
+.chargeLabel {
+  font: var(--df-weight-label) var(--df-text-3xs) / 1 var(--df-font-ui);
   letter-spacing: var(--df-tracking-wide);
-  color: var(--df-color-on-brand-80);
+  opacity: .75;
 }
-.meter { gap: 0; }
+.chargeKey { font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui); color: var(--df-color-speed-lite); }
+.pips { display: flex; gap: var(--df-space-3); }
+/* One pip for the one Dash, filling as it recharges. */
+.pip {
+  flex: 1;
+  height: calc(var(--df-u) * 1.1);
+  border-radius: var(--df-radius-pill);
+  background: linear-gradient(90deg, var(--df-color-speed) var(--df-dash-fill, 0%), rgba(255, 255, 255, .22) 0);
+}
+.pipOn { background: var(--df-color-speed); }
+.recharge {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-kicker);
+  opacity: .6;
+}
 
-/* Ready: the state that changes what the Player does next, so it is the one
-   that gets the colour. The pulse is slow on purpose — a fast one over live
-   gameplay reads as an alarm. */
-.ready { background: var(--df-color-plate-strong); }
-.ready .label {
-  color: var(--df-color-go);
-  animation: df-dash-ready 1.6s ease-in-out infinite;
-}
-@keyframes df-dash-ready {
-  0%, 100% { opacity: 1; }
-  50% { opacity: .45; }
-}
 @media (prefers-reduced-motion: reduce) {
-  .ready .label { animation: none; }
+  .halo { animation: none; opacity: .4; }
 }

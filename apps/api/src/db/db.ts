@@ -126,6 +126,7 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
       password_hash TEXT,
       display_name TEXT NOT NULL,
       avatar_url TEXT,
+      avatar_uploaded_at INTEGER,
       role TEXT NOT NULL DEFAULT '${sql.raw(DEFAULT_ACCOUNT_ROLE)}',
       friend_code TEXT UNIQUE,
       created_at INTEGER NOT NULL,
@@ -195,6 +196,29 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
     sqlite.exec("ALTER TABLE accounts ADD COLUMN friend_code TEXT");
     sqlite.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_friend_code ON accounts (friend_code)");
   }
+  // ADR 0110: uploaded avatars. Additive, nullable — no Account has one yet.
+  if (!accountColumns.some((c) => c.name === "avatar_uploaded_at")) {
+    sqlite.exec("ALTER TABLE accounts ADD COLUMN avatar_uploaded_at INTEGER");
+  }
+  // ADR 0110: the error screen's reports, filed by support code. New table.
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS client_errors (
+      code TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      message TEXT NOT NULL,
+      page TEXT NOT NULL,
+      user_agent TEXT NOT NULL,
+      account_id TEXT,
+      reported_at INTEGER NOT NULL
+    )
+  `);
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS account_avatars (
+      account_id TEXT PRIMARY KEY,
+      image BLOB NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
   db.run(sql`
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
@@ -272,10 +296,21 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
       placement INTEGER NOT NULL,
       score REAL NOT NULL,
       falls INTEGER NOT NULL,
+      best_survival_ms INTEGER,
+      grabs_broken INTEGER NOT NULL DEFAULT 0,
       ended_at_ms INTEGER NOT NULL,
       PRIMARY KEY (match_id, account_id)
     )
   `);
+  // ADR 0110: the career's BEST SURVIVAL and GRABS BROKEN. Additive: Matches
+  // saved before read as no Survival time and no Struggles won.
+  const participantColumns = sqlite.pragma("table_info(match_participants)") as { name: string }[];
+  if (!participantColumns.some((c) => c.name === "best_survival_ms")) {
+    sqlite.exec("ALTER TABLE match_participants ADD COLUMN best_survival_ms INTEGER");
+  }
+  if (!participantColumns.some((c) => c.name === "grabs_broken")) {
+    sqlite.exec("ALTER TABLE match_participants ADD COLUMN grabs_broken INTEGER NOT NULL DEFAULT 0");
+  }
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_match_participants_account ON match_participants (account_id)`);
 
   // Anonymous per-Track play counts (M9 ticket 16): brand-new table, so
@@ -286,6 +321,14 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
       plays INTEGER NOT NULL
     )
   `);
+  // ADR 0110: a week of timestamped plays for Discover's windows. New table.
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS track_play_log (
+      track_id TEXT NOT NULL,
+      played_at INTEGER NOT NULL
+    )
+  `);
+  db.run(sql`CREATE INDEX IF NOT EXISTS idx_track_play_log_played_at ON track_play_log (played_at)`);
 
   // Personal Bests (ADR 0088): brand-new table, same deal — nothing to migrate.
   db.run(sql`

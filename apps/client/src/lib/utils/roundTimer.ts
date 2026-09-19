@@ -40,6 +40,15 @@ export const formatSurvived = (elapsedMs: number): string => {
 };
 
 /**
+ * A best stay as the stat tiles write it (ADR 0110), `mm:ss` — the main
+ * menu's BEST SURVIVAL and the Survival leaderboard. Floored like the rest.
+ */
+export const formatStay = (elapsedMs: number): string => {
+  const totalSeconds = Math.floor(Math.max(0, elapsedMs) / 1000);
+  return `${String(Math.floor(totalSeconds / 60)).padStart(2, "0")}:${String(totalSeconds % 60).padStart(2, "0")}`;
+};
+
+/**
  * The Race HUD's running clock (ADR 0088), `mm:ss` plus a `.t` tenths tail
  * the HUD draws smaller. Floored like the race time: it never shows a tenth
  * not yet run.

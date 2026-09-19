@@ -59,6 +59,15 @@ export const parimutuelOdds = (pools: StakePools): { [targetId: string]: number 
   );
 };
 
+/**
+ * What a stake would pay if its runner won and nothing else were staked (ADR
+ * 0110) — the stake joins both the runner's pool and the whole pool first, so
+ * a lone bettor on an unbacked runner is quoted the whole pot plus their own
+ * stake back, not the odds as they stood before it. Floored, as a settle pays.
+ */
+export const stakePayout = (stake: number, runnerPool: number, totalPool: number): number =>
+  Math.floor((stake * (totalPool + stake)) / (runnerPool + stake));
+
 export interface SettledBet {
   bettorId: string;
   payout: number;

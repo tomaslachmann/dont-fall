@@ -7,10 +7,9 @@ import { buildApp } from "../app.js";
 import type { LobbyStatus } from "../lobbies/lobbies.service.js";
 
 /**
- * `GET /game-settings` through the real `buildApp` wiring — the same fake
- * match-server seam as `lobbies.controller.test.ts`: scripted per-port
- * statuses, so the online count is the sum the production
- * `LobbiesService.countOnlinePlayers` computes, not a stubbed number.
+ * `GET /game-settings` through the real `buildApp` wiring — the lobbies get
+ * the same fake match-server seam as `lobbies.controller.test.ts`, and the
+ * online count is the real heartbeat count (ADR 0110), not a stubbed number.
  */
 const fakeMatchServers = () => {
   let nextPort = 62000;
@@ -59,25 +58,22 @@ describe("GET /game-settings", () => {
     expect(res.json()).toEqual({ maxPlayers: 4, onlinePlayers: 0 });
   });
 
-  it("sums seated Players across public and private Lobbies", async () => {
-    const first = (await app.inject({ method: "POST", url: "/lobbies", payload: { isPrivate: false } })).json() as { port: number };
-    const second = (await app.inject({ method: "POST", url: "/lobbies", payload: { isPrivate: true } })).json() as { port: number };
-    fakes.statuses.set(first.port, { playerCount: 3, maxPlayers: 4, phase: "LOBBY", accounts: [], round: null });
-    fakes.statuses.set(second.port, { playerCount: 2, maxPlayers: 4, phase: "LOBBY", accounts: [], round: null });
+  it("counts signed-in Accounts by their presence heartbeat, in a Lobby or not (ADR 0110)", async () => {
+    const beat = async (email: string) => {
+      const signup = await app.inject({
+        method: "POST",
+        url: "/auth/signup",
+        payload: { email, password: "correct horse battery staple", displayName: email.split("@")[0] },
+      });
+      const { token } = signup.json() as { token: string };
+      await app.inject({ method: "POST", url: "/friends/heartbeat", headers: { authorization: `Bearer ${token}` } });
+    };
+    await beat("amy@example.com");
+    await beat("bo@example.com");
 
     const res = await app.inject({ method: "GET", url: "/game-settings" });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ maxPlayers: 4, onlinePlayers: 5 });
-  });
-
-  it("counts a dead Lobby as zero online, not a 500", async () => {
-    const created = (await app.inject({ method: "POST", url: "/lobbies", payload: {} })).json() as { port: number };
-    fakes.statuses.delete(created.port); // the Match server died without telling the registry
-
-    const res = await app.inject({ method: "GET", url: "/game-settings" });
-
-    expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ maxPlayers: 4, onlinePlayers: 0 });
+    expect(res.json()).toEqual({ maxPlayers: 4, onlinePlayers: 2 });
   });
 });

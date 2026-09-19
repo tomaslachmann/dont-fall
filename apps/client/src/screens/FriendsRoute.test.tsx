@@ -20,32 +20,32 @@ const FRIENDS: FriendView[] = [
   {
     accountId: "a2",
     displayName: "Floppo",
-    avatarUrl: null,
+    avatarUrl: null, color: 0,
     friendsSince: 1,
     presence: { status: "in-lobby", slotsOpen: 3, joinable: true, lobby: { kind: "public", lobbyId: "l1" } },
   },
   {
     accountId: "a3",
     displayName: "Wobbleton",
-    avatarUrl: null,
+    avatarUrl: null, color: 0,
     friendsSince: 2,
     presence: { status: "in-match", round: 2 },
   },
   {
     accountId: "a4",
     displayName: "Tumbleweed",
-    avatarUrl: null,
+    avatarUrl: null, color: 0,
     friendsSince: 3,
     presence: { status: "offline", lastSeenAt: Date.now() - 2 * 86_400_000 },
   },
 ];
 
 const REQUESTS: FriendRequestView[] = [
-  { id: "r1", fromAccountId: "a5", fromDisplayName: "Goopy", fromAvatarUrl: null, sentAt: 1, matchesTogether: 4 },
+  { id: "r1", fromAccountId: "a5", fromDisplayName: "Goopy", fromAvatarUrl: null, fromColor: 0, sentAt: 1, matchesTogether: 4 },
 ];
 
 const RECENT: RecentPlayerView[] = [
-  { accountId: "a6", displayName: "Splatteo", avatarUrl: null, matchesTogether: 2, lastPlayedAt: Date.now() - 3_600_000 },
+  { accountId: "a6", displayName: "Splatteo", avatarUrl: null, color: 0, matchesTogether: 2, lastPlayedAt: Date.now() - 3_600_000 },
 ];
 
 const hook = (overrides = {}) => ({
@@ -117,6 +117,15 @@ describe("FriendsRoute", () => {
     fireEvent.click(screen.getByRole("tab", { name: "RECENT" }));
     expect(screen.getByText("Splatteo")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "ADD" })).toBeInTheDocument();
+  });
+
+  it("the ONLINE · TOTAL count shows who is online (ADR 0110)", () => {
+    useFriends.mockReturnValue(hook());
+    renderAt("/friends");
+
+    fireEvent.click(screen.getByRole("tab", { name: "RECENT" }));
+    fireEvent.click(screen.getByRole("button", { name: /ONLINE · \d+ TOTAL/ }));
+    expect(screen.getByRole("tab", { name: "ONLINE" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("accept/decline answer the request; JOIN resolves the ref and lands in the Lobby", async () => {

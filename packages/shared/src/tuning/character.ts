@@ -67,6 +67,17 @@ export const CAPSULE_HALF_HEIGHT = 0.5;
 export const CAPSULE_BOTTOM_OFFSET = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS;
 
 /**
+ * Seating a Character never leaves it inside anything solid (found live
+ * 2026-09-18/19, "spawnul jsem se v assetu"): an overlapping seat rises in
+ * these steps until clear, up to this many metres, and the Countdown's own
+ * gravity then drops it onto the first real floor. A backstop for whatever
+ * put geometry over a spawn — a stale Track revision, an authored piece, a
+ * Moving Segment mid-cycle — on top of `trackSpawn`'s own avoidance.
+ */
+export const SEAT_CLEAR_STEP = 0.5;
+export const SEAT_CLEAR_MAX_LIFT = 6;
+
+/**
  * How quickly the Character's body closes on the direction it runs (1/s):
  * every second it covers all but e^−rate of the turn still left, so a turn
  * slows into a soft stop instead of halting on the spot (user call,

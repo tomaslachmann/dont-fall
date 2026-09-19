@@ -47,8 +47,7 @@ export function Turntable({ color, skin, hat, spinToken, emoteToken }: Turntable
       hat={hat}
       animation={emoting ? "Wobble" : "Idle"}
       spinToken={spinToken}
-      label="LIVE 3D CHARACTER RENDER · TURNTABLE + IDLE"
-      sub="EXISTING CHARACTER, EXISTING COSMETICS"
+      sub="TURNTABLE + IDLE"
       canvasLabel="3D preview of your bean"
       className={s.stage3d}
     />

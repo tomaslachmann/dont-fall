@@ -40,6 +40,10 @@ import { setShadowRole } from "./shadowRoles.js";
 import { createSkinCloset } from "./skins.js";
 import { createSpeedLines } from "./speedLines.js";
 import type { SpringTrigger } from "./springSquash.js";
+import { browserStorage } from "../lib/browserStorage.js";
+import { readGameplaySettings, subscribeGameplaySettings } from "../lib/gameplaySettings.js";
+import { CameraShake, SCREEN_SHAKE_SCALE, ShakeCues } from "./cameraShake.js";
+import { createNameplates, type NameplateEntry } from "./nameplates.js";
 import { createCameraRig } from "./stage/cameraRig.js";
 import { createLocalCharacter } from "./stage/localCharacter.js";
 import { createStageSounds } from "./stage/sounds.js";
@@ -236,6 +240,18 @@ export interface Stage {
    * outranks anyone else's, and only it whistles as it falls.
    */
   applyCharacterSounds: (characters: Record<string, RenderCharacter>, localId: string, nowMs: number) => void;
+  /**
+   * Screen shake on impact (ADR 0110): your own Character this frame, as it
+   * is heard — its knockdowns, Hits taken, bumps and hard landings jolt the
+   * camera at the Player's setting. The next {@link updateCamera} shows it.
+   */
+  applyShake: (own: RenderCharacter, localId: string, nowMs: number) => void;
+  /**
+   * Who each remote Character is, for the nameplates over their heads (ADR
+   * 0110) — set every frame from the roster, like the colours. Drawn by
+   * {@link updateCamera}, at the Player's setting.
+   */
+  setPlayerNames: (names: ReadonlyMap<string, string>) => void;
   /**
    * Advance every air column's swooshes and puffs to `nowMs` (ADR 0075),
    * render-rate driven like every other overlay. The swooshes face the
@@ -448,6 +464,22 @@ export const createStage = ({
     closet,
   });
 
+  // Screen shake and nameplates (ADR 0110), at the Player's per-device settings, live.
+  const gameplay = readGameplaySettings(browserStorage());
+  const shake = new CameraShake(SCREEN_SHAKE_SCALE[gameplay.screenShake]);
+  const shakeCues = new ShakeCues();
+  let nameplatesOn = gameplay.nameplates;
+  const nameplates = createNameplates(mount);
+  let playerNames: ReadonlyMap<string, string> = new Map();
+  let remoteNamed: NameplateEntry[] = [];
+  const stopShakeSetting =
+    typeof window === "undefined"
+      ? () => {}
+      : subscribeGameplaySettings((settings) => {
+          shake.setScale(SCREEN_SHAKE_SCALE[settings.screenShake]);
+          nameplatesOn = settings.nameplates;
+        }, browserStorage());
+
   const stageSounds = createStageSounds(sound, {
     environment: environmentPreset,
     killPlaneY,
@@ -525,9 +557,16 @@ export const createStage = ({
     },
     applyRemoteCharacters: (characters, deltaSeconds, localId, localPosition) => {
       remoteCentres = Object.values(characters).map((rc) => rc.position);
+      remoteNamed = Object.entries(characters)
+        .filter(([id, rc]) => id !== localId && !rc.eliminated)
+        .map(([id, rc]) => ({ id, name: playerNames.get(id) ?? "", position: rc.position }))
+        .filter((entry) => entry.name !== "");
       remotePool.apply(characters, deltaSeconds, localId, localPosition);
     },
     setPlayerColors: (colors) => remotePool.setColors(colors),
+    setPlayerNames: (names) => {
+      playerNames = names;
+    },
     setPlayerSkins: (skins) => remotePool.setSkins(skins),
     setLocalLook: (color, skin) => local.setLook(color, skin),
     setPlayerHats: (hats) => remotePool.setHats(hats),
@@ -543,7 +582,19 @@ export const createStage = ({
     applySpringSquash: (characters, nowMs) => {
       for (const spring of track.squashSprings(characters, nowMs)) stageSounds.springSettled(spring);
     },
-    updateCamera: (target, yaw, pitch, deltaSeconds) => cameraRig.follow(target, yaw, pitch, deltaSeconds),
+    applyShake: (own, localId, nowMs) => shake.kick(shakeCues.update(localId, own, nowMs)),
+    updateCamera: (target, yaw, pitch, deltaSeconds) => {
+      cameraRig.follow(target, yaw, pitch, deltaSeconds);
+      const jolt = shake.step(deltaSeconds);
+      if (jolt.x !== 0 || jolt.y !== 0 || jolt.z !== 0 || jolt.roll !== 0) {
+        camera.position.x += jolt.x;
+        camera.position.y += jolt.y;
+        camera.position.z += jolt.z;
+        camera.rotateZ(jolt.roll);
+      }
+      camera.updateMatrixWorld();
+      nameplates.update(camera, window.innerWidth, window.innerHeight, remoteNamed, nameplatesOn);
+    },
     updateMotion: (t) => {
       // The mud ripples under every Character the applies stashed this frame, local one included.
       const localCentre = local.centre();
@@ -556,6 +607,8 @@ export const createStage = ({
     sound,
     dispose: () => {
       stopResizing();
+      stopShakeSetting();
+      nameplates.dispose();
       // The context is three.js's and shared with the next Stage: only this
       // Stage's own graph goes.
       stageSounds.dispose();

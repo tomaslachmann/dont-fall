@@ -38,6 +38,7 @@ const input = (overrides: Partial<RoundHudInput> = {}): RoundHudInput => ({
   liveRace: null,
   checkpoints: 7,
   nicknameOf: (id) => id.toUpperCase(),
+  leftIds: [],
   tick: 1000,
   predicted: { escapeProgress: 0, spinMs: 0 },
   bindings: DEFAULT_BINDINGS,
@@ -112,7 +113,15 @@ describe("buildRoundHud", () => {
           extra: character(),
         },
       });
-      expect(hud).toMatchObject({ lastOut: "LATEST", critical: false });
+      expect(hud).toMatchObject({ lastOut: "LATEST", lastOutLeft: false, critical: false });
+    });
+
+    it("says so when the last one out left the Match rather than fell (ADR 0110)", () => {
+      const hud = survival({
+        characters: { me: character(), gone: character({ eliminated: true, eliminatedTick: 140 }) },
+        leftIds: ["gone"],
+      });
+      expect(hud).toMatchObject({ lastOut: "GONE", lastOutLeft: true });
     });
 
     it("floors the survived clock to whole seconds", () => {
@@ -159,6 +168,13 @@ describe("buildRoundHud", () => {
       expect(nearly.dashCharge).toBe(1);
       expect(nearly.dashReady).toBe(false);
       expect(buildRoundHud(input({ characters: { me: character({ dashCooldownMs: 0 }) } }))!.dashReady).toBe(true);
+    });
+
+    it("counts the recharge in whole seconds, rounded up, and names the Dash's key (ADR 0110)", () => {
+      const hud = buildRoundHud(input({ characters: { me: character({ dashCooldownMs: 11_200 }) } }))!;
+      expect(hud.dashRechargeS).toBe(12);
+      expect(hud.dashKey).toBe("Shift");
+      expect(buildRoundHud(input({ characters: { me: character({ dashCooldownMs: 0 }) } }))!.dashRechargeS).toBe(0);
     });
   });
 });

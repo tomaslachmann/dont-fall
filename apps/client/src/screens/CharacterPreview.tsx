@@ -31,7 +31,11 @@ export interface CharacterPreviewProps {
   autoRotate?: boolean | undefined;
   /** Increment to spin the bean one full extra turn. */
   spinToken?: number | undefined;
-  /** Fallback caption (no WebGL, no model) — the RenderSlot treatment, same as before. */
+  /**
+   * Fallback caption (no WebGL, no model) — the RenderSlot treatment. It says
+   * what is true there: no preview (ADR 0110); `sub` names what the bean
+   * would be doing.
+   */
   label?: string | undefined;
   sub?: string | undefined;
   canvasLabel?: string | undefined;
@@ -77,7 +81,7 @@ export function CharacterPreview({
   animation,
   autoRotate = true,
   spinToken = 0,
-  label = "3D CHARACTER RENDER",
+  label = "NO 3D PREVIEW",
   sub,
   canvasLabel = "3D character preview",
   className,

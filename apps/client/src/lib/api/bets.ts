@@ -15,6 +15,8 @@ export interface BettingRunnerState {
 }
 
 export interface BettingRecentBet {
+  /** The bettor's Account — whose avatar the ticker shows (ADR 0110). */
+  accountId: string;
   nickname: string;
   amount: number;
   targetNickname: string;

@@ -1,6 +1,6 @@
-import type { SimState } from "@dont-fall/shared";
+import { PLAYOUT_SLEW_MAX_RATE, type SimState } from "@dont-fall/shared";
 import { describe, expect, it } from "vitest";
-import { SnapshotInterpolator } from "./snapshotInterpolation.js";
+import { interpDelayMs, SnapshotInterpolator } from "./snapshotInterpolation.js";
 
 /**
  * Feedback loop for "the pushed box isn't smooth" (2026-09 playtest).
@@ -168,12 +168,212 @@ describe("client snapshot interpolation — smoothness under realistic arrival j
 
   it("stays smooth over a long stream despite local↔server clock drift", () => {
     // Server clock runs 0.5% fast relative to the client's — offset would grow
-    // unbounded without the ease-toward-observed correction.
+    // unbounded without the ease-toward-observed correction. (ADR 0109: what
+    // is drawn now follows the playout floor, which rises to keep up; the ease
+    // is left to `estimatedServerTick`'s fallback. The assertion is unchanged.)
     const drifting = Array.from({ length: 400 }, (_, k) => ({
       state: snapshotAtTick(k),
       atMs: k * TICK_MS * 1.005 + 1.5 + 2.5 * Math.abs(Math.sin(k * 1.7)),
     }));
     const rt = Array.from({ length: Math.floor((drifting.at(-1)!.atMs - TICK_MS) / RENDER_MS) }, (_, i) => i * RENDER_MS);
     expect(roughness(frameDeltas(renderBuffered(drifting, rt)))).toBeLessThan(0.15);
+  });
+});
+
+/**
+ * ADR 0109 — the playout clock. The world used to be drawn `interpDelayMs`
+ * behind the server's *current* time (the ping clock), so every millisecond a
+ * Snapshot spent in transit came out of the buffer: past ~33 ms one-way it ran
+ * dry every Snapshot, held the latest pose, then jumped. It is now drawn behind
+ * the least-delayed *arrival*.
+ *
+ * The stand-in server ticks at a true 30 Hz and stamps each Snapshot 1–4 ms
+ * after its step; its `performance.now()` runs {@link SERVER_CLOCK_MS} ahead of
+ * the client's. Delivery is in order (a WebSocket is TCP) after a one-way
+ * latency plus uniform ±`jitterMs`. Seeded, so every run is the same run.
+ */
+const SERVER_CLOCK_MS = 123_456.789;
+const FIRST_TICK = 900;
+
+interface Delivery {
+  state: SimState;
+  atMs: number;
+  serverTimeMs: number;
+}
+
+const seeded = (seed: number) => (): number => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+
+/** `oneWayMs` gets the local time the Snapshot was sent, so a test can step the latency mid-stream. */
+const deliveries = (seconds: number, oneWayMs: (sentAtMs: number) => number, jitterMs = 10): Delivery[] => {
+  const rnd = seeded(7);
+  const out: Delivery[] = [];
+  let lastAtMs = Number.NEGATIVE_INFINITY;
+  for (let k = 0; k < seconds * 30; k += 1) {
+    const sentAtMs = k * TICK_MS + 1 + 3 * rnd(); // on the client's clock
+    const atMs = Math.max(lastAtMs, sentAtMs + oneWayMs(sentAtMs) + (2 * rnd() - 1) * jitterMs);
+    lastAtMs = atMs;
+    out.push({ state: snapshotAtTick(FIRST_TICK + k), atMs, serverTimeMs: sentAtMs + SERVER_CLOCK_MS });
+  }
+  return out;
+};
+
+interface Frame {
+  nowMs: number;
+  renderTick: number;
+  holding: boolean;
+  /** Server time since the newest Snapshot was sent — the old ping clock drew past it once this reached `interpDelayMs`. */
+  sinceNewestSentMs: number;
+}
+
+/** Draw frames at `fps` the way `frameLoop.ts` does — the ping offset handed over, then `sample` — once the interpolator is ready. */
+const play = (
+  interp: SnapshotInterpolator,
+  stream: Delivery[],
+  fps: number,
+  untilMs: number,
+  pingOffsetMs: (nowMs: number) => number = () => SERVER_CLOCK_MS,
+): Frame[] => {
+  const frames: Frame[] = [];
+  let next = 0;
+  for (let nowMs = 0; nowMs < untilMs; nowMs += 1000 / fps) {
+    while (next < stream.length && stream[next]!.atMs <= nowMs) {
+      const d = stream[next++]!;
+      interp.receive(d.state, d.atMs, d.serverTimeMs);
+    }
+    if (!interp.ready) continue;
+    interp.setServerClockOffsetMs(pingOffsetMs(nowMs));
+    interp.sample(nowMs);
+    const sinceNewestSentMs = nowMs + pingOffsetMs(nowMs) - stream[next - 1]!.serverTimeMs;
+    frames.push({ nowMs, renderTick: interp.renderTick(nowMs), holding: interp.holdingLatest, sinceNewestSentMs });
+  }
+  return frames;
+};
+
+/** How fast the drawn world ran over each frame, as a multiple of real time. */
+const advances = (frames: Frame[]): number[] =>
+  frames.slice(1).map((f, i) => ((f.renderTick - frames[i]!.renderTick) * TICK_MS) / (f.nowMs - frames[i]!.nowMs));
+
+const tickAt = (frames: Frame[], nowMs: number): number => frames.find((f) => f.nowMs >= nowMs)!.renderTick;
+
+describe("client snapshot interpolation — the playout clock counts from arrival, not from the server's now (ADR 0109)", () => {
+  it.each([
+    [40, 60],
+    [50, 60],
+    [60, 60],
+    [40, 144],
+    [50, 144],
+    [60, 144],
+  ])("a %i ms one-way link with ±10 ms jitter never underruns at %i Hz, and the drawn world keeps real time", (oneWayMs, fps) => {
+    const stream = deliveries(14, () => oneWayMs);
+    const frames = play(new SnapshotInterpolator(), stream, fps, stream.at(-1)!.atMs);
+    const settled = frames.filter((f) => f.nowMs > 2000);
+
+    // The ping clock it replaces would have held the latest pose on some of these frames (6% at 40 ms, most at 60).
+    const pingClockHolds = settled.filter((f) => f.sinceNewestSentMs >= interpDelayMs(30)).length;
+    expect(pingClockHolds / settled.length).toBeGreaterThan(0.05);
+
+    expect(settled.filter((f) => f.holding)).toHaveLength(0);
+    for (const advance of advances(settled)) expect(Math.abs(advance - 1)).toBeLessThan(0.03);
+  });
+
+  it("what is drawn no longer reads the ping clock — only estimatedServerTick does", () => {
+    const stream = deliveries(6, () => 50);
+    const steady = play(new SnapshotInterpolator(), stream, 60, stream.at(-1)!.atMs);
+    const wandering = play(new SnapshotInterpolator(), stream, 60, stream.at(-1)!.atMs, (nowMs) => SERVER_CLOCK_MS + 15 * Math.sin(nowMs / 700));
+    expect(wandering.map((f) => f.renderTick)).toEqual(steady.map((f) => f.renderTick));
+  });
+
+  it("a first Snapshot received 200 ms late is worked off within 2 s — never underrunning, never drawn backwards", () => {
+    const onTime = deliveries(6, () => 50);
+    // The first Snapshot lands 200 ms late (TCP slow start, a main thread busy
+    // building the Stage) and the next six were never sent, so the stream
+    // resumes on time right after it — ADR 0019's poisoned anchor.
+    const poisoned = [{ ...onTime[0]!, atMs: onTime[0]!.atMs + 200 }, ...onTime.slice(7)];
+    const untilMs = onTime.at(-1)!.atMs;
+    const frames = play(new SnapshotInterpolator(), poisoned, 60, untilMs);
+    const reference = play(new SnapshotInterpolator(), onTime.slice(7), 60, untilMs);
+    const firstMs = frames[0]!.nowMs;
+
+    expect((tickAt(reference, firstMs + 100) - tickAt(frames, firstMs + 100)) * TICK_MS).toBeGreaterThan(150);
+    expect(Math.abs(tickAt(reference, firstMs + 2000) - tickAt(frames, firstMs + 2000)) * TICK_MS).toBeLessThan(TICK_MS / 3);
+    expect(frames.filter((f) => f.holding)).toHaveLength(0);
+    for (const advance of advances(frames)) expect(advance).toBeGreaterThan(0);
+  });
+
+  it("a +50 ms latency step stops underrunning within 2 s", () => {
+    const stepAtMs = 5000;
+    const stream = deliveries(12, (sentAtMs) => (sentAtMs < stepAtMs ? 40 : 90));
+    const frames = play(new SnapshotInterpolator(), stream, 60, stream.at(-1)!.atMs);
+
+    expect(frames.filter((f) => f.holding && f.nowMs > 2000 && f.nowMs < stepAtMs)).toHaveLength(0);
+    const lastHoldMs = frames.filter((f) => f.holding).at(-1)?.nowMs ?? stepAtMs;
+    expect(lastHoldMs - stepAtMs).toBeLessThan(2000);
+    for (const advance of advances(frames)) expect(advance).toBeGreaterThan(0);
+  });
+
+  it("a −50 ms latency step never draws the world backwards, and catches up within 2 s", () => {
+    const stepAtMs = 5000;
+    const stream = deliveries(12, (sentAtMs) => (sentAtMs < stepAtMs ? 90 : 40));
+    const untilMs = stream.at(-1)!.atMs;
+    const frames = play(new SnapshotInterpolator(), stream, 144, untilMs);
+    // The same Snapshots over a link that was always 40 ms: where it should end up.
+    const reference = play(new SnapshotInterpolator(), deliveries(12, () => 40), 144, untilMs);
+
+    for (const advance of advances(frames)) {
+      expect(advance).toBeGreaterThan(0);
+      expect(advance).toBeLessThanOrEqual(1 + PLAYOUT_SLEW_MAX_RATE + 1e-9);
+    }
+    expect(frames.filter((f) => f.holding && f.nowMs > 2000)).toHaveLength(0);
+    expect(Math.abs(tickAt(reference, stepAtMs + 2000) - tickAt(frames, stepAtMs + 2000)) * TICK_MS).toBeLessThan(TICK_MS / 3);
+  });
+
+  // A step up in lag larger than the headroom — a Wi-Fi roam, a route change,
+  // a server stall its scheduler forgave. The floor's own rise follows it at
+  // PLAYOUT_FLOOR_RISE_RATE, which held the latest pose for 3 s after +100 ms
+  // and ~10 s after +300 ms; the least lag of the last second of arrivals now
+  // bounds it from below.
+  it("a +100 ms latency step stops underrunning within 1.5 s, never drawing the world backwards", () => {
+    const stepAtMs = 5000;
+    const stream = deliveries(12, (sentAtMs) => (sentAtMs < stepAtMs ? 40 : 140));
+    const frames = play(new SnapshotInterpolator(), stream, 60, stream.at(-1)!.atMs);
+
+    expect(frames.filter((f) => f.holding && f.nowMs > 2000 && f.nowMs < stepAtMs)).toHaveLength(0);
+    const lastHoldMs = frames.filter((f) => f.holding).at(-1)?.nowMs ?? stepAtMs;
+    expect(lastHoldMs - stepAtMs).toBeLessThan(1500);
+    for (const advance of advances(frames)) expect(advance).toBeGreaterThan(0);
+  });
+
+  it("a +300 ms latency step stops underrunning within 1.5 s, through one backward jump", () => {
+    const stepAtMs = 5000;
+    const stream = deliveries(12, (sentAtMs) => (sentAtMs < stepAtMs ? 40 : 340));
+    const frames = play(new SnapshotInterpolator(), stream, 60, stream.at(-1)!.atMs);
+
+    const lastHoldMs = frames.filter((f) => f.holding).at(-1)?.nowMs ?? stepAtMs;
+    expect(lastHoldMs - stepAtMs).toBeLessThan(1500);
+    // Past PLAYOUT_SNAP_MS the clock jumps rather than slewing for seconds —
+    // once, back by the step less what the floor had already risen.
+    const backward = advances(frames).filter((advance) => advance <= 0);
+    expect(backward).toHaveLength(1);
+  });
+
+  it("the burst that lands when a 1.5 s transport stall clears never draws the world backwards", () => {
+    // Everything sent in the stall arrives at once when it clears, 2 ms apart
+    // and still in order, so frames land in the middle of the burst — where
+    // its first Snapshots, lagging by up to the whole stall, are nearly all a
+    // window would hold.
+    const stallFromMs = 5000;
+    const clearsAtMs = stallFromMs + 1540;
+    let lastAtMs = Number.NEGATIVE_INFINITY;
+    const stream = deliveries(12, () => 40).map((d) => {
+      lastAtMs = d.serverTimeMs - SERVER_CLOCK_MS < stallFromMs ? d.atMs : Math.max(d.atMs, clearsAtMs, lastAtMs + 2);
+      return { ...d, atMs: lastAtMs };
+    });
+    const burstEndsAtMs = stream.filter((d) => d.serverTimeMs - SERVER_CLOCK_MS < clearsAtMs).at(-1)!.atMs;
+    for (const fps of [60, 144]) {
+      const frames = play(new SnapshotInterpolator(), stream, fps, stream.at(-1)!.atMs);
+      expect(frames.filter((f) => f.nowMs > clearsAtMs && f.nowMs < burstEndsAtMs).length).toBeGreaterThan(1);
+      for (const advance of advances(frames)) expect(advance).toBeGreaterThan(0);
+      expect(frames.filter((f) => f.holding && f.nowMs > burstEndsAtMs)).toHaveLength(0);
+    }
   });
 });

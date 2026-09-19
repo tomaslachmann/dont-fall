@@ -48,14 +48,6 @@
   color: var(--df-color-on-brand-60);
 }
 
-.feed {
-  grid-column: 1 / -1;
-  align-self: end;
-  justify-self: start;
-  font: var(--df-weight-display) var(--df-text-2xs) / 2 var(--df-font-mono);
-  letter-spacing: var(--df-tracking-wide);
-  color: rgba(255, 255, 255, .45);
-}
 
 /* ---- the verdict ---- */
 .verdict {
@@ -124,6 +116,7 @@
 
 /* ---- actions ---- */
 .actions {
+  grid-row: 3;
   grid-column: 1 / -1;
   align-self: end;
   display: flex;

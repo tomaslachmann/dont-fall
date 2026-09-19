@@ -12,6 +12,9 @@ const row = (overrides: Partial<TrackListing> & { id: string }): TrackListing =>
   plays: 0,
   hasFinishZone: false, hasThumbnail: false,
   ...overrides,
+  // A fixture's plays are this week's too, unless it says otherwise.
+  playsThisWeek: overrides.playsThisWeek ?? overrides.plays ?? 0,
+  playsToday: overrides.playsToday ?? 0,
 });
 
 const NOW = 8 * 24 * 60 * 60 * 1000; // a week past the epoch — old rows read old, fresh rows read fresh
@@ -229,5 +232,24 @@ describe("Discover", () => {
 
     expect(img).not.toBeVisible();
     expect(card.getAttribute("aria-label")).toMatch(/shot/i); // the card itself still reads fine
+  });
+});
+
+describe("windows (ADR 0110)", () => {
+  it("TRENDING ranks by this week's plays, not all-time", () => {
+    const tracks = [
+      row({ id: "old-hit", plays: 900, playsThisWeek: 2 }),
+      row({ id: "this-week", plays: 40, playsThisWeek: 30 }),
+    ];
+    expect(filterDiscoverTracks(tracks, "TRENDING").map((t) => t.id)).toEqual(["this-week", "old-hit"]);
+  });
+
+  it("features today's most played, and TRENDING's top on a quiet day", () => {
+    const tracks = [
+      row({ id: "week", playsThisWeek: 30, playsToday: 1 }),
+      row({ id: "today", playsThisWeek: 5, playsToday: 4 }),
+    ];
+    expect(featuredTrack(tracks)?.id).toBe("today");
+    expect(featuredTrack(tracks.map((t) => ({ ...t, playsToday: 0 })))?.id).toBe("week");
   });
 });

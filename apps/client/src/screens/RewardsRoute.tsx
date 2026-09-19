@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { lobbyPath, quickMatch } from "../lib/api/lobbyBroker.js";
 import { Navigate, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { hatsUnlockedBetween, levelForXp, xpBarFractions, xpForRoundScore } from "@dont-fall/shared";
@@ -14,20 +15,19 @@ import Rewards from "./Rewards.js";
 
 interface RewardsLocationState {
   matchId?: string;
-  rounds?: { placement: number; playerCount: number; score: number }[];
 }
 
 /**
- * `/rewards` — MatchOver's COLLECT lands here with the Match id and its own
- * claim rows as route state. The claim is idempotent per `matchId` (ADR
- * 0059), so a remount replays the stored numbers instead of crediting again;
- * the guard below still dedupes the in-flight call itself (StrictMode-safe:
- * refs survive its double-effect).
+ * `/rewards` — MatchOver's COLLECT lands here with the Match id as route
+ * state. The server finds your Rounds in the stored Match and pays on them
+ * (ADR 0110); the claim is idempotent per `matchId` (ADR 0059), so a remount
+ * replays the stored numbers instead of crediting again. The guard below
+ * still dedupes the in-flight call itself (StrictMode-safe: refs survive its
+ * double-effect).
  *
- * The breakdown re-runs the shared formula over the same rows the server
- * credited, so "what the screen promised" and "what landed" agree by
- * construction. Coins show the match split only — betting isn't built, so
- * there is no BET WON row to show.
+ * The breakdown is the Rounds the server paid on, so "what the screen
+ * promised" and "what landed" agree by construction. Coins split into the
+ * Match's and, when there were any, what your bets won (BET WON).
  *
  * A Match whose XP crossed a hat's level announces that hat (ADR 0083) —
  * the last one, when it crossed several — and EQUIP NEW HAT puts it on
@@ -42,16 +42,15 @@ export function RewardsRoute() {
   const claimedRef = useRef(false);
 
   const matchId = state.matchId;
-  const rounds = state.rounds ?? [];
   const { account } = useAccount();
   const queryClient = useQueryClient();
   useEffect(() => {
-    if (matchId === undefined || rounds.length === 0 || claimedRef.current) return;
+    if (matchId === undefined || claimedRef.current) return;
     claimedRef.current = true;
-    claimRewards(rounds, matchId).then(setClaim, throwAsync);
-  }, [matchId, rounds, throwAsync]);
+    claimRewards(matchId).then(setClaim, throwAsync);
+  }, [matchId, throwAsync]);
 
-  if (matchId === undefined || rounds.length === 0) return <Navigate to="/" replace />;
+  if (matchId === undefined) return <Navigate to="/" replace />;
   if (claim === null) return <LoadingScreen label="COUNTING YOUR BEANS…" />;
 
   const fractions = xpBarFractions(claim.xpBefore, claim.gainedXp);
@@ -72,13 +71,23 @@ export function RewardsRoute() {
       unlockIcon={unlocked && hatIconUrl(unlocked.id)}
       onEquip={unlocked && account?.hat !== unlocked.id ? () => equip(unlocked.id) : undefined}
       level={levelForXp(claim.xpAfter)}
+      {...(unlocked ? { unlockLevel: unlocked.unlockLevel } : {})}
       xpGain={claim.gainedXp}
       xpBefore={fractions.before}
       xpEarned={fractions.earned}
-      breakdown={rounds.map((row, i) => [`ROUND ${i + 1} · ${ordinal(row.placement)} PLACE`, xpForRoundScore(row.score)])}
-      beans={claim.gainedCoins}
-      beansSplit={[["MATCH", claim.gainedCoins]]}
-      onPlayAgain={() => navigate("/play")}
+      breakdown={claim.rounds.map((row, i) => [`ROUND ${i + 1} · ${ordinal(row.placement)} PLACE`, xpForRoundScore(row.score)])}
+      beans={claim.gainedCoins + claim.betWinnings}
+      beansSplit={[["MATCH", claim.gainedCoins], ...(claim.betWinnings > 0 ? [["BET WON", claim.betWinnings] as [string, number]] : [])]}
+      // PLAY AGAIN goes straight into the next Match; BACK TO LOBBY is the
+      // choice of Lobby — the one this Match ran in closed with it (ADR 0059).
+      onPlayAgain={() => {
+        quickMatch()
+          .then((lobby) => navigate(lobbyPath(lobby)))
+          .catch((err: unknown) => {
+            flash(`Couldn't find a Match: ${err instanceof Error ? err.message : String(err)}`, "error");
+            navigate("/play");
+          });
+      }}
       onLobby={() => navigate("/play")}
     />
   );

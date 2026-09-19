@@ -13,7 +13,7 @@ describe("CharacterPreview", () => {
   it("degrades to the RenderSlot caption where WebGL doesn't exist — jsdom has no GPU", () => {
     render(<CharacterPreview color={0} animation="Idle" sub="IDLE" />);
 
-    expect(screen.getByText(/3D CHARACTER RENDER/)).toBeInTheDocument();
+    expect(screen.getByText(/NO 3D PREVIEW/)).toBeInTheDocument();
     expect(screen.getByText(/IDLE/)).toBeInTheDocument();
   });
 

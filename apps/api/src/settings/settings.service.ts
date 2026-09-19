@@ -5,21 +5,20 @@
  * grows a field at a time: this is the registry that gradually expands,
  * and every addition stays one typed field, not a second endpoint.
  *
- * Nothing here is persisted — `maxPlayers` is config, `onlinePlayers` is
- * the lobbies service's own in-memory count — so there is no DAO layer.
- * That absence is the point, not a gap: a DAO would invent storage this
- * endpoint promised never to have.
+ * This module stores nothing of its own — `maxPlayers` is config, and
+ * `onlinePlayers` is friends presence's count of fresh heartbeats (ADR 0110),
+ * handed in as a dependency — so it has no DAO layer of its own.
  */
 export interface GameSettings {
   /** Per-Lobby seat cap — the same value every Match server boots with. */
   maxPlayers: number;
-  /** Every Player seated in any live Lobby, public or private. */
+  /** Every signed-in Account with a fresh presence heartbeat (ADR 0110) — in a Lobby or not. */
   onlinePlayers: number;
 }
 
 export interface SettingsDeps {
   maxPlayers: number;
-  /** Live count, owned by whoever tracks presence (the lobbies service today). */
+  /** Live count of signed-in Accounts by presence heartbeat (ADR 0110), owned by friends presence. */
   countOnlinePlayers: () => Promise<number>;
 }
 

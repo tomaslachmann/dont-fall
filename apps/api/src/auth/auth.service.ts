@@ -1,4 +1,6 @@
 import {
+  AVATAR_DATA_URL_PREFIX,
+  MAX_AVATAR_BYTES,
   invalidBindingsReason,
   invalidBodyColorReason,
   invalidHatReason,
@@ -12,7 +14,9 @@ import type { ApiDb } from "../db/db.js";
 import { parseCookie } from "../http/cookies.js";
 import { ServiceError } from "../http/errors.js";
 import {
+  clearAccountAvatar,
   createAccountWithPassword,
+  setAccountAvatar,
   createSession,
   deleteSession,
   getAccountBySessionToken,
@@ -253,4 +257,44 @@ export const updateBindings = (
 /** Ends a session (logout). Deleting an already-gone/unknown token is a no-op, not an error. */
 export const logout = (db: ApiDb, token: string | undefined): void => {
   if (token) deleteSession(db, token);
+};
+
+/**
+ * Why an avatar upload can't be stored, or `undefined` when it can (ADR 0110):
+ * a WebP data URL whose bytes really are a WebP (`RIFF····WEBP`) and fit
+ * `MAX_AVATAR_BYTES`. Only the header is trusted — the browser that sent it
+ * already cropped and scaled it; the API only refuses anything else.
+ */
+export const invalidAvatarReason = (image: unknown): string | undefined => decodeAvatar(image).reason;
+
+const decodeAvatar = (image: unknown): { bytes?: Buffer; reason?: string } => {
+  if (typeof image !== "string" || !image.startsWith(AVATAR_DATA_URL_PREFIX)) {
+    return { reason: `image must be a data URL starting ${AVATAR_DATA_URL_PREFIX}` };
+  }
+  const bytes = Buffer.from(image.slice(AVATAR_DATA_URL_PREFIX.length), "base64");
+  if (bytes.length > MAX_AVATAR_BYTES) return { reason: `image must be at most ${MAX_AVATAR_BYTES} bytes` };
+  if (bytes.length < 12 || bytes.toString("ascii", 0, 4) !== "RIFF" || bytes.toString("ascii", 8, 12) !== "WEBP") {
+    return { reason: "image must be a WebP" };
+  }
+  return { bytes };
+};
+
+/** Stores the caller's uploaded avatar (`PUT /auth/me/avatar`, ADR 0110) and returns the updated Account. */
+export const uploadAvatar = (db: ApiDb, token: string | undefined, input: { image?: unknown }, nowMs: number): Account => {
+  const account = token ? getAccountBySessionToken(db, token) : undefined;
+  if (!account) throw new ServiceError(401, "not logged in");
+  const { bytes, reason } = decodeAvatar(input.image);
+  if (!bytes) throw new ServiceError(400, reason ?? "image must be a WebP");
+  const updated = setAccountAvatar(db, account.id, bytes, nowMs);
+  if (!updated) throw new ServiceError(401, "not logged in");
+  return updated;
+};
+
+/** Removes the caller's uploaded avatar (`DELETE /auth/me/avatar`, ADR 0110) and returns the updated Account. */
+export const removeAvatar = (db: ApiDb, token: string | undefined): Account => {
+  const account = token ? getAccountBySessionToken(db, token) : undefined;
+  if (!account) throw new ServiceError(401, "not logged in");
+  const updated = clearAccountAvatar(db, account.id);
+  if (!updated) throw new ServiceError(401, "not logged in");
+  return updated;
 };

@@ -10,7 +10,10 @@ export type ErrorKind = 'connection' | 'crash' | 'kicked';
 
 export interface ErrorScreenProps {
   kind?: ErrorKind;
-  /** Support code — the only string a player needs to give us. */
+  /**
+   * Support code — the only string a player needs to give us; the failure is
+   * filed under it (ADR 0110). Absent (a preview), the row is not shown.
+   */
   code?: string;
   /** Overrides the kind's canned detail line — the real error text when there is one. */
   detail?: string;
@@ -43,7 +46,7 @@ const COPY: Record<ErrorKind, { tag: string; title: string; body: string; detail
 };
 
 export default function ErrorScreen({
-  kind = 'connection', code = 'DF-7742-QX', detail, retryIn = 5, onRetry, onHome, feel,
+  kind = 'connection', code, detail, retryIn = 5, onRetry, onHome, feel,
 }: ErrorScreenProps) {
   const [left, setLeft] = useState(retryIn);
   const [copied, setCopied] = useState(false);
@@ -57,6 +60,7 @@ export default function ErrorScreen({
   }, [retryIn, kind]);
 
   const copy = () => {
+    if (code === undefined) return;
     navigator.clipboard?.writeText(code).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 1600);
@@ -82,11 +86,13 @@ export default function ErrorScreen({
         <p className={s.lede}>{c.body}</p>
 
         <div className={s.rows}>
+          {code !== undefined && (
           <button type="button" className={s.codeRow} onClick={copy}>
             <span className={s.rowLabel}>SUPPORT CODE</span>
             <code className={s.code}>{code}</code>
             <span className={s.copyHint}>{copied ? 'COPIED' : 'TAP TO COPY'}</span>
           </button>
+          )}
           <div className={s.detailRow}>
             <span className={s.rowLabel}>DETAIL</span>
             <code className={s.detail}>{detail ?? c.detail}</code>

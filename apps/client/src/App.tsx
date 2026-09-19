@@ -9,6 +9,7 @@ import { DiscoverRoute } from "./screens/DiscoverRoute.js";
 import { FriendsRoute } from "./screens/FriendsRoute.js";
 import MainMenu from "./screens/MainMenu";
 import { CreditsRoute } from "./screens/CreditsRoute.js";
+import { LeaderboardsRoute } from "./screens/LeaderboardsRoute.js";
 import { MatchResultsRoute } from "./screens/MatchResultsRoute";
 import NotFound from "./screens/NotFound";
 import { RewardsRoute } from "./screens/RewardsRoute";
@@ -83,6 +84,7 @@ export function App() {
         <Route path="/profile" element={<ProfileRoute />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/credits" element={<CreditsRoute />} />
+        <Route path="/leaderboards" element={<LeaderboardsRoute />} />
       </Route>
     </Routes>
   );
