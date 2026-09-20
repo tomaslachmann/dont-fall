@@ -14,18 +14,31 @@
 # Host ports can be moved (a second stack beside the first, say) with
 # DONTFALL_API_PORT, DONTFALL_WEB_PORT and DONTFALL_LOBBY_PORTS.
 #
-# DB GUI (opt-in, localhost only): a lightweight sqlite-web on the same
-# SQLite file the API uses (same named volume, so the -shm/-wal sidecars
-# stay together — WAL readers need them writable, hence no `:ro` below).
-# Behind the `tools` profile so plain `up` never starts it, and with no
-# dependency on `api` so it also browses a stopped API's data:
+# The database is one SQLite file, shared by every mode: the repo's own
+# `apps/api/data/track-service.sqlite`, bind-mounted at `/data` below. The
+# Docker API opens it in the container, `pnpm dev --api=local` opens the
+# same file straight from the host (the API default `./data/...`), so
+# accounts and tracks carry between the two modes instead of living twice.
+# The -shm/-wal sidecars travel with it (a directory mount, never `:ro` —
+# WAL readers need them writable). One writer at a time: `dev.sh` never
+# runs the local and the Docker API together.
+#
+# The old `track-service-data` named volume is retired — a volume hides
+# the file from host processes, which is what split the data in two. Its
+# contents were a one-time export (with the API stopped):
+#
+#   vol=$(docker volume ls -q | grep 'track-service-data$') && \
+#   docker run --rm -v "$vol:/vol" -v "$PWD/apps/api/data:/out" alpine \
+#     sh -c 'cp /vol/track-service.sqlite* /out/ 2>/dev/null; true'
+#
+# DB GUI (opt-in, localhost only): a lightweight sqlite-web on that same
+# file. Behind the `tools` profile so plain `up` never starts it, and with
+# no dependency on `api` so it also browses a stopped API's data:
 #
 #   docker compose --profile tools up db-gui   # then open http://localhost:8082
-# (or `pnpm dev --api=docker --db-gui` to start it with everything else)
+# (or `pnpm dev --db-gui` — either API mode — to start it with everything else)
 #
 # Port 8082: 8080/8081/5173/5174 are already taken by `scripts/dev.sh`.
-# (`--api=local` keeps its own file at `apps/api/data/track-service.sqlite`
-# instead of this volume — browse that one with a local SQLite client.)
 #
 services:
   api:
@@ -54,10 +67,9 @@ services:
       # no nginx in front gets it through the API's own upgrade handler.
       VOICE_PORT: "8083"
     volumes:
-      # Deliberately the old volume name: the SQLite file inside keeps its
-      # path (`/data/track-service.sqlite`), so existing dev data survives
-      # the merge instead of starting on a fresh empty volume. (ADR 0058)
-      - track-service-data:/data
+      # The repo's own DB dir (see the header comment): one SQLite file for
+      # every mode, so local and Docker API runs share accounts and tracks.
+      - ./apps/api/data:/data
   # The game, the builder and the API behind one address (ADR 0108). Built
   # from this checkout like `api`; `pnpm run online` starts both.
   web:
@@ -81,9 +93,6 @@ services:
     ports:
       - "127.0.0.1:8082:8080"
     volumes:
-      - track-service-data:/data
+      - ./apps/api/data:/data
     profiles:
       - tools
-
-volumes:
-  track-service-data:

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>DON'T FALL — ragdoll bake</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #14130f; color: #f2f0ea;
+        font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      #status { display: grid; place-items: center; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <!-- Dev-only, like the Track builder's `thumbnail.html` and this app's own
+         `rubber.html`: not a build input, not routed, not shipped. Driven by
+         `pnpm bake:ragdoll` (apps/client/scripts/bake-ragdoll.ts), which reads
+         `window.dontFallRagdollBake` and writes the generated spec into
+         `packages/shared/src/simulation/ragdoll/blipRagdollSpec.ts`. -->
+    <div id="status">baking the authored ragdoll…</div>
+    <script type="module" src="/src/bake/bakeRagdollPage.ts"></script>
+  </body>
+</html>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GETUP_TICKS, IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, RAGDOLL_MAX_TICKS, RAGDOLL_MIN_TICKS, STAGGER_INPUT_SCALE, STAGGER_TICKS } from "../tuning/knockdown.js";
+import { GETUP_TOTAL_TICKS, IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, RAGDOLL_MAX_TICKS, RAGDOLL_MIN_TICKS, STAGGER_INPUT_SCALE, STAGGER_TICKS } from "../tuning/knockdown.js";
 import { SLIDE_INPUT_SCALE } from "../tuning/movement.js";
 import { CharacterStateMachine, isDownMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
 
@@ -81,7 +81,9 @@ describe("CharacterStateMachine", () => {
     expect(m.state).toBe("GettingUp");
     expect(m.inputScale).toBe(0);
 
-    run(m, GETUP_TICKS);
+    // The sweep onto the get-up clip's first frame, then the clip to its
+    // planted feet (.scratch/physical-ragdoll ticket 03).
+    run(m, GETUP_TOTAL_TICKS);
     expect(m.state).toBe("Controlled");
     expect(m.inputScale).toBe(1);
   });
@@ -111,7 +113,7 @@ describe("CharacterStateMachine", () => {
     const m = new CharacterStateMachine();
     m.forceRagdoll();
     let reachedControlled = false;
-    for (let i = 0; i < RAGDOLL_MAX_TICKS + GETUP_TICKS + 10; i += 1) {
+    for (let i = 0; i < RAGDOLL_MAX_TICKS + GETUP_TOTAL_TICKS + 10; i += 1) {
       m.impact(IMPACT_RAGDOLL_MIN + 3); // hit every single tick
       if (m.tick(false) === "Controlled") reachedControlled = true;
     }

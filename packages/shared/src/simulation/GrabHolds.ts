@@ -10,6 +10,7 @@ import {
   GRAB_RANGE,
   GRAB_STRUGGLE_WINDOW_TICKS,
   HURL_AIM_SNAP_COS,
+  GRAB_GRIP_ABOVE_CHEST,
   HURL_LIFT_SPEED,
   HURL_MAX_SPEED,
   HURL_MIN_SPEED,
@@ -216,8 +217,12 @@ export class GrabHolds {
       const hurl = grabber.takeHurl();
       if (hurl) {
         const aim = this.world.effectiveInput(grabberId, inputs, matchLocked).moveDirection;
-        const speed = HURL_MIN_SPEED + (HURL_MAX_SPEED - HURL_MIN_SPEED) * hurl.windup;
-        this.hurl(grabberId, grab.heldId, held, scaleVec3(hurlDirection(spinTangentOf(hurl.facing), aim), speed));
+        this.hurl(
+          grabberId,
+          grab.heldId,
+          held,
+          scaleVec3(hurlDirection(spinTangentOf(hurl.facing), aim), hurlSpeed(held, hurl.windup)),
+        );
         continue;
       }
       if (grabber.takeDizzy()) {
@@ -250,7 +255,16 @@ export class GrabHolds {
       }
 
       const point = grabber.carryPoint();
+      // A Limp body stops being a pose and hangs as a real ragdoll from the
+      // grabber's grip (`.scratch/physical-ragdoll` ticket 04) — however it
+      // got there: a Struggle lost, or a body that was already down when it
+      // was picked up. The capsule is still what the hold places and what a
+      // swing reaches; only the look and the throw are the ragdoll's.
+      if (grab.phase === "limp" && !held.isHanging) {
+        held.beginLimpHang(point, GRAB_GRIP_ABOVE_CHEST, carryVelocity(grabber));
+      }
       held.placeHeld(point, grabber.facing + Math.PI, carryVelocity(grabber));
+      held.moveLimpHang(point);
       grabber.setGrabbingId(grab.heldId);
       held.reportHeld(grabberId, grab.phase, this.world.tick() + grab.ticksLeft);
       if (grabber.spinTicks > 0) this.swing(grabberId, grab.heldId, grabber, point);
@@ -428,6 +442,22 @@ const carryVelocity = (grabber: CharacterController): Vec3 => {
  * moment of release, turned onto `aim` — the direction the grabber is
  * steering — when the two are within `HURL_AIM_SNAP_DEG` of each other.
  */
+/**
+ * How fast a Hurl throws (`.scratch/physical-ragdoll` ticket 04, settled with
+ * the user 2026-09-20): the speed the Spin *really* gave the hanging body,
+ * clamped into the band ADR 0104 measured against the Hit's own reach. The
+ * look is the physics'; the balance stays the one that was played.
+ *
+ * A body that is not hanging — released during its Struggle, or on a client
+ * whose prediction never saw the hold — has no real speed to read, so it
+ * falls back to the wind-up's own place in that band.
+ */
+export const hurlSpeed = (held: CharacterController, windup: number): number => {
+  const measured = held.isHanging ? Math.hypot(held.hangVelocity().x, held.hangVelocity().z) : null;
+  const speed = measured ?? HURL_MIN_SPEED + (HURL_MAX_SPEED - HURL_MIN_SPEED) * windup;
+  return Math.min(HURL_MAX_SPEED, Math.max(HURL_MIN_SPEED, speed));
+};
+
 export const hurlDirection = (tangent: Vec3, aim: Vec3): Vec3 => {
   if (lengthVec3(aim) === 0) return tangent;
   const steer = normalizeVec3(vec3(aim.x, 0, aim.z));

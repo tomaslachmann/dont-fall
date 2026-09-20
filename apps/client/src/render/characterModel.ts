@@ -1,4 +1,4 @@
-import { CAPSULE_BOTTOM_OFFSET, RAGDOLL_BONES } from "@dont-fall/shared";
+import { BLIP_RAGDOLL_SPEC, CAPSULE_BOTTOM_OFFSET } from "@dont-fall/shared";
 
 /** Standing height (units) the loaded model is rescaled to, a touch taller than the capsule. */
 export const CHARACTER_VISUAL_HEIGHT = 2 * CAPSULE_BOTTOM_OFFSET + 0.35;
@@ -68,7 +68,7 @@ export const LOCOMOTION_CROSSFADE_SECONDS = 0.15;
  * air (ADR 0076, `knockdownFeetY`). On a deck, the floor under it wins.
  */
 export const RAGDOLL_PELVIS_TO_FEET =
-  CAPSULE_BOTTOM_OFFSET + RAGDOLL_BONES.find((b) => b.name === "pelvis")!.restCenter.y;
+  CAPSULE_BOTTOM_OFFSET + BLIP_RAGDOLL_SPEC.bones.find((b) => b.bone === "pelvis")!.rest.position.y;
 
 export const loadCharacterModel = async (): Promise<CharacterModel> => {
   const gltf = await new GLTFLoader().loadAsync(MODEL_URL);

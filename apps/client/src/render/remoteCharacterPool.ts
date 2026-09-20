@@ -27,7 +27,9 @@ import type { Wardrobe } from "./hats.js";
 import type { IceFootingQuery } from "./iceFooting.js";
 import { Footsteps, steppingClip, type SteppingClip } from "./footsteps.js";
 import { selectLocomotion } from "./locomotionAnimation.js";
+import { advanceGrabberLean, restGrabberLean, spinSpeedOf, type GrabberLean } from "./grabberLean.js";
 import { tintHueForColor } from "./playerTint.js";
+import { RagdollRig } from "./ragdollRig.js";
 import { RemoteYaws } from "./remoteYaw.js";
 import { createSkinCloset, type SkinCloset } from "./skins.js";
 
@@ -47,6 +49,12 @@ interface RemoteRig {
   activeAction: THREE.AnimationAction | null;
   /** Where this rig stands, vertically, while its Character is down (ADR 0076). */
   origin: KnockdownOrigin;
+  /** Poses this rig straight from the replicated ragdoll while a fall and its sweep last. */
+  ragdoll: RagdollRig;
+  /** Whether the last frame drew this rig down — the entry edge rests the bones physics does not drive. */
+  wasDown: boolean;
+  /** How far this rig is braced against the body it is whirling, and what the release does to it (ticket 04). */
+  lean: GrabberLean;
   /** This rig's own arms, legs and crest while Floating (ADR 0077). */
   floatLimbs: FloatLimbs;
   /** Drives this rig's own Punch/HitReact one-shot overlays (M6 ticket 03). */
@@ -197,6 +205,11 @@ export const createRemoteCharacterPool = (
     wardrobe?.wear(root, hats.get(id) ?? null);
     scene.add(root);
 
+    // Yaw first, then the grabber's lean about its own sideways axis
+    // (`.scratch/physical-ragdoll` ticket 04) — under the default order the
+    // pitch would be about the world's X and a body facing sideways would
+    // roll instead of leaning.
+    root.rotation.order = "YXZ";
     const mixer = new THREE.AnimationMixer(root);
     const actions = loadCharacterActions(mixer, characterModel.animations);
     const activeAction = actions.idle;
@@ -208,6 +221,9 @@ export const createRemoteCharacterPool = (
       actions,
       activeAction,
       origin: new KnockdownOrigin(),
+      ragdoll: new RagdollRig(root, root),
+      wasDown: false,
+      lean: restGrabberLean(),
       floatLimbs: new FloatLimbs(root),
       hitReactionPlayer: new HitReactionPlayer(),
       jumpTimeline: jumpTimeline(actions),
@@ -233,20 +249,26 @@ export const createRemoteCharacterPool = (
     const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
     const moving = horizontalSpeed > MOVING_SPEED_THRESHOLD;
     const nowMs = performance.now();
-    // The knockdown, exactly as the local Character draws it (ADR 0076). The
-    // rig root is a direct child of the scene, so its own rotation is the
-    // model's world rotation. While down, `velocity` is the ragdoll's: the push.
-    const knockdownPose = knockdowns.advance(
+    // The knockdown, exactly as the local Character draws it: the fall and the
+    // get-up's sweep from the bones, then the get-up clip where the sweep left
+    // the body (.scratch/physical-ragdoll ticket 02/03). The rig root is a
+    // direct child of the scene, so its own rotation is the model's world one.
+    const knockdownDraw = knockdowns.advance(
       id,
       {
         motionState,
         velocity,
         modelQuaternion: rig.root.quaternion,
+        bones: rc.bones,
         busy: moving || dashing || !grounded || grabbingId !== null || heldByGrabberId !== null,
         deltaSeconds,
       },
       rig.actions,
     );
+    const knockdownPose = knockdownDraw?.kind === "clip" ? knockdownDraw.pose : null;
+
+    const enteringDown = isDownMotionState(motionState) && !rig.wasDown;
+    rig.wasDown = isDownMotionState(motionState);
 
     if (isDownMotionState(motionState)) {
       footsteps.forget(id);
@@ -268,21 +290,39 @@ export const createRemoteCharacterPool = (
       // turn that reading puts π on x and z, so zeroing them mirrored the yaw
       // of a body let go of into a knockdown (turned it right round, held
       // facing straight back).
-      rig.root.rotation.set(0, Math.PI + MODEL_YAW_OFFSET - yaws.rest(id, { facing, respawnCount }), 0);
+      // Once the get-up clip plays, the body is turned the way the sweep left
+      // it — which is what the clip was placed against.
+      rig.root.rotation.set(
+        0,
+        knockdownDraw?.kind === "clip"
+          ? knockdownDraw.landing.yaw
+          : Math.PI + MODEL_YAW_OFFSET - yaws.rest(id, { facing, respawnCount }),
+        0,
+      );
       blendFloatStruggle(rig.actions, 0, rig.activeAction);
       // Standing where the Character is, on the floor under it or with the
-      // body in the air, and keeping the yaw it went down with. A rig that
-      // starts watching mid-knockdown plays from the phase it is shown.
+      // body in the air. A rig that starts watching mid-knockdown plays from
+      // the phase it is shown.
       const originY = rig.origin.place(
         floorBelow(position.x, position.y, position.z),
         knockdownFeetY(motionState, position.y),
         nowMs,
       );
       rig.root.position.set(position.x, originY, position.z);
-      if (knockdownPose) {
-        rig.activeAction = crossfadeLocomotion(knockdownPose.action, rig.activeAction, KNOCKDOWN_CROSSFADE_SECONDS);
-        pinClipPose(knockdownPose);
+      if (knockdownDraw?.kind === "clip") {
+        // Full weight, no crossfade: the sweep ended ON this clip's first
+        // frame, and blending two encodings of one pose is exactly what the
+        // physical get-up exists to avoid.
+        rig.activeAction = crossfadeLocomotion(knockdownDraw.pose.action, rig.activeAction, 0);
+        pinClipPose(knockdownDraw.pose);
         rig.mixer.update(deltaSeconds);
+      } else if (rc.bones.length > 0) {
+        // The fall, and the sweep that opens the get-up: bone for bone from
+        // the ragdoll the server is simulating.
+        if (enteringDown) rig.ragdoll.restUndriven();
+        rig.mixer.stopAllAction();
+        rig.activeAction = null;
+        rig.ragdoll.pose(rc.bones);
       }
       return;
     }
@@ -390,9 +430,19 @@ export const createRemoteCharacterPool = (
     const feetDown = footsteps.update(id, stepping ? rig.activeAction : null);
     if (stepping && onFootstep) for (let foot = 0; foot < feetDown; foot += 1) onFootstep(stepping, position);
 
-    if (heldByGrabberId !== null && motionState === "Held") {
-      // Carried: the body hangs from the grip and streams with the carry's
-      // speed (ADR 0104's drawn hold) — placement and tilt from `carriedFlail`.
+    if (heldByGrabberId !== null && motionState === "Held" && rc.bones.length > 0) {
+      // Limp: the body is a real ragdoll hanging from the grip
+      // (`.scratch/physical-ragdoll` ticket 04), so it is drawn bone for
+      // bone, exactly like a fall.
+      carriedHangs.delete(id);
+      rig.root.position.set(position.x, position.y - CAPSULE_BOTTOM_OFFSET, position.z);
+      rig.root.rotation.set(0, modelYaw, 0);
+      rig.mixer.stopAllAction();
+      rig.activeAction = null;
+      rig.ragdoll.pose(rc.bones);
+    } else if (heldByGrabberId !== null && motionState === "Held") {
+      // Still Struggling: a conscious body fighting the hold, drawn from its
+      // own clip and hung by `carriedFlail`.
       let hang = carriedHangs.get(id);
       if (!hang) {
         hang = restCarriedHang();
@@ -403,9 +453,13 @@ export const createRemoteCharacterPool = (
       rig.root.quaternion.copy(placed.quaternion);
     } else {
       // Full set, not just `.y`: a body fresh out of a carry still holds the
-      // hang's tilt on x/z, and yaw-only writes would keep it forever.
+      // hang's tilt on x/z, and yaw-only writes would keep it forever. The
+      // pitch is the grabber's own brace against what it is whirling
+      // (`.scratch/physical-ragdoll` ticket 04) — zero for everyone else, and
+      // it rocks itself back upright after a throw.
       carriedHangs.delete(id);
-      rig.root.rotation.set(0, modelYaw, 0);
+      const lean = advanceGrabberLean(rig.lean, grabbingId !== null ? spinSpeedOf(rc.spinMs) : 0, deltaSeconds);
+      rig.root.rotation.set(-lean, modelYaw, 0);
     }
   };
 

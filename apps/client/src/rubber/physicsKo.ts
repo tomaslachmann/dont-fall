@@ -175,7 +175,7 @@ export const createPhysicsKnockout = async (
   const use = (bones: readonly BoneSpec[]): { ragdoll: Ragdoll; rig: RagdollRig } => {
     if (built && built.bones === bones) return built;
     built?.ragdoll.dispose();
-    const rig = new RagdollRig(model, carrier, bones);
+    const rig = new RagdollRig(model, carrier, bones.map((b) => b.name));
     if (!rig.complete) console.warn("physics KO: the rig is missing nodes this skeleton poses");
     built = { bones, ragdoll: new Ragdoll(world, bones), rig };
     return built;

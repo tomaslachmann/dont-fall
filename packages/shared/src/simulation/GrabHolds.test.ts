@@ -18,7 +18,9 @@ import {
   SPIN_OVERSPIN_TICKS,
   SPIN_WINDUP_TICKS,
 } from "../tuning/fight.js";
+import { HURL_MAX_SPEED, HURL_MIN_SPEED } from "../tuning/fight.js";
 import { RAGDOLL_MIN_TICKS } from "../tuning/knockdown.js";
+import { BLIP_RAGDOLL_SPEC } from "./ragdoll/blipRagdollSpec.js";
 import { hurlDirection } from "./GrabHolds.js";
 import { DEFAULT_CHARACTER_ID, RapierSimulation, initPhysics } from "./RapierSimulation.js";
 import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
@@ -406,7 +408,10 @@ describe("GrabHolds — Limp, release and Grab immunity (ADR 0104, ticket 03)", 
     }
     expect(of(sim, HELD).motionState).toBe("Held");
     expect(of(sim, HELD).heldPhase).toBe("limp");
-    expect(of(sim, HELD).bones).toHaveLength(0); // the ragdoll is put away
+    // The consciously flipped contract (`.scratch/physical-ragdoll` ticket
+    // 04): a Limp body hangs from the grip as a real ragdoll, so its bones
+    // travel. A Struggling one is still a pose, and reports none.
+    expect(of(sim, HELD).bones).toHaveLength(BLIP_RAGDOLL_SPEC.bones.length);
     for (let n = 0; n < GRAB_CARRY_TICKS - 2; n += 1) sim.tick({});
     expect(of(sim, HELD).motionState).toBe("Held");
   });
@@ -477,12 +482,55 @@ describe("GrabHolds — Spin and Hurl (ADR 0104, ticket 04)", () => {
     return lengthVec3(flat(subVec3(of(sim, HELD).position, from)));
   };
 
+  /** Carried into Limp, so the body hangs as a real ragdoll (ticket 04). */
+  const limp = (): RapierSimulation => {
+    const sim = caught(-1, [{ center: { x: 0, y: -0.5, z: 0 }, halfExtents: { x: 80, y: 0.5, z: 80 } }]);
+    for (let n = 0; n < GRAB_STRUGGLE_WINDOW_TICKS + 1; n += 1) sim.tick({});
+    return sim;
+  };
+
+  it("hangs a Limp body from the grip as a real ragdoll, and carries it with the grabber", () => {
+    const sim = limp();
+    expect(of(sim, HELD).heldPhase).toBe("limp");
+    const bones = of(sim, HELD).bones;
+    expect(bones).toHaveLength(BLIP_RAGDOLL_SPEC.bones.length);
+    // Hanging: the pelvis swings below the point the hold carries the body at.
+    const pelvis = bones[0]!.position;
+    expect(pelvis.y).toBeLessThan(of(sim, HELD).position.y);
+    // And it goes where the grabber goes.
+    const before = bones[0]!.position.x;
+    for (let n = 0; n < 25; n += 1) sim.tick({ [GRABBER]: input({ moveDirection: EAST, facing: 0 }) });
+    expect(of(sim, HELD).bones[0]!.position.x - before).toBeGreaterThan(1);
+  });
+
+  it("throws a hurled body at the speed the Spin really gave it, inside the band that was tuned", () => {
+    const speedAfter = (spinTicks: number): number => {
+      const sim = limp();
+      for (let n = 0; n < spinTicks; n += 1) sim.tick({ [GRABBER]: spin });
+      sim.tick({}); // let go
+      const v = of(sim, HELD).velocity;
+      return Math.hypot(v.x, v.z);
+    };
+    const flick = speedAfter(1);
+    const full = speedAfter(SPIN_WINDUP_TICKS);
+    // Clamped into ADR 0104's measured band at both ends — a flick that gave
+    // the body almost nothing still throws, and a full Spin never overshoots.
+    expect(flick).toBeGreaterThanOrEqual(HURL_MIN_SPEED - 0.01);
+    expect(full).toBeLessThanOrEqual(HURL_MAX_SPEED + 0.01);
+    expect(full).toBeGreaterThan(flick);
+  });
+
   it("carries a Hurl further the longer the Spin wound up — measured (see HURL_MIN_SPEED)", () => {
     const flick = hurlDistance(1);
     const half = hurlDistance(Math.round(SPIN_WINDUP_TICKS / 2));
     const full = hurlDistance(SPIN_WINDUP_TICKS);
     // A full Spin carries about twice a fully charged Hit (3.6, ADR 0093).
-    expect(flick).toBeGreaterThan(2);
+    // Re-measured on the authored body (.scratch/physical-ragdoll ticket 01):
+    // the same launch speeds carry 1.67 / 3.53 / 6.46 — a flick shorter than
+    // the eleven capsules flew, a wider spread, so winding up pays more.
+    // Ticket 04 re-measures the whole table when the Hurl itself goes
+    // physical; until then this pins the shape, not the old body's numbers.
+    expect(flick).toBeGreaterThan(1.2);
     expect(half).toBeGreaterThan(flick);
     expect(full).toBeGreaterThan(half);
     expect(full).toBeGreaterThan(6);

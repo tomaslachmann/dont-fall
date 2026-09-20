@@ -1,15 +1,24 @@
-import { CAPSULE_BOTTOM_OFFSET, type CharacterMotionState, type Vec3 } from "@dont-fall/shared";
+import {
+  BLIP_RAGDOLL_SPEC,
+  CAPSULE_BOTTOM_OFFSET,
+  GETUP_DRIVE_MS,
+  mulQuat,
+  rotateVec3ByQuat,
+  yawQuat,
+  type BoneSnapshot,
+  type CharacterMotionState,
+  type Vec3,
+} from "@dont-fall/shared";
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import { KNOCKDOWN_DIRECTIONS, RAGDOLL_PELVIS_TO_FEET, type CharacterActions, type KnockdownDirection } from "./characterModel.js";
 import {
-  KNOCKDOWN_FALLBACK,
   KNOCKDOWN_ORIGIN_EASE_SECONDS,
-  KNOCKDOWN_PICK_SECONDS,
   KnockdownOrigin,
   Knockdowns,
   knockdownDirection,
   knockdownFeetY,
+  type KnockdownDraw,
   type KnockdownFrame,
 } from "./knockdownAnimation.js";
 
@@ -43,16 +52,47 @@ const pushAt = (degrees: number, speed = 5): Vec3 => {
   return { x: Math.sin(r) * speed, y: 0, z: Math.cos(r) * speed };
 };
 
+/** The baked get-up pose, placed: what the simulation's sweep leaves behind. */
+const swept = (side: "F" | "B", yaw = 0, x = 0, z = 0): BoneSnapshot[] => {
+  const facing = yawQuat(yaw);
+  return BLIP_RAGDOLL_SPEC.getUp[side].bones.map((bone) => {
+    const turned = rotateVec3ByQuat(bone.position, facing);
+    return { position: { x: turned.x + x, y: turned.y, z: turned.z + z }, rotation: mulQuat(facing, bone.rotation) };
+  });
+};
+
+/** A mid-fall heap: anything with bones in it, which is all the fall's drawing needs. */
+const HEAP: BoneSnapshot[] = swept("B", 0.4);
+
 const frame = (motionState: CharacterMotionState, overrides: Partial<KnockdownFrame> = {}): KnockdownFrame => ({
   motionState,
   velocity: { x: 0, y: 0, z: 0 },
   modelQuaternion: UNTURNED,
+  bones: HEAP,
   busy: false,
   deltaSeconds: 1 / 60,
   ...overrides,
 });
 
-const clipName = (pose: { action: THREE.AnimationAction } | null): string | null => pose?.action.getClip().name ?? null;
+const SWEEP_SECONDS = GETUP_DRIVE_MS / 1000;
+/**
+ * Enter GettingUp and sit out the sweep, ending on `bones` — the pose the
+ * simulation's sweep left behind. The entering frame starts the sweep's own
+ * clock at zero, so the wait is a frame of its own.
+ */
+const sweepThrough = (
+  knockdowns: Knockdowns,
+  actions: CharacterActions,
+  bones: BoneSnapshot[],
+  id = "a",
+): KnockdownDraw | null => {
+  knockdowns.advance(id, frame("GettingUp", { bones }), actions);
+  return knockdowns.advance(id, frame("GettingUp", { deltaSeconds: SWEEP_SECONDS, bones }), actions);
+};
+const clipName = (draw: KnockdownDraw | null): string | null =>
+  draw?.kind === "clip" ? draw.pose.action.getClip().name : null;
+const clipTime = (draw: KnockdownDraw | null): number | null => (draw?.kind === "clip" ? draw.pose.time : null);
+const landingOf = (draw: KnockdownDraw | null) => (draw?.kind === "clip" ? draw.landing : null);
 
 describe("knockdownDirection", () => {
   it("falls the way it was pushed, one fall every 60° clockwise from forward", () => {
@@ -85,67 +125,60 @@ describe("knockdownDirection", () => {
   });
 });
 
-describe("Knockdowns", () => {
-  it("plays KO the way it was pushed from the first down frame, and rests on its last frame", () => {
+describe("Knockdowns (.scratch/physical-ragdoll ticket 02/03)", () => {
+  it("draws the fall from the bones, never a clip", () => {
     const actions = rig();
     const knockdowns = new Knockdowns();
-    const first = knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(60) }), actions);
-    expect(clipName(first)).toBe("KO_FR");
-    expect(first!.time).toBe(0);
-
-    const later = knockdowns.advance("a", frame("Ragdoll", { deltaSeconds: 0.5, velocity: pushAt(200) }), actions);
-    expect(clipName(later)).toBe("KO_FR");
-    expect(later!.time).toBeCloseTo(0.5);
-
-    const held = knockdowns.advance("a", frame("Ragdoll", { deltaSeconds: 3 }), actions);
-    expect(held!.time).toBeCloseTo(KO_SECONDS);
+    expect(knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(60) }), actions)).toEqual({ kind: "bones" });
+    expect(knockdowns.advance("a", frame("Ragdoll", { deltaSeconds: 3 }), actions)).toEqual({ kind: "bones" });
   });
 
-  it("falls back with no push, and still takes a push that turns up in the first moments", () => {
+  it("keeps drawing bones through the get-up's sweep, then plays the clip the sweep landed on", () => {
     const actions = rig();
     const knockdowns = new Knockdowns();
-    expect(clipName(knockdowns.advance("a", frame("Ragdoll"), actions))).toBe(`KO_${KNOCKDOWN_FALLBACK}`);
-    expect(clipName(knockdowns.advance("a", frame("Ragdoll", { deltaSeconds: 0.03, velocity: pushAt(0) }), actions))).toBe("KO_F");
-
-    const late = new Knockdowns();
-    late.advance("a", frame("Ragdoll"), actions);
-    late.advance("a", frame("Ragdoll", { deltaSeconds: KNOCKDOWN_PICK_SECONDS + 0.05 }), actions);
-    expect(clipName(late.advance("a", frame("Ragdoll", { velocity: pushAt(0) }), actions))).toBe(`KO_${KNOCKDOWN_FALLBACK}`);
+    knockdowns.advance("a", frame("Ragdoll"), actions);
+    // The sweep is the simulation's; the rig keeps drawing what it is doing.
+    expect(knockdowns.advance("a", frame("GettingUp", { deltaSeconds: 0.2 }), actions)).toEqual({ kind: "bones" });
+    expect(knockdowns.advance("a", frame("GettingUp", { deltaSeconds: SWEEP_SECONDS - 0.3 }), actions)).toEqual({ kind: "bones" });
+    // Once it has ended, the clip starts at its own first frame, placed where
+    // the bones were left.
+    const landed = knockdowns.advance("a", frame("GettingUp", { deltaSeconds: 0.4, bones: swept("F", 1.2, 4, -3) }), actions);
+    expect(clipName(landed)).toBe("GetUp_F");
+    expect(clipTime(landed)).toBe(0);
+    const landing = landingOf(landed);
+    expect(landing?.yaw).toBeCloseTo(1.2, 4);
+    expect(landing?.originX).toBeCloseTo(4, 4);
+    expect(landing?.originZ).toBeCloseTo(-3, 4);
   });
 
-  it("lets the push overrule the stale first read — within the window, the last one wins (found live 2026-09-18)", () => {
+  it("gets up the way the body actually lies — on its back or on its face", () => {
     const actions = rig();
-    const knockdowns = new Knockdowns();
-    // The first drawn Ragdoll frame still carries the Character's own run —
-    // the drawn world is a beat behind the shove that knocked it down.
-    knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(0) }), actions);
-    // The real push (from the right, 90°) arrives two frames later, inside the window…
-    expect(clipName(knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(90) }), actions))).toBe("KO_BR");
-    // …and once the window closes, the fall is settled for good.
-    knockdowns.advance("a", frame("Ragdoll", { deltaSeconds: KNOCKDOWN_PICK_SECONDS, velocity: pushAt(90) }), actions);
-    expect(clipName(knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(180) }), actions))).toBe("KO_BR");
+    const toClip = (bones: BoneSnapshot[]): string | null => {
+      const knockdowns = new Knockdowns();
+      knockdowns.advance("a", frame("Ragdoll"), actions);
+      return clipName(sweepThrough(knockdowns, actions, bones));
+    };
+    expect(toClip(swept("B"))).toBe("GetUp_B");
+    expect(toClip(swept("F"))).toBe("GetUp_F");
   });
 
-  it("gets up the way it fell, from GetUp's first frame, the moment GettingUp is drawn", () => {
+  it("runs the clip's own clock from the frame it starts", () => {
     const actions = rig();
     const knockdowns = new Knockdowns();
-    knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(240) }), actions);
-    knockdowns.advance("a", frame("Ragdoll", { deltaSeconds: 2 }), actions);
-    const up = knockdowns.advance("a", frame("GettingUp", { deltaSeconds: 0.2 }), actions);
-    expect(clipName(up)).toBe("GetUp_BL");
-    expect(up!.time).toBe(0);
-    expect(knockdowns.advance("a", frame("GettingUp", { deltaSeconds: 0.25 }), actions)!.time).toBeCloseTo(0.25);
+    knockdowns.advance("a", frame("Ragdoll"), actions);
+    sweepThrough(knockdowns, actions, swept("B"));
+    expect(clipTime(knockdowns.advance("a", frame("GettingUp", { deltaSeconds: 0.25 }), actions))).toBeCloseTo(0.25);
   });
 
   it("plays the rest of the get-up back in Controlled while standing still, then lets go", () => {
     const actions = rig();
     const knockdowns = new Knockdowns();
-    knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(0) }), actions);
-    knockdowns.advance("a", frame("GettingUp"), actions);
+    knockdowns.advance("a", frame("Ragdoll"), actions);
+    sweepThrough(knockdowns, actions, swept("F"));
     knockdowns.advance("a", frame("GettingUp", { deltaSeconds: 1 }), actions);
     const tail = knockdowns.advance("a", frame("Controlled", { deltaSeconds: 0.5 }), actions);
     expect(clipName(tail)).toBe("GetUp_F");
-    expect(tail!.time).toBeCloseTo(1.5);
+    expect(clipTime(tail)).toBeCloseTo(1.5);
     expect(knockdowns.has("a")).toBe(true);
 
     expect(knockdowns.advance("a", frame("Controlled", { deltaSeconds: GETUP_SECONDS }), actions)).toBeNull();
@@ -156,10 +189,9 @@ describe("Knockdowns", () => {
     const actions = rig();
     const knockdowns = new Knockdowns();
     knockdowns.advance("a", frame("Ragdoll"), actions);
-    knockdowns.advance("a", frame("GettingUp"), actions);
+    sweepThrough(knockdowns, actions, swept("B"));
     expect(knockdowns.advance("a", frame("Controlled", { busy: true }), actions)).toBeNull();
     expect(knockdowns.has("a")).toBe(false);
-    // …and stays gone once standing still again.
     expect(knockdowns.advance("a", frame("Controlled"), actions)).toBeNull();
   });
 
@@ -167,52 +199,47 @@ describe("Knockdowns", () => {
     const actions = rig();
     const knockdowns = new Knockdowns();
     knockdowns.advance("a", frame("Ragdoll"), actions);
-    knockdowns.advance("a", frame("GettingUp"), actions);
+    sweepThrough(knockdowns, actions, swept("B"));
     expect(knockdowns.advance("a", frame("Stagger"), actions)).toBeNull();
   });
 
   it("drops a fall a correction undid, straight from Ragdoll to Controlled", () => {
     const actions = rig();
     const knockdowns = new Knockdowns();
-    knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(0) }), actions);
+    knockdowns.advance("a", frame("Ragdoll"), actions);
     expect(knockdowns.advance("a", frame("Controlled"), actions)).toBeNull();
     expect(knockdowns.has("a")).toBe(false);
   });
 
-  it("gets up the fallback way when the fall was never drawn", () => {
+  it("joins the clip at once for a rig that starts watching part-way through a get-up", () => {
     const actions = rig();
     const knockdowns = new Knockdowns();
-    const up = knockdowns.advance("a", frame("GettingUp", { velocity: pushAt(60) }), actions);
-    expect(clipName(up)).toBe(`GetUp_${KNOCKDOWN_FALLBACK}`);
-    expect(up!.time).toBe(0);
+    // Its sweep has been and gone; the bones it can see are already on the
+    // clip's first frame, and they say which one and where.
+    const up = knockdowns.advance("a", frame("GettingUp", { bones: swept("B", -0.8, 2, 2) }), actions);
+    expect(clipName(up)).toBe("GetUp_B");
+    expect(clipTime(up)).toBe(0);
+    expect(landingOf(up)?.yaw).toBeCloseTo(-0.8, 4);
   });
 
-  it("starts over for a new fall, or a new get-up, landing during the last one's tail", () => {
+  it("starts over for a new fall landing during the last one's tail", () => {
     const actions = rig();
     const knockdowns = new Knockdowns();
-    knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(0) }), actions);
-    knockdowns.advance("a", frame("GettingUp"), actions);
+    knockdowns.advance("a", frame("Ragdoll"), actions);
+    sweepThrough(knockdowns, actions, swept("B"));
     knockdowns.advance("a", frame("Controlled", { deltaSeconds: 1.5 }), actions);
-    const again = knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(180) }), actions);
-    expect(clipName(again)).toBe("KO_B");
-    expect(again!.time).toBe(0);
-
-    const other = new Knockdowns();
-    other.advance("b", frame("Ragdoll", { velocity: pushAt(0) }), actions);
-    other.advance("b", frame("GettingUp"), actions);
-    other.advance("b", frame("Controlled", { deltaSeconds: 1.5 }), actions);
-    const up = other.advance("b", frame("GettingUp"), actions);
-    expect(clipName(up)).toBe(`GetUp_${KNOCKDOWN_FALLBACK}`);
-    expect(up!.time).toBe(0);
+    expect(knockdowns.advance("a", frame("Ragdoll"), actions)).toEqual({ kind: "bones" });
   });
 
   it("keeps each Character's knockdown apart, and forgets on request", () => {
     const actions = rig();
     const knockdowns = new Knockdowns();
-    knockdowns.advance("a", frame("Ragdoll", { velocity: pushAt(0) }), actions);
-    knockdowns.advance("b", frame("Ragdoll", { velocity: pushAt(180) }), actions);
-    expect(clipName(knockdowns.advance("a", frame("Ragdoll"), actions))).toBe("KO_F");
-    expect(clipName(knockdowns.advance("b", frame("Ragdoll"), actions))).toBe("KO_B");
+    knockdowns.advance("a", frame("Ragdoll"), actions);
+    knockdowns.advance("b", frame("Ragdoll"), actions);
+    sweepThrough(knockdowns, actions, swept("F"), "a");
+    sweepThrough(knockdowns, actions, swept("B"), "b");
+    expect(clipName(knockdowns.advance("a", frame("GettingUp"), actions))).toBe("GetUp_F");
+    expect(clipName(knockdowns.advance("b", frame("GettingUp"), actions))).toBe("GetUp_B");
     knockdowns.forget("a");
     expect(knockdowns.has("a")).toBe(false);
     expect(knockdowns.has("b")).toBe(true);
@@ -220,9 +247,11 @@ describe("Knockdowns", () => {
     expect(knockdowns.has("b")).toBe(false);
   });
 
-  it("draws nothing for a rig without the clips", () => {
-    const actions = { ...rig(), ko: { F: null, FL: null, FR: null, B: null, BL: null, BR: null } };
-    expect(new Knockdowns().advance("a", frame("Ragdoll", { velocity: pushAt(0) }), actions)).toBeNull();
+  it("falls back to the bones for a rig without the get-up clips", () => {
+    const actions = { ...rig(), getUp: { F: null, FL: null, FR: null, B: null, BL: null, BR: null } };
+    const knockdowns = new Knockdowns();
+    knockdowns.advance("a", frame("Ragdoll"), actions);
+    expect(sweepThrough(knockdowns, actions, swept("B"))).toEqual({ kind: "bones" });
   });
 });
 

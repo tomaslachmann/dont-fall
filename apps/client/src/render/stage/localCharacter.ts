@@ -3,6 +3,7 @@ import {
   CAPSULE_BOTTOM_OFFSET,
   DASH_SPEED,
   isDownMotionState,
+  type BoneSnapshot,
   type CharacterMotionState,
   type RenderCharacter,
   type Vec3,
@@ -22,6 +23,7 @@ import {
 import { blendFloatStruggle, FloatLimbs } from "../floatPose.js";
 import { Footsteps, steppingClip, type SteppingClip } from "../footsteps.js";
 import { GrabAnimations } from "../grabAnimation.js";
+import { advanceGrabberLean, restGrabberLean } from "../grabberLean.js";
 import type { Wardrobe } from "../hats.js";
 import { HitReactionPlayer } from "../hitReactionPlayer.js";
 import type { IceFootingQuery } from "../iceFooting.js";
@@ -43,6 +45,7 @@ import {
   nextModelYaw,
 } from "../modelFacing.js";
 import { tintHueForColor } from "../playerTint.js";
+import { RagdollRig } from "../ragdollRig.js";
 import { setShadowRole } from "../shadowRoles.js";
 import type { SkinCloset } from "../skins.js";
 import type { Stage } from "../scene.js";
@@ -110,6 +113,9 @@ export const createLocalCharacter = (
   // Marked before any remote rig is cloned from it, so every clone casts too.
   setShadowRole(characterModel.scene, "caster");
   character.add(characterModel.scene);
+  // Yaw first, then the grabber's lean about its own sideways axis
+  // (`.scratch/physical-ragdoll` ticket 04).
+  character.rotation.order = "YXZ";
   character.position.y = CAPSULE_BOTTOM_OFFSET; // arbitrary until the first `place`
   scene.add(character);
 
@@ -129,8 +135,12 @@ export const createLocalCharacter = (
   const grabAnimations = new GrabAnimations();
   const jumpSequences = new JumpSequences();
   const localJumpTimeline = jumpTimeline(actions);
-  /** The fall, the get-up, and the get-up's tail (ADR 0076). */
+  /** The fall, the get-up, and the get-up's tail (.scratch/physical-ragdoll ticket 02/03). */
   const knockdowns = new Knockdowns();
+  /** Poses the rig straight from the replicated ragdoll while the fall and the sweep last. */
+  const ragdollRig = new RagdollRig(characterModel.scene, character);
+  /** The replicated bones, stashed by `place`. */
+  let localBones: readonly BoneSnapshot[] = [];
   /** A Floating Character's arms, legs and crest (ADR 0077). */
   const localFloatLimbs = new FloatLimbs(characterModel.scene);
   /** Where the knocked-down rig stands, vertically (ADR 0076). */
@@ -144,6 +154,8 @@ export const createLocalCharacter = (
   const modelQuaternion = new THREE.Quaternion();
   /** This body's damped hang while someone carries it (ADR 0104's drawn hold) — `null` on its feet. */
   let carriedHang: CarriedHang | null = null;
+  /** How far this Character is braced against a body it is whirling (ticket 04). */
+  const grabberLean = restGrabberLean();
   /** The released Spin's leftover turn (rad/s), bleeding off — see `decayedSpinMomentum`. */
   let spinMomentum = 0;
   /** The yaw rate the last Spin-pinned frame turned at, the momentum's seed. */
@@ -168,9 +180,10 @@ export const createLocalCharacter = (
   let localSkin: string | null = null;
 
   return {
-    place: ({ position, motionState, velocity }) => {
+    place: ({ position, motionState, velocity, bones }) => {
       localCentre = position;
       localVelocity = velocity;
+      localBones = bones;
       const fallingRagdoll = motionState === "Ragdoll";
       const gettingUp = motionState === "GettingUp";
       const enteringRagdoll = fallingRagdoll && visualState !== "Ragdoll";
@@ -185,11 +198,16 @@ export const createLocalCharacter = (
       visualState = motionState;
 
       if (fallingRagdoll || gettingUp) {
-        // The rig stands where the Character is (ADR 0076): `position` is the
-        // physics pelvis while down, so the origin is the floor under it, or
-        // where standing feet would be when the body is in the air. The pose
-        // is the knockdown's own clips, set in `animate`.
+        // The rig stands where the Character is: `position` is the physics
+        // pelvis while down, so the origin is the floor under it, or where
+        // standing feet would be when the body is in the air. The pose itself
+        // — bones, then the get-up clip — is set in `animate`.
         if (enteringRagdoll || enteringGettingUp) hitReactionPlayer.stop(actions);
+        // The bones physics does not drive (the GLB's `root`, the crest, the
+        // eyes) still hold whatever clip played before the fall; a heap
+        // written over a stale root rolls the body as the get-up blends out
+        // of it (measured on the rubber bench).
+        if (enteringRagdoll) ragdollRig.restUndriven();
         const floorY = floorBelow(position.x, position.y, position.z);
         const originY = localOrigin.place(floorY, knockdownFeetY(motionState, position.y), performance.now());
         character.position.set(position.x, originY, position.z);
@@ -226,17 +244,19 @@ export const createLocalCharacter = (
       // the Player does nothing. A held Grab counts as doing something, in
       // either role.
       characterModel.scene.getWorldQuaternion(modelQuaternion);
-      const knockdownPose = knockdowns.advance(
+      const knockdownDraw = knockdowns.advance(
         "local",
         {
           motionState: visualState,
           velocity: localVelocity,
           modelQuaternion,
+          bones: localBones,
           busy: moving || dashing || !grounded || hold.role !== "free",
           deltaSeconds,
         },
         actions,
       );
+      const knockdownPose = knockdownDraw?.kind === "clip" ? knockdownDraw.pose : null;
 
       // No steps to count across a knockdown. Landings are heard in
       // `applyCharacterSounds`.
@@ -259,12 +279,24 @@ export const createLocalCharacter = (
         // Written whole, not by zeroing a carry's tilt off x/z: those Euler
         // angles were read back off the carry's quaternion (see `bodyYaw`),
         // and zeroing them mirrored the yaw of a body hurled into a knockdown.
+        // Once the get-up clip plays, the body is turned the way the sweep
+        // left it, which is what the clip was placed against.
+        if (knockdownDraw?.kind === "clip") bodyYaw = knockdownDraw.landing.yaw;
         character.rotation.set(0, bodyYaw, 0);
         blendFloatStruggle(actions, 0, activeAction);
-        if (knockdownPose) {
-          activeAction = crossfadeLocomotion(knockdownPose.action, activeAction, KNOCKDOWN_CROSSFADE_SECONDS);
-          pinClipPose(knockdownPose);
+        if (knockdownDraw?.kind === "clip") {
+          // Full weight, no crossfade: the sweep ended ON this clip's first
+          // frame, and blending the two encodings of that one pose is what
+          // the physical get-up exists to avoid.
+          activeAction = crossfadeLocomotion(knockdownDraw.pose.action, activeAction, 0);
+          pinClipPose(knockdownDraw.pose);
           mixer.update(deltaSeconds);
+        } else if (localBones.length > 0) {
+          // The fall, and the sweep that opens the get-up: drawn bone for
+          // bone from the ragdoll the server is simulating.
+          mixer.stopAllAction();
+          activeAction = null;
+          ragdollRig.pose(localBones);
         }
         return;
       }
@@ -392,7 +424,17 @@ export const createLocalCharacter = (
       // Carried (ADR 0104's drawn hold): this body hangs from its grabber's
       // grip and streams with the carry's speed — your own screen shows you
       // whirled exactly as everyone else sees you.
-      if (hold.role === "held" && hold.pinnedFacing !== null && localCentre !== null) {
+      if (hold.role === "held" && hold.phase === "limp" && localBones.length > 0 && localCentre !== null) {
+        // Limp: a real ragdoll hanging from the grip
+        // (`.scratch/physical-ragdoll` ticket 04), drawn bone for bone — your
+        // own screen shows you hanging exactly as everyone else sees you.
+        carriedHang = null;
+        character.position.set(localCentre.x, localCentre.y - CAPSULE_BOTTOM_OFFSET, localCentre.z);
+        character.rotation.set(0, bodyYaw, 0);
+        mixer.stopAllAction();
+        activeAction = null;
+        ragdollRig.pose(localBones);
+      } else if (hold.role === "held" && hold.pinnedFacing !== null && localCentre !== null) {
         carriedHang ??= restCarriedHang();
         const placed = carriedFlail(
           carriedHang,
@@ -407,8 +449,18 @@ export const createLocalCharacter = (
         // Upright, turned to the body's yaw — written whole every frame, so a
         // body fresh out of the carry sheds the hang's tilt without its yaw
         // ever being read back off the tilted rig (see `bodyYaw`).
+        // The pitch is this Character's own brace against whatever it is
+        // whirling (ticket 04): zero unless it is Spinning someone, and it
+        // rocks itself upright again after the throw.
         carriedHang = null;
-        character.rotation.set(0, bodyYaw, 0);
+        character.rotation.set(
+          // Measured off the drawn yaw rather than the replicated `spinMs`:
+          // the grabber's own Spin is predicted, so its own screen knows how
+          // fast it is really turning a whole round trip before the wire does.
+          -advanceGrabberLean(grabberLean, spinPinned ? Math.abs(lastSpinRate) : 0, deltaSeconds),
+          bodyYaw,
+          0,
+        );
       }
 
       if (visualState === "Controlled") {

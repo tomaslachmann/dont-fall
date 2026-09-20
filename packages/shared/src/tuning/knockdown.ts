@@ -112,7 +112,7 @@ export const WALL_IMPACT_LIFT_RATIO = 0.3;
  * hit is just an ordinary blocked walk, not a knockdown; only real speed
  * counts as a real crash.
  */
-export const WALL_IMPACT_MIN_SPEED = DASH_SPEED * 0.6;
+export const WALL_IMPACT_MIN_SPEED = DASH_SPEED * 0.7;
 
 /**
  * Impact magnitude per unit of closing speed (M3.7 ticket 03) — replaces the
@@ -172,10 +172,18 @@ export const RAGDOLL_SETTLE_SPEED = 1.2;
  * How long GettingUp lasts at zero input (ms). This is the frame where the
  * rig's `GetUp_*` clips plant both feet, frame 32 of 84 at 30 fps (ADR 0076).
  * Control returns there, and the rest of the get-up plays out only while the
- * Character stands still. Also the length of the sim's own blend from the
- * settled pelvis back to the standing capsule. Was 450.
+ * Character stands still. Was 450.
  */
 export const GETUP_MS = 1067;
+
+/**
+ * The get-up's opening stretch (ms): the settled heap is swept kinematically
+ * onto the matching `GetUp_X` clip's first frame, so physics ends exactly
+ * where the clip begins and the handover has nothing left to hide
+ * (`.scratch/physical-ragdoll` ticket 03 — the rubber bench measured the
+ * seam at 0.0002 u). GettingUp as a whole lasts this plus {@link GETUP_MS}.
+ */
+export const GETUP_DRIVE_MS = 900;
 
 /** Where the capsule centre is placed above the settled pelvis when GettingUp begins (units). */
 export const GETUP_CAPSULE_LIFT = 0.7;
@@ -224,6 +232,13 @@ export const RAGDOLL_CONTACT_SKIN = 0.01;
 export const RAGDOLL_FRICTION = 0.9;
 
 /**
+ * Restitution on the authored ragdoll's hulls (`AuthoredRagdoll`,
+ * `.scratch/physical-ragdoll` ticket 01) — a whisper of bounce so a hard
+ * landing doesn't read as hitting wet clay. The rubber bench's own number.
+ */
+export const RAGDOLL_RESTITUTION = 0.05;
+
+/**
  * Fraction of its pre-hit velocity a Character's ragdoll keeps when the
  * knockdown was a *crash* — a dash into a wall/Prop, a Bump, a Spinner (M2
  * ticket 08). The collision absorbs most of the forward momentum, so the
@@ -247,3 +262,9 @@ export const RAGDOLL_MAX_TICKS = msToTicks(RAGDOLL_MAX_MS);
 
 /** {@link GETUP_MS} in whole ticks. */
 export const GETUP_TICKS = msToTicks(GETUP_MS);
+
+/** {@link GETUP_DRIVE_MS} in whole ticks. */
+export const GETUP_DRIVE_TICKS = msToTicks(GETUP_DRIVE_MS);
+
+/** The whole of GettingUp: the sweep onto the clip's first frame, then the clip to its planted-feet frame. */
+export const GETUP_TOTAL_TICKS = GETUP_DRIVE_TICKS + GETUP_TICKS;

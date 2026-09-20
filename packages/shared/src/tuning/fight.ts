@@ -168,6 +168,15 @@ export const GRAB_CARRY_DISTANCE = 1.1;
 export const GRAB_CARRY_LIFT = 0.4;
 
 /**
+ * Where the grabber's grip holds a Limp body, above the chest bone's own
+ * pivot (`.scratch/physical-ragdoll` ticket 04). At the collar: high enough
+ * that the body hangs from it rather than balancing on it, low enough that
+ * the head is not being carried by the neck. The rubber bench's own number,
+ * converted from BLIP's units to the sim's.
+ */
+export const GRAB_GRIP_ABOVE_CHEST = 0.2;
+
+/**
  * How long a Character released from a hold cannot be grabbed again, counted
  * from when it is standing (`Controlled`) once more (ms, ADR 0104) — Grab
  * immunity, so a Limp body cannot be dropped and picked straight back up.

@@ -10,6 +10,7 @@ import { DASH_COOLDOWN_MS, DASH_COOLDOWN_TICKS, DASH_DURATION_MS, DASH_SPEED, SL
 import { ICE_TOP_SPEED_MULTIPLIER } from "../tuning/surfaces.js";
 import { LAUNCH_TRIGGER_MARGIN } from "../tuning/world.js";
 import { DEFAULT_SURFACE, SURFACES } from "../track/Surface.js";
+import { BLIP_RAGDOLL_SPEC } from "./ragdoll/blipRagdollSpec.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import { isDownMotionState } from "./CharacterStateMachine.js";
 import { DEFAULT_CHARACTER_ID, RapierSimulation, initPhysics } from "./RapierSimulation.js";
@@ -1874,12 +1875,13 @@ describe("RapierSimulation — Impact & ragdoll", () => {
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Controlled");
   });
 
-  it("ragdolls on a hard Impact and shows 11 bones", () => {
+  it("ragdolls on a hard Impact and shows the authored rig's 15 bones", () => {
     const sim = standing();
     sim.applyImpact(DEFAULT_CHARACTER_ID, { x: IMPACT_RAGDOLL_MIN + 5, y: 3, z: 0 });
     sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
-    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bones.length).toBe(11);
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.bones.length).toBe(BLIP_RAGDOLL_SPEC.bones.length);
+    expect(BLIP_RAGDOLL_SPEC.bones.length).toBe(15);
   });
 
   it("reports the ragdoll's own velocity, not zero, while Ragdoll (ticket 08 follow-up)", () => {
@@ -1949,7 +1951,12 @@ describe("RapierSimulation — Impact & ragdoll", () => {
       prevRespawnCount = c.respawnCount;
       if (c.motionState === "Controlled" && i > 20) break;
     }
-    expect(maxStep).toBeLessThan(0.35); // no ~0.7 pop, no discontinuity
+    // No ~0.7 GETUP_CAPSULE_LIFT pop at the handoff. The bound moved with the
+    // authored rig (.scratch/physical-ragdoll ticket 01): BLIP's pelvis pivot
+    // sits 0.48 under the capsule centre (the old skeleton's sat 0.15), so
+    // the first down snapshot legitimately steps that far when `position`
+    // becomes the pelvis. The handoff itself still blends.
+    expect(maxStep).toBeLessThan(0.6);
   });
 
   it("dampens jump and dash while Staggered, not just walking", () => {

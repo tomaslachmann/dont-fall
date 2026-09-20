@@ -1,137 +1,87 @@
-import { type BoneSnapshot, type BoneSpec, RAGDOLL_BONES } from "@dont-fall/shared";
+import { BLIP_RAGDOLL_SPEC, type BoneSnapshot } from "@dont-fall/shared";
 import * as THREE from "three";
 import { boneOf } from "./characterModel.js";
 
 /**
- * Draws a Character's rig straight from its ragdoll's bones — a knockout with
- * no animation in it at all.
+ * Draws a Character's rig straight from its ragdoll's bones — a knockdown
+ * with no animation in it at all (`.scratch/physical-ragdoll` ticket 02,
+ * superseding ADR 0076's authored `KO_X` fall; the get-up clip stays).
  *
- * The game does not do this: ADR 0076 made a knockdown *authored*, posed from
- * clips the ragdoll's own measurements shaped. That reads well head-on and
- * badly from the side, where the authored fall leaves the bean springing on
- * two limbs (the user, 2026-09-20). This is the other option, side by side
- * with it in `rubber.html` so the two can be compared before anything is
- * decided.
- *
- * Only rotations are taken from physics, plus the pelvis's position for the
- * body as a whole. Writing each bone's world position too would let the rig
- * come apart, because nothing constrains the ragdoll's capsules to the rig's
- * own bone lengths; driving rotations keeps the bean in one piece and costs
- * nothing that can be seen.
+ * The authored rig puts a body on each of BLIP's own bone pivots, so a bone's
+ * body transform *is* where that bone goes: position and rotation both, with
+ * no bind offset to undo and nothing to stretch. Each bone's local transform
+ * is solved against its parent's real `matrixWorld`, parent before child —
+ * the real matrix because it carries the model's uniform scale, so inverting
+ * it hands back an offset already divided by that scale, which composing
+ * through the parent restores. (The rubber bench measured the alternative:
+ * solving against a unit-scale matrix drew every bone at 58% of its offset
+ * and squashed the torso into the pelvis.) The scale the decompose reports is
+ * discarded on purpose: a ragdoll owns where a bone is and which way it
+ * faces, never how big it is.
  */
 
-/**
- * Which rig node each `RAGDOLL_BONES` entry poses. Left and right are
- * deliberately **not** in here: BLIP names its limbs from its own point of
- * view (ADR 0071), so a name-to-name map is a coin flip on whether the body
- * comes out mirrored. {@link RagdollRig} measures which side each one is on
- * instead, the way `floatPose.ts` already does.
- */
-const RIG_NODE: Readonly<Record<string, string>> = {
-  pelvis: "pelvis",
-  chest: "body",
-  head: "head",
-  upperArm: "upper_arm",
-  lowerArm: "forearm",
-  upperLeg: "thigh",
-  lowerLeg: "shin",
-};
-
-/** `upperArmL` → `{ stem: "upperArm", side: "L" }`; a bone with no side answers null. */
-const splitSide = (name: string): { stem: string; side: "L" | "R" } | null => {
-  const side = name.endsWith("L") ? "L" : name.endsWith("R") ? "R" : null;
-  return side ? { stem: name.slice(0, -1), side } : null;
-};
-
-interface Driven {
-  node: THREE.Object3D;
-  /** The node's rotation in the model's own space at rest — what a ragdoll rotation of identity must reproduce. */
-  rest: THREE.Quaternion;
-}
+const UNIT_SCALE = new THREE.Vector3(1, 1, 1);
 
 export class RagdollRig {
-  private readonly driven: (Driven | null)[] = [];
-  private readonly desired = new THREE.Quaternion();
-  private readonly parentWorld = new THREE.Quaternion();
-  private readonly snapshotRotation = new THREE.Quaternion();
-  private readonly restTurn = new THREE.Quaternion();
+  private readonly bones: (THREE.Object3D | null)[] = [];
+  private readonly target = new THREE.Matrix4();
+  private readonly local = new THREE.Matrix4();
+  private readonly position = new THREE.Vector3();
+  private readonly rotation = new THREE.Quaternion();
+  private readonly scratchScale = new THREE.Vector3();
 
   constructor(
     private readonly model: THREE.Object3D,
-    /** The group the model hangs in — moved so the rig's pelvis sits where the ragdoll's does. */
+    /** The group the model hangs in — the caller places it; the bones land in world space regardless. */
     private readonly carrier: THREE.Object3D,
-    /**
-     * The skeleton being posed. Not always {@link RAGDOLL_BONES}: the demo
-     * poses from a differently-shaped one, whose pelvis sits elsewhere — and
-     * reading the offset off the wrong table drops the whole body by the
-     * difference.
-     */
-    private readonly bones: readonly BoneSpec[] = RAGDOLL_BONES,
+    /** The skeleton being posed, wire order (parent before child). */
+    private readonly names: readonly string[] = BLIP_RAGDOLL_SPEC.bones.map((b) => b.bone),
   ) {
     model.updateMatrixWorld(true);
-
-    // Which rig limb is on which side, measured once from where it hangs.
-    const sideOf = new Map<string, THREE.Object3D>();
-    const toModel = model.matrixWorld.clone().invert();
-    for (const stem of ["upper_arm", "forearm", "thigh", "shin"]) {
-      const candidates = (["L", "R"] as const)
-        .map((s) => boneOf(model, `${stem}.${s}`))
-        .filter((b): b is THREE.Object3D => b !== undefined);
-      for (const bone of candidates) {
-        const x = bone.getWorldPosition(new THREE.Vector3()).applyMatrix4(toModel).x;
-        // `RAGDOLL_BONES` puts its own `L` bones at positive x.
-        sideOf.set(`${stem}:${x >= 0 ? "L" : "R"}`, bone);
-      }
-    }
-
-    for (const spec of this.bones) {
-      const split = splitSide(spec.name);
-      // A skeleton may already be named after the rig (an authored one is),
-      // in which case there is nothing to translate.
-      const direct = boneOf(model, spec.name);
-      const stem = RIG_NODE[split ? split.stem : spec.name];
-      const node =
-        direct ??
-        (stem === undefined ? undefined : split ? sideOf.get(`${stem}:${split.side}`) : boneOf(model, stem));
-      this.driven.push(node ? { node, rest: node.getWorldQuaternion(new THREE.Quaternion()) } : null);
-    }
+    // `boneOf` handles GLTFLoader's dot-stripping (`upper_arm.L` →
+    // `upper_armL`); the spec keeps the dots the source file writes.
+    for (const name of this.names) this.bones.push(boneOf(model, name) ?? null);
   }
 
-  /** Every ragdoll bone found a rig node to pose — false means a rig this cannot draw. */
+  /** Every ragdoll bone found its rig node — false means a rig this cannot draw. */
   get complete(): boolean {
-    return this.driven.every((d) => d !== null);
+    return this.bones.every((bone) => bone !== null);
   }
 
   /**
-   * Writes one frame of the ragdoll onto the rig. `bones` is in the posed
-   * skeleton's own order, as `Ragdoll.readBones` returns it.
+   * Writes one frame of the ragdoll onto the rig, in world space. `bones` is
+   * the replicated snapshot, in the spec's own order.
    *
-   * Parent before child, which `RAGDOLL_BONES`' own order already gives:
-   * each bone's local rotation is solved against a parent that has already
-   * been placed this frame.
+   * The bones physics does not drive — the GLB's `root`, the crest, the eyes
+   * — still hold whatever clip played before the knockdown. The driven bones
+   * are compensated against them, so the world pose is right either way; but
+   * a heap written over a stale root is a heap the get-up then blends out of
+   * through that root. {@link restUndriven} is what the caller resets first.
    */
   pose(bones: readonly BoneSnapshot[]): void {
-    const pelvis = bones[0];
-    if (!pelvis) return;
-    // The rig's pelvis sits at a fixed offset below the carrier, so moving the
-    // carrier is what puts the body where the physics put it.
-    const rest = this.bones[0]!.restCenter;
-    this.carrier.position.set(pelvis.position.x - rest.x, pelvis.position.y - rest.y, pelvis.position.z - rest.z);
-
-    for (const [i, driven] of this.driven.entries()) {
+    // Ancestors physics does not drive must be where the renderer last put
+    // them before locals solve against them.
+    this.carrier.updateMatrixWorld(true);
+    for (const [i, bone] of this.bones.entries()) {
       const snapshot = bones[i];
-      if (!driven || !snapshot || !driven.node.parent) continue;
-      const { x, y, z, w } = snapshot.rotation;
-      // How far the bone has turned *since its rest pose*, which is identity
-      // for the game's skeleton and not for one whose arms start out sideways.
-      const rest = this.bones[i]?.restRotation;
-      this.snapshotRotation.set(x, y, z, w);
-      if (rest) this.snapshotRotation.multiply(this.restTurn.set(rest.x, rest.y, rest.z, rest.w).invert());
-      this.desired.copy(this.snapshotRotation).multiply(driven.rest);
-      driven.node.parent.getWorldQuaternion(this.parentWorld);
-      driven.node.quaternion.copy(this.parentWorld.invert().multiply(this.desired));
-      driven.node.updateMatrixWorld(true);
+      if (!bone?.parent || !snapshot) continue;
+      const { position: p, rotation: r } = snapshot;
+      this.target.compose(this.position.set(p.x, p.y, p.z), this.rotation.set(r.x, r.y, r.z, r.w), UNIT_SCALE);
+      this.local.copy(bone.parent.matrixWorld).invert().multiply(this.target);
+      this.local.decompose(this.position, this.rotation, this.scratchScale);
+      bone.position.copy(this.position);
+      bone.quaternion.copy(this.rotation);
+      bone.updateMatrix();
+      bone.updateMatrixWorld(true);
     }
+  }
+
+  /** Puts every bone back in its bind pose — run once when a knockdown starts. */
+  restUndriven(): void {
+    this.model.traverse((object) => {
+      const mesh = object as THREE.SkinnedMesh;
+      if (mesh.isSkinnedMesh) mesh.skeleton.pose();
+    });
   }
 
   /** Puts the carrier back where it was, for handing the rig back to the mixer. */

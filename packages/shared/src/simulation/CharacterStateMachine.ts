@@ -1,4 +1,4 @@
-import { GETUP_TICKS, IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, RAGDOLL_MAX_TICKS, RAGDOLL_MIN_TICKS, STAGGER_INPUT_SCALE, STAGGER_TICKS } from "../tuning/knockdown.js";
+import { GETUP_TOTAL_TICKS, IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, RAGDOLL_MAX_TICKS, RAGDOLL_MIN_TICKS, STAGGER_INPUT_SCALE, STAGGER_TICKS } from "../tuning/knockdown.js";
 import { SLIDE_INPUT_SCALE } from "../tuning/movement.js";
 
 /**
@@ -14,8 +14,10 @@ import { SLIDE_INPUT_SCALE } from "../tuning/movement.js";
  * Stagger    → Controlled (after STAGGER_TICKS)
  * Stagger    → Ragdoll    (a hard Impact lands while staggering)
  * Ragdoll    → GettingUp  (past RAGDOLL_MIN_TICKS and settled, or at RAGDOLL_MAX_TICKS)
- * GettingUp  → Controlled (after GETUP_TICKS — uninterruptible, so continuous
- *                          Impacts can't soft-lock the Character while down)
+ * GettingUp  → Controlled (after GETUP_TOTAL_TICKS: the sweep onto the get-up
+ *                          clip's first frame, then the clip to its planted
+ *                          feet — uninterruptible, so continuous Impacts
+ *                          can't soft-lock the Character while down)
  * any        ↔ Held       (only ever set from outside, by a Grab hold — ADR 0104)
  * ```
  *
@@ -251,7 +253,9 @@ export class CharacterStateMachine {
         break;
       case "GettingUp":
         this.timer += 1;
-        if (this.timer >= GETUP_TICKS) this.enter("Controlled");
+        // The sweep onto the clip's first frame, then the clip to its
+        // planted-feet frame (.scratch/physical-ragdoll ticket 03).
+        if (this.timer >= GETUP_TOTAL_TICKS) this.enter("Controlled");
         break;
     }
     return this.motionState;

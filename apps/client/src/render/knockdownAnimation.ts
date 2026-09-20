@@ -1,11 +1,30 @@
-import { CAPSULE_BOTTOM_OFFSET, type CharacterMotionState, type Vec3 } from "@dont-fall/shared";
+import {
+  CAPSULE_BOTTOM_OFFSET,
+  GETUP_DRIVE_MS,
+  matchGetUp,
+  type BoneSnapshot,
+  type CharacterMotionState,
+  type GetUpMatch,
+  type Vec3,
+} from "@dont-fall/shared";
 import * as THREE from "three";
 import { RAGDOLL_PELVIS_TO_FEET, type CharacterActions, type ClipPose, type KnockdownDirection } from "./characterModel.js";
 
 /**
- * The knockdown as the rig authored it (ADR 0076): `KO_X`, held down, then
- * `GetUp_X`, with X the way the Character was pushed. Physics still decides
- * where the body is; these clips decide only what it looks like.
+ * The knockdown, physics first (`.scratch/physical-ragdoll` ticket 02/03,
+ * superseding ADR 0076's authored fall):
+ *
+ * - **`Ragdoll`** draws no clip at all. The rig is posed bone for bone from
+ *   the replicated ragdoll (`RagdollRig`), so every fall is the one that
+ *   actually happened — reacting to the floor, a Prop, the Character that hit
+ *   you.
+ * - **`GettingUp`** opens with the simulation's own kinematic sweep carrying
+ *   the heap onto `GetUp_X`'s first frame ({@link GETUP_DRIVE_MS}); the rig
+ *   keeps drawing from bones through it. Then the clip plays, from frame 0 at
+ *   full weight: the two poses are the same pose, so there is nothing to
+ *   crossfade and nothing to hide.
+ *
+ * `KO_*` and `Death_*` stay bound, driven by nothing.
  */
 
 /**
@@ -60,6 +79,8 @@ export interface KnockdownFrame {
   velocity: Vec3;
   /** The model's world rotation, read only while a fall is picking its direction. */
   modelQuaternion: THREE.Quaternion;
+  /** The replicated ragdoll bones — what the fall is drawn from, and what the get-up is read off. */
+  bones: readonly BoneSnapshot[];
   /**
    * Doing anything but standing still: moving, off the ground, dashing,
    * holding or being held. Only read once the Character is back in
@@ -69,14 +90,27 @@ export interface KnockdownFrame {
   deltaSeconds: number;
 }
 
+/**
+ * What to draw this frame: the bones themselves (the fall, and the sweep that
+ * opens the get-up), or the get-up clip placed where the sweep left the body.
+ */
+export type KnockdownDraw =
+  | { kind: "bones" }
+  | { kind: "clip"; pose: ClipPose; landing: GetUpMatch };
+
 interface Knockdown {
   direction: KnockdownDirection;
-  phase: "ko" | "getUp";
-  /** Seconds into the current phase's clip. */
+  phase: "fall" | "sweep" | "getUp";
+  /** Seconds into the current phase. */
   seconds: number;
+  /** Where the sweep put the body — read off the bones once the sweep has ended. */
+  landing: GetUpMatch | null;
   /** Past `GettingUp` already, playing the get-up's last frames in `Controlled`. */
   inTail: boolean;
 }
+
+/** The sweep's length, in seconds — the simulation's own {@link GETUP_DRIVE_MS}. */
+const SWEEP_SECONDS = GETUP_DRIVE_MS / 1000;
 
 /**
  * Each Character's place in its knockdown, keyed by id like the renderer's
@@ -99,43 +133,45 @@ export class Knockdowns {
    * call is also what starts a knockdown, moves it on to the get-up, and
    * ends it.
    */
-  advance(id: string, frame: KnockdownFrame, actions: CharacterActions): ClipPose | null {
+  advance(id: string, frame: KnockdownFrame, actions: CharacterActions): KnockdownDraw | null {
     const entry = this.entries.get(id);
     const { motionState, deltaSeconds } = frame;
 
     if (motionState === "Ragdoll") {
       // A fresh fall, or a new one landing during the last one's get-up tail.
-      if (!entry || entry.phase !== "ko") return this.start(id, "ko", frame, actions);
+      if (!entry || entry.phase !== "fall") return this.start(id, "fall", frame, actions);
       entry.seconds += deltaSeconds;
-      // Re-picked every frame of the window, last non-null read wins (found
-      // live 2026-09-18: every fall played the same clip). Latching the first
-      // non-null read defeated the window's whole purpose: a *moving*
-      // Character's first drawn Ragdoll frame still carries its own walk
-      // velocity — the drawn world runs a beat behind the push — so the fall
-      // always followed the run, never the shove that caused it. The clips'
-      // first frames stand the same in every direction, which is exactly what
-      // makes a switch inside the window invisible.
-      if (entry.seconds <= KNOCKDOWN_PICK_SECONDS) this.pick(entry, frame);
-      return poseOf(entry, actions);
+      return { kind: "bones" };
     }
 
     if (motionState === "GettingUp") {
-      // A get-up whose fall was never drawn: nothing to take a direction from.
-      if (!entry || entry.inTail) return this.start(id, "getUp", frame, actions);
-      if (entry.phase === "ko") {
-        entry.phase = "getUp";
+      // A get-up whose fall was never drawn (a rig that started watching
+      // mid-knockdown): it still has bones to sweep and read.
+      if (!entry || entry.inTail) return this.start(id, "sweep", frame, actions);
+      if (entry.phase === "fall") {
+        entry.phase = "sweep";
         entry.seconds = 0;
       } else {
         entry.seconds += deltaSeconds;
       }
-      return poseOf(entry, actions);
+      if (entry.phase === "sweep") {
+        if (entry.seconds < SWEEP_SECONDS) return { kind: "bones" };
+        // The sweep has ended on the clip's own first frame: the bones say
+        // exactly where and which way it is played, so the handover needs no
+        // crossfade — and must not have one. The heap and the clip encode
+        // "lying" in different frames (bone transforms vs a pitched root),
+        // and blending between two encodings of one world pose sweeps the
+        // body through nonsense (measured on the rubber bench).
+        this.land(entry, frame);
+      }
+      return drawOf(entry, actions) ?? { kind: "bones" };
     }
 
     if (!entry) return null;
     // Only the get-up's tail survives into `Controlled`, and only standing
     // still: a fall that never got up was undone by a correction, and a
     // Wobble or anything the Player does owns the body from here.
-    if (entry.phase === "ko" || motionState !== "Controlled" || frame.busy) {
+    if (entry.phase !== "getUp" || motionState !== "Controlled" || frame.busy) {
       this.entries.delete(id);
       return null;
     }
@@ -146,7 +182,7 @@ export class Knockdowns {
       this.entries.delete(id);
       return null;
     }
-    return poseOf(entry, actions);
+    return drawOf(entry, actions);
   }
 
   /** Whether `id` is anywhere in a knockdown, its get-up's tail included. */
@@ -163,30 +199,54 @@ export class Knockdowns {
     this.entries.clear();
   }
 
-  private start(id: string, phase: Knockdown["phase"], frame: KnockdownFrame, actions: CharacterActions): ClipPose | null {
-    const entry: Knockdown = { direction: KNOCKDOWN_FALLBACK, phase, seconds: 0, inTail: false };
-    if (phase === "ko") this.pick(entry, frame);
+  private start(id: string, phase: Knockdown["phase"], frame: KnockdownFrame, actions: CharacterActions): KnockdownDraw | null {
+    const entry: Knockdown = { direction: KNOCKDOWN_FALLBACK, phase, seconds: 0, landing: null, inTail: false };
     this.entries.set(id, entry);
-    return poseOf(entry, actions);
+    // A rig that starts watching part-way through a get-up has missed the
+    // sweep; the bones it can see are already on (or near) the clip's first
+    // frame, so it reads the landing and joins the clip rather than waiting
+    // out a sweep that has been and gone.
+    if (phase === "sweep" && frame.bones.length > 0) {
+      this.land(entry, frame);
+      return drawOf(entry, actions) ?? { kind: "bones" };
+    }
+    return { kind: "bones" };
   }
 
-  private pick(entry: Knockdown, frame: KnockdownFrame): void {
-    const direction = knockdownDirection(frame.velocity, frame.modelQuaternion);
-    if (direction !== null) entry.direction = direction;
+  /**
+   * Reads where the sweep left the body off the bones themselves and starts
+   * the clip there. The same pure rule the simulation swept by
+   * (`matchGetUp`), applied to the pose it swept onto, which is why this
+   * needs no field of its own on the wire.
+   */
+  private land(entry: Knockdown, frame: KnockdownFrame): void {
+    const landing = matchGetUp(frame.bones);
+    entry.phase = "getUp";
+    entry.seconds = 0;
+    if (landing) {
+      entry.landing = landing;
+      entry.direction = landing.side;
+    }
   }
 }
 
-/** The frame `entry` is on, resting on the clip's last frame once it has played. `null` if the rig lacks the clip. */
-const poseOf = (entry: Knockdown, actions: CharacterActions): ClipPose | null => {
-  const action = (entry.phase === "ko" ? actions.ko : actions.getUp)[entry.direction];
-  if (!action) return null;
-  return { action, time: Math.min(entry.seconds, action.getClip().duration) };
+/** The clip frame `entry` is on, resting on its last once it has played. `null` if the rig lacks the clip or the landing. */
+const drawOf = (entry: Knockdown, actions: CharacterActions): KnockdownDraw | null => {
+  const action = actions.getUp[entry.direction];
+  if (!action || !entry.landing) return null;
+  return {
+    kind: "clip",
+    pose: { action, time: Math.min(entry.seconds, action.getClip().duration) },
+    landing: entry.landing,
+  };
 };
 
 /**
  * Where standing feet would be for a Character reported at `positionY` while
  * down. While `Ragdoll`, that position is the physics pelvis. While
- * `GettingUp`, it rises from there to the standing capsule's centre.
+ * `GettingUp`, it rises from there to the capsule standing at the get-up
+ * clip's own origin, so by the time the clip plays this is that origin's
+ * floor exactly.
  */
 export const knockdownFeetY = (motionState: CharacterMotionState, positionY: number): number =>
   positionY - (motionState === "Ragdoll" ? RAGDOLL_PELVIS_TO_FEET : CAPSULE_BOTTOM_OFFSET);

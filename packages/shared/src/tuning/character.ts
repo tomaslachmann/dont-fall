@@ -19,7 +19,7 @@ export const GRAVITY_Y = -22;
  * ice/mud) is what turns "target reached over time" into something a player
  * can actually feel.
  */
-export const WALK_SPEED = 6;
+export const WALK_SPEED = 5.5;
 
 /**
  * Small downward speed (units/s) kept while grounded so the character controller

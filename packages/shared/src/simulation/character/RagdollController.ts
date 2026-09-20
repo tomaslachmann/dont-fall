@@ -1,9 +1,11 @@
 import { addVec3, lengthVec3, lerpVec3, scaleVec3, vec3, type Vec3 } from "../../math/vec3.js";
-import { GETUP_CAPSULE_LIFT, GETUP_TICKS, KNOCKDOWN_LAUNCH_SCALE, RAGDOLL_IMPACT_VELOCITY_SCALE, RAGDOLL_SETTLE_SPEED, RESPAWN_WOBBLE_TICKS } from "../../tuning/knockdown.js";
+import { CAPSULE_BOTTOM_OFFSET } from "../../tuning/character.js";
+import { GETUP_CAPSULE_LIFT, GETUP_DRIVE_TICKS, KNOCKDOWN_LAUNCH_SCALE, RAGDOLL_IMPACT_VELOCITY_SCALE, RAGDOLL_SETTLE_SPEED, RESPAWN_WOBBLE_TICKS } from "../../tuning/knockdown.js";
 import { THROWING_RAGDOLL_CAUSES, type RagdollCause, type ReconcileBase } from "../../state/SimState.js";
 import { isDownMotionState, type CharacterMotionState, type CharacterStateMachine } from "../CharacterStateMachine.js";
-import { Ragdoll } from "../Ragdoll.js";
-import { blendGettingUpBones, type BoneSnapshot } from "../ragdollSkeleton.js";
+import { AuthoredRagdoll, modelYawOfFacing } from "../ragdoll/AuthoredRagdoll.js";
+import { getUpFloorY, matchGetUp, type GetUpMatch } from "../ragdoll/getUp.js";
+import type { BoneSnapshot } from "../ragdollSkeleton.js";
 import type { Capsule } from "./Capsule.js";
 import type { MovementController } from "./MovementController.js";
 
@@ -32,7 +34,7 @@ export interface DownPose {
  * feet, and what the snapshot reports for the body while it is down.
  */
 export class RagdollController {
-  readonly ragdoll: Ragdoll;
+  readonly ragdoll: AuthoredRagdoll;
   /**
    * Monotonic count of Respawn teleports (ADR 0023 / Q9). The renderer holds the
    * last value it saw and snaps (no interpolation) when it changes — robust
@@ -53,6 +55,9 @@ export class RagdollController {
   private getupBones: readonly BoneSnapshot[] = [];
   private getupStartTick = 0;
   private getupStartRoot: Vec3 = vec3();
+  /** The get-up this knockdown is being swept into (ticket 03), and the floor it plays on. */
+  private sweep: GetUpMatch | null = null;
+  private sweepFloorY = 0;
 
   /**
    * `resetMotion` stops everything the Character was doing upright — its
@@ -64,8 +69,14 @@ export class RagdollController {
     private readonly machine: CharacterStateMachine,
     private readonly movement: MovementController,
     private readonly resetMotion: () => void,
+    /**
+     * The Character's current facing (ADR 0045) — the authored doll spawns
+     * turned to it, so the drawn body and its bones agree from the first
+     * frame instead of snapping a half-turn on the first sync.
+     */
+    private readonly facingOf: () => number,
   ) {
-    this.ragdoll = new Ragdoll(capsule.world);
+    this.ragdoll = new AuthoredRagdoll(capsule.world);
   }
 
   /** Whether a Fall-triggered respawn is queued for the top of the next tick. */
@@ -192,12 +203,55 @@ export class RagdollController {
    */
   beginHeld(): void {
     if (this.ragdoll.isActive) this.ragdoll.deactivate();
+    this.sweep = null;
     this.getupBones = [];
     this.pendingImpact = null;
     this.capsule.collider.setEnabled(false);
     this.resetMotion();
     this.movement.grounded = false;
     this.machine.snapTo("Held");
+  }
+
+  /**
+   * The Struggle was lost (`.scratch/physical-ragdoll` ticket 04): a Limp
+   * body stops being a pose and becomes a real ragdoll, hung from the
+   * grabber's grip. The capsule keeps being placed at the carry point —
+   * every contract in `GrabHolds` is the capsule's — and the bones are what
+   * is drawn and replicated.
+   */
+  beginLimpHang(carryPoint: Vec3, gripAboveChest: number, velocity: Vec3): void {
+    this.ragdoll.beginHang(carryPoint, modelYawOfFacing(this.facingOf()), velocity, gripAboveChest);
+  }
+
+  /** Carry the hang to this tick's carry point. */
+  moveLimpHang(carryPoint: Vec3): void {
+    this.ragdoll.moveHang(carryPoint);
+  }
+
+  /** Whether a hold is carrying this body as a hanging ragdoll right now. */
+  get isHanging(): boolean {
+    return this.ragdoll.isHanging;
+  }
+
+  /** How fast the hanging body is really travelling — what a Hurl's throw is measured from. */
+  hangVelocity(): Vec3 {
+    return this.ragdoll.rootVelocity();
+  }
+
+  /**
+   * Let go of a hanging body into a knockdown (ticket 04). Unlike
+   * {@link knockDownFromHold}, nothing is re-activated: the ragdoll is
+   * already flying, so it keeps the pose and the tumble the carry gave it and
+   * only its linear velocity is replaced by the throw.
+   */
+  releaseHang(cause: RagdollCause, launch: Vec3): void {
+    this.pendingCause = cause;
+    this.machine.snapTo("Ragdoll");
+    this.ragdollEpoch += 1;
+    this.ragdollCause = cause;
+    this.capsule.collider.setEnabled(false);
+    this.resetMotion();
+    this.ragdoll.endHang(launch);
   }
 
   /**
@@ -224,7 +278,7 @@ export class RagdollController {
     const at = this.capsule.body.translation();
     this.capsule.collider.setEnabled(false);
     this.resetMotion();
-    this.ragdoll.activate(vec3(at.x, at.y, at.z), launch, tumble);
+    this.ragdoll.activate(vec3(at.x, at.y, at.z), modelYawOfFacing(this.facingOf()), launch, tumble);
   }
 
   /**
@@ -238,6 +292,7 @@ export class RagdollController {
   }
 
   private beginRagdoll(): void {
+    this.sweep = null;
     const at = this.capsule.body.translation();
     const impulse = this.takeImpactImpulse();
     // A crash (dash into a wall/Prop, a Bump, a Spinner — anything carrying an
@@ -274,21 +329,65 @@ export class RagdollController {
     const launch = magnitude > 0 ? stripIntoImpact(kept, impulse) : kept;
     this.capsule.collider.setEnabled(false);
     this.resetMotion();
-    this.ragdoll.activate(vec3(at.x, at.y, at.z), launch, impulse);
+    this.ragdoll.activate(vec3(at.x, at.y, at.z), modelYawOfFacing(this.facingOf()), launch, impulse);
   }
 
+  /**
+   * Getting up begins with the sweep (`.scratch/physical-ragdoll` ticket 03):
+   * the heap is matched to its `GetUp_X` clip, the bones go kinematic and are
+   * carried onto that clip's first frame over {@link GETUP_DRIVE_TICKS}. The
+   * capsule waits where the clip's own origin will be, so nothing about the
+   * Character's place changes again when the clip takes over.
+   */
   private beginGettingUp(tickCount: number): void {
     this.getupBones = this.ragdoll.readBones();
     this.getupStartTick = tickCount + 1; // this tick's snapshot is t = 0
     this.getupStartRoot = this.ragdoll.rootPosition();
-    this.ragdoll.deactivate();
     this.pendingImpact = null;
-    this.capsule.body.setTranslation(
-      { x: this.getupStartRoot.x, y: this.getupStartRoot.y + GETUP_CAPSULE_LIFT, z: this.getupStartRoot.z },
-      false,
-    );
+    this.sweep = matchGetUp(this.getupBones);
+    if (this.sweep) {
+      this.sweepFloorY = getUpFloorY(this.getupBones, this.sweep);
+      this.ragdoll.startSweep();
+      this.capsule.body.setTranslation(
+        { x: this.sweep.originX, y: this.sweepFloorY + CAPSULE_BOTTOM_OFFSET, z: this.sweep.originZ },
+        false,
+      );
+    } else {
+      // No match (a spec with no get-up pose, or a heap with no chest to
+      // read): the old behaviour — freeze and stand up where the pelvis is.
+      this.ragdoll.deactivate();
+      this.capsule.body.setTranslation(
+        { x: this.getupStartRoot.x, y: this.getupStartRoot.y + GETUP_CAPSULE_LIFT, z: this.getupStartRoot.z },
+        false,
+      );
+    }
     this.capsule.collider.setEnabled(true);
     this.movement.velocity = vec3();
+  }
+
+  /**
+   * One tick of the sweep, run before the world steps while GettingUp's first
+   * stretch lasts. Returns whether the sweep is still running — once it ends
+   * the ragdoll freezes and the clip owns the body (which is the client's
+   * business; the simulation only stops moving it).
+   */
+  advanceGetUp(tickCount: number): void {
+    if (!this.sweep || !this.ragdoll.isActive) return;
+    const elapsed = tickCount - this.getupStartTick + 1;
+    if (elapsed >= GETUP_DRIVE_TICKS) {
+      // Ends exactly on the clip's first frame, then stops: from here the
+      // drawn body is the clip's, at full weight, with nothing to blend.
+      this.ragdoll.sweepStep(this.sweep, this.sweepFloorY, 1);
+      this.ragdoll.deactivate();
+      return;
+    }
+    const w = Math.max(0, elapsed / GETUP_DRIVE_TICKS);
+    this.ragdoll.sweepStep(this.sweep, this.sweepFloorY, w * w * (3 - 2 * w));
+  }
+
+  /** Where the last knockdown's get-up put the body, for the renderer's clip (ticket 03). `null` outside one. */
+  get getUpLanding(): GetUpMatch | null {
+    return this.sweep;
   }
 
   /**
@@ -334,17 +433,26 @@ export class RagdollController {
     return impulse;
   }
 
-  /** The GettingUp blend's current position — shared by `pose()` and `reconcileTo`'s position-tracking correction. */
+  /**
+   * The GettingUp position: it travels from the settled pelvis to where the
+   * get-up clip's own origin stands (the capsule, placed there when the sweep
+   * began), over the sweep itself — the body really is moving that far in
+   * those ticks. Shared by `pose()` and `reconcileTo`'s position-tracking
+   * correction.
+   */
   private getupBlendedPosition(elapsed: number, capsuleCentre: Vec3): Vec3 {
-    const getupT = Math.min(1, Math.max(0, elapsed / GETUP_TICKS));
+    const getupT = Math.min(1, Math.max(0, elapsed / GETUP_DRIVE_TICKS));
     return lerpVec3(this.getupStartRoot, capsuleCentre, getupT);
   }
 
   /**
    * Where the snapshot says the body is while down: the ragdoll's own root,
    * velocity and bones, or — getting up — a position rising smoothly from the
-   * settled pelvis to the standing capsule, so there is no jump at the
-   * Ragdoll → GettingUp boundary.
+   * settled pelvis to where the get-up clip is played, so there is no jump at
+   * the Ragdoll → GettingUp boundary. The bones are the swept ones throughout:
+   * live while the sweep runs, and then the clip's own first frame, frozen,
+   * which is what the renderer hands over to (`.scratch/physical-ragdoll`
+   * ticket 03).
    */
   pose(pose: "ragdoll" | "gettingUp", capsuleCentre: Vec3, tickCount: number, capsuleVelocity: Vec3): DownPose {
     if (pose === "ragdoll") {
@@ -355,12 +463,10 @@ export class RagdollController {
       return { position: this.ragdoll.rootPosition(), velocity: this.ragdoll.rootVelocity(), bones: this.ragdoll.readBones() };
     }
     const elapsed = tickCount - this.getupStartTick;
-    // position rises smoothly from the settled pelvis to the standing capsule,
-    // so there is no jump at the Ragdoll → GettingUp boundary
     return {
       position: this.getupBlendedPosition(elapsed, capsuleCentre),
       velocity: capsuleVelocity,
-      bones: blendGettingUpBones(this.getupBones, capsuleCentre, elapsed),
+      bones: this.sweep ? this.ragdoll.readBones() : [...this.getupBones],
     };
   }
 

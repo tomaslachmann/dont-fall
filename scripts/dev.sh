@@ -15,17 +15,18 @@
 #
 # The DB GUI (the `db-gui` compose service, sqlite-web on the API's SQLite
 # file) is the same kind of opt-in dev tool — pass --db-gui to also start
-# it on http://localhost:8082. Docker API mode only: `--api=local` keeps
-# its own SQLite file outside the compose volume, so the GUI would show
-# the wrong database and the flag is refused in that mode.
+# it on http://localhost:8082. It shows the same database in either API
+# mode: the one SQLite file at `apps/api/data/track-service.sqlite` (a
+# compose bind mount, so also visible from inside containers).
 #
 # The API runs via Docker by default (ticket 13 — matching how it actually
 # runs in practice). Pass --api=local to run it as a plain tsx watch
 # process instead: hot-reloads on every API change with no compose rebuild,
 # and — decisively while lobby sockets are concerned — its in-process Match
 # servers bind ports on your machine, reachable from the browser. The price
-# is parity (not the production shape) plus a different SQLite file than
-# the Docker volume, so accounts/tracks don't carry between the two modes.
+# is parity (not the production shape). The database is the same file in
+# both modes, so accounts/tracks carry over; never run both modes at once
+# (SQLite has a single writer).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -50,11 +51,6 @@ for arg in "$@"; do
   esac
 done
 
-if [ "$WITH_DB_GUI" = 1 ] && [ "$API_MODE" = "local" ]; then
-  echo "--db-gui needs the Docker API: --api=local keeps its own SQLite file outside the compose volume (see the header comment)." >&2
-  exit 1
-fi
-
 DEV_PORTS="8081,8080,5173"
 if [ "$WITH_BUILDER" = 1 ]; then DEV_PORTS="$DEV_PORTS,5174"; fi
 if [ "$WITH_DB_GUI" = 1 ]; then DEV_PORTS="$DEV_PORTS,8082"; fi
@@ -70,7 +66,7 @@ cleanup() {
   # or a stray non-Docker process is already squatting on 8081 from earlier
   # manual debugging, `docker compose down` won't touch it and this port
   # would otherwise go uncleaned, unlike every other dev port.
-  if [ "$API_MODE" = "docker" ]; then
+  if [ "$API_MODE" = "docker" ] || [ "$WITH_DB_GUI" = 1 ]; then
     if [ "$WITH_DB_GUI" = 1 ]; then
       docker compose --profile tools down
     else
@@ -94,7 +90,15 @@ if [ "$API_MODE" = "docker" ]; then
   fi
 else
   echo "api: local mode (tsx watch, no Docker — see the header comment for the trade-offs)."
+  # better-sqlite3 creates the file but not its dir (fresh clones have no
+  # `data/` — its contents are gitignored), and the db-gui bind below needs
+  # the same dir to exist.
+  mkdir -p apps/api/data
   pnpm --filter @dont-fall/api dev &
+  if [ "$WITH_DB_GUI" = 1 ]; then
+    # Only the GUI: the API itself runs above, on the same bind-mounted file.
+    docker compose --profile tools up db-gui &
+  fi
 fi
 
 echo "Waiting for the api..."

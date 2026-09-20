@@ -199,7 +199,13 @@ export class CharacterController {
     this.movement = new MovementController(this.capsule);
     this.surface = new SurfaceController(this.capsule);
     this.interaction = new InteractionController();
-    this.ragdolls = new RagdollController(this.capsule, this.machine, this.movement, () => this.resetMovementControllers());
+    this.ragdolls = new RagdollController(
+      this.capsule,
+      this.machine,
+      this.movement,
+      () => this.resetMovementControllers(),
+      () => this.currentFacing,
+    );
   }
 
   /** The camera-follow point: capsule centre while upright, ragdoll pelvis while down. */
@@ -418,7 +424,36 @@ export class CharacterController {
   /** Let go of into a knockdown with a fresh clock (ADR 0104) — see `RagdollController.knockDownFromHold`. */
   releaseKnockedDown(cause: RagdollCause, launch: Vec3, tumble: Vec3): void {
     this.interaction.forgetStruggle();
-    this.ragdolls.knockDownFromHold(cause, launch, tumble);
+    // A hanging body is already a flying ragdoll: it keeps the pose and the
+    // tumble the carry gave it, and only its throw is replaced
+    // (`.scratch/physical-ragdoll` ticket 04).
+    if (this.ragdolls.isHanging) this.ragdolls.releaseHang(cause, launch);
+    else this.ragdolls.knockDownFromHold(cause, launch, tumble);
+  }
+
+  /**
+   * The Struggle was lost (ticket 04): the Limp body hangs from the grabber's
+   * grip as a real ragdoll. The capsule is still placed by the hold every
+   * tick — it stays the authority for where the body is and what a swing
+   * reaches — and the bones are what is drawn and replicated.
+   */
+  beginLimpHang(carryPoint: Vec3, gripAboveChest: number, velocity: Vec3): void {
+    this.ragdolls.beginLimpHang(carryPoint, gripAboveChest, velocity);
+  }
+
+  /** Carry this tick's hang, if this body is hanging at all. */
+  moveLimpHang(carryPoint: Vec3): void {
+    this.ragdolls.moveLimpHang(carryPoint);
+  }
+
+  /** Whether a hold is carrying this body as a hanging ragdoll. */
+  get isHanging(): boolean {
+    return this.ragdolls.isHanging;
+  }
+
+  /** How fast a hanging body is really travelling — what a Hurl's throw is measured from. */
+  hangVelocity(): Vec3 {
+    return this.ragdolls.hangVelocity();
   }
 
   /** Down on the next tick, for `cause`, with nothing hitting it (ADR 0104: a dizzy grabber) — see `RagdollController.knockDown`. */
@@ -525,6 +560,10 @@ export class CharacterController {
 
     const mode = this.machine.mode;
     this.tickingRagdoll = mode.body === "ragdoll";
+    // The get-up's opening sweep (.scratch/physical-ragdoll ticket 03): the
+    // bones are kinematic here, so their targets are set before the step
+    // that carries them, exactly as a Moving Segment's are.
+    if (mode.pose === "gettingUp") this.ragdolls.advanceGetUp(this.tickCount);
     // ADR 0104: a Held body is placed by its hold after the step, and its
     // Player's input does one thing — the Struggle.
     if (mode.body === "held") this.interaction.struggle(input.moveDirection);
@@ -757,6 +796,10 @@ export class CharacterController {
     let bones: BoneSnapshot[] = [];
     if (pose !== "capsule") {
       ({ position, velocity, bones } = this.ragdolls.pose(pose, capsuleCentre, this.tickCount, velocity));
+    } else if (this.ragdolls.isHanging) {
+      // A Limp body hangs as a real ragdoll (ticket 04), so its bones travel
+      // even though the hold, not the ragdoll, says where the body is.
+      bones = this.ragdolls.ragdoll.readBones();
     }
 
     return {
