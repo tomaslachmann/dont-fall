@@ -12,6 +12,8 @@ import { ConnectionError } from "../lib/errors.js";
 import { browserStorage } from "../lib/browserStorage.js";
 import { readGraphicsQuality } from "../lib/graphicsQuality.js";
 import { setGameActive } from "../lib/gamePresence.js";
+import { placeVoices, speakingAccounts, useVoiceRoom } from "../lib/voice/session.js";
+import { namesFromRoster, usePauseVoice } from "../lib/voice/usePauseVoice.js";
 import { avatarLook, NO_AVATAR, type AvatarLook } from "../lib/avatar.js";
 import { useBeanBalance, useBettingState, usePlaceBet } from "../lib/hooks/useBetting.js";
 import { useTrackDetail } from "../lib/hooks/useTrackDetail.js";
@@ -33,8 +35,12 @@ import FinishedOrOut from "../screens/FinishedOrOut.js";
 import Grabbed from "../screens/Grabbed.js";
 import HitFeedback from "../screens/HitFeedback.js";
 import HoldingPanel from "../screens/HoldingPanel.js";
+import PauseMenu from "../screens/PauseMenu.js";
+import Settings from "../screens/Settings.js";
+import { useGameplaySettings } from "../lib/hooks/useGameplaySettings.js";
 import { LoadingScreen, RoundLoader } from "../screens/LoadingScreen.js";
 import Spectator from "../screens/Spectator.js";
+import SpeakingRow from "../screens/SpeakingRow.js";
 import { PracticeHud } from "../screens/PracticeHud.js";
 import RaceHUD from "../screens/RaceHUD.js";
 import Scoreboard from "../screens/Scoreboard.js";
@@ -153,6 +159,8 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
   // The Round HUD's facts (ADR 0088) — raised by the game only when a drawn
   // value changed, `null` outside RUNNING or without a Character in the Round.
   const [roundHud, setRoundHud] = useState<RoundHudSnapshot | null>(null);
+  // Who is talking (ADR 0111). Edges only: a frame of audio never reaches React.
+  const voice = useVoiceRoom();
   // Whether this client's own world is built (ADR 0089). The Round waits for
   // every client's, but this is the half only this client can know: until it
   // is true there is nothing under the loading Screen worth showing.
@@ -165,6 +173,11 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
   // than on its own route: leaving the route would close the socket and the
   // Player with it (ADR 0110).
   const [scoreboardOpen, setScoreboardOpen] = useState(false);
+  // The pause sheet (ADR 0110): opened by letting go of the mouse mid-Match or
+  // by Esc, over the Round, which runs on. ALL SETTINGS opens Settings in place.
+  const [paused, setPaused] = useState(false);
+  const [allSettings, setAllSettings] = useState(false);
+  const [gameplay, setGameplay] = useGameplaySettings();
   // The Countdown overlay holds on green GO! for one beat after release
   // (GO_HOLD_MS) — set on the COUNTDOWN → RUNNING edge, cleared by the timer
   // below. Display-only, like everything else phase-edged here.
@@ -185,6 +198,10 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
     }
     if (phase === "RUNNING" && prevPhaseRef.current !== "RUNNING") setShowGo(true);
     if (phase !== "RESULTS") setScoreboardOpen(false);
+    if (phase === "LOBBY" || phase === "RESULTS") {
+      setPaused(false);
+      setAllSettings(false);
+    }
     prevPhaseRef.current = phase;
   }, [lobby?.phase]);
   useEffect(() => {
@@ -306,6 +323,12 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
           // ADR 0089: the game says when its world stands; the server is
           // told over the socket by the game itself.
           onWorldReady: (ready) => setWorldReady(ready),
+          onPause: () => setPaused(true),
+          // Voice chat places each speaker at their Character (ADR 0111).
+          // A per-frame value, so it goes straight to the voice session and
+          // never through React (ADR 0060).
+          onVoiceScene: placeVoices,
+          speakingAccounts,
         }),
       )
       .then((bootedHandle) => {
@@ -333,6 +356,33 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
       setShowGo(false);
     };
   }, [trackId, serverPort, connection, practice, graphicsQuality]);
+
+  // Esc toggles the pause sheet in a Round (ADR 0110). While the mouse is
+  // held the browser takes Esc for itself and releases it, which the game
+  // reports as `onPause`; this is the Esc that arrives with the mouse free.
+  const inRound = lobby !== null && lobby.phase !== "LOBBY" && lobby.phase !== "RESULTS" && !practice;
+  // On Standings the sheet opens too (ADR 0111), so Voice chat and its Mutes
+  // are reachable between Rounds without leaving the Match for `/settings`.
+  const onStandings = lobby !== null && lobby.phase === "RESULTS" && !practice;
+  const canPause = inRound || onStandings;
+  useEffect(() => {
+    if (!canPause) return;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      setAllSettings(false);
+      setPaused((open) => {
+        if (open) handleRef.current?.resume();
+        return !open;
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canPause]);
+  const resume = (): void => {
+    setPaused(false);
+    setAllSettings(false);
+    handleRef.current?.resume();
+  };
 
   // Leaving a practice session is the existing `onExit` path (m8.1 ticket
   // 03) — no new exit mechanism. The teardown above already ran on unmount
@@ -394,6 +444,26 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
     const player = lobby?.players.find((p) => p.id === id);
     return player ? avatarLook(player.accountId, player.color) : NO_AVATAR;
   };
+  // Who is talking right now (ADR 0111), as the HUD's own row. The voice room
+  // names people by Account and the Lobby roster by session id, so the roster
+  // is where the two meet; anyone not on it has left, and is dropped.
+  const speakingBeans = lobby === null
+    ? []
+    : lobby.players
+        .filter((p) => p.accountId !== null && voice.isSpeaking(p.accountId))
+        .map((p) => ({
+          accountId: p.accountId!,
+          look: avatarLook(p.accountId, p.color),
+          nickname: p.nickname,
+          you: p.id === myId,
+        }));
+  // Voice chat's rows on the pause sheet (ADR 0111) — the scope, and one Mute
+  // per Player the link rule joined you to. A Playtest and free roam have no
+  // voice, so they get no rows.
+  const pauseVoice = usePauseVoice(
+    namesFromRoster(lobby?.players ?? []),
+    (lobby?.players.length ?? 0) > 1,
+  );
   const standingRows = standings ? toStandingRows(standings.standings, myId, lookOf) : null;
   // Who the next Round waits on: everyone still connected, not those who left.
   const stillHere = standings?.standings.filter((row) => !row.gone) ?? [];
@@ -521,6 +591,12 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
               dashKey={roundHud.dashKey}
             />
           )}
+          {/* Who is talking (ADR 0111) — always on, and inside the Round HUD's
+              own overlay so it sits under the verdict and the Spectator panel
+              exactly as the rest of the HUD does. */}
+          <div className={styles.speakingRow}>
+            <SpeakingRow speaking={speakingBeans} />
+          </div>
         </div>
       )}
       {/* ADR 0104: a hold, either end — its own overlay above the Round HUD, so
@@ -721,6 +797,24 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
           // moment `matchOver` lands, unmounting this canvas behind it.
           <LoadingScreen label="SAVING RESULTS…" />
         ))}
+      {paused && canPause && (
+        <div className={styles.screenOverlay}>
+          {allSettings ? (
+            <Settings onClose={() => setAllSettings(false)} />
+          ) : (
+            <PauseMenu
+              settings={gameplay}
+              onChange={setGameplay}
+              onClose={resume}
+              onAllSettings={() => setAllSettings(true)}
+              // Standings has its own way on (LEAVE, PLAY AGAIN); quitting the
+              // Match from a Round is the only place that button belongs.
+              {...(inRound ? { onQuit: goToMainMenu } : {})}
+              {...(practice ? {} : { voice: pauseVoice })}
+            />
+          )}
+        </div>
+      )}
       {exitReason && (
         <div className={styles.exitBanner}>
           <Button variant="secondary" onClick={() => onExitRef.current?.(exitReason)}>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BASE_BODY_COLOR_ID, HATS, SKINS } from '@dont-fall/shared';
+import { BASE_BODY_COLOR_ID, DEFAULT_EMOTE, DEFAULT_VICTORY_POSE, EMOTES, HATS, SKINS, emoteById, type EmoteId } from '@dont-fall/shared';
 import { BODY_COLOR_STRIPES as COLORS } from '../lib/bodyColors.js';
 import { hatIconUrl } from '../lib/hatAssets.js';
 import { skinIconUrl } from '../lib/skinAssets.js';
@@ -29,9 +29,23 @@ export interface CharacterSelectProps {
   /** Controlled hat pick (ADR 0083), owned by the Route the same way — `null` for none. */
   hat?: string | null;
   onSelectHat?: (hat: string | null) => void;
+  /** Controlled emote pick (ADR 0110), owned by the Route the same way — what PLAY EMOTE performs. */
+  emote?: EmoteId;
+  onSelectEmote?: (emote: EmoteId) => void;
+  /** Controlled victory pose pick (ADR 0110) — VICTORY POSE steps through the set. */
+  victoryPose?: EmoteId;
+  onSelectVictoryPose?: (pose: EmoteId) => void;
   /** The Account's level: a skin or hat above it shows locked, with the level it needs. */
   level?: number;
 }
+
+/** A random pick from `options` that isn't `current` — a re-roll that changed nothing would look dead. `null` when there's nothing else. */
+const rerollFrom = <T,>(options: readonly T[], current: T): T | null => {
+  const others = options.filter((option) => option !== current);
+  return others.length > 0 ? others[Math.floor(Math.random() * others.length)]! : null;
+};
+
+const EMOTE_IDS: readonly EmoteId[] = EMOTES.map((def) => def.id);
 
 const stripe = ([a, b]: readonly [string, string]) =>
   `repeating-linear-gradient(45deg,${a} 0 calc(var(--df-u) * .62),${b} calc(var(--df-u) * .62) calc(var(--df-u) * 1.25))`;
@@ -76,12 +90,23 @@ const IconTile = ({ name, iconUrl, unlockLevel, level, selected, onSelect }: Ico
 
 export default function CharacterSelect({
   equipped = 'BUBBLEGUM BEAN', onBack, onSave, onShop, feel, color, onSelectColor,
-  skin = null, onSelectSkin, hat = null, onSelectHat, level = 1,
+  skin = null, onSelectSkin, hat = null, onSelectHat,
+  emote = DEFAULT_EMOTE, onSelectEmote, victoryPose = DEFAULT_VICTORY_POSE, onSelectVictoryPose, level = 1,
 }: CharacterSelectProps) {
   const [tab, setTab] = useState<CosmeticTab>('COLOR');
   // Turntable one-shots — counters, not booleans, so a second click re-fires.
   const [spinToken, setSpinToken] = useState(0);
   const [emoteToken, setEmoteToken] = useState(0);
+  // What the turntable performs next: the emote, or a victory pose being picked.
+  const [performing, setPerforming] = useState<EmoteId>(emote);
+  const perform = (id: EmoteId) => {
+    setPerforming(id);
+    setEmoteToken((n) => n + 1);
+  };
+  const pickEmote = (id: EmoteId) => {
+    onSelectEmote?.(id);
+    perform(id);
+  };
 
   return (
     <Stage background="var(--df-stage-lobby)" sheen="var(--df-sheen-menu)" feel={feel} className={s.screen}>
@@ -93,27 +118,35 @@ export default function CharacterSelect({
       </div>
 
       <div className={s.turntable}>
-        <Turntable color={color} skin={skin} hat={hat} spinToken={spinToken} emoteToken={emoteToken} />
+        <Turntable color={color} skin={skin} hat={hat} spinToken={spinToken} emote={performing} emoteToken={emoteToken} />
         <span className={s.shadow} />
         <div className={s.turnActions}>
           <JellyButton variant="pill" tone="glass" centered onClick={() => setSpinToken((t) => t + 1)}>ROTATE</JellyButton>
-          <JellyButton variant="pill" centered onClick={() => setEmoteToken((t) => t + 1)}>PLAY EMOTE</JellyButton>
+          <JellyButton variant="pill" centered onClick={() => perform(emote)}>PLAY EMOTE</JellyButton>
           <JellyButton
             variant="pill"
             tone="glass"
             centered
             onClick={() => {
               // Re-rolls whichever tab you're on, and never the current pick:
-              // a randomise that changed nothing would look dead.
+              // a randomise that changed nothing would look dead. For a skin
+              // or a hat, taking it off counts as a pick, and is what's left
+              // when nothing else is unlocked.
               if (tab === 'SKIN') {
-                const unlocked = SKINS.filter((def) => level >= def.unlockLevel && def.id !== skin);
-                // Nothing unlocked but what's already on: taking it off is still a change.
-                onSelectSkin?.(unlocked.length > 0 ? unlocked[Math.floor(Math.random() * unlocked.length)]!.id : null);
+                onSelectSkin?.(rerollFrom([null, ...SKINS.filter((def) => level >= def.unlockLevel).map((def) => def.id)], skin));
                 return;
               }
-              let next = Math.floor(Math.random() * COLORS.length);
-              if (next === color) next = (next + 1) % COLORS.length;
-              onSelectColor?.(next);
+              if (tab === 'HAT') {
+                onSelectHat?.(rerollFrom([null, ...HATS.filter((def) => level >= def.unlockLevel).map((def) => def.id)], hat));
+                return;
+              }
+              if (tab === 'EMOTES') {
+                const next = rerollFrom(EMOTE_IDS, emote);
+                if (next !== null) pickEmote(next);
+                return;
+              }
+              const next = rerollFrom(COLORS.map((_, i) => i), color);
+              if (next !== null) onSelectColor?.(next);
             }}
           >RANDOMISE</JellyButton>
         </div>
@@ -155,6 +188,18 @@ export default function CharacterSelect({
                 />
               ))}
             </>
+          ) : tab === 'EMOTES' ? (
+            // No icon art exists for an emote, so its tile says its name, as NONE does.
+            EMOTES.map((def) => (
+              <button
+                key={def.id}
+                type="button"
+                aria-label={def.name}
+                aria-pressed={emote === def.id}
+                onClick={() => pickEmote(def.id)}
+                className={[s.swatch, s.iconTile, emote === def.id && s.selected].filter(Boolean).join(' ')}
+              >{def.name}</button>
+            ))
           ) : tab === 'SKIN' ? (
             <>
               <button
@@ -207,7 +252,17 @@ export default function CharacterSelect({
 
       <div className={s.foot}>
         <JellyButton variant="pill" tone="glass" centered>NAME CARD</JellyButton>
-        <JellyButton variant="pill" tone="glass" centered>VICTORY POSE</JellyButton>
+        <JellyButton
+          variant="pill"
+          tone="glass"
+          centered
+          onClick={() => {
+            // Steps through the set in order and shows the new pose at once.
+            const next = EMOTE_IDS[(EMOTE_IDS.indexOf(victoryPose) + 1) % EMOTE_IDS.length]!;
+            onSelectVictoryPose?.(next);
+            perform(next);
+          }}
+        >{`VICTORY POSE · ${emoteById(victoryPose)?.name ?? victoryPose.toUpperCase()}`}</JellyButton>
         <JellyButton variant="pill" tone="glass" centered onClick={onShop}>OPEN SHOP</JellyButton>
       </div>
     </Stage>

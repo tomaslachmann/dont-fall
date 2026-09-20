@@ -200,6 +200,8 @@ export interface LobbyConnectionOptions {
    * `scripts/dev.sh` still starts for a single-Lobby test.
    */
   serverPort?: number;
+  /** The Reservation the broker kept for this seat (ADR 0112) — carried to the Match server as `?reservation=`. */
+  reservation?: string;
 }
 
 /**
@@ -210,6 +212,7 @@ export interface LobbyConnectionOptions {
 export const createLobbyConnection = async (options: LobbyConnectionOptions = {}): Promise<LobbyConnection> => {
   const endpoints = resolveEndpoints(options.host ?? location.hostname, {
     ...(options.serverPort === undefined ? {} : { matchServerPort: options.serverPort }),
+    ...(options.reservation === undefined ? {} : { reservation: options.reservation }),
   });
   const socket = new WebSocket(endpoints.matchServerUrl);
   let welcome: WelcomeMessage;

@@ -52,3 +52,15 @@
   background: rgba(0, 0, 0, 0.6);
   border-radius: var(--df-radius-standard);
 }
+
+/* Who is talking (ADR 0111) — bottom-centre of the Round HUD, above the
+   Round's own bottom row and clear of the Dash meter in the corner. */
+.speakingRow {
+  position: absolute;
+  left: 50%;
+  bottom: var(--df-space-6);
+  transform: translateX(-50%);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}

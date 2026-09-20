@@ -35,6 +35,12 @@
 .toastDark .toastKicker { color: var(--df-color-accent); }
 .toastTitle { font: var(--df-weight-display) var(--df-text-sm) / 1.1 var(--df-font-display); }
 .toastDark .toastTitle { font: var(--df-weight-label) var(--df-text-xs) / 1.1 var(--df-font-ui); }
+/* The Party mock's toast has a line under its title — the kit's note text (PartyStrip's `.note`). */
+.toastBody {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1.3 var(--df-font-ui);
+  color: var(--df-color-ink-55);
+  text-wrap: pretty;
+}
 
 .toastActions { display: flex; gap: var(--df-space-3); }
 .action {

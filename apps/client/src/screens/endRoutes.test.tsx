@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { xpLevelStart } from "@dont-fall/shared";
+import { xpLevelStart, type PartyMemberView } from "@dont-fall/shared";
 import { ErrorBoundary } from "../components/ErrorBoundary.js";
 import { WithQuery } from "../test/query.js";
+import { connectFakeAccountSocket } from "../test/fakeAccountSocket.js";
 import { RewardsRoute } from "./RewardsRoute.js";
 import { ScoreboardRoute } from "./ScoreboardRoute.js";
 
@@ -104,6 +105,80 @@ describe("RewardsRoute", () => {
     );
 
     expect(await screen.findByText("SOMETHING BROKE")).toBeInTheDocument();
+  });
+});
+
+describe("RewardsRoute PLAY AGAIN takes the Party (ADR 0112)", () => {
+  const member = (accountId: string, displayName: string, place: PartyMemberView["place"]): PartyMemberView => ({
+    accountId,
+    displayName,
+    color: 2,
+    skin: null,
+    hat: null,
+    avatarUploadedAt: null,
+    xp: 0,
+    joinedAt: 1,
+    place,
+    online: true,
+  });
+
+  const renderRewards = (hostAccountId: string, members: PartyMemberView[]) => {
+    const account = connectFakeAccountSocket("me");
+    account.socket.deliver({
+      type: "party",
+      party: { id: "p1", hostAccountId, members, pending: [], code: null, codeExpiresAt: null, lobby: null },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ gainedXp: 0, gainedCoins: 0, xpBefore: 0, xpAfter: 0, coinsBefore: 0, coinsAfter: 0, rounds: ROWS, betWinnings: 0 }),
+          { status: 200 },
+        ),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={[{ pathname: "/rewards", state: { matchId: "m1" } }]}>
+        <Routes>
+          <Route path="/rewards" element={<WithQuery><RewardsRoute /></WithQuery>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    return account;
+  };
+
+  it("is the host's call for a member", async () => {
+    const account = renderRewards("a2", [member("a2", "Floppo", "match"), member("me", "Noodle", "match")]);
+
+    const again = await screen.findByRole("button", { name: /PLAY AGAIN/ });
+    expect(again).toBeDisabled();
+    expect(again).toHaveTextContent("FLOPPO PICKS THE MATCH");
+    account.stop();
+  });
+
+  it("waits, for the host, until every member has left their own results", async () => {
+    const account = renderRewards("me", [member("me", "Noodle", "match"), member("a2", "Floppo", "match")]);
+
+    const again = await screen.findByRole("button", { name: /PLAY AGAIN/ });
+    expect(again).toBeDisabled();
+    expect(again).toHaveTextContent("WAITING FOR FLOPPO");
+
+    act(() =>
+      account.socket.deliver({
+        type: "party",
+        party: {
+          id: "p1",
+          hostAccountId: "me",
+          members: [member("me", "Noodle", "match"), member("a2", "Floppo", "menu")],
+          pending: [],
+          code: null,
+          codeExpiresAt: null,
+          lobby: null,
+        },
+      }),
+    );
+    expect(screen.getByRole("button", { name: /PLAY AGAIN/ })).not.toBeDisabled();
+    account.stop();
   });
 });
 

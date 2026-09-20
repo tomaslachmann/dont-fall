@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { CharacterPreviewStage, PreviewStep } from "../render/characterPreviewStage.js";
+import type { EmoteId } from "@dont-fall/shared";
+import type { CharacterPreviewStage, PreviewBean, PreviewStep } from "../render/characterPreviewStage.js";
 import RenderSlot from "../ui/RenderSlot.js";
 import s from "./CharacterPreview.module.css";
 
-export type { PreviewStep } from "../render/characterPreviewStage.js";
+export type { PreviewBean, PreviewStep } from "../render/characterPreviewStage.js";
 
 /** What the preview performs: one clip looped forever, or a list looped as a sequence. */
 export type PreviewAnimation = string | PreviewStep[];
@@ -19,6 +20,28 @@ export const WIN_SEQUENCE: PreviewStep[] = [{ clip: "Win_Start" }, { clip: "Win_
 export const SULK_SEQUENCE: PreviewStep[] = [{ clip: "Sulk_In" }, { clip: "Sulk_Hold", seconds: 4 }, { clip: "Sulk_Out" }];
 export const SHRUG_SEQUENCE: PreviewStep[] = [{ clip: "Shrug_In" }, { clip: "Shrug_Hold", seconds: 3.2 }, { clip: "Shrug_Out" }];
 
+/** The breath after a one-clip emote, so a looped Punch reads as a pose and not as shadowboxing. */
+const ONE_CLIP_REST: PreviewStep = { clip: "Idle", seconds: 1.6 };
+
+/**
+ * What each emote performs (ADR 0110) — the authored triplets above, or one
+ * clip played once and rested after. The set is the rig's, so every clip
+ * named here is one `BLIP.glb` ships.
+ */
+export const EMOTE_SEQUENCES: Record<EmoteId, PreviewStep[]> = {
+  win: WIN_SEQUENCE,
+  shrug: SHRUG_SEQUENCE,
+  sulk: SULK_SEQUENCE,
+  wobble: [{ clip: "Wobble" }, ONE_CLIP_REST],
+  punch: [{ clip: "Punch" }, ONE_CLIP_REST],
+};
+
+/** Longer than anyone watches a turntable: an emote played once idles here until it is asked for again. */
+const IDLE_UNTIL_ASKED: PreviewStep = { clip: "Idle", seconds: 3_600 };
+
+/** An emote performed once, then idling — what PLAY EMOTE and a VICTORY POSE pick show. */
+export const emoteOnce = (id: EmoteId): PreviewStep[] => [...EMOTE_SEQUENCES[id], IDLE_UNTIL_ASKED];
+
 export interface CharacterPreviewProps {
   /** Equipped body color — or null for the default, when nobody's color is known. Shows under no `skin`. */
   color: number | null;
@@ -31,6 +54,13 @@ export interface CharacterPreviewProps {
   autoRotate?: boolean | undefined;
   /** Increment to spin the bean one full extra turn. */
   spinToken?: number | undefined;
+  /** Increment to play the sequence again from its first step — the same emote asked for twice. */
+  playToken?: number | undefined;
+  /**
+   * The rest of your Party (ADR 0112), idling beside the bean in their own
+   * looks, host first — the main menu's hero. Left out everywhere else.
+   */
+  party?: PreviewBean[] | undefined;
   /**
    * Fallback caption (no WebGL, no model) — the RenderSlot treatment. It says
    * what is true there: no preview (ADR 0110); `sub` names what the bean
@@ -41,6 +71,9 @@ export interface CharacterPreviewProps {
   canvasLabel?: string | undefined;
   className?: string | undefined;
 }
+
+/** No Party beside the bean — every screen but the main menu. */
+const NO_COMPANIONS: PreviewBean[] = [];
 
 let webglSupport: boolean | undefined;
 
@@ -81,6 +114,8 @@ export function CharacterPreview({
   animation,
   autoRotate = true,
   spinToken = 0,
+  playToken = 0,
+  party = NO_COMPANIONS,
   label = "NO 3D PREVIEW",
   sub,
   canvasLabel = "3D character preview",
@@ -103,7 +138,12 @@ export function CharacterPreview({
   skinRef.current = skin;
   const hatRef = useRef(hat);
   hatRef.current = hat;
+  // Keyed like the steps: the menu builds its Party list fresh every render.
+  const partyKey = JSON.stringify(party);
+  const partyRef = useRef(party);
+  partyRef.current = party;
   const firstSpin = useRef(true);
+  const firstPlay = useRef(true);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -121,6 +161,7 @@ export function CharacterPreview({
             hat: hatRef.current,
             autoRotate,
             steps: () => stepsRef.current,
+            companions: partyRef.current,
             onUnavailable: () => {
               if (!cancelled) setAvailable(false);
             },
@@ -153,6 +194,11 @@ export function CharacterPreview({
     stageRef.current?.setHat(hat);
   }, [hat]);
 
+  useEffect(() => {
+    stageRef.current?.setCompanions(partyRef.current);
+    // The key IS the dependency — see the note where it is built.
+  }, [partyKey]);
+
   // A new sequence restarts the player from its first step.
   useEffect(() => {
     stageRef.current?.restart();
@@ -166,6 +212,14 @@ export function CharacterPreview({
     }
     stageRef.current?.spin();
   }, [spinToken]);
+
+  useEffect(() => {
+    if (firstPlay.current) {
+      firstPlay.current = false;
+      return;
+    }
+    stageRef.current?.restart();
+  }, [playToken]);
 
   return (
     <div ref={wrapRef} className={[s.stage, className].filter(Boolean).join(" ")}>

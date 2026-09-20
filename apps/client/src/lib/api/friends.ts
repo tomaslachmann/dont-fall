@@ -1,18 +1,13 @@
 /**
  * The client half of `/friends/*` (M9 ticket 12) — the roster, requests,
- * recent co-players, and Lobby invites behind the Friends screen. Thin by
+ * recent co-players, and Lobby invites (sent here; they arrive over the
+ * Account socket, ADR 0112) behind the Friends screen. Thin by
  * contract: typed paths over `apiGet`/`apiPost`, one `apiJson` DELETE. All
  * wire shapes come from `@dont-fall/shared`, so producer and consumer can
  * never silently drift apart.
  */
 
-import type {
-  FriendRequestView,
-  FriendView,
-  LobbyInviteView,
-  LobbyRef,
-  RecentPlayerView,
-} from "@dont-fall/shared";
+import type { FriendRequestView, FriendView, LobbyRef, RecentPlayerView } from "@dont-fall/shared";
 import { apiGet, apiJson, apiPost } from "./base.js";
 
 /** `GET /friends` — the whole screen in one round trip. */
@@ -31,13 +26,6 @@ export const getRecentPlayers = (): Promise<{ recent: RecentPlayerView[] }> =>
 
 /** `GET /friends/code` — this Account's own add-code, stable forever. */
 export const getOwnFriendCode = (): Promise<{ code: string }> => apiGet<{ code: string }>("/friends/code");
-
-/**
- * `POST /friends/heartbeat` — "I am here", every 30 s. Doubles as the moment
- * pending Lobby invites surface: each arrives on exactly one heartbeat.
- */
-export const postHeartbeat = (): Promise<{ ok: true; invites: LobbyInviteView[] }> =>
-  apiPost<{ ok: true; invites: LobbyInviteView[] }>("/friends/heartbeat");
 
 /** `POST /friends/requests` — by friend code or, from RECENT, by account id. */
 export const sendFriendRequest = (to: { code?: string; accountId?: string }): Promise<{ id: string }> =>

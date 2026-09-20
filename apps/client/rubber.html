@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DON'T FALL — rubber skeleton</title>
+    <style>
+      :root { color-scheme: dark; --ink: #f2f0ea; --dim: #8e8a80; --line: #2a2822; --hot: #ffd24a; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #14130f; color: var(--ink);
+        font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      #app { display: grid; grid-template-columns: 1fr 392px; height: 100%; }
+      #view { position: relative; min-width: 0; }
+      #view canvas { display: block; width: 100%; height: 100%; }
+      #panel { border-left: 1px solid var(--line); padding: 14px; overflow-y: auto; background: #191813; }
+      h1 { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; margin: 0 0 2px; }
+      .sub { color: var(--dim); margin: 0 0 16px; font-size: 11px; }
+      h2 { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--dim);
+        margin: 18px 0 7px; font-weight: 600; }
+      button { font: inherit; color: var(--ink); background: #232118; border: 1px solid var(--line);
+        border-radius: 5px; padding: 6px 8px; cursor: pointer; }
+      button:hover { border-color: #4a463a; }
+      button.on { background: var(--hot); border-color: var(--hot); color: #14130f; font-weight: 700; }
+      .grid { display: grid; gap: 5px; }
+      .g2 { grid-template-columns: 1fr 1fr; }
+      .g3 { grid-template-columns: repeat(3, 1fr); }
+      .row { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+      .row label { flex: 0 0 74px; color: var(--dim); font-size: 11px; }
+      .row input[type=range] { flex: 1; min-width: 0; accent-color: var(--hot); }
+      .row output { flex: 0 0 42px; text-align: right; font-variant-numeric: tabular-nums; }
+      #bars { display: grid; gap: 2px; margin-top: 4px; }
+      .bar { display: grid; grid-template-columns: 72px 1fr; gap: 6px; align-items: center; font-size: 10px; }
+      .bar span { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+      .bar i { height: 7px; background: #2a2822; border-radius: 2px; display: block; }
+      .bar i b { display: block; height: 100%; background: var(--hot); border-radius: 2px; width: 0; }
+      #hint { position: absolute; left: 14px; bottom: 12px; color: var(--dim); font-size: 11px; }
+      #status { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); }
+    </style>
+  </head>
+  <body>
+    <!-- Dev-only, like the Track builder's `thumbnail.html`: not a build input,
+         not routed, not shipped. `pnpm --filter @dont-fall/client dev` serves it
+         at /rubber.html. It exists to find the numbers in `rubberBones.ts`,
+         which no test in this repo can look at. -->
+    <div id="app">
+      <div id="view"><div id="status">loading BLIP…</div><div id="hint"></div></div>
+      <div id="panel"></div>
+    </div>
+    <script type="module" src="/src/rubber/main.ts"></script>
+  </body>
+</html>

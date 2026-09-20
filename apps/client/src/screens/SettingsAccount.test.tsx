@@ -103,4 +103,12 @@ describe("Settings ACCOUNT (ADR 0110)", () => {
     fireEvent.click(screen.getByRole("button", { name: "REMOVE" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "REMOVE" })).toBeNull());
   });
+
+  it("GAMEPLAY holds the nameplates, stored per device (ADR 0110)", async () => {
+    await openAccount();
+    fireEvent.click(screen.getByRole("tab", { name: "GAMEPLAY" }));
+    expect(screen.getByText("SHOW OTHER BEANS’ NAMES")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "OFF" }));
+    expect(JSON.parse(localStorage.getItem("dontfall.gameplay.v1")!)).toMatchObject({ nameplates: false });
+  });
 });

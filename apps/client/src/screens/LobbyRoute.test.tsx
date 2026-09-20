@@ -95,6 +95,15 @@ describe("LobbyRoute", () => {
     expect(useLobbyConnection).not.toHaveBeenCalled();
   });
 
+  it("hands the broker's Reservation to the Lobby's socket (ADR 0112)", async () => {
+    useLobbyConnection.mockReturnValue({ connection: null, lobby: null, actions, error: null, closed: null });
+
+    renderAtLobby("/lobby?port=51234&id=l1&reservation=r-1");
+
+    expect(await screen.findByText("CONNECTING TO THE LOBBY…")).toBeInTheDocument();
+    expect(useLobbyConnection).toHaveBeenCalledWith(51234, { reservation: "r-1" });
+  });
+
   it("shows a connecting state before the first snapshot — no game boots for a wait", async () => {
     useLobbyConnection.mockReturnValue({ connection: null, lobby: null, actions, error: null, closed: null });
 

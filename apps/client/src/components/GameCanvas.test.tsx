@@ -180,6 +180,7 @@ interface MatchConfig {
   onSpectate?: (snapshot: unknown) => void;
   onRoundHud?: (snapshot: unknown) => void;
   onWorldReady?: (ready: boolean) => void;
+  onPause?: () => void;
 }
 
 const bootMatch = async (): Promise<{
@@ -197,6 +198,8 @@ const bootMatch = async (): Promise<{
   spectateNext: ReturnType<typeof vi.fn>;
   setFreeCam: ReturnType<typeof vi.fn>;
   enterSpectate: ReturnType<typeof vi.fn>;
+  reportPause: () => void;
+  resume: ReturnType<typeof vi.fn>;
 }> => {
   let reportLobby!: (state: unknown) => void;
   let reportStandings!: (snapshot: unknown) => void;
@@ -205,6 +208,8 @@ const bootMatch = async (): Promise<{
   let reportSpectate!: (snapshot: unknown) => void;
   let reportRoundHud!: (snapshot: unknown) => void;
   let reportWorldReady!: (ready: boolean) => void;
+  let reportPause!: () => void;
+  const resume = vi.fn();
   const standingsReady = vi.fn();
   const spectateFollow = vi.fn();
   const spectatePrev = vi.fn();
@@ -219,6 +224,7 @@ const bootMatch = async (): Promise<{
     reportSpectate = config.onSpectate!;
     reportRoundHud = config.onRoundHud!;
     reportWorldReady = config.onWorldReady!;
+    reportPause = config.onPause!;
     return {
       stop: vi.fn(),
           setReady: vi.fn(),
@@ -230,6 +236,7 @@ const bootMatch = async (): Promise<{
       spectateNext,
       setFreeCam,
       enterSpectate,
+      resume,
     };
   });
   renderAtPlayRoute({ connection: { myId: "me" } as never });
@@ -253,6 +260,8 @@ const bootMatch = async (): Promise<{
     spectateNext,
     setFreeCam,
     enterSpectate,
+    reportPause: () => reportPause(),
+    resume,
   };
 };
 
@@ -1019,6 +1028,32 @@ describe("GameCanvas", () => {
     fireEvent.click(screen.getByRole("button", { name: /^STAKE 100/ }));
     await waitFor(() => expect(seen.betBodies).toHaveLength(1));
     expect(seen.betBodies[0]).toEqual({ matchId: "match-1", round: 2, targetId: "p2", amount: 100 });
+  });
+
+  it("letting go of the mouse mid-Round opens the pause sheet; its rows are real settings, and × takes the mouse back (ADR 0110)", async () => {
+    const seen = freshSeen();
+    stubMatchApi(seen);
+    const { reportLobby, reportPause, resume } = await bootMatch();
+    await act(async () => {
+      reportLobby(lobbyIn("RUNNING"));
+    });
+    expect(screen.queryByText("PAUSED")).toBeNull();
+
+    await act(async () => {
+      reportPause();
+    });
+    expect(await screen.findByText("PAUSED")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "LOW" })[0]!);
+    expect(JSON.parse(localStorage.getItem("dontfall.gameplay.v1")!)).toMatchObject({ screenShake: "LOW" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    expect(resume).toHaveBeenCalledOnce();
+    expect(screen.queryByText("PAUSED")).toBeNull();
+
+    // Esc with the mouse already free opens it too.
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(await screen.findByText("PAUSED")).toBeInTheDocument();
+    localStorage.removeItem("dontfall.gameplay.v1");
   });
 
   it("the panel follows beans and holds the camera through the handle", async () => {

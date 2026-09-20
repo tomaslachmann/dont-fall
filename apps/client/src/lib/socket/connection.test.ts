@@ -71,6 +71,16 @@ describe("resolveEndpoints", () => {
     expect(endpoints.apiUrl).toBe(`http://localhost:${DEFAULT_API_PORT}`);
   });
 
+  it("hands the broker's Reservation to the Match server, online and locally (ADR 0112)", () => {
+    expect(
+      resolveEndpoints("localhost", { matchServerPort: 51003, reservation: "r-1" }, "https://x-8081.app.github.dev/api")
+        .matchServerUrl,
+    ).toBe("wss://x-8081.app.github.dev/api/match/51003?reservation=r-1");
+    expect(resolveEndpoints("localhost", { matchServerPort: 51234, reservation: "r-1" }).matchServerUrl).toBe(
+      "ws://localhost:51234/?reservation=r-1",
+    );
+  });
+
   it("carries a Playtest Track onto a brokered Lobby's port too", () => {
     expect(resolveEndpoints("localhost", { trackId: "abc", matchServerPort: 51234 }).matchServerUrl).toBe(
       "ws://localhost:51234/?track=abc",

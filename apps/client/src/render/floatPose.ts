@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { CharacterActions } from "./characterModel.js";
+import { boneOf, type CharacterActions } from "./characterModel.js";
 
 /**
  * What a Floating Character wears over its jump pose (ADR 0077). The two
@@ -73,18 +73,23 @@ export const blendFloatStruggle = (
   struggle.setEffectiveWeight(share / (1 - share));
 };
 
-/** Bones by the rig's names; `GLTFLoader` strips the dots (`upper_arm.L` → `upper_armL`). */
-const boneOf = (root: THREE.Object3D, name: string): THREE.Object3D | undefined =>
-  root.getObjectByName(name.replace(/\./g, "")) ?? root.getObjectByName(name);
-
 const ARMS = ["upper_arm.L", "upper_arm.R"] as const;
 const THIGHS = ["thigh.L", "thigh.R"] as const;
 const DRIVEN = ["pelvis", "body", "head", "crest.01", "crest.02", ...ARMS, ...THIGHS, "shin.L", "shin.R"] as const;
 
 /**
  * The procedural layer for one rig, written on top of the mixer's pose each
- * frame. The mixer rewrites every bound bone on its next update, so nothing
- * accumulates. Which side each limb is on is measured once, from where it
+ * frame.
+ *
+ * It relies on the mixer rewriting every bone it bends on the next update,
+ * which holds here only because a Float always has `Struggle_Air` moving
+ * under it: three.js's `PropertyMixer.apply` skips a write whose value has
+ * not changed, so a bone a clip holds *still* is written once and then never
+ * again, and a layer premultiplying onto it walks it away for good. Measured
+ * on 2026-09-20 over a real 30-second Float — every bone here stays a unit
+ * quaternion, so this layer is safe as it is used. `rubberBones.ts`, which
+ * runs over clips that do hold bones still (`Idle`, a clamped `KO_*`),
+ * re-bases instead of trusting the mixer. Which side each limb is on is measured once, from where it
  * hangs, rather than read off its name: BLIP names limbs from its own point
  * of view (ADR 0071).
  */

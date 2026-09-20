@@ -1,0 +1,716 @@
+{
+  "asset": "BLIP_RAPIER_v2.glb",
+  "version": 2,
+  "units": "GLB units (model is ~3.52 units tall)",
+  "notes": [
+    "v2 neck fix: body_head changed from unrestricted spherical to limited revolute.",
+    "Neck rotation is limited to \u00b110 degrees around local X to stop face/eyes entering the torso after impacts.",
+    "A soft neck motor biases the head back toward the authored neutral pose.",
+    "Head angular damping increased to 2.4; all other collider shapes remain identical to v1.",
+    "Eyes and crest remain visual-only bones/weights under the head chain and therefore follow the constrained head safely."
+  ],
+  "bodies": [
+    {
+      "bone": "pelvis",
+      "restWorld": {
+        "translation": [
+          0.0,
+          0.68,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "collider": {
+        "shape": "cuboid",
+        "halfExtents": [
+          0.52,
+          0.22,
+          0.43
+        ],
+        "offset": [
+          0.0,
+          0.1,
+          0.0
+        ],
+        "mass": 2.1
+      }
+    },
+    {
+      "bone": "body",
+      "restWorld": {
+        "translation": [
+          0.0,
+          1.18,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "collider": {
+        "shape": "capsule",
+        "halfHeight": 0.24,
+        "radius": 0.55,
+        "offset": [
+          0.0,
+          0.36,
+          0.0
+        ],
+        "mass": 3.2
+      }
+    },
+    {
+      "bone": "head",
+      "restWorld": {
+        "translation": [
+          0.0,
+          1.98,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      },
+      "collider": {
+        "shape": "ball",
+        "radius": 0.6,
+        "offset": [
+          0.0,
+          0.43,
+          0.0
+        ],
+        "mass": 2.0,
+        "angularDamping": 2.4
+      }
+    },
+    {
+      "bone": "upper_arm.L",
+      "restWorld": {
+        "translation": [
+          -0.7,
+          1.98,
+          0.0
+        ],
+        "rotation": [
+          0.0260281,
+          0.0381421,
+          0.8251226,
+          0.5630634
+        ]
+      },
+      "collider": {
+        "shape": "capsule",
+        "halfHeight": 0.14,
+        "radius": 0.16,
+        "offset": [
+          0.0,
+          0.3,
+          0.0
+        ],
+        "mass": 0.4
+      }
+    },
+    {
+      "bone": "forearm.L",
+      "restWorld": {
+        "translation": [
+          -1.252778,
+          1.763582,
+          0.055
+        ],
+        "rotation": [
+          0.0264189,
+          0.083597,
+          0.9498458,
+          0.3001774
+        ]
+      },
+      "collider": {
+        "shape": "capsule",
+        "halfHeight": 0.035,
+        "radius": 0.125,
+        "offset": [
+          0.0,
+          0.157,
+          0.0
+        ],
+        "mass": 0.28
+      }
+    },
+    {
+      "bone": "hand.L",
+      "restWorld": {
+        "translation": [
+          -1.430946,
+          1.509848,
+          0.11
+        ],
+        "rotation": [
+          0.0133078,
+          0.0412622,
+          0.9508311,
+          0.3066603
+        ]
+      },
+      "collider": {
+        "shape": "ball",
+        "radius": 0.205,
+        "offset": [
+          0.0,
+          0.09,
+          0.02
+        ],
+        "mass": 0.2
+      }
+    },
+    {
+      "bone": "upper_arm.R",
+      "restWorld": {
+        "translation": [
+          0.7,
+          1.98,
+          0.0
+        ],
+        "rotation": [
+          -0.0260281,
+          0.0381421,
+          0.8251226,
+          -0.5630634
+        ]
+      },
+      "collider": {
+        "shape": "capsule",
+        "halfHeight": 0.14,
+        "radius": 0.16,
+        "offset": [
+          0.0,
+          0.3,
+          0.0
+        ],
+        "mass": 0.4
+      }
+    },
+    {
+      "bone": "forearm.R",
+      "restWorld": {
+        "translation": [
+          1.252778,
+          1.763582,
+          0.055
+        ],
+        "rotation": [
+          -0.0264189,
+          0.083597,
+          0.9498458,
+          -0.3001774
+        ]
+      },
+      "collider": {
+        "shape": "capsule",
+        "halfHeight": 0.035,
+        "radius": 0.125,
+        "offset": [
+          0.0,
+          0.157,
+          0.0
+        ],
+        "mass": 0.28
+      }
+    },
+    {
+      "bone": "hand.R",
+      "restWorld": {
+        "translation": [
+          1.430946,
+          1.509848,
+          0.11
+        ],
+        "rotation": [
+          -0.0133078,
+          0.0412622,
+          0.9508311,
+          -0.3066603
+        ]
+      },
+      "collider": {
+        "shape": "ball",
+        "radius": 0.205,
+        "offset": [
+          0.0,
+          0.09,
+          0.02
+        ],
+        "mass": 0.2
+      }
+    },
+    {
+      "bone": "thigh.L",
+      "restWorld": {
+        "translation": [
+          -0.485,
+          0.74,
+          0.0
+        ],
+        "rotation": [
+          0.0006321,
+          0.0708755,
+          0.9974452,
+          0.0089049
+        ]
+      },
+      "collider": {
+        "shape": "capsule",
+        "halfHeight": 0.035,
+        "radius": 0.155,
+        "offset": [
+          0.0,
+          0.141,
+          0.0
+        ],
+        "mass": 0.55
+      }
+    },
+    {
+      "bone": "shin.L",
+      "restWorld": {
+        "translation": [
+          -0.49,
+          0.46,
+          0.04
+        ],
+        "rotation": [
+          -0.0025693,
+          -0.082281,
+          0.9961205,
+          0.0310981
+        ]
+      },
+      "collider": {
+        "shape": "capsule",
+        "halfHeight": 0.025,
+        "radius": 0.13,
+        "offset": [
+          0.0,
+          0.122,
+          0.0
+        ],
+        "mass": 0.4
+      }
+    },
+    {
+      "bone": "foot.L",
+      "restWorld": {
+        "translation": [
+          -0.505,
+          0.22,
+          0.0
+        ],
+        "rotation": [
+          -8e-07,
+          0.6576028,
+          0.7533648,
+          3e-07
+        ]
+      },
+      "collider": {
+        "shape": "cuboid",
+        "halfExtents": [
+          0.24,
+          0.31,
+          0.13
+        ],
+        "offset": [
+          0.0,
+          0.17,
+          0.04
+        ],
+        "mass": 0.32
+      }
+    },
+    {
+      "bone": "thigh.R",
+      "restWorld": {
+        "translation": [
+          0.485,
+          0.74,
+          0.0
+        ],
+        "rotation": [
+          -0.0006321,
+          0.0708755,
+          0.9974452,
+          -0.0089049
+        ]
+      },
+      "collider": {
+        "shape": "capsule",
+        "halfHeight": 0.035,
+        "radius": 0.155,
+        "offset": [
+          0.0,
+          0.141,
+          0.0
+        ],
+        "mass": 0.55
+      }
+    },
+    {
+      "bone": "shin.R",
+      "restWorld": {
+        "translation": [
+          0.49,
+          0.46,
+          0.04
+        ],
+        "rotation": [
+          0.0025693,
+          -0.082281,
+          0.9961205,
+          -0.0310981
+        ]
+      },
+      "collider": {
+        "shape": "capsule",
+        "halfHeight": 0.025,
+        "radius": 0.13,
+        "offset": [
+          0.0,
+          0.122,
+          0.0
+        ],
+        "mass": 0.4
+      }
+    },
+    {
+      "bone": "foot.R",
+      "restWorld": {
+        "translation": [
+          0.505,
+          0.22,
+          0.0
+        ],
+        "rotation": [
+          7e-07,
+          0.6576028,
+          0.7533648,
+          -3e-07
+        ]
+      },
+      "collider": {
+        "shape": "cuboid",
+        "halfExtents": [
+          0.24,
+          0.31,
+          0.13
+        ],
+        "offset": [
+          0.0,
+          0.17,
+          0.04
+        ],
+        "mass": 0.32
+      }
+    }
+  ],
+  "joints": [
+    {
+      "name": "pelvis_body",
+      "type": "spherical",
+      "bodyA": "pelvis",
+      "bodyB": "body",
+      "anchorA": [
+        0.0,
+        0.5,
+        0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false
+    },
+    {
+      "name": "body_head",
+      "type": "revolute",
+      "bodyA": "body",
+      "bodyB": "head",
+      "anchorA": [
+        0.0,
+        0.8,
+        0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false,
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "limits": [
+        -0.1745329,
+        0.1745329
+      ],
+      "motor": {
+        "target": 0.0,
+        "stiffness": 7.0,
+        "damping": 1.8
+      }
+    },
+    {
+      "name": "shoulder_L",
+      "type": "spherical",
+      "bodyA": "body",
+      "bodyB": "upper_arm.L",
+      "anchorA": [
+        -0.7,
+        0.8,
+        0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false
+    },
+    {
+      "name": "elbow_L",
+      "type": "revolute",
+      "bodyA": "upper_arm.L",
+      "bodyB": "forearm.L",
+      "anchorA": [
+        -0.0,
+        0.596175,
+        0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false,
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "limits": [
+        -0.15,
+        2.55
+      ]
+    },
+    {
+      "name": "wrist_L",
+      "type": "spherical",
+      "bodyA": "forearm.L",
+      "bodyB": "hand.L",
+      "anchorA": [
+        0.0,
+        0.314881,
+        0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false
+    },
+    {
+      "name": "shoulder_R",
+      "type": "spherical",
+      "bodyA": "body",
+      "bodyB": "upper_arm.R",
+      "anchorA": [
+        0.7,
+        0.8,
+        0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false
+    },
+    {
+      "name": "elbow_R",
+      "type": "revolute",
+      "bodyA": "upper_arm.R",
+      "bodyB": "forearm.R",
+      "anchorA": [
+        0.0,
+        0.596175,
+        0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false,
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "limits": [
+        -0.15,
+        2.55
+      ]
+    },
+    {
+      "name": "wrist_R",
+      "type": "spherical",
+      "bodyA": "forearm.R",
+      "bodyB": "hand.R",
+      "anchorA": [
+        -0.0,
+        0.314881,
+        0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false
+    },
+    {
+      "name": "hip_L",
+      "type": "spherical",
+      "bodyA": "pelvis",
+      "bodyB": "thigh.L",
+      "anchorA": [
+        -0.485,
+        0.06,
+        0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false
+    },
+    {
+      "name": "knee_L",
+      "type": "revolute",
+      "bodyA": "thigh.L",
+      "bodyB": "shin.L",
+      "anchorA": [
+        0.0,
+        0.282887,
+        -0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false,
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "limits": [
+        -0.1,
+        2.35
+      ]
+    },
+    {
+      "name": "ankle_L",
+      "type": "spherical",
+      "bodyA": "shin.L",
+      "bodyB": "foot.L",
+      "anchorA": [
+        0.0,
+        0.243772,
+        -0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false
+    },
+    {
+      "name": "hip_R",
+      "type": "spherical",
+      "bodyA": "pelvis",
+      "bodyB": "thigh.R",
+      "anchorA": [
+        0.485,
+        0.06,
+        0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false
+    },
+    {
+      "name": "knee_R",
+      "type": "revolute",
+      "bodyA": "thigh.R",
+      "bodyB": "shin.R",
+      "anchorA": [
+        -0.0,
+        0.282887,
+        -0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false,
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "limits": [
+        -0.1,
+        2.35
+      ]
+    },
+    {
+      "name": "ankle_R",
+      "type": "spherical",
+      "bodyA": "shin.R",
+      "bodyB": "foot.R",
+      "anchorA": [
+        -0.0,
+        0.243772,
+        -0.0
+      ],
+      "anchorB": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "contactsEnabled": false
+    }
+  ]
+}

@@ -18,7 +18,13 @@ export interface NameplateEntry {
   id: string;
   name: string;
   position: Vec3;
+  /** Whether this Player is talking right now (ADR 0111) — the plate goes go-coloured while they are. */
+  speaking?: boolean;
 }
+
+/** The plate's ordinary colours, and the ones it wears while its Player is talking. */
+const PLATE_QUIET = { background: "rgba(43, 27, 77, .6)", color: "var(--df-color-on-brand, #fff)" };
+const PLATE_SPEAKING = { background: "var(--df-color-go, #2FD9A0)", color: "var(--df-color-go-ink, #0E4736)" };
 
 export interface Nameplates {
   /** Places every plate for this frame's camera; hides them all when `visible` is false. */
@@ -56,8 +62,8 @@ export const createNameplates = (mount: HTMLElement): Nameplates => {
         top: "0",
         padding: "3px 9px",
         borderRadius: "999px",
-        background: "rgba(43, 27, 77, .6)",
-        color: "var(--df-color-on-brand, #fff)",
+        background: PLATE_QUIET.background,
+        color: PLATE_QUIET.color,
         font: "var(--df-weight-label, 800) 11px/1 var(--df-font-ui, sans-serif)",
         letterSpacing: "0.06em",
         whiteSpace: "nowrap",
@@ -80,6 +86,15 @@ export const createNameplates = (mount: HTMLElement): Nameplates => {
           const plate = plateFor(entry.id);
           const label = entry.name.toUpperCase();
           if (plate.textContent !== label) plate.textContent = label;
+          // The same cue the Avatars wear (ADR 0111), in the one vocabulary a
+          // bare DOM pill has. Written only on the change: this runs for every
+          // plate every frame, and assigning an unchanged style still costs a
+          // style recalculation.
+          const look = entry.speaking === true ? PLATE_SPEAKING : PLATE_QUIET;
+          if (plate.style.background !== look.background) {
+            plate.style.background = look.background;
+            plate.style.color = look.color;
+          }
           plate.style.transform = `translate(${at.x}px, ${at.y}px) translate(-50%, -100%)`;
           plate.style.display = "";
           seen.add(entry.id);

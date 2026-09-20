@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import type { PersistedMatchResult } from "@dont-fall/shared";
-import { ApiError, apiGet } from "../api/base.js";
+import type { MatchResultResponse } from "@dont-fall/shared";
+import type { ApiError } from "../api/base.js";
+import { getMatchResult } from "../api/matches.js";
 
 /**
  * One finished Match's results by id (ADR 0059) — what the results page
@@ -9,10 +10,10 @@ import { ApiError, apiGet } from "../api/base.js";
  */
 export const useMatchResult = (
   matchId: string | undefined,
-): { result: PersistedMatchResult | null; error: ApiError | null; isPending: boolean; retry: () => void } => {
+): { result: MatchResultResponse | null; error: ApiError | null; isPending: boolean; retry: () => void } => {
   const { data, error, isPending, refetch } = useQuery({
     queryKey: ["match-result", matchId],
-    queryFn: () => apiGet<PersistedMatchResult>(`/matches/${matchId}`),
+    queryFn: () => getMatchResult(matchId!),
     enabled: matchId !== undefined,
     staleTime: Infinity,
     retry: false,

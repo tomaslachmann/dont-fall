@@ -9,6 +9,8 @@ import { flash } from "../lib/flash.js";
 import { hatIconUrl } from "../lib/hatAssets.js";
 import { useAccount } from "../lib/hooks/useAccount.js";
 import { useAsyncError } from "../lib/hooks/useAsyncError.js";
+import { useParty } from "../lib/social/accountSocket.js";
+import { queueBlockedReason } from "../lib/social/partyGate.js";
 import { ordinal } from "../lib/matchView.js";
 import { LoadingScreen } from "./LoadingScreen.js";
 import Rewards from "./Rewards.js";
@@ -43,6 +45,9 @@ export function RewardsRoute() {
 
   const matchId = state.matchId;
   const { account } = useAccount();
+  // PLAY AGAIN takes the Party along (ADR 0112): the host's call, once every
+  // member has left their own results.
+  const playAgainBlocked = queueBlockedReason(useParty());
   const queryClient = useQueryClient();
   useEffect(() => {
     if (matchId === undefined || claimedRef.current) return;
@@ -80,6 +85,7 @@ export function RewardsRoute() {
       beansSplit={[["MATCH", claim.gainedCoins], ...(claim.betWinnings > 0 ? [["BET WON", claim.betWinnings] as [string, number]] : [])]}
       // PLAY AGAIN goes straight into the next Match; BACK TO LOBBY is the
       // choice of Lobby — the one this Match ran in closed with it (ADR 0059).
+      playAgainBlocked={playAgainBlocked}
       onPlayAgain={() => {
         quickMatch()
           .then((lobby) => navigate(lobbyPath(lobby)))

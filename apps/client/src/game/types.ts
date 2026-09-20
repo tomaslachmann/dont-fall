@@ -1,4 +1,4 @@
-import type { MatchWinner, ResultsRow, RoundType } from "@dont-fall/shared";
+import type { MatchWinner, ResultsRow, RoundType, Vec3 } from "@dont-fall/shared";
 import type { GraphicsQuality } from "../lib/graphicsQuality.js";
 import type { LobbyConnection, LobbySnapshot } from "../lib/socket/lobbyConnection.js";
 import type { HitTakenEvent } from "./hitTaken.js";
@@ -195,6 +195,40 @@ export interface GameConfig {
    * and {@link GameHandle.resume} takes the mouse back.
    */
   onPause?: () => void;
+  /**
+   * Where everyone is, once per drawn frame, so Voice chat can place each
+   * speaker at their Character (ADR 0111) — and `null` whenever there is no
+   * Round drawing to place them in, which flattens every voice.
+   *
+   * A sink rather than a callback into React, deliberately: this is a
+   * per-frame value, and ADR 0060 keeps those out of React entirely. The
+   * game raises where the camera and the Characters are and knows nothing
+   * else about voice; the arithmetic lives on the other side of this.
+   *
+   * The vectors handed over are live and are re-used next frame, so the sink
+   * reads them rather than keeping them.
+   */
+  onVoiceScene?: (scene: VoiceScene | null) => void;
+  /**
+   * Whose voice is being heard right now, by Account (ADR 0111) — pulled once
+   * per drawn frame to mark their nameplates.
+   *
+   * A pull rather than a push, for the same reason `onVoiceScene` is a sink:
+   * a nameplate is placed every frame by projecting a head through the
+   * camera, so nothing about it can come through React (ADR 0060).
+   */
+  speakingAccounts?: () => ReadonlySet<string>;
+}
+
+/**
+ * Where a Round's voices are, as the game raises them (ADR 0111): the pose
+ * the Player hears from, and every drawn Character by the Account behind it.
+ * Anyone with no Account — an anonymous seat — is simply not in it, and is
+ * heard flat.
+ */
+export interface VoiceScene {
+  listener: { position: Vec3; forward: Vec3 };
+  speakers: ReadonlyMap<string, Vec3>;
 }
 
 export interface GameHandle {

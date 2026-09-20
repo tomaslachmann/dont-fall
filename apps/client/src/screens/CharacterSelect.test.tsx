@@ -183,4 +183,67 @@ describe("CharacterSelect", () => {
       expect(["starter-cream", "zebra", "mint-spots"]).toContain(next);
     });
   });
+
+  describe("the HAT tab's RANDOMISE (ADR 0110)", () => {
+    it("re-rolls the hat, never the color, among what is unlocked — and bareheaded counts", () => {
+      const onSelectHat = vi.fn();
+      const onSelectColor = vi.fn();
+      renderScreen({ level: 5, hat: "cone", onSelectHat, onSelectColor });
+      fireEvent.click(screen.getByRole("tab", { name: "HAT" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "RANDOMISE" }));
+
+      expect(onSelectColor).not.toHaveBeenCalled();
+      expect(onSelectHat).toHaveBeenCalledTimes(1);
+      expect([null, "pot"]).toContain(onSelectHat.mock.calls[0]![0]);
+    });
+  });
+
+  describe("the EMOTES tab (ADR 0110)", () => {
+    const openEmotes = (props: Partial<React.ComponentProps<typeof CharacterSelect>> = {}) => {
+      renderScreen(props);
+      fireEvent.click(screen.getByRole("tab", { name: "EMOTES" }));
+    };
+
+    it("lists the rig's five, the pressed one is the Route's, and a tile reports up", () => {
+      const onSelectEmote = vi.fn();
+      openEmotes({ emote: "sulk", onSelectEmote });
+
+      for (const name of ["WIN", "SHRUG", "SULK", "WOBBLE", "PUNCH"]) {
+        expect(screen.getByRole("button", { name })).toBeInTheDocument();
+      }
+      expect(screen.getByRole("button", { name: "SULK" })).toHaveAttribute("aria-pressed", "true");
+      // The colors are the COLOR tab's, not this one's.
+      expect(screen.queryByRole("button", { name: "Colour 1" })).toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: "PUNCH" }));
+      expect(onSelectEmote).toHaveBeenCalledWith("punch");
+    });
+
+    it("RANDOMISE on this tab re-rolls the emote, never the color, and never to the same one", () => {
+      const onSelectEmote = vi.fn();
+      const onSelectColor = vi.fn();
+      openEmotes({ emote: "wobble", onSelectEmote, onSelectColor });
+
+      for (let i = 0; i < 10; i++) fireEvent.click(screen.getByRole("button", { name: "RANDOMISE" }));
+
+      expect(onSelectColor).not.toHaveBeenCalled();
+      expect(onSelectEmote).toHaveBeenCalledTimes(10);
+      expect(onSelectEmote.mock.calls.map(([id]) => id)).not.toContain("wobble");
+    });
+  });
+
+  describe("VICTORY POSE (ADR 0110)", () => {
+    it("names the pose and steps through the set in order, wrapping at the end", () => {
+      const onSelectVictoryPose = vi.fn();
+      const { rerender } = renderScreen({ victoryPose: "win", onSelectVictoryPose });
+
+      fireEvent.click(screen.getByRole("button", { name: "VICTORY POSE · WIN" }));
+      expect(onSelectVictoryPose).toHaveBeenLastCalledWith("shrug");
+
+      rerender(<CharacterSelect color={0} victoryPose="punch" onSelectVictoryPose={onSelectVictoryPose} />);
+      fireEvent.click(screen.getByRole("button", { name: "VICTORY POSE · PUNCH" }));
+      expect(onSelectVictoryPose).toHaveBeenLastCalledWith("win");
+    });
+  });
 });

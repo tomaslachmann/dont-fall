@@ -1,4 +1,5 @@
 import { Navigate, useNavigate, useParams, useSearchParams } from "react-router";
+import { DEFAULT_VICTORY_POSE, emoteById } from "@dont-fall/shared";
 import { avatarLook } from "../lib/avatar.js";
 import { ordinal, toMatchResultsView } from "../lib/matchView.js";
 import { useAccount } from "../lib/hooks/useAccount.js";
@@ -62,12 +63,22 @@ export function MatchResultsRoute() {
   const spectating = mine === undefined || view.myStats === null;
 
   // Poses are positional, matching the screen's own celebration/sulk/shrug —
-  // the fallback caption and the performance agree by construction.
-  const POSES = ["WINNER CELEBRATION LOOP", "SULK POSE", "SHRUG POSE"];
+  // the fallback caption and the performance agree by construction. The
+  // winner celebrates with the victory pose its Account picked (ADR 0110).
+  const championPose = (result.victoryPoses ?? {})[champion.id] ?? DEFAULT_VICTORY_POSE;
+  const POSES = [`VICTORY POSE · ${emoteById(championPose)?.name ?? championPose.toUpperCase()}`, "SULK POSE", "SHRUG POSE"];
 
   return (
     <MatchOver
-      podium={view.table.slice(0, 3).map((row, i) => ({ name: row.nickname, points: row.score, pose: POSES[i] ?? "", color: row.color, skin: row.skin, hat: row.hat })) as [
+      podium={view.table.slice(0, 3).map((row, i) => ({
+        name: row.nickname,
+        points: row.score,
+        pose: POSES[i] ?? "",
+        color: row.color,
+        skin: row.skin,
+        hat: row.hat,
+        ...(i === 0 ? { victoryPose: championPose } : {}),
+      })) as [
         PodiumPlace,
         ...PodiumPlace[],
       ]}

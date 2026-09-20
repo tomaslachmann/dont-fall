@@ -6,7 +6,6 @@ import {
   getFriendsOverview,
   getOwnFriendCode,
   getRecentPlayers,
-  postHeartbeat,
   removeFriend,
   sendFriendRequest,
   sendLobbyInvite,
@@ -37,17 +36,6 @@ describe("friends api", () => {
 
     vi.stubGlobal("fetch", respond(200, { code: "BEAN42" }));
     await expect(getOwnFriendCode()).resolves.toEqual({ code: "BEAN42" });
-  });
-
-  it("heartbeats with no body, and surfaces arriving invites", async () => {
-    const invites = [{ id: "i1", fromAccountId: "a", fromDisplayName: "Amy", lobby: { kind: "public", lobbyId: "l1" }, sentAt: 1 }];
-    const fetchMock = respond(200, { ok: true, invites });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(postHeartbeat()).resolves.toEqual({ ok: true, invites });
-    const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe(`${API}/friends/heartbeat`);
-    expect(init).toMatchObject({ method: "POST" });
   });
 
   it("sends requests by code or account id, and answers the inbox", async () => {

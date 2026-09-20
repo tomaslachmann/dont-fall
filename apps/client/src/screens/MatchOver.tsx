@@ -1,9 +1,10 @@
+import { DEFAULT_VICTORY_POSE, type EmoteId } from '@dont-fall/shared';
 import Stage from '../ui/Stage';
 import JellyButton from '../ui/JellyButton';
 import Avatar from '../ui/Avatar';
 import type { AvatarLook } from '../lib/avatar.js';
 import type { Feel } from '../tokens';
-import { CharacterPreview, SHRUG_SEQUENCE, SULK_SEQUENCE, WIN_SEQUENCE, type PreviewAnimation } from './CharacterPreview.js';
+import { CharacterPreview, EMOTE_SEQUENCES, SHRUG_SEQUENCE, SULK_SEQUENCE, type PreviewAnimation } from './CharacterPreview.js';
 import s from './MatchOver.module.css';
 
 export interface PodiumPlace {
@@ -17,11 +18,15 @@ export interface PodiumPlace {
   skin?: string | null;
   /** And hat (ADR 0083) — null or left out for none. */
   hat?: string | null;
+  /** The winner's victory pose (ADR 0110) — read on 1st only; left out, it celebrates with WIN. */
+  victoryPose?: EmoteId;
 }
 
-/** The performance is positional: 1st celebrates, 2nd sulks, 3rd shrugs. Anything past that idles. */
-const performanceForPlace = (index: number): PreviewAnimation =>
-  index === 0 ? WIN_SEQUENCE : index === 1 ? SULK_SEQUENCE : index === 2 ? SHRUG_SEQUENCE : "Idle";
+/** The performance is positional: 1st plays its victory pose, 2nd sulks, 3rd shrugs. Anything past that idles. */
+const performanceFor = (place: PodiumPlace, index: number): PreviewAnimation =>
+  index === 0
+    ? EMOTE_SEQUENCES[place.victoryPose ?? DEFAULT_VICTORY_POSE]
+    : index === 1 ? SULK_SEQUENCE : index === 2 ? SHRUG_SEQUENCE : "Idle";
 
 export interface MatchOverProps {
   /** Finishing order, at least 1st — the podium renders only the places present, so a two-Player Match simply has no 3rd. */
@@ -58,7 +63,7 @@ function Place({ place, rank, index, first }: { place: PodiumPlace; rank: string
         color={place.color ?? null}
         skin={place.skin ?? null}
         hat={place.hat ?? null}
-        animation={performanceForPlace(index)}
+        animation={performanceFor(place, index)}
         autoRotate={false}
         sub={place.pose}
         canvasLabel={`3D preview of ${place.name}`}

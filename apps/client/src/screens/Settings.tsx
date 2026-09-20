@@ -8,9 +8,14 @@ import {
   DEFAULT_BINDINGS,
   findConflicts,
   isBindableControl,
+  isTalkMode,
+  isVoiceScope,
   levelForXp,
+  TALK_MODES,
+  VOICE_SCOPES,
   type BindingAction,
   type KeyBindings,
+  type TalkMode,
 } from '@dont-fall/shared';
 import Stage from '../ui/Stage';
 import Panel from '../ui/Panel';
@@ -23,6 +28,10 @@ import { useAccount } from '../lib/hooks/useAccount';
 import { flash } from '../lib/flash.js';
 import { logout, removeAvatar, saveBindings, uploadAvatar, type Account } from '../lib/api/auth';
 import { avatarLook } from '../lib/avatar.js';
+import { DEFAULT_GAMEPLAY_SETTINGS, SCREEN_SHAKE_LEVELS, type ScreenShake } from '../lib/gameplaySettings.js';
+import { useGameplaySettings } from '../lib/hooks/useGameplaySettings.js';
+import { useVoiceSettings } from '../lib/hooks/useVoiceSettings.js';
+import { DEFAULT_VOICE_SETTINGS } from '../lib/voiceSettings.js';
 import { AVATAR_ACCEPT, avatarFromFile } from '../lib/avatarImage.js';
 import { resolveEffectiveBindings, writeStoredBindings } from '../lib/bindingsStore';
 import {
@@ -48,15 +57,28 @@ export type SettingsTab = 'AUDIO' | 'GAMEPLAY' | 'VIDEO' | 'CONTROLS' | 'ACCOUNT
 
 const TABS: SettingsTab[] = ['AUDIO', 'GAMEPLAY', 'VIDEO', 'CONTROLS', 'ACCOUNT'];
 
-const DEFAULT_SHAKE = 'LOW';
 
-/** The AUDIO pane's sliders, in order (ADR 0087, M14 ticket 03). */
+/** The AUDIO pane's sliders, in order (ADR 0087, M14 ticket 03; VOICE from ADR 0111). */
 const AUDIO_SLIDERS: { channel: AudioChannel; label: string; tone: SliderTone }[] = [
   { channel: "master", label: "MASTER", tone: "brand" },
   { channel: "effects", label: "EFFECTS", tone: "accent" },
   { channel: "environment", label: "ENVIRONMENT", tone: "go" },
   { channel: "music", label: "MUSIC", tone: "danger" },
+  { channel: "voice", label: "VOICE", tone: "go" },
 ];
+
+/**
+ * What the VOICE CHAT row says underneath it: how this device talks right
+ * now, with the key actually bound to it (ADR 0111). The design's own
+ * caption is "Push to talk · V", and it stops being true the moment someone
+ * rebinds `talk` or picks open mic — so it is built from both rather than
+ * written down.
+ */
+export const talkCaption = (talkMode: TalkMode, bindings: KeyBindings): string => {
+  if (talkMode === "OPEN MIC") return "Open mic · heard whenever you speak";
+  const [first] = bindings.talk;
+  return first === undefined ? "Push to talk · no key bound" : `Push to talk · ${controlLabel(first, "short")}`;
+};
 
 const ACTION_ROWS: { action: BindingAction; name: string }[] = [
   { action: "forward", name: "Move forward" },
@@ -68,6 +90,11 @@ const ACTION_ROWS: { action: BindingAction; name: string }[] = [
   { action: "hit", name: "Hit" },
   { action: "grab", name: "Grab" },
   { action: "spectateNext", name: "Spectate next" },
+  // Not a gameplay action (ADR 0111): it holds Voice chat, and is listened
+  // for at the app level rather than sampled into an input. It is here
+  // because this pane is where a Player looks for a key, not because the
+  // list means one thing.
+  { action: "talk", name: "Push to talk" },
 ];
 
 /**
@@ -272,7 +299,16 @@ const QUALITY_NOTES: Record<GraphicsQuality, string> = {
 };
 
 /** 1o — main settings. Full sheet with a sidebar; the in-game version is SettingsModal. */
-export default function Settings() {
+export interface SettingsProps {
+  /**
+   * Closes the sheet in place — × and DONE — when it is opened over a Match
+   * from the pause sheet's ALL SETTINGS (ADR 0110): leaving the route would
+   * leave the Match. Absent, both go to the main menu.
+   */
+  onClose?: () => void;
+}
+
+export default function Settings({ onClose }: SettingsProps = {}) {
   const { account, status } = useAccount();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -284,7 +320,12 @@ export default function Settings() {
     setAudioVolumes(volumes);
     writeAudioVolumes(browserStorage(), volumes);
   };
-  const [shake, setShake] = useState(DEFAULT_SHAKE);
+  // Screen shake and nameplates (ADR 0110): per device, heard by a running game at once.
+  const [gameplay, setGameplay] = useGameplaySettings();
+  // Voice chat's scope and talk mode (ADR 0111) — the same per-device store
+  // the pause sheet's VOICE CHAT row writes, so the two never disagree.
+  const [voice, setVoice] = useVoiceSettings();
+  const close = onClose ?? (() => navigate("/"));
   // Graphics quality (ADR 0079): per device, stored the moment it is picked,
   // read by the game the next time it builds a Stage.
   const [graphicsQuality, setGraphicsQuality] = useState<GraphicsQuality>(() => readGraphicsQuality(browserStorage()));
@@ -341,7 +382,10 @@ export default function Settings() {
   function resetTab() {
     if (tab === "AUDIO") {
       chooseVolumes(DEFAULT_AUDIO_VOLUMES);
-      setShake(DEFAULT_SHAKE);
+      setGameplay({ ...gameplay, screenShake: DEFAULT_GAMEPLAY_SETTINGS.screenShake });
+      setVoice(DEFAULT_VOICE_SETTINGS);
+    } else if (tab === "GAMEPLAY") {
+      setGameplay({ ...gameplay, nameplates: DEFAULT_GAMEPLAY_SETTINGS.nameplates });
     } else if (tab === "VIDEO") {
       chooseQuality(DEFAULT_GRAPHICS_QUALITY);
     } else if (tab === "CONTROLS") {
@@ -379,7 +423,7 @@ export default function Settings() {
         <div className={s.pane}>
           <div className={s.header}>
             <span className={s.paneTitle}>{tab}</span>
-            <button type="button" className={s.close} data-ui-sound="back" onClick={() => navigate("/")} aria-label="Resume">×</button>
+            <button type="button" className={s.close} data-ui-sound="back" onClick={close} aria-label="Resume">×</button>
           </div>
 
           {tab === 'AUDIO' ? (
@@ -399,12 +443,45 @@ export default function Settings() {
               <div className={s.divider} />
 
               <div className={s.rows}>
+                {/* Voice chat (ADR 0111): here on AUDIO, where the design put
+                    it, and drawn as the pause sheet's own scope Toggle — a
+                    Switch cannot say PARTY or ALL. The same store both read. */}
+                <div className={s.row}>
+                  <span className={s.rowText}>
+                    <span className={s.rowLabel}>VOICE CHAT</span>
+                    <span className={s.rowSub}>{talkCaption(voice.talkMode, effectiveControls)}</span>
+                  </span>
+                  <Toggle
+                    options={[...VOICE_SCOPES]}
+                    value={voice.scope}
+                    onChange={(value) => {
+                      if (isVoiceScope(value)) setVoice({ ...voice, scope: value });
+                    }}
+                  />
+                </div>
+                <div className={s.row}>
+                  <span className={s.rowText}>
+                    <span className={s.rowLabel}>TALK</span>
+                    <span className={s.rowSub}>Hold a key, or be heard whenever you speak</span>
+                  </span>
+                  <Toggle
+                    options={[...TALK_MODES]}
+                    value={voice.talkMode}
+                    onChange={(value) => {
+                      if (isTalkMode(value)) setVoice({ ...voice, talkMode: value });
+                    }}
+                  />
+                </div>
                 <div className={s.row}>
                   <span className={s.rowText}>
                     <span className={s.rowLabel}>SCREEN SHAKE ON IMPACT</span>
                     <span className={s.rowSub}>Reduce for motion sensitivity</span>
                   </span>
-                  <Toggle options={['OFF', 'LOW', 'FULL']} value={shake} onChange={setShake} />
+                  <Toggle
+                    options={[...SCREEN_SHAKE_LEVELS]}
+                    value={gameplay.screenShake}
+                    onChange={(value) => setGameplay({ ...gameplay, screenShake: value as ScreenShake })}
+                  />
                 </div>
               </div>
             </div>
@@ -434,6 +511,22 @@ export default function Settings() {
               onCommit={commitControl}
               onRemove={removeControl}
             />
+          ) : tab === 'GAMEPLAY' ? (
+            <div className={s.groups}>
+              <div className={s.rows}>
+                <div className={s.row}>
+                  <span className={s.rowText}>
+                    <span className={s.rowLabel}>SHOW OTHER BEANS’ NAMES</span>
+                    <span className={s.rowSub}>Nameplates during a race</span>
+                  </span>
+                  <Toggle
+                    options={['OFF', 'ON']}
+                    value={gameplay.nameplates ? 'ON' : 'OFF'}
+                    onChange={(value) => setGameplay({ ...gameplay, nameplates: value === 'ON' })}
+                  />
+                </div>
+              </div>
+            </div>
           ) : tab === 'ACCOUNT' && account ? (
             <AccountPane
               account={account}
@@ -448,7 +541,7 @@ export default function Settings() {
           <div className={s.foot}>
             <button type="button" className={s.reset} onClick={resetTab}>RESET</button>
             <button type="button" className={s.reset} onClick={() => navigate("/credits")}>CREDITS</button>
-            <JellyButton variant="tile" centered sound="confirm" onClick={() => navigate("/")}>DONE</JellyButton>
+            <JellyButton variant="tile" centered sound="confirm" onClick={close}>DONE</JellyButton>
           </div>
         </div>
       </Panel>

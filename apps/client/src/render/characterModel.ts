@@ -81,6 +81,18 @@ export const loadCharacterModel = async (): Promise<CharacterModel> => {
  * clips come in one of each, and the pair must agree — you get up the way you
  * fell.
  */
+/**
+ * A bone by the name the source file writes, whatever the loader made of it.
+ * BLIP's own `nodes[].name` carries a dot (`upper_arm.L`) and `GLTFLoader`
+ * strips it (`upper_armL`), almost certainly because `AnimationClip` track
+ * paths are themselves dot-separated `nodeName.property` strings. Two
+ * since-deleted modules were written against the dotted names and silently
+ * matched nothing — found live, not by a test (`modelBones.test.ts` pins it
+ * now). Every procedural bone layer resolves names through here.
+ */
+export const boneOf = (root: THREE.Object3D, name: string): THREE.Object3D | undefined =>
+  root.getObjectByName(name.replace(/\./g, "")) ?? root.getObjectByName(name);
+
 export const KNOCKDOWN_DIRECTIONS = ["F", "FL", "FR", "B", "BL", "BR"] as const;
 export type KnockdownDirection = (typeof KNOCKDOWN_DIRECTIONS)[number];
 
@@ -143,7 +155,9 @@ export interface CharacterActions {
   /**
    * Unsteady on your feet (ADR 0072) — the `Stagger` state, which had no
    * animation at all until this rig brought one. M1's procedural lean of the
-   * same name (ADR 0010) was a different thing and stays switched off.
+   * same name (ADR 0010) was a different thing, and was deleted on
+   * 2026-09-20: a wobble belongs after an Impact, not under every step
+   * (`rubberBones.ts`).
    */
   wobble: THREE.AnimationAction | null;
   /** The same wobble while moving — the legs step instead of standing still under it. */

@@ -5,6 +5,7 @@ import {
   DEFAULT_AUDIO_VOLUMES,
   readAudioVolumes,
   subscribeAudioVolumes,
+  voiceGain,
   volumeGain,
   writeAudioVolumes,
 } from "./audioSettings.js";
@@ -25,7 +26,7 @@ describe("audio settings (M14 ticket 03, ADR 0087)", () => {
 
   it("round-trips what was written", () => {
     const storage = memoryStorage();
-    const volumes = { master: 50, effects: 10, environment: 0, music: 100 };
+    const volumes = { master: 50, effects: 10, environment: 0, music: 100, voice: 80 };
     writeAudioVolumes(storage, volumes, null);
     expect(readAudioVolumes(storage)).toEqual(volumes);
   });
@@ -68,9 +69,12 @@ describe("audio settings (M14 ticket 03, ADR 0087)", () => {
     expect(volumeGain(-5)).toBe(0);
   });
 
-  it("sets every channel on an engine, and tolerates none", () => {
+  it("sets every engine bus, leaves VOICE alone, and tolerates no engine", () => {
     const setVolume = vi.fn();
-    applyAudioVolumes({ setVolume }, { master: 100, effects: 50, environment: 0, music: 10 });
+    applyAudioVolumes({ setVolume }, { master: 100, effects: 50, environment: 0, music: 10, voice: 100 });
+    // VOICE is not a bus on the Stage's engine (ADR 0111) — it is applied by
+    // the voice chain itself, outside every Stage, and handing it here would
+    // throw rather than do nothing.
     expect(setVolume.mock.calls).toEqual([
       ["master", 1],
       ["effects", 0.25],
@@ -78,5 +82,12 @@ describe("audio settings (M14 ticket 03, ADR 0087)", () => {
       ["music", volumeGain(10)],
     ]);
     expect(() => applyAudioVolumes(null, DEFAULT_AUDIO_VOLUMES)).not.toThrow();
+  });
+
+  it("is MASTER × VOICE for a voice, as it is MASTER × MUSIC for the music", () => {
+    const volumes = { ...DEFAULT_AUDIO_VOLUMES, master: 50, voice: 100, music: 50 };
+    expect(voiceGain(volumes)).toBeCloseTo(volumeGain(50) * volumeGain(100), 9);
+    expect(voiceGain({ ...volumes, master: 0 })).toBe(0);
+    expect(voiceGain({ ...volumes, voice: 0 })).toBe(0);
   });
 });

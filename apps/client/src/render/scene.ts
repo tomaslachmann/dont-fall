@@ -253,6 +253,12 @@ export interface Stage {
    */
   setPlayerNames: (names: ReadonlyMap<string, string>) => void;
   /**
+   * Who is talking right now, by session id (ADR 0111) — set every frame like
+   * the names, and drawn on their nameplates by the next
+   * {@link Stage.updateCamera}.
+   */
+  setSpeakingPlayers: (ids: ReadonlySet<string>) => void;
+  /**
    * Advance every air column's swooshes and puffs to `nowMs` (ADR 0075),
    * render-rate driven like every other overlay. The swooshes face the
    * Stage's camera as it stood at its last update.
@@ -264,6 +270,16 @@ export interface Stage {
    * rather than jumping to it (ADR 0086).
    */
   updateCamera: (target: Vec3, yaw: number, pitch: number, deltaSeconds: number) => void;
+  /**
+   * Where the Player is hearing from, as of the last {@link updateCamera}:
+   * the camera's world position and the direction it looks. The sound
+   * engine's own listener already rides the camera (ADR 0087); this is the
+   * same pose, for what is mixed outside the Stage — Voice chat placing each
+   * speaker at their Character (ADR 0111).
+   *
+   * Returns live vectors the caller must read, not keep: both move next frame.
+   */
+  listenerPose: () => { position: Vec3; forward: Vec3 };
   /**
    * Pose every Spinner and Moving Segment (ADR 0061) at continuous simulation tick `t`
    * (fractional for smooth render-rate rotation). A Spinner's rotation is a
@@ -472,6 +488,8 @@ export const createStage = ({
   const nameplates = createNameplates(mount);
   let playerNames: ReadonlyMap<string, string> = new Map();
   let remoteNamed: NameplateEntry[] = [];
+  /** Who is talking, by session id (ADR 0111) — set every frame beside the names. */
+  let speakingPlayers: ReadonlySet<string> = new Set();
   const stopShakeSetting =
     typeof window === "undefined"
       ? () => {}
@@ -511,6 +529,9 @@ export const createStage = ({
   });
 
   const cameraRig = createCameraRig(camera, track.collidables);
+  // Reused rather than allocated per frame: `listenerPose` is read once every
+  // drawn frame, and its own doc says the vectors are to be read, not kept.
+  const listenerForward = new THREE.Vector3();
 
   /** This frame's bounce landings, stashed by `applyBounceSheets` for `applyCharacterSounds`, which runs after it. */
   let bounceLandings: readonly BounceLanding[] = [];
@@ -559,13 +580,21 @@ export const createStage = ({
       remoteCentres = Object.values(characters).map((rc) => rc.position);
       remoteNamed = Object.entries(characters)
         .filter(([id, rc]) => id !== localId && !rc.eliminated)
-        .map(([id, rc]) => ({ id, name: playerNames.get(id) ?? "", position: rc.position }))
+        .map(([id, rc]) => ({
+          id,
+          name: playerNames.get(id) ?? "",
+          position: rc.position,
+          speaking: speakingPlayers.has(id),
+        }))
         .filter((entry) => entry.name !== "");
       remotePool.apply(characters, deltaSeconds, localId, localPosition);
     },
     setPlayerColors: (colors) => remotePool.setColors(colors),
     setPlayerNames: (names) => {
       playerNames = names;
+    },
+    setSpeakingPlayers: (ids) => {
+      speakingPlayers = ids;
     },
     setPlayerSkins: (skins) => remotePool.setSkins(skins),
     setLocalLook: (color, skin) => local.setLook(color, skin),
@@ -583,6 +612,10 @@ export const createStage = ({
       for (const spring of track.squashSprings(characters, nowMs)) stageSounds.springSettled(spring);
     },
     applyShake: (own, localId, nowMs) => shake.kick(shakeCues.update(localId, own, nowMs)),
+    listenerPose: () => {
+      camera.getWorldDirection(listenerForward);
+      return { position: camera.position, forward: listenerForward };
+    },
     updateCamera: (target, yaw, pitch, deltaSeconds) => {
       cameraRig.follow(target, yaw, pitch, deltaSeconds);
       const jolt = shake.step(deltaSeconds);

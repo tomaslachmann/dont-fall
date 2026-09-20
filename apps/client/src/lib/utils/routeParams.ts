@@ -24,16 +24,21 @@ export const parsePlayParams = (searchParams: URLSearchParams): { trackId?: stri
  * one there is nothing to connect to — and `?code=` carries the join code a
  * private Lobby was created with, purely so the Lobby Screen can show it.
  * `?id=` is the broker's id for the Lobby — what an invite to a public one
- * names (ADR 0110).
+ * names (ADR 0110). `?reservation=` is the seat the broker kept for this
+ * client (ADR 0112), which the Lobby's socket hands its Match server.
  */
-export const parseLobbyParams = (searchParams: URLSearchParams): { port?: number; code?: string; id?: string } => {
+export const parseLobbyParams = (
+  searchParams: URLSearchParams,
+): { port?: number; code?: string; id?: string; reservation?: string } => {
   const rawPort = searchParams.get("port");
   const port = rawPort !== null && /^\d+$/.test(rawPort) ? Number(rawPort) : undefined;
   const code = searchParams.get("code") ?? undefined;
   const id = searchParams.get("id") ?? undefined;
+  const reservation = searchParams.get("reservation") || undefined;
   return {
     ...(port === undefined ? {} : { port }),
     ...(code === undefined ? {} : { code }),
     ...(id === undefined ? {} : { id }),
+    ...(reservation === undefined ? {} : { reservation }),
   };
 };

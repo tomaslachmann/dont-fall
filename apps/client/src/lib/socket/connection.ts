@@ -32,6 +32,14 @@ export interface EndpointOptions {
    * single-Lobby test that skips Create/Join/Quick Match entirely.
    */
   matchServerPort?: number;
+  /**
+   * The Reservation the broker kept for this client's seat (ADR 0112),
+   * forwarded onto the Match server connection as `?reservation=` — the
+   * connection uses it up, so a Party walking in behind its host is seated
+   * even if strangers filled the Lobby's count meanwhile. Absent for an
+   * anonymous entry, and for every socket that is not a brokered Lobby's.
+   */
+  reservation?: string;
 }
 
 export const resolveEndpoints = (host: string, options: EndpointOptions = {}, origin: string | undefined = serverOrigin()): Endpoints => {
@@ -42,10 +50,13 @@ export const resolveEndpoints = (host: string, options: EndpointOptions = {}, or
     const socket = new URL(`${origin}${matchSocketPath(options.matchServerPort ?? DEFAULT_SERVER_PORT)}`);
     socket.protocol = socket.protocol === "https:" ? "wss:" : "ws:";
     if (options.trackId) socket.searchParams.set("track", options.trackId);
+    // The API's proxy carries the query on to the Match server with the socket.
+    if (options.reservation) socket.searchParams.set("reservation", options.reservation);
     return { matchServerUrl: socket.toString(), apiUrl: origin };
   }
   const matchServerUrl = new URL(`ws://${host}:${options.matchServerPort ?? DEFAULT_SERVER_PORT}`);
   if (options.trackId) matchServerUrl.searchParams.set("track", options.trackId);
+  if (options.reservation) matchServerUrl.searchParams.set("reservation", options.reservation);
   return {
     matchServerUrl: matchServerUrl.toString(),
     apiUrl: `http://${host}:${DEFAULT_API_PORT}`,

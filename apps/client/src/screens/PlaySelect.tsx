@@ -8,10 +8,13 @@ import Toggle from '../ui/Toggle';
 import Stepper from '../ui/Stepper';
 import Avatar from '../ui/Avatar';
 import type { Feel } from '../tokens';
-import { MAX_PLAYERS } from '@dont-fall/shared';
+import { DEFAULT_MATCH_LENGTH, MAX_MATCH_LENGTH, MAX_PLAYERS, MIN_MATCH_LENGTH } from '@dont-fall/shared';
 import { createLobby, lobbyByCode, lobbyPath, quickMatch, resolveLobbyRef, type BrokeredLobby } from '../lib/api/lobbyBroker.js';
 import { avatarLook } from '../lib/avatar.js';
+import { useAccount } from '../lib/hooks/useAccount';
 import { useFriends } from '../lib/hooks/useFriends';
+import { useParty } from '../lib/social/accountSocket.js';
+import { queueBlockedReason } from '../lib/social/partyGate.js';
 import { useGameSettings } from '../lib/hooks/useGameSettings';
 import { formatBeansOnline } from '../lib/api/settings';
 import s from './PlaySelect.module.css';
@@ -69,10 +72,18 @@ export default function PlaySelect({
   const friendsInALobby = useFriends().friends.filter(
     (friend) => friend.presence.status === 'in-lobby' && friend.presence.joinable && friend.presence.lobby,
   );
+  // Your Party (ADR 0112): who a Quick Match brings, and whose call it is.
+  // Only the Party host queues — the Party follows it everywhere — and the
+  // host's queue waits for every member to be back in the menus. CREATE and
+  // JOIN stay open to a member: entering alone just leaves the Party.
+  const { account } = useAccount();
+  const party = useParty();
+  const quickBlocked = queueBlockedReason(party);
+  const friendsBrought = party.others.length;
   const navigate = useNavigate();
   const [mode, setMode] = useState<PlayMode>(defaultMode);
   const [privacy, setPrivacy] = useState('INVITE ONLY');
-  const [rounds, setRounds] = useState(4);
+  const [rounds, setRounds] = useState(DEFAULT_MATCH_LENGTH);
   const [code, setCode] = useState<string[]>(() => Array(CODE_LEN).fill(''));
   // One in-flight broker call at a time, and the reason the last one failed
   // — the broker's own words (an unknown code, a Lobby that filled up),
@@ -172,7 +183,7 @@ export default function PlaySelect({
               <>
                 <div className={s.detailHead}>
                   <span className={s.kicker}>FASTEST WAY IN</span>
-                  <h2 className={s.title}>Drop into the next race with {lobbySize - 1} strangers.</h2>
+                  <h2 className={s.title}>Drop into the next race with {lobbySize - party.size} strangers.</h2>
                 </div>
                 <div className={s.rows}>
                   <div className={s.row}>
@@ -187,16 +198,22 @@ export default function PlaySelect({
                 <div className={s.party}>
                   <span className={s.rowLabel}>BRINGING</span>
                   <span className={s.faces}>
-                    <Avatar look={{ src: null, color: 0 }} />
-                    <Avatar look={{ src: null, color: 2 }} />
-                    <Avatar look={{ src: null, color: 1 }} />
+                    {/* You first, then your Party's other beans in joining order. */}
+                    <Avatar look={account ? avatarLook(account.id, account.color, account.avatarUploadedAt) : undefined} />
+                    {party.others.map((member) => (
+                      <Avatar key={member.accountId} look={avatarLook(member.accountId, member.color, member.avatarUploadedAt)} />
+                    ))}
                   </span>
-                  <span className={s.partyNote}>2 friends in your party</span>
+                  <span className={s.partyNote}>
+                    {friendsBrought === 0
+                      ? 'Just you — invite friends from the menu'
+                      : `${friendsBrought} ${friendsBrought === 1 ? 'friend' : 'friends'} in your party`}
+                  </span>
                 </div>
-                {/* POST /lobbies/quick-match — an open public Lobby, or a fresh one when there is none. */}
+                {/* POST /lobbies/quick-match — an open public Lobby with room for the whole Party, or a fresh one. */}
                 <JellyButton
-                  disabled={pending}
-                  kicker={pending ? 'FINDING A LOBBY…' : 'MATCHMAKING'}
+                  disabled={pending || quickBlocked !== null}
+                  kicker={quickBlocked ?? (pending ? 'FINDING A LOBBY…' : 'MATCHMAKING')}
                   onClick={() => enterLobby('quick', () => quickMatch())}
                 >
                   FIND A MATCH
@@ -217,18 +234,23 @@ export default function PlaySelect({
                   </div>
                   <div className={s.row}>
                     <span className={s.rowLabel}>ROUNDS</span>
-                    <Stepper value={rounds} min={1} max={9} onChange={setRounds} />
+                    <Stepper value={rounds} min={MIN_MATCH_LENGTH} max={MAX_MATCH_LENGTH} onChange={setRounds} />
                   </div>
                   <div className={s.row}>
                     <span className={s.rowLabel}>LOBBY SIZE</span>
                     <Pill tone="plate">UP TO {lobbySize} BEANS</Pill>
                   </div>
                 </div>
-                {/* POST /lobbies {isPrivate:true} — the broker answers with the join code to share. */}
+                {/* POST /lobbies {isPrivate, matchLength, privacy} — the broker answers with the join code to share. */}
                 <JellyButton
                   disabled={pending}
                   kicker={pending ? 'STARTING A LOBBY…' : 'YOU HOST'}
-                  onClick={() => enterLobby('create', () => createLobby(true))}
+                  // ADR 0110: ROUNDS and WHO CAN JOIN travel with the create.
+                  onClick={() =>
+                    enterLobby('create', () =>
+                      createLobby(true, { matchLength: rounds, privacy: privacy === 'FRIENDS' ? 'friends' : 'invite-only' }),
+                    )
+                  }
                 >CREATE LOBBY</JellyButton>
               </>
             )}
@@ -288,7 +310,7 @@ export default function PlaySelect({
                 </div>
                 )}
 
-                {/* GET /lobbies/code/:code — 404/409 come back as the broker's own reason, shown below. */}
+                {/* POST /lobbies/join {code} — 404/409 come back as the broker's own reason, shown below. */}
                 <JellyButton
                   disabled={!codeReady || pending}
                   kicker={pending ? 'LOOKING FOR THAT LOBBY…' : codeReady ? 'READY' : 'NEEDS 6 CHARACTERS'}

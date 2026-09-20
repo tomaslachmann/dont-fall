@@ -85,6 +85,7 @@ const applyRoster = (session: GameSession, message: SnapshotMessage): void => {
   roster.colors = Object.fromEntries(players.map((player) => [player.id, player.color]));
   roster.skins = Object.fromEntries(players.map((player) => [player.id, player.skin]));
   roster.hats = Object.fromEntries(players.map((player) => [player.id, player.hat]));
+  roster.accounts = Object.fromEntries(players.map((player) => [player.id, player.accountId]));
   for (const player of players) roster.known.set(player.id, player.nickname);
   for (const dropped of message.dnf) roster.known.set(dropped.id, dropped.nickname);
 };

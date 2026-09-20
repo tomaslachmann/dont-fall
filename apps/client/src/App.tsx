@@ -15,6 +15,7 @@ import NotFound from "./screens/NotFound";
 import { RewardsRoute } from "./screens/RewardsRoute";
 import { ScoreboardRoute } from "./screens/ScoreboardRoute";
 import { LobbyRoute } from "./screens/LobbyRoute.js";
+import { PartyJoinRoute } from "./screens/PartyJoinRoute.js";
 import PlaySelect from "./screens/PlaySelect";
 import { ProfileRoute } from "./screens/ProfileRoute.js";
 import Settings from "./screens/Settings";
@@ -85,6 +86,8 @@ export function App() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/credits" element={<CreditsRoute />} />
         <Route path="/leaderboards" element={<LeaderboardsRoute />} />
+        {/* A Party code's SHARE LINK (ADR 0112) — joins, then the menu. */}
+        <Route path="/party/:code" element={<PartyJoinRoute />} />
       </Route>
     </Routes>
   );

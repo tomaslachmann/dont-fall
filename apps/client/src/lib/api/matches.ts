@@ -1,4 +1,4 @@
-import type { PersistedMatchResult } from "@dont-fall/shared";
+import type { MatchResultResponse } from "@dont-fall/shared";
 import { apiGet } from "./base.js";
 
 /**
@@ -7,5 +7,5 @@ import { apiGet } from "./base.js";
  * claim rows all derive client-side from this (`matchView.ts`), the same
  * discipline the old in-canvas overlay followed over live snapshots.
  */
-export const getMatchResult = (matchId: string): Promise<PersistedMatchResult> =>
-  apiGet<PersistedMatchResult>(`/matches/${matchId}`);
+export const getMatchResult = (matchId: string): Promise<MatchResultResponse> =>
+  apiGet<MatchResultResponse>(`/matches/${matchId}`);

@@ -49,6 +49,7 @@ export function ProfileRoute() {
       color={account?.color ?? null}
       skin={account?.skin ?? null}
       hat={account?.hat ?? null}
+      {...(account ? { victoryPose: account.victoryPose } : {})}
       level={level}
       xp={xp - xpLevelStart(level)}
       xpTarget={xpToLeaveLevel(level)}

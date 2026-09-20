@@ -122,6 +122,13 @@ export interface RosterState {
   /** Equipped hats by session id (ADR 0083). */
   hats: Record<string, string | null>;
   /**
+   * id → the Account behind that seat (ADR 0111), or `null` for one that
+   * never authenticated. What Voice chat places a speaker by: the relay names
+   * people by Account, the simulation by session id, and this is the only
+   * place both are known.
+   */
+  accounts: Record<string, string | null>;
+  /**
    * Every nickname ever seen this session, never cleared (M7 ticket 06/08) —
    * `names` only knows who is connected *right now*, but a Standings row for
    * a Player who dropped mid-Match still needs a name, not a bare id.
@@ -181,7 +188,17 @@ export class ChangeGate<T> {
 /** The shell-facing callbacks a session raises — {@link GameConfig}'s own half of ADR 0008's boundary. */
 export type GameCallbacks = Pick<
   GameConfig,
-  "onExit" | "onLobbyState" | "onStandings" | "onRunEnd" | "onHitTaken" | "onSpectate" | "onRoundHud" | "onWorldReady" | "onPause"
+  | "onExit"
+  | "onLobbyState"
+  | "onStandings"
+  | "onRunEnd"
+  | "onHitTaken"
+  | "onSpectate"
+  | "onRoundHud"
+  | "onWorldReady"
+  | "onPause"
+  | "onVoiceScene"
+  | "speakingAccounts"
 >;
 
 export interface GameSession {

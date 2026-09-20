@@ -5,15 +5,15 @@ import { Turntable } from "./Turntable";
 
 describe("Turntable", () => {
   it("degrades to the caption where WebGL doesn't exist — jsdom has no GPU", () => {
-    render(<Turntable color={0} skin={null} hat={null} spinToken={0} emoteToken={0} />);
+    render(<Turntable color={0} skin={null} hat={null} spinToken={0} emote="wobble" emoteToken={0} />);
 
     expect(screen.getByText(/NO 3D PREVIEW/)).toBeInTheDocument();
   });
 
   it("color, skin, spin and emote changes don't crash the fallback", () => {
-    const { rerender } = render(<Turntable color={0} skin={null} hat={null} spinToken={0} emoteToken={0} />);
+    const { rerender } = render(<Turntable color={0} skin={null} hat={null} spinToken={0} emote="wobble" emoteToken={0} />);
 
-    rerender(<Turntable color={5} skin="tiger" hat={null} spinToken={1} emoteToken={2} />);
+    rerender(<Turntable color={5} skin="tiger" hat={null} spinToken={1} emote="wobble" emoteToken={2} />);
     expect(screen.getByText(/NO 3D PREVIEW/)).toBeInTheDocument();
   });
 });

@@ -1,0 +1,28 @@
+/* Who is talking, over a running Round (ADR 0111). The Survival HUD's avatar
+   row in a plate pill — the same vocabulary, so it reads as part of the HUD
+   rather than as a notification landing on top of it. */
+.row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--df-space-4);
+  padding: var(--df-space-3) var(--df-space-5);
+  border-radius: var(--df-radius-pill);
+  background: var(--df-color-plate-strong);
+  color: var(--df-color-on-brand);
+  pointer-events: none;
+}
+
+.icon {
+  display: inline-flex;
+  width: calc(var(--df-u) * 1.2);
+  color: var(--df-color-go);
+}
+.icon svg { width: 100%; height: auto; fill: currentColor; }
+
+.beans { display: inline-flex; align-items: center; gap: var(--df-space-3); }
+
+.name {
+  font: var(--df-weight-label) var(--df-text-2xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  white-space: nowrap;
+}

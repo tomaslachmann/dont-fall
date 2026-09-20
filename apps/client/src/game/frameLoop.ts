@@ -310,6 +310,10 @@ const drawWorld = (session: GameSession, frame: DrawnFrame, input: SimInputs, el
   // the own row's bind. Hats the same way (ADR 0083).
   stage.setPlayerColors(new Map(Object.entries(roster.colors)));
   stage.setPlayerNames(new Map(Object.entries(roster.names)));
+  // Voice chat names people by Account and the simulation by session id
+  // (ADR 0111), so the roster is where the two are turned into each other —
+  // before `applyRemoteCharacters`, which is what builds the nameplates.
+  stage.setSpeakingPlayers(speakingPlayerIds(session));
   stage.setPlayerSkins(new Map(Object.entries(roster.skins)));
   stage.setLocalLook(roster.colors[myId] ?? null, roster.skins[myId] ?? null);
   stage.setPlayerHats(new Map(Object.entries(roster.hats)));
@@ -489,6 +493,44 @@ const aimCamera = (
   return { spectating, spectatingNickname };
 };
 
+/** Whose Character's nameplate wears the speaking cue this frame, by session id. */
+const speakingPlayerIds = (session: GameSession): ReadonlySet<string> => {
+  const speaking = session.callbacks.speakingAccounts?.();
+  if (speaking === undefined || speaking.size === 0) return NOBODY_SPEAKING;
+  const ids = new Set<string>();
+  for (const [id, accountId] of Object.entries(session.roster.accounts)) {
+    if (accountId !== null && speaking.has(accountId)) ids.add(id);
+  }
+  return ids;
+};
+
+/** Shared rather than rebuilt: nobody is talking most frames of most Rounds. */
+const NOBODY_SPEAKING: ReadonlySet<string> = new Set();
+
+/**
+ * Where everyone is, for Voice chat (ADR 0111) — raised after the camera has
+ * been aimed, so the pose a voice is placed against is this frame's, not the
+ * one before it.
+ *
+ * An eliminated Character is left out on purpose: its body stays in the world
+ * with its collider disabled (ADR 0043), but the Player behind it is watching
+ * rather than standing there, and the ADR hears them flat. So is anyone whose
+ * seat never authenticated — the relay names speakers by Account, and an
+ * anonymous seat has none.
+ */
+const placeVoices = (session: GameSession, frame: DrawnFrame): void => {
+  const sink = session.callbacks.onVoiceScene;
+  if (sink === undefined) return;
+  const { roster, myId } = session;
+  const speakers = new Map<string, Vec3>();
+  for (const [id, character] of Object.entries({ ...frame.remote, [myId]: frame.visual })) {
+    const accountId = roster.accounts[id];
+    if (accountId == null || character.eliminated) continue;
+    speakers.set(accountId, character.position);
+  }
+  sink({ listener: session.world.stage.listenerPose(), speakers });
+};
+
 /** The banner and the Match's own voice (M14 ticket 10), on the ui bus beside it. */
 const speak = (
   session: GameSession,
@@ -616,6 +658,7 @@ export const createFrameLoop = (session: GameSession, sendInput: () => void): { 
 
     drawWorld(session, drawn, input, elapsedMs, now);
     const { spectating, spectatingNickname } = aimCamera(session, drawn, serverRender, elapsedMs);
+    placeVoices(session, drawn);
     speak(session, drawn, spectating, spectatingNickname, now);
 
     world.stage.render();

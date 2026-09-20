@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   MAX_MATCH_LENGTH,
@@ -21,6 +21,13 @@ import type { Feel } from '../tokens';
 import type { LobbySnapshot } from '../lib/socket/lobbyConnection.js';
 import { formatRoundClock } from '../lib/utils/roundTimer.js';
 import { useDiscoverTracks } from '../lib/hooks/useDiscoverTracks.js';
+import { useGameplaySettings } from '../lib/hooks/useGameplaySettings.js';
+import { useVoiceRoom } from '../lib/voice/session.js';
+import { loadMutes, useMutes } from '../lib/voice/mutes.js';
+import { namesFromRoster, usePauseVoice } from '../lib/voice/usePauseVoice.js';
+import { listen } from '../lib/socket/listeners.js';
+import PauseMenu from './PauseMenu.js';
+import Settings from './Settings.js';
 import { TRACK_ART_LAYER, thumbnailFor, trackArtStyle } from '../lib/trackArt.js';
 import { copyText } from '../lib/clipboard.js';
 import Discover from './Discover.js';
@@ -98,6 +105,29 @@ export default function Lobby({
   const navigate = useNavigate();
   const me = lobby.players.find((p) => p.id === lobby.myId);
   const isHost = lobby.hostId === lobby.myId;
+  // Who is talking right now (ADR 0111). Only the edges of that reach React —
+  // a frame of audio never does — so this re-renders when someone starts or
+  // stops, not fifty times a second.
+  const voice = useVoiceRoom();
+  // Whom this Player has Muted (ADR 0111) — read once, and shown on the cards
+  // of the beans it silences.
+  const { isMuted } = useMutes();
+  useEffect(() => void loadMutes(), []);
+  // The pause sheet opens here too (ADR 0111), so Voice chat and its Mutes are
+  // reachable while the Lobby's socket stays up — leaving for `/settings`
+  // would leave the Lobby.
+  const [paused, setPaused] = useState(false);
+  const [allSettings, setAllSettings] = useState(false);
+  const pauseVoice = usePauseVoice(namesFromRoster(lobby.players), lobby.players.length > 1);
+  const [gameplay, setGameplay] = useGameplaySettings();
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.code !== "Escape") return;
+      setPaused((open) => !open);
+      setAllSettings(false);
+    };
+    return listen(window, "keydown", onKeyDown as EventListener);
+  }, []);
 
   // Only the host ever picks a Track, so only the host pays for the fetch —
   // one cached query (fresh for 30s), not a fetch per mount. A failed list
@@ -229,11 +259,20 @@ export default function Lobby({
           {lobby.players.map((p) => (
             <div key={p.id} className={[s.player, !p.ready && s.pending].filter(Boolean).join(' ')}>
               <div className={s.playerHead}>
-                <Avatar look={avatarLook(p.accountId, p.color)} size={4} {...(p.id === lobby.myId ? { ring: 'var(--df-color-accent)' } : {})} />
+                <Avatar
+                  look={avatarLook(p.accountId, p.color)}
+                  size={4}
+                  {...(p.id === lobby.myId ? { ring: 'var(--df-color-accent)' } : {})}
+                  speaking={p.accountId !== null && voice.isSpeaking(p.accountId)}
+                />
                 {p.id === lobby.hostId && <Chip tone="host">HOST</Chip>}
               </div>
               <span className={s.playerName}>{p.nickname}</span>
               <Chip tone={p.ready ? 'ready' : 'waiting'} dot>{p.ready ? 'READY' : 'WAITING'}</Chip>
+              {/* ADR 0111: you cannot hear this one, and a Mute is silent by
+                  nature — without the chip, a bean you Muted weeks ago is
+                  indistinguishable from one who never speaks. */}
+              {p.accountId !== null && isMuted(p.accountId) && <Chip tone="plate">MUTED</Chip>}
             </div>
           ))}
           {open > 0 && (
@@ -426,6 +465,23 @@ export default function Lobby({
           <p className={s.hint}>Waiting for the host to start…</p>
         )}
       </div>
+
+      {/* The pause sheet, in place (ADR 0111): Voice chat and its Mutes while
+          the Lobby's socket stays up. No QUIT MATCH — there is no Round to
+          walk out of, and the Screen behind it already has its own way out. */}
+      {paused && (
+        allSettings
+          ? <Settings onClose={() => setAllSettings(false)} />
+          : (
+            <PauseMenu
+              settings={gameplay}
+              onChange={setGameplay}
+              onClose={() => setPaused(false)}
+              onAllSettings={() => setAllSettings(true)}
+              voice={pauseVoice}
+            />
+          )
+      )}
     </Stage>
   );
 }

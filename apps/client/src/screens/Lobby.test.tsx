@@ -16,6 +16,22 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 })));
 });
 
+// Who is talking (ADR 0111). The room itself is the voice socket's, and this
+// Screen only reads it — so the reading is what is tested here, and the socket
+// has its own suite.
+let speakingNow: string[] = [];
+vi.mock("../lib/voice/session.js", () => ({
+  useVoiceRoom: () => ({
+    connected: true,
+    linked: speakingNow,
+    speaking: speakingNow,
+    isSpeaking: (accountId: string) => speakingNow.includes(accountId),
+  }),
+}));
+beforeEach(() => {
+  speakingNow = [];
+});
+
 // The logged-in Account is what names this Player in the roster (ADR 0052).
 vi.mock("../lib/hooks/useAccount.js", () => ({
   useAccount: () => ({
@@ -180,6 +196,57 @@ describe("Lobby", () => {
     expect(screen.getByText("Waiting for the host to start…")).toBeInTheDocument();
     expect(screen.queryByLabelText("Change Track for Round 1")).not.toBeInTheDocument();
     await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
+  });
+
+  describe("who is talking (ADR 0111)", () => {
+    /** Every avatar disc wearing the speaking halo. */
+    const speakingDiscs = (container: HTMLElement): Element[] => [...container.querySelectorAll("[class*='speaking']")];
+
+    const twoAccounts = () =>
+      baseLobby({
+        players: [
+          { id: "host-id", nickname: "Host Player", ready: false, joinOrder: 0, accountId: "acc-host", color: null, skin: null, hat: null },
+          { id: "guest-id", nickname: "Guest", ready: true, joinOrder: 1, accountId: "acc-guest", color: null, skin: null, hat: null },
+        ],
+      });
+
+    it("rings the bean whose voice is being heard, and nobody else", () => {
+      speakingNow = ["acc-guest"];
+
+      const { container } = renderLobby({ lobby: twoAccounts() });
+
+      expect(speakingDiscs(container)).toHaveLength(1);
+    });
+
+    it("rings nobody while the room is quiet", () => {
+      const { container } = renderLobby({ lobby: twoAccounts() });
+
+      expect(speakingDiscs(container)).toHaveLength(0);
+    });
+
+    it("keeps your own ring as well as the speaking one — both cues, not one replacing the other", () => {
+      speakingNow = ["acc-host"];
+
+      const { container } = renderLobby({ lobby: twoAccounts() });
+
+      // `myId` is the host here, so their card already wore the accent ring.
+      expect(container.querySelectorAll("[class*='ringed'][class*='speaking']")).toHaveLength(1);
+    });
+
+    it("leaves an anonymous seat alone — the relay names speakers by Account", () => {
+      // An Account id that is talking, and a seat that never authenticated.
+      speakingNow = ["acc-host"];
+
+      const { container } = renderLobby({
+        lobby: baseLobby({
+          players: [
+            { id: "host-id", nickname: "Host Player", ready: false, joinOrder: 0, accountId: null, color: null, skin: null, hat: null },
+          ],
+        }),
+      });
+
+      expect(speakingDiscs(container)).toHaveLength(0);
+    });
   });
 
   describe("the join code (ADR 0054)", () => {

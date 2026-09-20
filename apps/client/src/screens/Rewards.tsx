@@ -31,6 +31,12 @@ export interface RewardsProps {
   /** The level the unlocked item needs — what UNLOCKED AT names (defaults to `level`). */
   unlockLevel?: number | undefined;
   onPlayAgain?: () => void;
+  /**
+   * Why PLAY AGAIN cannot be pressed, shown as its kicker (ADR 0112): a Party
+   * member's is the host's call, and the host's waits for its members. Unset,
+   * it plays.
+   */
+  playAgainBlocked?: string | null | undefined;
   onLobby?: () => void;
   /** Puts the unlocked hat on — the button hides without one. */
   onEquip?: (() => void) | undefined;
@@ -56,7 +62,7 @@ export default function Rewards({
   level = 43, xpGain = 1240, xpBefore = 0.46, xpEarned = 0.31,
   breakdown = BREAKDOWN, beans = 860, beansSplit = SPLIT,
   color = null, skin = null, hat = null,
-  unlock, unlockIcon, unlockLevel, onPlayAgain, onLobby, onEquip, onExit, feel,
+  unlock, unlockIcon, unlockLevel, onPlayAgain, playAgainBlocked, onLobby, onEquip, onExit, feel,
 }: RewardsProps) {
   return (
     <Stage
@@ -142,7 +148,10 @@ export default function Rewards({
       </div>
 
       <div className={s.actions}>
-        <JellyButton variant="tile" tone="go" centered sound="confirm" onClick={onPlayAgain} icon={<ReplayIcon />}>
+        <JellyButton
+          variant="tile" tone="go" centered sound="confirm" onClick={onPlayAgain} icon={<ReplayIcon />}
+          disabled={Boolean(playAgainBlocked)} kicker={playAgainBlocked || undefined}
+        >
           PLAY AGAIN
         </JellyButton>
         <JellyButton variant="pill" tone="glass" centered sound="back" onClick={onLobby}>BACK TO LOBBY</JellyButton>

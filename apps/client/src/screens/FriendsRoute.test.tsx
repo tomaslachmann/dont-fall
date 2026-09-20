@@ -2,7 +2,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useSearchParams } from "react-router";
-import type { FriendRequestView, FriendView, RecentPlayerView } from "@dont-fall/shared";
+import type { FriendRequestView, FriendView, LobbyRef, RecentPlayerView } from "@dont-fall/shared";
+import { ApiError } from "../lib/api/base.js";
 import { clearFlashes } from "../lib/flash.js";
 import FlashHost from "../ui/FlashHost.js";
 import { FriendsRoute } from "./FriendsRoute";
@@ -14,6 +15,12 @@ const { resolveLobbyRef } = vi.hoisted(() => ({ resolveLobbyRef: vi.fn() }));
 vi.mock("../lib/api/lobbyBroker.js", async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   resolveLobbyRef,
+}));
+
+const { inviteToParty } = vi.hoisted(() => ({ inviteToParty: vi.fn() }));
+vi.mock("../lib/api/party.js", async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  inviteToParty,
 }));
 
 const FRIENDS: FriendView[] = [
@@ -40,6 +47,15 @@ const FRIENDS: FriendView[] = [
   },
 ];
 
+/** A friend standing in the menus: not joinable, so their row wears INVITE rather than JOIN. */
+const BONK: FriendView = {
+  accountId: "a7",
+  displayName: "Bonk",
+  avatarUrl: null, color: 0,
+  friendsSince: 4,
+  presence: { status: "online" },
+};
+
 const REQUESTS: FriendRequestView[] = [
   { id: "r1", fromAccountId: "a5", fromDisplayName: "Goopy", fromAvatarUrl: null, fromColor: 0, sentAt: 1, matchesTogether: 4 },
 ];
@@ -55,8 +71,6 @@ const hook = (overrides = {}) => ({
   requests: REQUESTS,
   recent: RECENT,
   code: "BEAN42",
-  invites: [],
-  dismissInvite: vi.fn(),
   requestedIds: [],
   isLoading: false,
   error: null,
@@ -76,7 +90,10 @@ const LobbyProbe = () => {
   return <div>{`lobby:${params.get("port")}|${params.get("code")}`}</div>;
 };
 
-const renderAt = (entry: string) =>
+/** Reached from the Lobby's own INVITE FRIENDS: its ref rides in navigation state. */
+const IN_LOBBY = { pathname: "/friends", state: { lobbyRef: { kind: "public", lobbyId: "l9" } satisfies LobbyRef } };
+
+const renderAt = (entry: string | { pathname: string; state: unknown }) =>
   render(
     <MemoryRouter initialEntries={[entry]}>
       {/* The shell mounts the flash stack above the routes — this test does the same. */}
@@ -92,6 +109,8 @@ const renderAt = (entry: string) =>
 describe("FriendsRoute", () => {
   beforeEach(() => {
     clearFlashes();
+    inviteToParty.mockReset();
+    inviteToParty.mockResolvedValue({ inviteId: "inv-1" });
   });
 
   it("renders the hooked roster — online tab first, requests above", () => {
@@ -172,5 +191,74 @@ describe("FriendsRoute", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByText("home")).toBeInTheDocument();
+  });
+});
+
+/**
+ * A lone bean starts a Party from here (ADR 0112): opened from the menu, with
+ * no Lobby to invite to, INVITE and INVITE ALL ONLINE send Party invites —
+ * where they used to dead-end at "Join a Lobby first".
+ */
+describe("FriendsRoute sends Party invites from the menu (ADR 0112)", () => {
+  beforeEach(() => {
+    clearFlashes();
+    inviteToParty.mockReset();
+    inviteToParty.mockResolvedValue({ inviteId: "inv-1" });
+  });
+
+  it("INVITE invites that bean to the Party, not to a Lobby", async () => {
+    const fns = hook({ friends: [...FRIENDS, BONK] });
+    useFriends.mockReturnValue(fns);
+    renderAt("/friends");
+
+    fireEvent.click(screen.getByRole("button", { name: "INVITE" }));
+    await waitFor(() => expect(inviteToParty).toHaveBeenCalledWith("a7"));
+    expect(fns.invite).not.toHaveBeenCalled();
+    expect(await screen.findByText("Invite sent.")).toBeInTheDocument();
+  });
+
+  it("a bean still in a Match can be invited — the Party takes them (ADR 0112)", async () => {
+    useFriends.mockReturnValue(hook());
+    renderAt("/friends");
+
+    fireEvent.click(screen.getByRole("tab", { name: "IN A MATCH" }));
+    const invite = screen.getByRole("button", { name: "INVITE" });
+    expect(invite).toBeEnabled();
+
+    fireEvent.click(invite);
+    await waitFor(() => expect(inviteToParty).toHaveBeenCalledWith("a3"));
+  });
+
+  it("INVITE ALL ONLINE invites everyone but the offline, mid-Match included", async () => {
+    useFriends.mockReturnValue(hook({ friends: [...FRIENDS, BONK] }));
+    renderAt("/friends");
+
+    fireEvent.click(screen.getByRole("button", { name: "INVITE ALL ONLINE" }));
+    // a2 in a Lobby, a3 mid-Match, a7 in the menus — a4 is offline.
+    await waitFor(() => expect(inviteToParty.mock.calls.map(([id]) => id)).toEqual(["a2", "a3", "a7"]));
+    expect(await screen.findByText("Invited 3.")).toBeInTheDocument();
+  });
+
+  it("a refusal says the API's own reason", async () => {
+    useFriends.mockReturnValue(hook({ friends: [...FRIENDS, BONK] }));
+    inviteToParty.mockRejectedValue(new ApiError("your party is full", 409));
+    renderAt("/friends");
+
+    fireEvent.click(screen.getByRole("button", { name: "INVITE" }));
+    expect(await screen.findByText("your party is full")).toBeInTheDocument();
+  });
+
+  it("inside a Lobby they stay Lobby invites, and mid-Match stays uninvitable", async () => {
+    const fns = hook({ friends: [...FRIENDS, BONK] });
+    useFriends.mockReturnValue(fns);
+    renderAt(IN_LOBBY);
+
+    fireEvent.click(screen.getByRole("button", { name: "INVITE" }));
+    await waitFor(() => expect(fns.invite).toHaveBeenCalledWith("a7", IN_LOBBY.state.lobbyRef));
+    expect(inviteToParty).not.toHaveBeenCalled();
+    expect(await screen.findByText("Invite sent.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "IN A MATCH" }));
+    expect(screen.getByRole("button", { name: "INVITE" })).toBeDisabled();
   });
 });

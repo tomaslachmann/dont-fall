@@ -24,3 +24,22 @@
 }
 
 .foot { display: flex; justify-content: space-between; gap: var(--df-space-4); }
+
+/* Voice chat's Mutes (ADR 0111) — one row per linked Player, under the scope
+   row they belong to. Its own block rather than more rows in the same list:
+   the rows above are settings, and these are people. */
+.voice { display: flex; flex-direction: column; gap: var(--df-space-4); }
+.voiceHead {
+  font: var(--df-weight-kicker) var(--df-text-3xs) / 1 var(--df-font-ui);
+  letter-spacing: var(--df-tracking-wide);
+  color: var(--df-color-ink-55);
+}
+.voiceEmpty {
+  font: var(--df-weight-kicker) var(--df-text-2xs) / 1.4 var(--df-font-ui);
+  color: var(--df-color-ink-55);
+}
+.peer { display: flex; align-items: center; gap: var(--df-space-4); min-width: 0; }
+
+/* The list can outgrow the card in a full Lobby; the card itself must not
+   outgrow the screen. */
+.voice > * { max-height: calc(var(--df-u) * 22); overflow-y: auto; }

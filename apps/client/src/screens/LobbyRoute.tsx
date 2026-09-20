@@ -1,9 +1,13 @@
+import { useEffect } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
 import type { LobbyRef } from "@dont-fall/shared";
+import { browserStorage } from "../lib/browserStorage.js";
+import { applyLobbyKindToVoiceScope } from "../lib/voiceSettings.js";
 import { GameCanvas } from "../components/GameCanvas.js";
 import { ConnectionError } from "../lib/errors.js";
 import { useLobbyConnection } from "../lib/hooks/useLobbyConnection.js";
 import { useMatchMusic } from "../lib/hooks/useMatchMusic.js";
+import { useLobbyPresence } from "../lib/social/place.js";
 import { parseLobbyParams } from "../lib/utils/routeParams.js";
 import Lobby from "./Lobby.js";
 import { LoadingScreen } from "./LoadingScreen.js";
@@ -16,10 +20,14 @@ import { LoadingScreen } from "./LoadingScreen.js";
  * `<GameCanvas>`, which attaches its snapshot/sim feed to it instead of
  * dialing a second socket (a second socket would rejoin as a stranger: new
  * id, lost Ready, lost host).
+ *
+ * `?reservation=` is the seat the broker kept (ADR 0112); the socket carries
+ * it to the Match server, which uses it up — a reload afterwards connects as
+ * an ordinary join.
  */
 export function LobbyRoute() {
   const [searchParams] = useSearchParams();
-  const { port, code, id } = parseLobbyParams(searchParams);
+  const { port, code, id, reservation } = parseLobbyParams(searchParams);
   // With no `?port=` there is no Lobby to connect to — back to `/play` to
   // pick a way in rather than guessing at one.
   if (port === undefined) return <Navigate to="/play" replace />;
@@ -32,15 +40,38 @@ export function LobbyRoute() {
       serverPort={port}
       {...(code === undefined ? {} : { code })}
       {...(inviteRef === undefined ? {} : { inviteRef })}
+      {...(reservation === undefined ? {} : { reservation })}
     />
   );
 }
 
-function BrokeredLobby({ serverPort, code, inviteRef }: { serverPort: number; code?: string; inviteRef?: LobbyRef }) {
+function BrokeredLobby({
+  serverPort,
+  code,
+  inviteRef,
+  reservation,
+}: {
+  serverPort: number;
+  code?: string;
+  inviteRef?: LobbyRef;
+  reservation?: string;
+}) {
   const navigate = useNavigate();
-  const { connection, lobby, actions, error, closed } = useLobbyConnection(serverPort);
+  // Voice chat's ALL never follows a Player into a Lobby of strangers (ADR
+  // 0111). A join code is what a private Lobby has and a public one does not,
+  // so the route already knows which this is — before the voice session
+  // starts, because this runs on the commit that publishes the Lobby's
+  // presence and the session only starts once that has.
+  useEffect(() => applyLobbyKindToVoiceScope(browserStorage(), code === undefined), [serverPort, code]);
+  const { connection, lobby, actions, error, closed } = useLobbyConnection(
+    serverPort,
+    reservation === undefined ? {} : { reservation },
+  );
   // The music follows the Match for the whole visit (M14 ticket 11), Lobby and game alike.
   useMatchMusic(lobby?.phase ?? null);
+  // Where this client is, for its Party (ADR 0112): in this Lobby, then in its
+  // Match once it leaves LOBBY — until this route unmounts.
+  useLobbyPresence(serverPort, lobby?.phase ?? null);
 
   // Expected connectivity failures go to the app-wide boundary — one
   // ErrorScreen for the whole app, not one per component. A refused welcome

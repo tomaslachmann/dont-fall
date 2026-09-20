@@ -1,9 +1,10 @@
+import { DEFAULT_VICTORY_POSE, emoteById, type EmoteId } from '@dont-fall/shared';
 import Stage from '../ui/Stage';
 import Panel from '../ui/Panel';
 import JellyButton from '../ui/JellyButton';
 import Chip from '../ui/Chip';
 import type { Feel } from '../tokens';
-import { CharacterPreview, WIN_SEQUENCE } from './CharacterPreview.js';
+import { CharacterPreview, EMOTE_SEQUENCES } from './CharacterPreview.js';
 import s from './Profile.module.css';
 
 export interface MatchRow {
@@ -28,6 +29,8 @@ export interface ProfileProps {
   skin?: string | null;
   /** And their hat (ADR 0083), or none. */
   hat?: string | null;
+  /** What the render performs — the Account's victory pose (ADR 0110). */
+  victoryPose?: EmoteId;
   level?: number;
   /** No season system exists, so the Route passes none and the chip hides. */
   season?: string;
@@ -59,7 +62,7 @@ const LockIcon = () => (
 );
 
 export default function Profile({
-  name = 'BEAN', color = null, skin = null, hat = null, level = 1, season, xp = 0, xpTarget = 1000,
+  name = 'BEAN', color = null, skin = null, hat = null, victoryPose = DEFAULT_VICTORY_POSE, level = 1, season, xp = 0, xpTarget = 1000,
   stats = null, badges = null, badgeNames = [], matches = null, failed = false,
   onBack, onShare, onEditBean, onSeeAll, seeAllLabel = 'SEE ALL', feel,
 }: ProfileProps) {
@@ -89,9 +92,9 @@ export default function Profile({
           color={color}
           skin={skin}
           hat={hat}
-          animation={WIN_SEQUENCE}
+          animation={EMOTE_SEQUENCES[victoryPose]}
           autoRotate={false}
-          sub="SIGNATURE VICTORY POSE"
+          sub={`SIGNATURE VICTORY POSE · ${emoteById(victoryPose)?.name ?? victoryPose.toUpperCase()}`}
           canvasLabel={`3D preview of ${name}`}
           className={s.render}
         />

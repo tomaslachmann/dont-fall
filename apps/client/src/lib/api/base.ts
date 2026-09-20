@@ -90,6 +90,23 @@ export const apiJson = async <T>(path: string, init: RequestInit = {}): Promise<
   return body as T;
 };
 
+/**
+ * A call the API answers `204 No Content` — nothing to parse on success. A
+ * non-2xx throws `ApiError` with the server's own `{error}` text, as
+ * `apiJson` does.
+ */
+export const apiNoContent = async (path: string, init: RequestInit = {}): Promise<void> => {
+  const res = await apiFetch(path, init);
+  if (res.ok) return;
+  let reason: unknown;
+  try {
+    reason = ((await res.json()) as { error?: unknown }).error;
+  } catch {
+    // No readable body — the status alone says it was refused.
+  }
+  throw new ApiError(typeof reason === "string" ? reason : `The API refused that (HTTP ${res.status}).`, res.status);
+};
+
 /** `GET path` → parsed JSON. The stored token rides along when there is one. */
 export const apiGet = <T>(path: string): Promise<T> => apiJson<T>(path);
 

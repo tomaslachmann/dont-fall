@@ -5,7 +5,8 @@
  * and the auth Screens are the only callers. Origin, token storage, and
  * transport come from the shared base (`api.ts`) — no `baseUrl` threading.
  */
-import type { AccountRole, KeyBindings } from "@dont-fall/shared";
+import type { AccountRole, EmoteId, KeyBindings } from "@dont-fall/shared";
+import { clearMutes } from "../voice/mutes.js";
 import { ApiError, apiBaseUrl, apiFetch, apiJson, apiPost, getStoredToken } from "./base.js";
 
 export interface Account {
@@ -27,6 +28,10 @@ export interface Account {
   skin: string | null;
   /** The equipped hat's id (ADR 0083) — `null` for no hat. */
   hat: string | null;
+  /** The emote your bean plays in the menus (ADR 0110). */
+  emote: EmoteId;
+  /** What your bean performs on the Profile and on the podium when it wins (ADR 0110). */
+  victoryPose: EmoteId;
   /** The stored key bindings (M9 controls) — `null` when never saved, which resolves to defaults. */
   bindings: KeyBindings | null;
 }
@@ -69,6 +74,10 @@ export const login = (input: { email: string; password: string }): Promise<{ acc
 
 /** Ends the stored session. Quiet when there is none — logging out twice is not an error. */
 export const logout = async (): Promise<void> => {
+  // Whoever this Account had Muted (ADR 0111) is theirs, not the machine's:
+  // the next Account to sign in on this browser starts from their own list,
+  // which is read from the API, never inherited from the tab.
+  clearMutes();
   if (!getStoredToken()) return;
   await apiFetch("/auth/logout", { method: "POST" });
 };
@@ -96,6 +105,8 @@ export interface CosmeticsChoice {
   color?: number;
   skin?: string | null;
   hat?: string | null;
+  emote?: EmoteId;
+  victoryPose?: EmoteId;
 }
 
 /**

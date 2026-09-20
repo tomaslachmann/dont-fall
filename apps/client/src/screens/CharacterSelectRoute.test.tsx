@@ -19,6 +19,8 @@ const ACCOUNT = {
   color: 2,
   skin: null as string | null,
   hat: null as string | null,
+  emote: "wobble",
+  victoryPose: "win",
 };
 
 const renderAt = (entry: string) => {
@@ -257,6 +259,41 @@ describe("CharacterSelectRoute", () => {
       expect(globalThis.fetch).toHaveBeenCalledWith(
         expect.stringContaining("/auth/me/cosmetics"),
         expect.objectContaining({ body: JSON.stringify({ color: 2, skin: null }) }),
+      );
+    });
+  });
+
+  describe("emotes and a victory pose (ADR 0110)", () => {
+    it("SAVE stores a new emote beside the colour, and leaves an unchanged pose out", async () => {
+      renderAt("/character");
+      await screen.findByText("COLOUR 3");
+      fireEvent.click(screen.getByRole("tab", { name: "EMOTES" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "PUNCH" }));
+      fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
+
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+          expect.stringContaining("/auth/me/cosmetics"),
+          expect.objectContaining({ method: "PUT", body: JSON.stringify({ color: 2, emote: "punch" }) }),
+        ),
+      );
+      await waitFor(() => expect(screen.getByRole("button", { name: "PUNCH" })).toHaveAttribute("aria-pressed", "true"));
+    });
+
+    it("VICTORY POSE steps to the next pose and SAVE stores it", async () => {
+      renderAt("/character");
+      await screen.findByText("COLOUR 3");
+
+      fireEvent.click(screen.getByRole("button", { name: "VICTORY POSE · WIN" }));
+      expect(screen.getByRole("button", { name: "VICTORY POSE · SHRUG" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "SAVE" }));
+
+      await waitFor(() =>
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+          expect.stringContaining("/auth/me/cosmetics"),
+          expect.objectContaining({ body: JSON.stringify({ color: 2, victoryPose: "shrug" }) }),
+        ),
       );
     });
   });

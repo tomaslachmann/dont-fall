@@ -45,18 +45,7 @@ import {
 import { tintHueForColor } from "../playerTint.js";
 import { setShadowRole } from "../shadowRoles.js";
 import type { SkinCloset } from "../skins.js";
-import { initialWobbleState, stepWobble } from "../wobble.js";
 import type { Stage } from "../scene.js";
-
-/**
- * Procedural Wobble lean (ticket 07), temporarily OFF. It derives acceleration
- * from render-frame `character.position` deltas, which a predicted + reconciled
- * Character (M2) delivers unevenly — fixed 30 Hz prediction ticks sampled at a
- * variable render rate, plus reconciliation snaps — so it reads as a micro-stutter
- * / "lag" while just walking. Re-enable once it's driven from a simulation-owned
- * velocity instead of position deltas (the same fix speed-lines already got).
- */
-const WOBBLE_ENABLED = false;
 
 /** What the local Character needs from the rest of the Stage. */
 export interface LocalCharacterWorld {
@@ -105,12 +94,8 @@ export const createLocalCharacter = (
 ): LocalCharacter => {
   // `character` is the runtime placement handle: its position is the capsule's
   // ground-contact point (feet), its yaw the cosmetic facing (`bodyYaw`).
-  // `wobblePivot` sits between it and the model for the procedural Wobble lean
-  // (ticket 07) — rotating in `character`'s local frame so "lean forward"
-  // always means forward relative to the current facing, at whatever yaw.
   // The loaded model's own pivot/scale quirks are corrected once, on the child.
   const character = new THREE.Group();
-  const wobblePivot = new THREE.Group();
   const naturalBounds = new THREE.Box3().setFromObject(characterModel.scene);
   const naturalHeight = naturalBounds.getSize(new THREE.Vector3()).y;
   const naturalFeetY = naturalBounds.min.y;
@@ -124,8 +109,7 @@ export const createLocalCharacter = (
   characterModel.scene.rotation.y = MODEL_YAW_OFFSET;
   // Marked before any remote rig is cloned from it, so every clone casts too.
   setShadowRole(characterModel.scene, "caster");
-  wobblePivot.add(characterModel.scene);
-  character.add(wobblePivot);
+  character.add(characterModel.scene);
   character.position.y = CAPSULE_BOTTOM_OFFSET; // arbitrary until the first `place`
   scene.add(character);
 
@@ -177,12 +161,6 @@ export const createLocalCharacter = (
    * where it had hung, on the server and every other screen too.
    */
   let bodyYaw = 0;
-
-  let wobbleState = initialWobbleState;
-  // Seeded lazily on the first `animate` call (null here would otherwise
-  // predate `place` putting the Character at its real spawn position,
-  // producing a one-frame phantom velocity spike at game start).
-  let previousWobblePosition: Vec3 | null = null;
 
   // The model's own body look (M9 ticket 15, ADR 0091) — the closet drops a
   // `setLook` that changes nothing, since restyling clones every material.
@@ -238,23 +216,7 @@ export const createLocalCharacter = (
       grabEpoch,
       hold,
     ) => {
-      const currentPosition: Vec3 = { x: character.position.x, y: character.position.y, z: character.position.z };
-      // Lazily seeded so the very first call (before any real movement) reads
-      // as zero velocity rather than a jump from an arbitrary creation-time value.
-      previousWobblePosition ??= currentPosition;
-
-      // Wobble only applies while Controlled (ADR 0006). Every other state —
-      // Stagger, Ragdoll, GettingUp — holds it neutral *and* keeps the position
-      // tracker current every frame (not just on the Controlled branch below),
-      // so the instant Controlled resumes there is no stale previousWobblePosition
-      // to compute a fake velocity/acceleration spike from (e.g. the Ragdoll/
-      // GettingUp anchor, or a Fall's Respawn teleport, sitting units away from
-      // where control resumes).
       if (visualState !== "Controlled") {
-        wobbleState = initialWobbleState;
-        previousWobblePosition = currentPosition;
-        wobblePivot.rotation.x = 0;
-        wobblePivot.rotation.z = 0;
         speedLines.setIntensity(0);
       }
 
@@ -450,18 +412,6 @@ export const createLocalCharacter = (
       }
 
       if (visualState === "Controlled") {
-        if (WOBBLE_ENABLED) {
-          // `stepWobble` itself skips a frame where `character.position` jumped
-          // metres (a reconciliation snap / Respawn) — see WOBBLE_TELEPORT_DISTANCE.
-          const yaw = bodyYaw;
-          const forward: Vec3 = { x: Math.sin(yaw), y: 0, z: Math.cos(yaw) };
-          const right: Vec3 = { x: -Math.cos(yaw), y: 0, z: Math.sin(yaw) };
-          wobbleState = stepWobble(wobbleState, currentPosition, previousWobblePosition, forward, right, deltaSeconds);
-          wobblePivot.rotation.x = -wobbleState.pitch;
-          wobblePivot.rotation.z = wobbleState.roll;
-        }
-        previousWobblePosition = currentPosition;
-
         // Speed lines: driven directly by the Dash's own envelope value
         // (0 when not dashing, ramping via the same `dashEnvelope` curve
         // driving the physics) rather than a velocity derived from position

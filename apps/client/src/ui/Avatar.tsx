@@ -13,9 +13,15 @@ export interface AvatarProps {
   size?: number | undefined;
   /** Outline color, e.g. to mark the local player. */
   ring?: string | undefined;
+  /**
+   * Whether this Player is talking right now (ADR 0111). Drawn as a
+   * go-coloured halo *outside* {@link ring}, so a bean who is both yours and
+   * talking wears both cues rather than one replacing the other.
+   */
+  speaking?: boolean | undefined;
 }
 
-export default function Avatar({ look, size = 3, ring }: AvatarProps) {
+export default function Avatar({ look, size = 3, ring, speaking }: AvatarProps) {
   const [a, b] = stripesFor(look?.color);
   // A picture that fails (no upload and no Discord picture answers 404) leaves
   // the disc — remembered per address, so a new picture gets its own chance.
@@ -23,7 +29,7 @@ export default function Avatar({ look, size = 3, ring }: AvatarProps) {
   const src = look?.src ?? null;
   return (
     <div
-      className={[s.avatar, ring && s.ringed].filter(Boolean).join(' ')}
+      className={[s.avatar, ring && s.ringed, speaking && s.speaking].filter(Boolean).join(' ')}
       style={{
         '--df-avatar-size': `calc(var(--df-u) * ${size})`,
         '--df-avatar-ring': ring,

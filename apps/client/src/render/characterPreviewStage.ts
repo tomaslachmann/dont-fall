@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { clone as cloneRig } from "three/addons/utils/SkeletonUtils.js";
 import {
   bindClipAction,
   CHARACTER_VISUAL_HEIGHT,
@@ -7,11 +8,34 @@ import {
   LOCOMOTION_CROSSFADE_SECONDS,
 } from "./characterModel.js";
 import { createWardrobe } from "./hats.js";
+import { formationHalfSpan, partyFormation } from "./partyFormation.js";
 import { tintHueForColor } from "./playerTint.js";
 import { createSkinCloset } from "./skins.js";
 
 /** Idle turntable speed (rad/s) — one full turn in ~10 s, slow enough to inspect the bean. */
 const TURNTABLE_SPEED = 0.6;
+
+/** How much room the camera leaves around a lone bean's height — a celebration stays in view. */
+const FRAME_MARGIN = 1.45;
+/** How much room it leaves either side of a Party's formation, so the outermost bean is never cut. */
+const GROUP_FRAME_MARGIN = 1.15;
+/**
+ * How far apart (seconds) the companions' Idle loops start, so a Party
+ * breathes out of step instead of as one. Not a multiple of any clip length.
+ */
+const COMPANION_IDLE_STAGGER_SECONDS = 0.37;
+
+/**
+ * One more bean on the stage beside the main one (ADR 0112): a Party member,
+ * in their own look. `id` is who it is, so a bean keeps its rig while the
+ * others around it change.
+ */
+export interface PreviewBean {
+  id: string;
+  color: number | null;
+  skin: string | null;
+  hat: string | null;
+}
 
 /**
  * One sequence step: play `clip`, holding it for `seconds` when set (looped)
@@ -35,6 +59,12 @@ export interface CharacterPreviewStageOptions {
   autoRotate: boolean;
   /** The sequence to perform, read live at every step so a new one takes effect on {@link CharacterPreviewStage.restart}. */
   steps: () => PreviewStep[];
+  /**
+   * Beans standing with the main one at mount (the menu's Party, ADR 0112),
+   * in formation order — none on every other screen. Later changes go
+   * through {@link CharacterPreviewStage.setCompanions}.
+   */
+  companions?: PreviewBean[];
   /** The model could not be loaded — the screen shows its caption instead. */
   onUnavailable: () => void;
 }
@@ -45,6 +75,12 @@ export interface CharacterPreviewStage {
   setLook: (color: number | null, skin: string | null) => void;
   /** Puts a hat on, or takes it off for `null`. */
   setHat: (hat: string | null) => void;
+  /**
+   * The beans standing with the main one, in formation order: a new id gets
+   * a rig, a missing one loses its rig, a kept one is re-dressed and moved to
+   * its new spot. The camera widens or closes in to fit them.
+   */
+  setCompanions: (beans: PreviewBean[]) => void;
   /** Restarts the sequence from its first step. */
   restart: () => void;
   /** Queues one full extra turn. */
@@ -65,9 +101,27 @@ interface PreviewPlayer {
   warnedClips: Set<string>;
 }
 
+/** A companion's rig: a copy of the main bean's, idling on its own mixer. */
+interface CompanionRig {
+  root: THREE.Object3D;
+  mixer: THREE.AnimationMixer;
+}
+
+/** What the camera fits, measured once off the main bean after it loads. */
+interface Framing {
+  center: THREE.Vector3;
+  /** The bean's height — the formation's unit. */
+  height: number;
+  halfWidth: number;
+  /** Where the bean's feet correction puts every rig's origin. */
+  feetY: number;
+}
+
 /**
  * The stage behind `CharacterPreview` (M9): renderer, lights, camera fit,
- * tint, sequence player and teardown, for one canvas. Lives on the game side
+ * tint, sequence player and teardown, for one canvas — one bean performing,
+ * and on the main menu the rest of its Party idling beside it (ADR 0112,
+ * `partyFormation.ts`). Lives on the game side
  * of the code split (ADR 0008) — the screen loads it with a dynamic
  * `import()`, so the menu bundle never carries three.js or the rig loader.
  *
@@ -77,7 +131,15 @@ interface PreviewPlayer {
 export const mountCharacterPreview = (
   canvas: HTMLCanvasElement,
   wrap: HTMLElement,
-  { color: initialColor, skin: initialSkin, hat: initialHat, autoRotate, steps, onUnavailable }: CharacterPreviewStageOptions,
+  {
+    color: initialColor,
+    skin: initialSkin,
+    hat: initialHat,
+    autoRotate,
+    steps,
+    companions: initialCompanions = [],
+    onUnavailable,
+  }: CharacterPreviewStageOptions,
 ): CharacterPreviewStage => {
   const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -103,7 +165,30 @@ export const mountCharacterPreview = (
   let cancelled = false;
   let root: THREE.Group | null = null;
   let mixer: THREE.AnimationMixer | null = null;
+  let clips: THREE.AnimationClip[] = [];
+  let framing: Framing | null = null;
+  let companionBeans = initialCompanions;
+  const companionRigs = new Map<string, CompanionRig>();
   const clock = new THREE.Clock();
+
+  /**
+   * Frames the scaled bean: far enough a celebration stays in view, close
+   * enough it fills the stage — and, with companions, far enough that the
+   * whole formation fits this canvas's width. Re-run on every resize, since
+   * only the formation's fit depends on the aspect.
+   */
+  const frame = (): void => {
+    if (!framing) return;
+    const { center, height, halfWidth } = framing;
+    const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    let dist = (height / 2 / tanHalfFov) * FRAME_MARGIN;
+    if (companionBeans.length > 0) {
+      const reach = formationHalfSpan(partyFormation(companionBeans.length)) * height + halfWidth;
+      dist = Math.max(dist, (reach / (tanHalfFov * camera.aspect)) * GROUP_FRAME_MARGIN);
+    }
+    camera.position.set(center.x, center.y + height * 0.08, center.z + dist);
+    camera.lookAt(center);
+  };
 
   const fit = () => {
     const w = Math.max(wrap.clientWidth, 1);
@@ -111,6 +196,7 @@ export const mountCharacterPreview = (
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    frame();
   };
   const resize = new ResizeObserver(fit);
   resize.observe(wrap);
@@ -145,6 +231,73 @@ export const mountCharacterPreview = (
     current.stepTimer = setTimeout(() => playStep(current, index, skips), ms);
   };
 
+  /**
+   * A companion's rig: a copy of the main bean's (`SkeletonUtils.clone` — its
+   * own skeleton, the loaded geometry shared), so a Party of four costs one
+   * model load, not four. Idling out of step with the others. The wardrobe
+   * and closet undress the copy on its first `wear` (their own rule for a rig
+   * copied from a dressed one), so it never shows your look while its own
+   * arrives.
+   */
+  const standCompanion = (source: THREE.Object3D, index: number): CompanionRig => {
+    const copy = cloneRig(source);
+    scene.add(copy);
+    const companionMixer = new THREE.AnimationMixer(copy);
+    bindClipAction(companionMixer, clips, "Idle", true)?.play();
+    companionMixer.setTime((index + 1) * COMPANION_IDLE_STAGGER_SECONDS);
+    return { root: copy, mixer: companionMixer };
+  };
+
+  /**
+   * Takes a companion off the stage. Its hat goes back to the wardrobe
+   * first (a worn hat's materials are the wardrobe's), then only what the
+   * copy owns is freed — its skeleton and the materials its first `wear`
+   * cloned — never the geometry, which is the main bean's and freed with it.
+   */
+  const retireCompanion = (rig: CompanionRig): void => {
+    rig.mixer.stopAllAction();
+    wardrobe.wear(rig.root, null);
+    scene.remove(rig.root);
+    rig.root.traverse((object) => {
+      const mesh = object as Partial<THREE.SkinnedMesh>;
+      mesh.skeleton?.dispose();
+      const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+      for (const material of materials) material.dispose();
+    });
+  };
+
+  /**
+   * Makes the stage's companions match `companionBeans`: a rig per new bean,
+   * none for one that left, everyone dressed in their own look and standing
+   * in their spot of the formation. Waits for the main bean — its load runs
+   * this — since every companion is a copy of it.
+   */
+  const syncCompanions = (): void => {
+    const source = root;
+    const measured = framing;
+    if (cancelled || !source || !measured) return;
+    const wanted = new Set(companionBeans.map((bean) => bean.id));
+    for (const [id, rig] of companionRigs) {
+      if (wanted.has(id)) continue;
+      retireCompanion(rig);
+      companionRigs.delete(id);
+    }
+    const slots = partyFormation(companionBeans.length);
+    companionBeans.forEach((bean, index) => {
+      let rig = companionRigs.get(bean.id);
+      if (!rig) {
+        rig = standCompanion(source, index);
+        companionRigs.set(bean.id, rig);
+      }
+      wardrobe.wear(rig.root, bean.hat);
+      closet.wear(rig.root, bean.skin, tintHueForColor(bean.color));
+      const slot = slots[index]!;
+      rig.root.position.set(slot.x * measured.height, measured.feetY, slot.z * measured.height);
+      rig.root.rotation.set(0, slot.yaw, 0);
+    });
+    frame();
+  };
+
   const tick = () => {
     if (cancelled) return;
     raf = requestAnimationFrame(tick);
@@ -160,6 +313,7 @@ export const mountCharacterPreview = (
     if (Math.abs(player.spinTarget - player.spinCurrent) < 0.001) player.spinCurrent = player.spinTarget;
     root.rotation.y = player.autoAngle + player.spinCurrent;
     mixer.update(dt);
+    for (const rig of companionRigs.values()) rig.mixer.update(dt);
     renderer.render(scene, camera);
   };
   raf = requestAnimationFrame(tick);
@@ -194,15 +348,19 @@ export const mountCharacterPreview = (
         warnedClips: new Set(),
       };
       player = loaded;
+      clips = model.animations;
       playStep(loaded, 0);
-      // Frame the scaled bean: far enough a celebration stays in view,
-      // close enough it fills the stage.
+      // Measured once, off the scaled bean — `frame` places the camera from it.
       const box = new THREE.Box3().setFromObject(root);
-      const center = box.getCenter(new THREE.Vector3());
-      const height = Math.max(box.getSize(new THREE.Vector3()).y, 0.01);
-      const dist = (height / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.45;
-      camera.position.set(center.x, center.y + height * 0.08, center.z + dist);
-      camera.lookAt(center);
+      const size = box.getSize(new THREE.Vector3());
+      framing = {
+        center: box.getCenter(new THREE.Vector3()),
+        height: Math.max(size.y, 0.01),
+        halfWidth: size.x / 2,
+        feetY: root.position.y,
+      };
+      // The Party waited for this bean: every companion is a copy of it.
+      syncCompanions();
       fit();
     })
     .catch(() => {
@@ -221,6 +379,10 @@ export const mountCharacterPreview = (
       hat = next;
       if (player) wardrobe.wear(player.root, next);
     },
+    setCompanions: (beans) => {
+      companionBeans = beans;
+      syncCompanions();
+    },
     restart: () => {
       if (player) playStep(player, 0);
     },
@@ -234,6 +396,9 @@ export const mountCharacterPreview = (
       const current = player;
       player = null;
       if (current?.stepTimer) clearTimeout(current.stepTimer);
+      // Companions first: they share the main bean's geometry, freed below.
+      for (const rig of companionRigs.values()) retireCompanion(rig);
+      companionRigs.clear();
       if (mixer) mixer.stopAllAction();
       if (root) {
         scene.remove(root);

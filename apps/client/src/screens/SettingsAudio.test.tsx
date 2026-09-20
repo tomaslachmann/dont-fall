@@ -9,6 +9,14 @@ import {
   DEFAULT_AUDIO_VOLUMES,
   type AudioVolumes,
 } from "../lib/audioSettings.js";
+import {
+  DEFAULT_VOICE_SETTINGS,
+  readVoiceSettings,
+  VOICE_SETTINGS_EVENT,
+  writeVoiceSettings,
+} from "../lib/voiceSettings.js";
+import { bindingsStorageKey } from "../lib/bindingsStore.js";
+import { DEFAULT_BINDINGS } from "@dont-fall/shared";
 import Settings from "./Settings";
 
 const renderSettings = () => {
@@ -43,15 +51,70 @@ describe("Settings AUDIO tab (ADR 0087, M14 ticket 03)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows master, effects, environment and music at their defaults, and none of the dead switches", () => {
+  it("shows every slider at its default, and none of the dead switches", () => {
     renderSettings();
     expect(Number(slider("MASTER").value)).toBe(DEFAULT_AUDIO_VOLUMES.master);
     expect(Number(slider("EFFECTS").value)).toBe(DEFAULT_AUDIO_VOLUMES.effects);
     expect(Number(slider("ENVIRONMENT").value)).toBe(DEFAULT_AUDIO_VOLUMES.environment);
     expect(Number(slider("MUSIC").value)).toBe(DEFAULT_AUDIO_VOLUMES.music);
-    expect(screen.queryByText("VOICE CHAT")).toBeNull();
+    // VOICE joined them when voice chat became real (ADR 0111).
+    expect(Number(slider("VOICE").value)).toBe(DEFAULT_AUDIO_VOLUMES.voice);
+    // CROWD REACTIONS is still a mock with nothing behind it (ADR 0110).
     expect(screen.queryByText("CROWD REACTIONS")).toBeNull();
     expect(screen.queryByText(/IMPACTS/)).toBeNull();
+  });
+
+  describe("Voice chat's rows (ADR 0111)", () => {
+    it("shows the scope and the talk mode at their defaults", () => {
+      renderSettings();
+
+      expect(screen.getByText("VOICE CHAT")).toBeDefined();
+      expect(screen.getByText("TALK")).toBeDefined();
+      // The mock's own caption, with the key actually bound to `talk`.
+      expect(screen.getByText("Push to talk · V")).toBeDefined();
+    });
+
+    it("stores a picked scope for this device, and tells a running session", () => {
+      const heard = vi.fn();
+      window.addEventListener(VOICE_SETTINGS_EVENT, heard);
+      renderSettings();
+
+      fireEvent.click(screen.getByText("ALL"));
+
+      expect(readVoiceSettings(localStorage)).toEqual({ ...DEFAULT_VOICE_SETTINGS, scope: "ALL" });
+      expect(heard).toHaveBeenCalledTimes(1);
+      window.removeEventListener(VOICE_SETTINGS_EVENT, heard);
+    });
+
+    it("re-captions itself when the talk mode changes — the row says how you actually talk", () => {
+      renderSettings();
+
+      fireEvent.click(screen.getByText("OPEN MIC"));
+
+      expect(screen.queryByText("Push to talk · V")).toBeNull();
+      // The caption exactly — "OPEN MIC" also reads off the TALK toggle itself.
+      expect(screen.getByText("Open mic · heard whenever you speak")).toBeDefined();
+      expect(readVoiceSettings(localStorage).talkMode).toBe("OPEN MIC");
+    });
+
+    it("captions with the key the Player actually bound, not the one the design wrote down", () => {
+      localStorage.setItem(
+        bindingsStorageKey(null),
+        JSON.stringify({ ...DEFAULT_BINDINGS, talk: ["KeyB"] }),
+      );
+
+      renderSettings();
+
+      expect(screen.getByText("Push to talk · B")).toBeDefined();
+    });
+
+    it("says so rather than lying when nothing is bound to talk", () => {
+      localStorage.setItem(bindingsStorageKey(null), JSON.stringify({ ...DEFAULT_BINDINGS, talk: [] }));
+
+      renderSettings();
+
+      expect(screen.getByText("Push to talk · no key bound")).toBeDefined();
+    });
   });
 
   it("stores a moved slider at once and tells a running game", () => {
@@ -71,10 +134,23 @@ describe("Settings AUDIO tab (ADR 0087, M14 ticket 03)", () => {
   });
 
   it("RESET returns every slider to its default and stores that", () => {
-    localStorage.setItem(AUDIO_VOLUMES_STORAGE_KEY, JSON.stringify({ master: 1, effects: 2, environment: 3, music: 4 }));
+    localStorage.setItem(
+      AUDIO_VOLUMES_STORAGE_KEY,
+      JSON.stringify({ master: 1, effects: 2, environment: 3, music: 4, voice: 5 }),
+    );
     renderSettings();
     fireEvent.click(screen.getByRole("button", { name: "RESET" }));
     expect(Number(slider("MASTER").value)).toBe(DEFAULT_AUDIO_VOLUMES.master);
     expect(stored()).toEqual(DEFAULT_AUDIO_VOLUMES);
+  });
+
+  it("RESET puts Voice chat's own rows back too — they are on this tab", () => {
+    writeVoiceSettings(localStorage, { scope: "ALL", talkMode: "OPEN MIC" }, null);
+    renderSettings();
+
+    fireEvent.click(screen.getByRole("button", { name: "RESET" }));
+
+    expect(readVoiceSettings(localStorage)).toEqual(DEFAULT_VOICE_SETTINGS);
+    expect(screen.getByText("Push to talk · V")).toBeDefined();
   });
 });

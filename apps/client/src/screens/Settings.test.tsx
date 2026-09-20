@@ -80,6 +80,10 @@ describe("Settings CONTROLS tab", () => {
     }
     expect(screen.getByText("W")).toBeDefined();
     expect(screen.getByText("Space")).toBeDefined();
+    // Push-to-talk is rebindable like the rest (ADR 0111), though it is the
+    // one action that never reaches the simulation.
+    expect(screen.getByText("PUSH TO TALK")).toBeDefined();
+    expect(screen.getByText("V")).toBeDefined();
   });
 
   it("replaces a control on keypress and persists the whole record", async () => {

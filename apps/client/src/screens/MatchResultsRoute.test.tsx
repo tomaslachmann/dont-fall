@@ -123,6 +123,19 @@ describe("MatchResultsRoute", () => {
     localStorage.clear();
   });
 
+  it("the winner celebrates with the victory pose its Account picked, WIN with none (ADR 0110)", async () => {
+    stubApi({ claimBodies: [] }, { m1: { ...RESULT, victoryPoses: { b: "punch", a: "sulk" } }, m2: TWO_PLAYER });
+    const { unmount } = renderAtMatch("/match/m1?me=b");
+
+    // Only 1st plays a victory pose: 2nd still sulks, whatever its own pick.
+    expect(await screen.findByText(/VICTORY POSE · PUNCH/)).toBeInTheDocument();
+    expect(screen.getByText(/SULK POSE/)).toBeInTheDocument();
+    unmount();
+
+    renderAtMatch("/match/m2?me=b");
+    expect(await screen.findByText(/VICTORY POSE · WIN/)).toBeInTheDocument();
+  });
+
   it("a two-Player Match renders a two-place podium — simply no 3rd", async () => {
     stubApi({ claimBodies: [] }, { m2: TWO_PLAYER });
     renderAtMatch("/match/m2?me=b");

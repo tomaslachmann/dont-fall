@@ -1,5 +1,8 @@
-/* Three rows: header / body / stats. The body splits into the action column and the
-   render column. No absolute positioning — the render column is a normal grid track. */
+/* Three rows: header / body / bottom. The body splits into the action column and the
+   render column. No absolute positioning — the render column is a normal grid track.
+   The bottom row is the stat tiles, and the PartyStrip in their place while the Party
+   is active (ADR 0112) — so the body splits two ways: the Party mock's while the strip
+   is there, and this Screen's own while the tiles are. */
 .screen {
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-columns: minmax(0, 1fr);
@@ -57,11 +60,14 @@
 
 .body {
   display: grid;
-  grid-template-columns: minmax(0, .7fr) minmax(0, 1fr);
+  /* The Party mock's split, for the rows that sit over the strip. */
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
   align-items: end;
   gap: var(--df-space-7);
   min-height: 0;
 }
+/* Alone over the stat tiles: the menu's own split, which leaves the bean more room. */
+.bodyAlone { grid-template-columns: minmax(0, .7fr) minmax(0, 1fr); }
 
 /* The action stack must always fit the body row — tighter gaps than the default rhythm. */
 .actions {
@@ -89,8 +95,23 @@
 
 .hero { height: 100%; }
 
+/* The career's three numbers, the bottom row whenever no Party is worn (ADR 0110). */
 .stats {
   display: flex;
   flex-wrap: wrap;
   gap: var(--df-space-5);
 }
+
+/* INVITE FRIENDS: the card over the menu, behind the scrim — the Party mock's. */
+.scrim {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  /* One row the scrim's own height (not the content's), so the card below can be held to it. */
+  grid-template-rows: minmax(0, 1fr);
+  place-items: center;
+  padding: var(--df-space-7);
+  background: var(--df-color-scrim);
+}
+/* Holds the card inside the scrim's box, so a long list scrolls in the card instead of off the stage. */
+.invite { display: flex; flex-direction: column; min-height: 0; max-height: 100%; }

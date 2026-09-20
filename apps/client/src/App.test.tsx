@@ -7,6 +7,7 @@ import { setStoredToken } from "./lib/api/base.js";
 import { App } from "./App";
 import { WithQuery } from "./test/query.js";
 import { parseLobbyParams, parsePlayParams } from "./lib/utils/routeParams.js";
+import { takeHeldPartyLink } from "./lib/social/partyLink.js";
 
 const { startGame } = vi.hoisted(() => ({ startGame: vi.fn() }));
 vi.mock("./game/index.js", () => ({ startGame }));
@@ -18,7 +19,7 @@ const CAREER = {
   matches: [],
 };
 
-const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, avatarUploadedAt: null, role: "player", xp: 0, coins: 0, color: 0, skin: null, hat: null, bindings: null };
+const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: "Wobbleton", avatarUrl: null, avatarUploadedAt: null, role: "player", xp: 0, coins: 0, color: 0, skin: null, hat: null, emote: "wobble", victoryPose: "win", bindings: null };
 
 // Every existing test below exercises the gated (post-login) routes — a
 // stored token that resolves is the default here, same as any real Player
@@ -27,6 +28,18 @@ const ACCOUNT: Account = { id: "a1", discordId: "d1", email: null, displayName: 
 beforeEach(() => {
   localStorage.clear();
   setStoredToken("tok-1");
+  // Signed in, the shell opens the Account socket (ADR 0112) — a quiet
+  // stand-in here, never a real dial to whatever answers on the API's port.
+  vi.stubGlobal(
+    "WebSocket",
+    class {
+      readyState = 0;
+      addEventListener(): void {}
+      removeEventListener(): void {}
+      send(): void {}
+      close(): void {}
+    },
+  );
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: unknown) =>
@@ -183,6 +196,20 @@ describe("AuthGate (M9 ticket 11, ADR 0052 — mandatory login, app-wide)", () =
     expect(startGame).not.toHaveBeenCalled();
   });
 
+  it("a Party's SHARE LINK opened signed out goes to sign in, holding its code for after (ADR 0112)", async () => {
+    localStorage.clear();
+    vi.stubGlobal("fetch", vi.fn());
+
+    render(
+      <MemoryRouter initialEntries={["/party/4K7NQX"]}>
+        <WithQuery><App /></WithQuery>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole("button", { name: "DISCORD" })).toBeInTheDocument();
+    expect(takeHeldPartyLink()).toBe("4K7NQX");
+  });
+
   it("a stored but rejected (401) session also redirects to /auth", async () => {
     setStoredToken("stale-token");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "not logged in" }), { status: 401 })));
@@ -337,6 +364,14 @@ describe("parseLobbyParams (ADR 0054 — the broker names the port)", () => {
 
   it("carries a private Lobby's join code alongside it", () => {
     expect(parseLobbyParams(new URLSearchParams("port=51234&code=PLUMJA"))).toEqual({ port: 51234, code: "PLUMJA" });
+  });
+
+  it("carries the Reservation the broker kept for this seat (ADR 0112)", () => {
+    expect(parseLobbyParams(new URLSearchParams("port=51234&id=l1&reservation=r-1"))).toEqual({
+      port: 51234,
+      id: "l1",
+      reservation: "r-1",
+    });
   });
 
   it("has no port at all for a junk or missing one — there is nothing to connect to", () => {

@@ -48,3 +48,8 @@
    once per toast by mounting (each toast keys its own flash/alert id). */
 @keyframes df-toast-settle { 0% { opacity: 0; transform: translateX(120%); } 30% { opacity: 1; transform: translateX(-4%); } 45%,100% { opacity: 1; transform: translateX(0); } }
 @keyframes df-badge-pulse { 0%,100% { transform: scale(1); } 12% { transform: scale(1.35); } 24% { transform: scale(1); } }
+
+/* Voice chat's speaking halo (ADR 0111) — a slow breath, not a blink: it is on
+   for as long as someone is talking, so it has to be bearable in the corner of
+   the eye for a whole sentence. */
+@keyframes df-speaking { 0%,100% { opacity: 1; } 50% { opacity: .62; } }

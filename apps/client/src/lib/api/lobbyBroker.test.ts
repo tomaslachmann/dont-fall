@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearFlashes, getFlashesSnapshot } from "../flash.js";
 import { createLobby, lobbyByCode, lobbyById, lobbyPath, quickMatch, resolveLobbyRef } from "./lobbyBroker.js";
 
 const BROKER = "http://localhost:8081"; // the single API (ADR 0058)
@@ -8,7 +9,12 @@ const respond = (status: number, body: unknown) =>
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  clearFlashes();
 });
+
+/** The JSON body a broker call sent. */
+const bodyOf = (fetchMock: ReturnType<typeof respond>, call = 0): unknown =>
+  JSON.parse((fetchMock.mock.calls[call]![1] as RequestInit).body as string);
 
 describe("createLobby", () => {
   it("asks the broker for a private Lobby and returns its port and join code", async () => {
@@ -31,13 +37,15 @@ describe("createLobby", () => {
 });
 
 describe("lobbyByCode", () => {
-  it("upper-cases and trims the typed code before asking", async () => {
-    const fetchMock = respond(200, { id: "l1", port: 51234 });
+  it("upper-cases and trims the typed code, then POSTs it to /lobbies/join — joining reserves (ADR 0112)", async () => {
+    const fetchMock = respond(200, { id: "l1", port: 51234, reservation: "r-1" });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(lobbyByCode(" plumja ")).resolves.toEqual({ id: "l1", port: 51234, code: "PLUMJA" });
+    await expect(lobbyByCode(" plumja ")).resolves.toEqual({ id: "l1", port: 51234, code: "PLUMJA", reservation: "r-1" });
 
-    expect(fetchMock.mock.calls[0]![0]).toBe(`${BROKER}/lobbies/code/PLUMJA`);
+    expect(fetchMock.mock.calls[0]![0]).toBe(`${BROKER}/lobbies/join`);
+    expect(fetchMock.mock.calls[0]![1]).toMatchObject({ method: "POST" });
+    expect(bodyOf(fetchMock)).toEqual({ code: "PLUMJA" });
   });
 
   it("surfaces the broker's own reason an unknown code failed, not a generic one", async () => {
@@ -77,12 +85,13 @@ describe("quick-match", () => {
 });
 
 describe("lobbyById / resolveLobbyRef", () => {
-  it("resolves a public id off GET /lobbies/:id", async () => {
+  it("enters a public Lobby by id through POST /lobbies/join", async () => {
     const fetchMock = respond(200, { id: "l7", port: 61000 });
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(lobbyById("l7")).resolves.toEqual({ id: "l7", port: 61000 });
-    expect(fetchMock.mock.calls[0]![0]).toBe(`${BROKER}/lobbies/l7`);
+    expect(fetchMock.mock.calls[0]![0]).toBe(`${BROKER}/lobbies/join`);
+    expect(bodyOf(fetchMock)).toEqual({ lobbyId: "l7" });
   });
 
   it("routes private refs by code and public refs by id", async () => {
@@ -90,10 +99,10 @@ describe("lobbyById / resolveLobbyRef", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(resolveLobbyRef({ kind: "private", code: "PLUMJA" })).resolves.toMatchObject({ port: 61000 });
-    expect(fetchMock.mock.calls[0]![0]).toBe(`${BROKER}/lobbies/code/PLUMJA`);
+    expect(bodyOf(fetchMock, 0)).toEqual({ code: "PLUMJA" });
 
     await expect(resolveLobbyRef({ kind: "public", lobbyId: "l7" })).resolves.toMatchObject({ port: 61000 });
-    expect(fetchMock.mock.calls[1]![0]).toBe(`${BROKER}/lobbies/l7`);
+    expect(bodyOf(fetchMock, 1)).toEqual({ lobbyId: "l7" });
   });
 
   it("surfaces the broker's reason a friend's Lobby stopped being joinable", async () => {
@@ -109,5 +118,33 @@ describe("lobbyPath", () => {
   it("carries the port and the broker's id always, the code only when the Lobby has one", () => {
     expect(lobbyPath({ id: "l1", port: 61000 })).toBe("/lobby?port=61000&id=l1");
     expect(lobbyPath({ id: "l1", port: 61000, code: "PLUMJA" })).toBe("/lobby?port=61000&code=PLUMJA&id=l1");
+  });
+
+  it("carries the Reservation the broker kept, for the Lobby's socket to hand on (ADR 0112)", () => {
+    expect(lobbyPath({ id: "l1", port: 61000, reservation: "r-1" })).toBe("/lobby?port=61000&id=l1&reservation=r-1");
+  });
+});
+
+describe("party-aware entries (ADR 0112)", () => {
+  it("every entry answers the grant's Reservation", async () => {
+    vi.stubGlobal("fetch", respond(201, { id: "l1", port: 51234, code: "PLUMJA", isPrivate: true, reservation: "r-2" }));
+    await expect(createLobby(true)).resolves.toEqual({ id: "l1", port: 51234, code: "PLUMJA", reservation: "r-2" });
+
+    vi.stubGlobal("fetch", respond(200, { id: "l7", port: 61000, reservation: "r-3" }));
+    await expect(quickMatch()).resolves.toEqual({ id: "l7", port: 61000, reservation: "r-3" });
+  });
+
+  it("says so when entering alone took the caller out of a Party", async () => {
+    vi.stubGlobal("fetch", respond(200, { id: "l7", port: 61000, reservation: "r-3", leftPartyOf: "Floppo" }));
+
+    await expect(quickMatch()).resolves.toMatchObject({ leftPartyOf: "Floppo" });
+    expect(getFlashesSnapshot().map((entry) => entry.title)).toEqual(["You left Floppo's party."]);
+  });
+
+  it("surfaces the broker's reason a Lobby has no room for the whole Party", async () => {
+    vi.stubGlobal("fetch", respond(409, { error: "no room for your party of 3" }));
+
+    await expect(lobbyByCode("PLUMJA")).rejects.toThrow("no room for your party of 3");
+    expect(getFlashesSnapshot()).toEqual([]);
   });
 });

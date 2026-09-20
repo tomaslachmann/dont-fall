@@ -36,8 +36,14 @@ export interface LobbyConnectionState {
  * mount, publishes Lobby snapshots as state, closes on unmount. StrictMode's
  * dev-only double mount is safe — the first effect's cleanup closes the
  * still-connecting socket before the second one dials.
+ *
+ * `reservation` is the seat the broker kept for this client (ADR 0112),
+ * handed to the Match server on connect.
  */
-export const useLobbyConnection = (serverPort: number, host?: string): LobbyConnectionState => {
+export const useLobbyConnection = (
+  serverPort: number,
+  { host, reservation }: { host?: string; reservation?: string } = {},
+): LobbyConnectionState => {
   const [connection, setConnection] = useState<LobbyConnection | null>(null);
   const [lobby, setLobby] = useState<LobbySnapshot | null>(null);
   const [error, setError] = useState<Error | null>(null);
@@ -54,7 +60,11 @@ export const useLobbyConnection = (serverPort: number, host?: string): LobbyConn
     setClosed(null);
     connectionRef.current = null;
 
-    createLobbyConnection({ ...(host === undefined ? {} : { host }), serverPort })
+    createLobbyConnection({
+      ...(host === undefined ? {} : { host }),
+      serverPort,
+      ...(reservation === undefined ? {} : { reservation }),
+    })
       .then((created) => {
         if (cancelled) {
           created.close(); // unmounted while connecting — leave nothing behind
@@ -82,7 +92,7 @@ export const useLobbyConnection = (serverPort: number, host?: string): LobbyConn
       conn?.close();
       if (connectionRef.current === conn) connectionRef.current = null;
     };
-  }, [serverPort, host]);
+  }, [serverPort, host, reservation]);
 
   const actions = useMemo<LobbyActions>(
     () => ({

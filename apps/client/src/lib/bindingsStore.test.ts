@@ -37,8 +37,25 @@ describe("readStoredBindings / writeStoredBindings", () => {
     localStorage.setItem(bindingsStorageKey(null), "not-json{");
     expect(readStoredBindings(null)).toBeNull();
 
-    localStorage.setItem(bindingsStorageKey(null), JSON.stringify({ hit: ["Escape"] }));
+    localStorage.setItem(bindingsStorageKey(null), JSON.stringify({ favouriteHat: "top" }));
     expect(readStoredBindings(null)).toBeNull();
+  });
+
+  it("keeps a mirror written before an action existed, rather than resetting the layout", () => {
+    // Exactly what a Player who customised anything before `talk` arrived
+    // has in their browser (ADR 0111): every action but the new one. It used
+    // to read as nothing at all, so the upgrade that added `talk` would have
+    // silently thrown their layout away.
+    const { talk: _added, ...beforeTalk } = custom();
+    localStorage.setItem(bindingsStorageKey(null), JSON.stringify(beforeTalk));
+
+    expect(readStoredBindings(null)).toEqual(custom());
+  });
+
+  it("drops an unbindable control from a stored record instead of rejecting the record", () => {
+    localStorage.setItem(bindingsStorageKey(null), JSON.stringify({ ...DEFAULT_BINDINGS, hit: ["Escape"] }));
+
+    expect(readStoredBindings(null)).toEqual({ ...DEFAULT_BINDINGS, hit: [] });
   });
 });
 

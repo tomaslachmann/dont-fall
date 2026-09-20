@@ -1,4 +1,4 @@
-import { invalidBindingsReason, resolveBindings, type KeyBindings } from "@dont-fall/shared";
+import { resolveBindings, storedBindings, type KeyBindings } from "@dont-fall/shared";
 import { getStoredToken } from "./api/base.js";
 
 /**
@@ -11,13 +11,17 @@ import { getStoredToken } from "./api/base.js";
 /** `dontfall.bindings.v1:<accountId>` — guests share the `guest` lane. The `v1` restarts cleanly if the shape ever changes. */
 export const bindingsStorageKey = (accountId: string | null): string => `dontfall.bindings.v1:${accountId ?? "guest"}`;
 
-/** The mirrored record, or `null` when nothing (valid) was ever stored — corrupt JSON reads as absent, never throws. */
+/**
+ * The mirrored record, or `null` when nothing was ever stored — corrupt JSON
+ * reads as absent, never throws. `storedBindings`, so a mirror written before
+ * an action existed is read rather than thrown away (ADR 0111); see the
+ * API's `toBindings`, which had the same trap.
+ */
 export const readStoredBindings = (accountId: string | null): KeyBindings | null => {
   try {
     const raw = localStorage.getItem(bindingsStorageKey(accountId));
     if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    return invalidBindingsReason(parsed) ? null : (parsed as KeyBindings);
+    return storedBindings(JSON.parse(raw));
   } catch {
     return null;
   }

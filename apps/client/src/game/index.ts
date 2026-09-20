@@ -207,7 +207,7 @@ const boot = async (config: GameConfig, teardown: Teardown): Promise<GameHandle>
       resultsCall: null,
       musicPhase: null,
     },
-    roster: { names: {}, colors: {}, skins: {}, hats: {}, known: new Map() },
+    roster: { names: {}, colors: {}, skins: {}, hats: {}, accounts: {}, known: new Map() },
     run: { wasFinished: false, wasEliminated: false, verdictFired: false, lastHitEpochs: null },
     spectate: {
       // Who this client follows (M7 ticket 07) — its own choice, never sent
@@ -278,6 +278,11 @@ const boot = async (config: GameConfig, teardown: Teardown): Promise<GameHandle>
   };
 
   const loop = createFrameLoop(session, sendInput);
+  // Nothing draws once the loop stops, so nothing would place a voice again —
+  // and the last frame's scene must not be what the podium is then heard
+  // through (ADR 0111). Registered *before* the loop's own stop because
+  // teardown is newest-first: the loop stops, then the voices go flat.
+  if (config.onVoiceScene) teardown.add(() => config.onVoiceScene?.(null));
   teardown.add(() => loop.stop());
   // Loaded: the status line has nothing more to say until a connection is lost.
   hud.setStatus(null);
