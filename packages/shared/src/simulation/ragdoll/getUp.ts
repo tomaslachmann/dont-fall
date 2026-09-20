@@ -53,20 +53,42 @@ export const matchGetUp = (
 };
 
 /**
+ * The lowest hull contact of a bone set: every hull point of every bone, in
+ * world Y. For the heap that is the deck it came to rest on (up to the
+ * contact skin); for the baked clip pose, its rig origin the same way.
+ */
+const lowestContactY = (
+  bones: readonly { position: Vec3; rotation: Quat }[],
+  spec: BlipRagdollSpec,
+): number => {
+  let lowest = Infinity;
+  for (const [i, bone] of bones.entries()) {
+    for (const point of spec.bones[i]?.hull ?? []) {
+      lowest = Math.min(lowest, bone.position.y + rotateVec3ByQuat(point, bone.rotation).y);
+    }
+  }
+  return lowest;
+};
+
+/**
  * The floor the clip should be played on, read off the heap itself: both
- * poses are a body resting on the ground, so putting the clip's lowest bone
- * where the heap's lowest bone is puts the clip on the same floor. Asking the
- * world instead would need a ray the simulation has no reason to cast, and
- * would disagree with the body whenever it came to rest on a Prop.
+ * poses are a body resting on the ground, so seating the clip's lowest hull
+ * contact where the heap's lowest hull contact is puts the clip on the same
+ * floor. Contacts, never pivots — a heap's pivots float lower over the deck
+ * than the clip's float over its origin (found live 2026-09-20: aligning
+ * pivots seated the capsule decimetres under the deck, and the bean visibly
+ * sank the moment GettingUp handed over to Controlled). Asking the world
+ * instead would need a ray the simulation has no reason to cast, and would
+ * disagree with the body whenever it came to rest on a Prop.
  */
 export const getUpFloorY = (
   bones: readonly BoneSnapshot[],
   match: GetUpMatch,
   spec: BlipRagdollSpec = BLIP_RAGDOLL_SPEC,
 ): number => {
-  const heapLowest = Math.min(...bones.map((b) => b.position.y));
-  const clipLowest = Math.min(...spec.getUp[match.side].bones.map((b) => b.position.y));
-  return heapLowest - clipLowest;
+  const heapContact = lowestContactY(bones, spec);
+  const clipContact = lowestContactY(spec.getUp[match.side].bones, spec);
+  return heapContact - clipContact;
 };
 
 /** The placed sweep target for one bone of `match`: the baked pose turned and pinned, on a floor at `floorY`. */

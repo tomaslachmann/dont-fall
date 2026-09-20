@@ -1,6 +1,6 @@
 import { addVec3, lengthVec3, lerpVec3, scaleVec3, vec3, type Vec3 } from "../../math/vec3.js";
 import { CAPSULE_BOTTOM_OFFSET } from "../../tuning/character.js";
-import { GETUP_CAPSULE_LIFT, GETUP_DRIVE_TICKS, KNOCKDOWN_LAUNCH_SCALE, RAGDOLL_IMPACT_VELOCITY_SCALE, RAGDOLL_SETTLE_SPEED, RESPAWN_WOBBLE_TICKS } from "../../tuning/knockdown.js";
+import { GETUP_CAPSULE_LIFT, GETUP_DRIVE_TICKS, KNOCKDOWN_LAUNCH_SCALE, RAGDOLL_BELT_CATCH_SLACK, RAGDOLL_BELT_SPIN_DAMP, RAGDOLL_IMPACT_VELOCITY_SCALE, RAGDOLL_SETTLE_SPEED, RESPAWN_WOBBLE_TICKS } from "../../tuning/knockdown.js";
 import { THROWING_RAGDOLL_CAUSES, type RagdollCause, type ReconcileBase } from "../../state/SimState.js";
 import { isDownMotionState, type CharacterMotionState, type CharacterStateMachine } from "../CharacterStateMachine.js";
 import { AuthoredRagdoll, modelYawOfFacing } from "../ragdoll/AuthoredRagdoll.js";
@@ -58,6 +58,8 @@ export class RagdollController {
   /** The get-up this knockdown is being swept into (ticket 03), and the floor it plays on. */
   private sweep: GetUpMatch | null = null;
   private sweepFloorY = 0;
+  /** This tick's belt flow under a Ragdolling body, if any — set before `beginTick`, like the Ride. */
+  private beltFlow: Vec3 | undefined;
 
   /**
    * `resetMotion` stops everything the Character was doing upright — its
@@ -91,9 +93,23 @@ export class RagdollController {
    * Without this it could recover *ahead* of the server, which is exactly
    * what reopens the double-knockdown bug ADR 0014 fixed: a later, slower
    * snapshot still reporting the old episode would read as a fresh one.
+   *
+   * On a belt the check reads bone speed relative to the belt flow: rest on
+   * a moving belt is moving with it, and a world-frame check would keep every
+   * belt knockdown down until RAGDOLL_MAX.
    */
   settled(authoritative: boolean): boolean {
-    return authoritative && this.ragdoll.isActive && this.ragdoll.maxSpeed() < RAGDOLL_SETTLE_SPEED;
+    return authoritative && this.ragdoll.isActive && this.ragdoll.maxSpeed(this.beltFlow) < RAGDOLL_SETTLE_SPEED;
+  }
+
+  /** Set this tick's belt flow under a Ragdolling body — `RapierSimulation` calls it before `beginTick`. */
+  setBeltFlow(flow: Vec3 | undefined): void {
+    this.beltFlow = flow ? { ...flow } : undefined;
+  }
+
+  /** Catch a Ragdolling body on the belt flow under it, if any. Slow bones ride; fast ones fly. */
+  dragOnBelt(): void {
+    if (this.beltFlow) this.ragdoll.dragByBelt(this.beltFlow, RAGDOLL_BELT_CATCH_SLACK, RAGDOLL_BELT_SPIN_DAMP);
   }
 
   /**
@@ -370,19 +386,30 @@ export class RagdollController {
    * stretch lasts. Returns whether the sweep is still running — once it ends
    * the ragdoll freezes and the clip owns the body (which is the client's
    * business; the simulation only stops moving it).
+   *
+   * The sweep follows the capsule: a belt or a Ride carries the capsule while
+   * the bones are kinematic, and the frozen frame must end where the capsule
+   * is (found live 2026-09-20: pinned bones plus a riding capsule popped the
+   * body metres at the clip handover on a belt).
    */
   advanceGetUp(tickCount: number): void {
     if (!this.sweep || !this.ragdoll.isActive) return;
+    const at = this.capsule.body.translation();
+    const follow = vec3(
+      at.x - this.sweep.originX,
+      at.y - (this.sweepFloorY + CAPSULE_BOTTOM_OFFSET),
+      at.z - this.sweep.originZ,
+    );
     const elapsed = tickCount - this.getupStartTick + 1;
     if (elapsed >= GETUP_DRIVE_TICKS) {
       // Ends exactly on the clip's first frame, then stops: from here the
       // drawn body is the clip's, at full weight, with nothing to blend.
-      this.ragdoll.sweepStep(this.sweep, this.sweepFloorY, 1);
+      this.ragdoll.sweepStep(this.sweep, this.sweepFloorY, 1, follow);
       this.ragdoll.deactivate();
       return;
     }
     const w = Math.max(0, elapsed / GETUP_DRIVE_TICKS);
-    this.ragdoll.sweepStep(this.sweep, this.sweepFloorY, w * w * (3 - 2 * w));
+    this.ragdoll.sweepStep(this.sweep, this.sweepFloorY, w * w * (3 - 2 * w), follow);
   }
 
   /** Where the last knockdown's get-up put the body, for the renderer's clip (ticket 03). `null` outside one. */

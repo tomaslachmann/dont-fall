@@ -8,6 +8,7 @@ import { QUARTER_MODULE_DEFS } from "./quarterAssetDefs.js";
 import { TRAP_MODULE_DEFS } from "./trapAssetDefs.js";
 import type { Footprint, Hazard, Module, Socket } from "./Module.js";
 import type { VolumeConfig } from "../simulation/Volume.js";
+import type { SegmentColorId } from "./SegmentColor.js";
 import type { SurfaceId } from "./Surface.js";
 import type { Track } from "./Track.js";
 
@@ -24,6 +25,48 @@ import type { Track } from "./Track.js";
 
 /** Filename stem rule (ADR 0050): `<moduleId>.glb`, derived from the id — a mismatch is impossible by construction. */
 export const assetFileName = (moduleId: string): string => `${moduleId}.glb`;
+
+/**
+ * The color suffixes the KayKit converter emits per shape
+ * (`scripts/convert-kaykit.ts`) — one file each. The four share their texture
+ * bytes and differ only in UVs (measured off the GLBs) — which is why
+ * authored paint wears the file instead of shifting pixels.
+ */
+export const LEGACY_ASSET_COLORS = ["blue", "green", "red", "yellow"] as const;
+
+/** One of {@link LEGACY_ASSET_COLORS} — the authored color a legacy module id names. */
+export type LegacyAssetColor = (typeof LEGACY_ASSET_COLORS)[number];
+
+/** A color family's shared shape: its stem, the id's own color, and the canonical file new placements load. */
+export interface AssetColorFamily {
+  /** The shape without its color suffix — what the builder's palette shows once. */
+  stem: string;
+  /** The color suffix this id carries — always a paintable id, so placing it keeps its look. */
+  color: SegmentColorId;
+  /** The family's canonical file (`<stem>_red`) — what the palette lists and family placements place. */
+  canonicalId: string;
+}
+
+/**
+ * The color family `moduleId` belongs to, or `null`. A stem groups only when
+ * every one of the four files exists in `knownIds` — a lone `_blue` (the
+ * quarter pack) is its own look, not a family of one. Defaults to the real
+ * registry; tests pass their own id sets.
+ */
+let knownDefIds: ReadonlySet<string> | null = null;
+
+export const assetColorFamilyOf = (
+  moduleId: string,
+  knownIds?: ReadonlySet<string>,
+): AssetColorFamily | null => {
+  const ids = knownIds ?? (knownDefIds ??= new Set(ASSET_MODULE_DEFS.map((def) => def.id)));
+  const color = LEGACY_ASSET_COLORS.find((c) => moduleId.endsWith(`_${c}`));
+  if (!color) return null;
+  const stem = moduleId.slice(0, -color.length - 1);
+  if (stem.length === 0) return null;
+  if (!LEGACY_ASSET_COLORS.every((c) => ids.has(`${stem}_${c}`))) return null;
+  return { stem, color, canonicalId: `${stem}_red` };
+};
 
 /**
  * Which group of the Track builder's Assets tab lists an Asset Module
@@ -223,6 +266,42 @@ const ASSET_DEF_BY_ID = new Map(ASSET_MODULE_DEFS.map((def) => [def.id, def]));
 export const assetIdsOf = (track: Track): string[] => [
   ...new Set(track.map((segment) => segment.moduleId).filter((id) => ASSET_DEF_BY_ID.has(id))),
 ];
+
+/**
+ * The authored file a painted family Segment wears (`X_red` + blue wears
+ * `X_blue.glb`'s own bytes — the character's `paintModel`: authored art wins
+ * outright, nothing synthesised), or `null` when the paint is a flat tint
+ * instead: a new hue (orange/cyan/purple/pink, which no file carries), or a
+ * Segment with no family at all. `red` on the canonical answers the
+ * canonical itself — the identity needs no second file.
+ */
+export const authoredPaintFileId = (moduleId: string, color: SegmentColorId): string | null => {
+  const family = assetColorFamilyOf(moduleId);
+  if (!family) return null;
+  if (!(LEGACY_ASSET_COLORS as readonly string[]).includes(color)) return null;
+  return `${family.stem}_${color}`;
+};
+
+/**
+ * The Asset files a *renderer* needs for `track`: what it places
+ * ({@link assetIdsOf}) plus the authored paint files its painted Segments
+ * wear ({@link authoredPaintFileId}) — a blue-painted canonical loads both
+ * `_red` (placed) and `_blue` (worn). Collision never reads paint, so the
+ * physics half keeps loading {@link assetIdsOf} alone. Each id once, placed
+ * files first in first-placed order, paint files after in first-needed order.
+ */
+export const visualAssetIdsOf = (track: Track): string[] => {
+  const ids = assetIdsOf(track);
+  const seen = new Set(ids);
+  for (const segment of track) {
+    if (segment.color === undefined) continue;
+    const fileId = authoredPaintFileId(segment.moduleId, segment.color);
+    if (fileId === null || seen.has(fileId) || !ASSET_DEF_BY_ID.has(fileId)) continue;
+    seen.add(fileId);
+    ids.push(fileId);
+  }
+  return ids;
+};
 
 /** The Asset ids `track` places that `library` holds no geometry for yet. */
 export const missingAssetIds = (track: Track, library: Record<string, Module>): string[] =>

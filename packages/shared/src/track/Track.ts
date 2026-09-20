@@ -10,6 +10,7 @@ import { isCheckpointGate, respawnProbeOrigins, startSegmentIndex, type SegmentC
 import { placeGate, type PlacedGate } from "./Gate.js";
 import type { SolidShape } from "./asset.js";
 import { deckPlanOf } from "./DeckPlan.js";
+import type { SegmentColorId } from "./SegmentColor.js";
 
 /**
  * One placed instance of a Module in a Track (CONTEXT.md: Segment).
@@ -125,6 +126,14 @@ export interface SegmentAttachments {
    * they were put.
    */
   prop?: boolean;
+  /**
+   * This Segment's paint (one of `SEGMENT_COLORS`, `SegmentColor.ts`) — which hue the
+   * colored parts of its Asset wear. Additive and optional: a Segment without
+   * one renders its file's own authored look. Purely visual — neither
+   * `resolveTrack` nor the Match server reads it — so unlike every other
+   * Attachment it also rides on a Prop.
+   */
+  color?: SegmentColorId;
 }
 
 /** A solid part's shape at `scale` (ADR 0062/0063). */

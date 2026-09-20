@@ -2,17 +2,20 @@ import {
   BOUNCE_TEXTURE_FILE,
   DEFAULT_ENVIRONMENT_ID,
   ENVIRONMENT_PRESETS,
+  assetColorFamilyOf,
   hasMotion,
   resolveEnvironmentId,
   moduleHasBounceSurface,
   segmentScale,
   SURFACE_ATTACHMENTS,
   TICK_RATE_HZ,
+  visualAssetIdsOf,
   type AssetCategory,
   type Box,
   type DeckPlan,
   type EnvironmentId,
   type Module,
+  type SegmentColorId,
   type SegmentConveyor,
   type SegmentMotion,
   type SurfaceAttachmentKey,
@@ -209,6 +212,8 @@ export interface BuilderEngine {
   setSegmentSurface: (surface: SurfaceAttachmentKey | undefined) => void;
   /** Make the primary Segment a Prop, or leave its Asset where it stands (ADR 0095). */
   setSegmentProp: (prop: boolean) => void;
+  /** Paint the primary Segment — a color family's hue (a no-op on lone looks, which keep their authored bytes). */
+  setSegmentColor: (color: SegmentColorId) => void;
   /**
    * Set (or clear, `undefined`) how high the primary Spring Segment throws
    * (ADR 0069). Clearing returns it to its Asset's own default — a Spring is
@@ -304,6 +309,8 @@ export const createBuilderEngine = (opts?: {
   let assetsLoading = false;
   let assetsLoaded = false;
   let templates: Record<string, THREE.Group> = {};
+  /** Template fetches in flight — the track top-up never refetches what the tab stream already carries. */
+  const pendingTemplates = new Set<string>();
   /** One deck plan per settled asset file (ADR 0096) — cached beside its template, which settled from the same bytes. */
   let deckPlans: Record<string, DeckPlan | undefined> = {};
   const assetErrors = new Map<string, string>();
@@ -373,6 +380,13 @@ export const createBuilderEngine = (opts?: {
 
   /** Full viewport rebuild or the transform-only fast path (a move/rotate never re-chains). */
   const syncTrackView = (transformOnly: boolean): void => {
+    // Paint files a repaint (or undo, or duplicate) just asked for — fetched
+    // even with no viewport attached (cache warmup; the attach draws them).
+    // The rebuild below draws the flat tint meanwhile, and the fetch's own
+    // rebuild swaps the authored file in. A no-op when nothing is missing
+    // (and while a fetch is in flight), so this cannot loop with the top-up's
+    // completion. Transform-only edits never repaint.
+    if (!transformOnly) ensureTrackTemplates();
     if (!viewport) return;
     if (transformOnly) {
       viewport.retransformSegments(history.track);
@@ -463,6 +477,40 @@ export const createBuilderEngine = (opts?: {
   const rememberAsset = (moduleId: string): void => {
     if (!(moduleId in categories)) return;
     recentAssets = [moduleId, ...recentAssets.filter((id) => id !== moduleId)].slice(0, RECENT_ASSETS_CAP);
+  };
+
+  /**
+   * Fetch whatever the current Track places that has no template yet (a
+   * Track loaded after — or during — the tab stream may name legacy files
+   * the deduped tiles never fetch — or paint files: an authored hue wears
+   * its own file). Skipped only while nothing ever started, where
+   * `ensureAssetTemplates` already covers the union.
+   */
+  const ensureTrackTemplates = (): void => {
+    if (!assetsLoading && !assetsLoaded) return;
+    const missing = visualAssetIdsOf(history.track).filter(
+      (id) => id in categories && !(id in templates) && !assetErrors.has(id) && !pendingTemplates.has(id),
+    );
+    if (missing.length === 0) return;
+    for (const id of missing) pendingTemplates.add(id);
+    void loadAssetVisuals(fetchAssetBytes, `${apiUrl}/assets`, missing).then(
+      (loaded) => {
+        for (const id of missing) {
+          pendingTemplates.delete(id);
+          templates = { ...templates, [id]: loaded[id]!.template };
+          deckPlans = { ...deckPlans, [id]: loaded[id]!.plan };
+        }
+        syncTrackView(false);
+        notify();
+      },
+      (err: unknown) => {
+        for (const id of missing) {
+          pendingTemplates.delete(id);
+          assetErrors.set(id, (err as Error).message);
+        }
+        notify();
+      },
+    );
   };
 
   const engine: BuilderEngine = {
@@ -660,7 +708,15 @@ export const createBuilderEngine = (opts?: {
       const at = primary();
       const insertAt = at !== undefined ? at + 1 : history.track.length;
       rememberAsset(moduleId);
-      applyEdit(insertSegment(history.track, library, insertAt, moduleId, categories), insertAt);
+      // A family placement wears its file's own color from the start — one
+      // history entry, and the inspector's picker shows paint, not absence.
+      // Lone looks place colorless and render their authored bytes as-is.
+      const inserted = insertSegment(history.track, library, insertAt, moduleId, categories);
+      const family = assetColorFamilyOf(moduleId);
+      applyEdit(
+        family ? setSegmentAttachment(inserted, insertAt, "color", family.color) : inserted,
+        insertAt,
+      );
     },
     select: (index) => {
       selected = index !== undefined && index >= 0 && index < history.track.length ? new Set([index]) : new Set();
@@ -808,6 +864,15 @@ export const createBuilderEngine = (opts?: {
         next = setSegmentAttachment(next, index, "conveyor", undefined);
       }
       applyEdit(next, index);
+    },
+    setSegmentColor: (color) => {
+      const index = primary();
+      if (index === undefined) return;
+      const segment = history.track[index]!;
+      // Families repaint, lone looks don't — but paint already stored stays
+      // settable either way (a legacy id recolored before its family shrank).
+      if (segment.color === undefined && !assetColorFamilyOf(segment.moduleId)) return;
+      applyEdit(setSegmentAttachment(history.track, index, "color", color), index);
     },
     setSegmentLaunch: (height) => {
       const index = primary();
@@ -1032,8 +1097,11 @@ export const createBuilderEngine = (opts?: {
         };
         // A loaded Track may place asset Segments before the Assets tab was
         // ever opened — fetch their visuals in the background and re-render
-        // when they land, rather than leaving them invisible.
+        // when they land, rather than leaving them invisible. The second call
+        // tops up legacy files when the tab stream already settled (or is
+        // still carrying the old Track's set).
         if (stored.track.some((segment) => segment.moduleId in categories)) engine.ensureAssetTemplates();
+        ensureTrackTemplates();
         syncTrackView(false);
         viewport?.frameTrack();
         selected = new Set();
@@ -1085,12 +1153,15 @@ export const createBuilderEngine = (opts?: {
       assetsLoading = true;
       setStatus("loading asset visuals…", "quiet");
       notify();
-      const fetchBytes = async (url: string): Promise<Uint8Array> => {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`GET ${url} answered ${res.status}`);
-        return new Uint8Array(await res.arrayBuffer());
-      };
-      void loadAssetVisualsProgressive(fetchBytes, `${apiUrl}/assets`, assetTabModuleIds(), (moduleId, result) => {
+      // The tab's tiles plus whatever the current Track places: legacy
+      // `X_blue` Segments render their own files, which deduped tiles never
+      // fetch — without the union they would stay invisible. Paint files
+      // ride along: an authored hue wears its own file, a flat tint needs
+      // nothing beyond the placed one.
+      const ids = [...new Set([...assetTabModuleIds(), ...visualAssetIdsOf(history.track)])];
+      for (const id of ids) pendingTemplates.add(id);
+      void loadAssetVisualsProgressive(fetchAssetBytes, `${apiUrl}/assets`, ids, (moduleId, result) => {
+        pendingTemplates.delete(moduleId);
         if (result.ok) {
           templates = { ...templates, [moduleId]: result.template };
           deckPlans = { ...deckPlans, [moduleId]: result.plan };
@@ -1117,6 +1188,7 @@ export const createBuilderEngine = (opts?: {
           // per-file and never rejects), kept so a future throw still lands
           // visibly instead of as an unhandled rejection.
           assetsLoading = false;
+          pendingTemplates.clear();
           setStatus(`assets failed: ${(err as Error).message}`, "error");
           notify();
         },
@@ -1126,12 +1198,7 @@ export const createBuilderEngine = (opts?: {
       if (!assetsLoaded) return;
       assetErrors.delete(moduleId);
       notify();
-      const fetchBytes = async (url: string): Promise<Uint8Array> => {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`GET ${url} answered ${res.status}`);
-        return new Uint8Array(await res.arrayBuffer());
-      };
-      void loadAssetVisuals(fetchBytes, `${apiUrl}/assets`, [moduleId]).then(
+      void loadAssetVisuals(fetchAssetBytes, `${apiUrl}/assets`, [moduleId]).then(
         (loaded) => {
           templates = { ...templates, [moduleId]: loaded[moduleId]!.template };
           deckPlans = { ...deckPlans, [moduleId]: loaded[moduleId]!.plan };

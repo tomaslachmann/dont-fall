@@ -1,17 +1,21 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ASSET_CATEGORIES, ASSET_MODULE_DEFS, type AssetCategory } from "@dont-fall/shared";
+import { ASSET_CATEGORIES, ASSET_MODULE_DEFS, assetColorFamilyOf, type AssetCategory } from "@dont-fall/shared";
 import css from "./AssetsTab.module.css";
 import { SegmentedControl } from "../SegmentedControl/SegmentedControl";
 import { Chip } from "../Chip/Chip";
 import { SearchIcon } from "../icons/Icons";
 import { IMPACT } from "../../lib/impact";
 import type { BuilderEngine } from "../../engine.js";
-import { assetCategoryById, assetTabModuleIds } from "../../assets/assets.js";
+import { assetCategoryById, assetTabModuleIds, canonicalPaletteId } from "../../assets/assets.js";
 import { assetPackOf, filterAssetIds, packLabel } from "../../assets/assetFilter.js";
 import { useEngineVersion } from "../../hooks/useEngine.js";
 
 const IDS = assetTabModuleIds();
 const CATEGORY_BY_ID = assetCategoryById();
+/** Tile captions: a family's stem (`…_6x6x1`, not `…_6x6x1_red`) — the tile is the shape, paint lives in the inspector. */
+const TILE_LABELS: Record<string, string> = Object.fromEntries(
+  IDS.map((id) => [id, assetColorFamilyOf(id)?.stem ?? id]),
+);
 const HAZARD_BY_ID = new Set(ASSET_MODULE_DEFS.filter((def) => def.hazard).map((def) => def.id));
 const PACKS = [...new Set(IDS.map(assetPackOf))].sort();
 const PACK_COUNT = new Map(PACKS.map((pack) => [pack, IDS.filter((id) => assetPackOf(id) === pack).length]));
@@ -26,7 +30,10 @@ const loadFavourites = (): Set<string> => {
     if (typeof localStorage === "undefined") return new Set();
     const raw = localStorage.getItem(FAVOURITES_KEY);
     if (!raw) return new Set();
-    return new Set((JSON.parse(raw) as string[]).filter((id) => IDS.includes(id)));
+    // Through the canonical: a star on `X_blue` survives the dedup as a star on the family.
+    return new Set(
+      (JSON.parse(raw) as string[]).map((id) => canonicalPaletteId(id)).filter((id) => IDS.includes(id)),
+    );
   } catch {
     return new Set();
   }
@@ -99,7 +106,7 @@ const AssetTile = memo(function AssetTile({
           {favourite ? "★" : "☆"}
         </button>
       </span>
-      <span className={[css.tileName, error ? css.errorName : ""].join(" ")}>{moduleId}</span>
+      <span className={[css.tileName, error ? css.errorName : ""].join(" ")}>{TILE_LABELS[moduleId] ?? moduleId}</span>
     </div>
   );
 });
@@ -129,17 +136,25 @@ export function AssetsTab({ engine, hidden }: { engine: BuilderEngine; hidden?: 
     });
   }, []);
 
-  // Asset ids only — an unknown Module in a loaded Track must not inflate the chip count.
+  // Canonical palette ids only — an unknown Module in a loaded Track must not
+  // inflate the chip count, and a legacy `X_blue` Segment lights the family tile.
   const inTrack = useMemo(
-    () => new Set(engine.track.map((s) => s.moduleId).filter((id) => id in CATEGORY_BY_ID)),
+    () =>
+      new Set(
+        engine.track.map((s) => canonicalPaletteId(s.moduleId)).filter((id) => IDS.includes(id)),
+      ),
     [engine, engine.track],
   );
+  const recent = useMemo(
+    () => [...new Set(engine.recentAssets.map((id) => canonicalPaletteId(id)).filter((id) => IDS.includes(id)))],
+    [engine.recentAssets],
+  );
   const savedSet = useMemo(() => {
-    if (saved === "recent") return new Set(engine.recentAssets);
+    if (saved === "recent") return new Set(recent);
     if (saved === "favourites") return favourites;
     if (saved === "intrack") return inTrack;
     return null;
-  }, [saved, engine.recentAssets, favourites, inTrack]);
+  }, [saved, recent, favourites, inTrack]);
 
   const visible = useMemo(
     () => filterAssetIds(IDS, CATEGORY_BY_ID, { query, category, pack, saved: savedSet, sort }),
@@ -148,7 +163,7 @@ export function AssetsTab({ engine, hidden }: { engine: BuilderEngine; hidden?: 
   const errors = IDS.filter((id) => engine.assetError(id) !== undefined).length;
 
   const savedChips: { kind: SavedKind; label: string; count: number }[] = [
-    { kind: "recent", label: "RECENT", count: engine.recentAssets.length },
+    { kind: "recent", label: "RECENT", count: recent.length },
     { kind: "favourites", label: "FAVOURITES", count: favourites.size },
     { kind: "intrack", label: "IN THIS TRACK", count: inTrack.size },
   ];

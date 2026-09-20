@@ -1,6 +1,7 @@
 import {
   ASSET_MODULE_DEFS,
   ASSET_PLACEMENT_MODULES,
+  assetColorFamilyOf,
   assetFileName,
   attachAssetGeometry,
   deckPlanOf,
@@ -14,11 +15,33 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 /**
+ * The palette id `moduleId` lists under: a color family's canonical file, or
+ * the id itself for lone looks. Legacy placements (`X_blue`) and family
+ * placements (`X_red` + paint) meet on one tile this way — favourites,
+ * recents and the in-track set all normalize through here.
+ */
+export const canonicalPaletteId = (moduleId: string): string =>
+  assetColorFamilyOf(moduleId)?.canonicalId ?? moduleId;
+
+/**
  * The Assets tab's fixed Module set (M8 ticket 05): exactly the registry's
  * asset Modules — user-uploadable GLBs are a content-pipeline milestone, not
  * a tab feature, so there is deliberately no file input behind this list.
+ * Color families list once, under their canonical file — paint moved to the
+ * inspector's picker, so the tab shows one tile per shape instead of one per
+ * file.
  */
-export const assetTabModuleIds = (): string[] => ASSET_MODULE_DEFS.map((def) => def.id);
+export const assetTabModuleIds = (): string[] => {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const def of ASSET_MODULE_DEFS) {
+    const id = canonicalPaletteId(def.id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+};
 
 /** Each tab Module's Asset category — which of the tab's groups lists it. */
 export const assetCategoryById = (): Record<string, AssetCategory> =>

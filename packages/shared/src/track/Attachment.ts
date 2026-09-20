@@ -5,6 +5,7 @@ import { ICE_SURFACE_ID, invalidIceReason } from "./IceOverlay.js";
 import { invalidLaunchReason } from "./Launch.js";
 import { invalidMotionReason } from "./Motion.js";
 import { invalidMudReason, MUD_SURFACE_ID } from "./MudOverlay.js";
+import { invalidSegmentColorReason } from "./SegmentColor.js";
 import type { SurfaceId } from "./Surface.js";
 import type { SegmentAttachments } from "./Track.js";
 
@@ -47,7 +48,15 @@ export const ATTACHMENTS: { readonly [K in AttachmentKey]-?: AttachmentDef } = {
   prop: { invalidReason: invalidPropReason, noun: "a Prop" },
   start: { invalidReason: invalidStartReason, noun: "the Start" },
   checkpoint: { invalidReason: invalidCheckpointReason, noun: "a Checkpoint" },
+  color: { invalidReason: invalidSegmentColorReason, noun: "a color" },
 };
+
+/**
+ * Attachments a Prop may still carry: the visual-only ones. Paint changes no
+ * physics, so a shovable cone keeps its hue — everything behavioral stays
+ * refused beside a body physics owns.
+ */
+const PROP_COMPATIBLE: ReadonlySet<AttachmentKey> = new Set<AttachmentKey>(["color"]);
 
 /** Every Attachment's key, in {@link ATTACHMENTS}' order. */
 export const ATTACHMENT_KEYS = Object.keys(ATTACHMENTS) as AttachmentKey[];
@@ -109,14 +118,17 @@ export const invalidAttachmentReason = (segment: object): string | undefined => 
  * - **A Prop is nothing else** (ADR 0095): a body physics owns is not a deck,
  *   not authored movement and not a piece of the course. Every other
  *   Attachment is refused beside it — including one added later, until
- *   someone decides it may ride on a Prop. Refusing is the side a mistake can
- *   be undone from; a stored Revision is not.
+ *   someone decides it may ride on a Prop — except the visual-only ones in
+ *   {@link PROP_COMPATIBLE}. Refusing is the side a mistake can be undone
+ *   from; a stored Revision is not.
  * - **One deck, one Surface** (ADR 0066/0067/0070): at most one of
  *   {@link SURFACE_ATTACHMENTS}.
  */
 export const attachmentConflictReason = (segment: SegmentAttachments): string | undefined => {
   if (segment.prop === true) {
-    const clashes = ATTACHMENT_KEYS.filter((key) => key !== "prop" && segment[key] !== undefined);
+    const clashes = ATTACHMENT_KEYS.filter(
+      (key) => key !== "prop" && !PROP_COMPATIBLE.has(key) && segment[key] !== undefined,
+    );
     if (clashes.length > 0) {
       const named = clashes.map((key) => ATTACHMENTS[key].noun).join(", ");
       return `prop cannot be combined with ${named} — a Prop is a body physics owns, not a deck or a piece of the course`;

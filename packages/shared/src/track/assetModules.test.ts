@@ -8,9 +8,12 @@ import { chainTrack, type Track } from "./Track.js";
 import {
   ASSET_MODULE_DEFS,
   ASSET_PLACEMENT_MODULES,
+  assetColorFamilyOf,
   assetFileName,
   attachAssetGeometry,
+  authoredPaintFileId,
   loadAssetLibrary,
+  visualAssetIdsOf,
   type AssetModuleDef,
 } from "./assetModules.js";
 import { loadAssetModule, readAssetModel } from "./asset.js";
@@ -473,5 +476,78 @@ describe("loadAssetLibrary failure", () => {
         return bad[name]!;
       }, "http://assets.test"),
     ).rejects.toThrow(/kaykit_ball/);
+  });
+});
+
+describe("assetColorFamilyOf — one palette tile per shape, not per file", () => {
+  it("groups a complete 4-set by stem and names the _red canonical", () => {
+    const ids = new Set(["kaykit_platform_6x6x1_blue", "kaykit_platform_6x6x1_green", "kaykit_platform_6x6x1_red", "kaykit_platform_6x6x1_yellow"]);
+    expect(assetColorFamilyOf("kaykit_platform_6x6x1_blue", ids)).toEqual({
+      stem: "kaykit_platform_6x6x1",
+      color: "blue",
+      canonicalId: "kaykit_platform_6x6x1_red",
+    });
+  });
+
+  it("groups nothing without all four files, and never a bare id", () => {
+    const ids = new Set(["kaykit_platform_6x6x1_blue", "kaykit_platform_6x6x1_red", "kaykit_ball"]);
+    expect(assetColorFamilyOf("kaykit_platform_6x6x1_blue", ids)).toBeNull();
+    expect(assetColorFamilyOf("kaykit_ball", ids)).toBeNull();
+    expect(assetColorFamilyOf("no_such_thing_red", ids)).toBeNull();
+  });
+
+  it("over the real registry: every legacy-suffixed def groups, and every canonical exists", () => {
+    const ids = ASSET_MODULE_DEFS.map((def) => def.id);
+    // Quarter blues are lone looks, not families (pinned below) — everything else groups.
+    const suffixed = ids.filter(
+      (id) => /_(blue|green|red|yellow)$/.test(id) && !id.startsWith("kaykit_platform_quarter_"),
+    );
+    expect(suffixed.length).toBeGreaterThan(0);
+    const stems = new Set<string>();
+    for (const id of suffixed) {
+      const family = assetColorFamilyOf(id);
+      expect(family, id).not.toBeNull();
+      stems.add(family!.stem);
+      expect(ids, `${family!.canonicalId} exists`).toContain(family!.canonicalId);
+    }
+    // No partial families: 4 files per stem, exactly.
+    expect(suffixed.length).toBe(stems.size * 4);
+  });
+
+  it("leaves the quarter pack's lone blues alone", () => {
+    expect(assetColorFamilyOf("kaykit_platform_quarter_circle_6x6x1_blue")).toBeNull();
+  });
+});
+
+describe("authoredPaintFileId + visualAssetIdsOf — authored paint wears its file", () => {
+  const RED = "kaykit_platform_6x6x1_red";
+  const at = (moduleId: string, color?: "blue" | "orange" | "red"): Track[number] => ({
+    moduleId,
+    position: { x: 0, y: 0, z: 0 },
+    rotation: 0,
+    ...(color === undefined ? {} : { color }),
+  });
+
+  it("names the authored file for an authored hue, null for a flat-tinted one", () => {
+    expect(authoredPaintFileId(RED, "blue")).toBe("kaykit_platform_6x6x1_blue");
+    expect(authoredPaintFileId(RED, "red")).toBe(RED);
+    expect(authoredPaintFileId("kaykit_platform_6x6x1_blue", "yellow")).toBe("kaykit_platform_6x6x1_yellow");
+    expect(authoredPaintFileId(RED, "orange")).toBeNull();
+    expect(authoredPaintFileId(RED, "purple")).toBeNull();
+    expect(authoredPaintFileId("kaykit_ball", "blue")).toBeNull();
+  });
+
+  it("adds paint files after placed ones, each once, and never for flat tints", () => {
+    expect(visualAssetIdsOf([at(RED, "blue"), at("kaykit_ball"), at(RED, "blue")])).toEqual([
+      RED,
+      "kaykit_ball",
+      "kaykit_platform_6x6x1_blue",
+    ]);
+    // A flat tint needs no file — the canonical it tints is already listed.
+    expect(visualAssetIdsOf([at(RED, "orange")])).toEqual([RED]);
+    // Red on the canonical is the identity — listed once, as placed.
+    expect(visualAssetIdsOf([at(RED, "red")])).toEqual([RED]);
+    // Unpainted tracks load exactly what they place, as before.
+    expect(visualAssetIdsOf([at(RED), at("kaykit_ball")])).toEqual([RED, "kaykit_ball"]);
   });
 });

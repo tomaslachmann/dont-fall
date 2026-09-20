@@ -169,6 +169,36 @@ export const RAGDOLL_MAX_MS = 4000;
 export const RAGDOLL_SETTLE_SPEED = 1.2;
 
 /**
+ * How far below the pelvis a belt still catches a Ragdolling body (units). A
+ * belt is virtual — its collider never moves — so a down body feels nothing
+ * from physics alone; the simulation drags it (see
+ * {@link RAGDOLL_BELT_BLEND}) whenever a probe this long finds belt under it.
+ * Long enough to catch a low tumble, short of dragging a body thrown clear
+ * over the belt.
+ */
+export const RAGDOLL_BELT_REACH = 1;
+
+/**
+ * How much faster than the belt flow (units/s) a bone may still be moving to
+ * get caught by it (found live 2026-09-20: a down body on a belt visibly
+ * stood still while the chevrons ran under it). A caught bone's horizontal
+ * velocity is set to the flow outright — a proportional chase loses to the
+ * static floor's friction and equilibrates at half belt speed (measured), and
+ * a resting body on a real belt moves with it from the first instant anyway.
+ * Anything faster keeps flying: a Hurl across a belt must stay a Hurl.
+ */
+export const RAGDOLL_BELT_CATCH_SLACK = 2;
+
+/**
+ * Per-tick keep-fraction of a belt-caught bone's angular velocity. Forcing
+ * translation while the floor stands still torques the body every tick (a
+ * treadmill tumbler that never settles — measured at the full RAGDOLL_MAX);
+ * bleeding the spin as fast as it is wound keeps the ride a slide, which is
+ * what then settles relative to the flow.
+ */
+export const RAGDOLL_BELT_SPIN_DAMP = 0.5;
+
+/**
  * How long GettingUp lasts at zero input (ms). This is the frame where the
  * rig's `GetUp_*` clips plant both feet, frame 32 of 84 at 30 fps (ADR 0076).
  * Control returns there, and the rest of the get-up plays out only while the

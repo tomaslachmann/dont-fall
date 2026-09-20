@@ -5,7 +5,7 @@ import { rotateVec3ByQuat } from "../math/vec3.js";
 import { CAPSULE_BOTTOM_OFFSET, CAPSULE_RADIUS, GROUND_STICK_SPEED, WALK_SPEED } from "../tuning/character.js";
 import { TICK_MS, TICK_RATE_HZ } from "../tuning/clock.js";
 import { HIT_CHARGE_MAX_TICKS, HIT_COOLDOWN_MS, HIT_RANGE, ELIMINATION_CREDIT_TICKS } from "../tuning/fight.js";
-import { IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, RAGDOLL_MAX_MS, RESPAWN_WOBBLE_TICKS, STAGGER_TICKS } from "../tuning/knockdown.js";
+import { GETUP_DRIVE_TICKS, IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, RAGDOLL_MAX_MS, RAGDOLL_MAX_TICKS, RESPAWN_WOBBLE_TICKS, STAGGER_TICKS } from "../tuning/knockdown.js";
 import { DASH_COOLDOWN_MS, DASH_COOLDOWN_TICKS, DASH_DURATION_MS, DASH_SPEED, SLIDE_INPUT_SCALE } from "../tuning/movement.js";
 import { ICE_TOP_SPEED_MULTIPLIER } from "../tuning/surfaces.js";
 import { LAUNCH_TRIGGER_MARGIN } from "../tuning/world.js";
@@ -3661,6 +3661,85 @@ describe("RapierSimulation — Conveyor (ADR 0064): the ground collider's belt f
     tick(sim, 1, NORTH);
     const runAfter = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
     expect(runBefore.z - runAfter.z).toBeCloseTo(WALK_SPEED * SURFACES.mud!.topSpeedMultiplier + 4, 0);
+  });
+
+  it("carries a Ragdolling body at the belt speed — a down body rides too (found live 2026-09-20)", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 8 },
+      statics: [BELT_FLOOR],
+      staticConveyors: [MEDIUM_NORTH],
+    });
+    tick(sim, 0.5);
+    // Straight up: a knockdown with no horizontal throw of its own, so every
+    // metre below is the belt's doing (Bump throws, but only along the shove).
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: 0, y: 12, z: 0 });
+    sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("Ragdoll");
+    const before = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.position;
+    tick(sim, 1.5); // still inside RAGDOLL_MIN — the window below is all Ragdoll
+    const down = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(down.motionState).toBe("Ragdoll");
+    const carried = before.z - down.position.z;
+    // Dynamic bodies integrate at half speed in this sim (physics dt 1/60 vs
+    // sim tick 1/30, one world.step() per tick) — measured ~2.8 here. The
+    // threshold locks the fixed behaviour (rides the belt, not stuck at 0).
+    expect(carried).toBeGreaterThan(2);
+    expect(carried).toBeLessThan(7);
+  });
+
+  it("settles on a belt relative to the belt — a knockdown there must not run to RAGDOLL_MAX", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 8 },
+      statics: [BELT_FLOOR],
+      staticConveyors: [MEDIUM_NORTH],
+    });
+    tick(sim, 0.5);
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: 0, y: 12, z: 0 });
+    let gettingUpAt = -1;
+    for (let n = 0; n < RAGDOLL_MAX_TICKS + 10; n += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState === "GettingUp") {
+        gettingUpAt = n;
+        break;
+      }
+    }
+    // A body riding the belt at belt speed has come to rest in the only frame
+    // that matters; without the relative settle check it never drops below
+    // RAGDOLL_SETTLE_SPEED in world frame and every belt knockdown lasts the max.
+    expect(gettingUpAt).toBeGreaterThanOrEqual(0);
+    expect(gettingUpAt).toBeLessThan(RAGDOLL_MAX_TICKS);
+  });
+
+  it("hands the sweep over where the capsule is — no pop at the clip handover on a belt (found live 2026-09-20)", () => {
+    const sim = new RapierSimulation({
+      spawn: { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 8 },
+      statics: [BELT_FLOOR],
+      staticConveyors: [MEDIUM_NORTH],
+    });
+    tick(sim, 0.5);
+    sim.applyImpact(DEFAULT_CHARACTER_ID, { x: 0, y: 12, z: 0 });
+    // At the sweep's own end: the bones are the frozen clip frame, and the
+    // clip the renderer takes over with plays at the capsule — so the two
+    // must agree, or the body visibly pops. (Past the drive the capsule keeps
+    // riding through the clip phase while the frozen bones do not, but by
+    // then the clip owns the body and the root follows the capsule: smooth.)
+    for (let n = 0; n < RAGDOLL_MAX_TICKS + 10; n += 1) {
+      sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+      if (sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState === "GettingUp") break;
+    }
+    expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.motionState).toBe("GettingUp");
+    for (let n = 0; n < GETUP_DRIVE_TICKS; n += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
+    const handover = sim.snapshot().characters[DEFAULT_CHARACTER_ID]!;
+    expect(handover.motionState).toBe("GettingUp");
+    const gap = Math.hypot(
+      handover.bones[0]!.position.x - handover.position.x,
+      handover.bones[0]!.position.y - handover.position.y,
+      handover.bones[0]!.position.z - handover.position.z,
+    );
+    // The clip's own pelvis sits ~0.4 out from its origin — that is the pose,
+    // not a pop. Before the sweep followed the capsule this was the belt's
+    // whole drive carry (~3.6 u on medium).
+    expect(gap).toBeLessThan(1);
   });
 });
 

@@ -34,6 +34,7 @@ import {
   deckRectGeometry,
   deckSheetGeometry,
   motionCarry,
+  templateForPlacement,
   tileDeckTexture,
   type MudDeckPlacement,
 } from "@dont-fall/render";
@@ -329,7 +330,9 @@ export const buildSegmentGroup = (
   const module = modules[segment.moduleId];
   if (!module) return undefined;
   const template = assetTemplates[segment.moduleId];
-  const content = template ? template.clone(true) : new THREE.Group();
+  // A painted Segment clones what its paint wears — its authored file, or the
+  // flat tint built once per (file, paint) — never the placed file itself.
+  const content = template ? templateForPlacement(assetTemplates, segment.moduleId, segment.color).clone(true) : new THREE.Group();
   if (template) content.userData[SHARES_TEMPLATE_RESOURCES] = true;
   // Placement on the outer group, Motion on the inner node (ADR 0061): a
   // Motion is a pose in the Segment's own local frame, so the gizmo keeps

@@ -925,6 +925,7 @@ describe("every Attachment through a re-chain and a Duplicate (ADR 0099)", () =>
     prop: true,
     start: true,
     checkpoint: { order: 1 },
+    color: "purple",
   };
   const carrying = (key: AttachmentKey): Track => {
     let track = appendModule([], "start", MODULES);

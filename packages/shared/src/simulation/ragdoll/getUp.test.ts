@@ -80,4 +80,45 @@ describe("matchGetUp (.scratch/physical-ragdoll ticket 03)", () => {
     const pose = placed("B", 0, 0, 0, 7.25);
     expect(getUpFloorY(pose, matchGetUp(pose)!)).toBeCloseTo(7.25, 4);
   });
+
+  /**
+   * The test's own seating rule: the lowest hull contact of `bones`
+   * (independent of `getUpFloorY` — it is what seats the fixture, not what
+   * is under test).
+   */
+  const contactsRestOn = (bones: BoneSnapshot[]): number => {
+    let min = Infinity;
+    for (const [i, bone] of bones.entries()) {
+      for (const p of BLIP_RAGDOLL_SPEC.bones[i]!.hull) {
+        const w = rotateVec3ByQuat(p, bone.rotation);
+        min = Math.min(min, bone.position.y + w.y);
+      }
+    }
+    return min;
+  };
+
+  it("seats the clip's contacts on the heap's contacts — pivots lie (sunk capsule, found live 2026-09-20)", () => {
+    // A real heap never shares the clip's relative pose: its pivots float
+    // lower over the deck than the clip's float over its origin (0.05–0.17
+    // vs 0.21–0.41), so aligning pivots seats the capsule decimetres under
+    // the deck. Pitch every bone 90° in place so pivots and contacts no
+    // longer stand in the clip's own relation, then seat the CONTACTS on
+    // the floor: the clip must still play on that floor.
+    const pitch: Quat = { x: Math.SQRT1_2, y: 0, z: 0, w: Math.SQRT1_2 };
+    const heap = placed("B", 0.7, 3, -2, 0).map((bone) => ({
+      position: bone.position,
+      rotation: mulQuat(pitch, bone.rotation),
+    }));
+    const lift = 7.25 - contactsRestOn(heap);
+    const seated = heap.map((bone) => ({ ...bone, position: { ...bone.position, y: bone.position.y + lift } }));
+    // The invariant, not the number: the clip placed at the returned floor
+    // rests its own contacts where the heap's are (the hulls reach ~3 cm
+    // below the rig origin, so the origin itself floats that far — a float
+    // gravity heals in the first GettingUp ticks, where the old pivot rule's
+    // decimetre sink never healed at all).
+    const match = matchGetUp(seated)!;
+    const floorY = getUpFloorY(seated, match);
+    const clip = seated.map((_, i) => getUpTargetOf(match, i, floorY)!);
+    expect(contactsRestOn(clip)).toBeCloseTo(7.25, 4);
+  });
 });

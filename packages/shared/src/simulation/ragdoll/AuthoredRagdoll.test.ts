@@ -7,6 +7,7 @@ import { TICK_DT } from "../../tuning/clock.js";
 import { initPhysics } from "../RapierSimulation.js";
 import { AuthoredRagdoll } from "./AuthoredRagdoll.js";
 import { BLIP_RAGDOLL_SPEC } from "./blipRagdollSpec.js";
+import { getUpFloorY, getUpTargetOf, matchGetUp } from "./getUp.js";
 
 beforeAll(async () => {
   await initPhysics();
@@ -215,6 +216,56 @@ describe("the authored BLIP ragdoll (.scratch/physical-ragdoll ticket 01)", () =
     expect(nod, "still nods").toBeGreaterThan(0.1);
     // …and the nod respects the authored neck limit (±0.1745 + solver give).
     expect(nod).toBeLessThan(0.35);
+    doll.dispose();
+    w.free();
+  });
+
+  it("catches slow bones on a belt flow, horizontally only, and lets fast ones fly", () => {
+    const w = floored();
+    const doll = new AuthoredRagdoll(w);
+    doll.activate(ROOT, 0, ZERO, ZERO);
+    doll.bodyOf("pelvis")!.setLinvel({ x: 0, y: -2, z: 0 }, true);
+    doll.bodyOf("pelvis")!.setAngvel({ x: 0, y: 6, z: 0 }, true);
+    doll.bodyOf("body")!.setLinvel({ x: 0, y: 0, z: -10 }, true); // hurled across the belt
+    doll.bodyOf("body")!.setAngvel({ x: 0, y: 6, z: 0 }, true);
+    doll.dragByBelt({ x: 4, y: 0, z: 0 }, 2, 0.5);
+    const caught = doll.bodyOf("pelvis")!.linvel();
+    expect(caught.x).toBeCloseTo(4, 6);
+    expect(caught.y).toBeCloseTo(-2, 6); // a belt carries, it never lifts
+    expect(caught.z).toBeCloseTo(0, 6);
+    expect(doll.bodyOf("pelvis")!.angvel().y).toBeCloseTo(3, 6); // the ride is a slide, not a tumble
+    const flying = doll.bodyOf("body")!.linvel();
+    expect(flying.x).toBeCloseTo(0, 6);
+    expect(flying.z).toBeCloseTo(-10, 6);
+    expect(doll.bodyOf("body")!.angvel().y).toBeCloseTo(6, 6);
+    doll.dispose();
+    w.free();
+  });
+
+  it("dragging an inactive ragdoll is a no-op", () => {
+    const w = floored();
+    const doll = new AuthoredRagdoll(w);
+    expect(() => doll.dragByBelt({ x: 4, y: 0, z: 0 }, 2, 0.5)).not.toThrow();
+    doll.dispose();
+    w.free();
+  });
+
+  it("carries the sweep along the follow offset — the frozen frame ends where the capsule is", () => {
+    const w = floored();
+    const doll = new AuthoredRagdoll(w);
+    doll.activate(ROOT, 0, ZERO, ZERO);
+    for (let i = 0; i < 60; i += 1) w.step(); // fall into a heap
+    const heap = doll.readBones();
+    const match = matchGetUp(heap)!;
+    const floorY = getUpFloorY(heap, match);
+    doll.startSweep();
+    doll.sweepStep(match, floorY, 1, { x: 2, y: 0.5, z: -1 }); // the capsule rode on while the bones were kinematic
+    w.step();
+    const pelvis = doll.readBones()[indexOf("pelvis")]!;
+    const target = getUpTargetOf(match, indexOf("pelvis"), floorY)!;
+    expect(pelvis.position.x).toBeCloseTo(target.position.x + 2, 2);
+    expect(pelvis.position.y).toBeCloseTo(target.position.y + 0.5, 2);
+    expect(pelvis.position.z).toBeCloseTo(target.position.z - 1, 2);
     doll.dispose();
     w.free();
   });

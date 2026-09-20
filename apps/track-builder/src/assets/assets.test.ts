@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import {
   assetTabModuleIds,
   builderLibrary,
+  canonicalPaletteId,
   extractVisualRoot,
   loadAssetVisuals,
   loadAssetVisualsProgressive,
@@ -28,12 +29,33 @@ const realFetch = async (url: string): Promise<Uint8Array> => {
 };
 
 describe("assetTabModuleIds", () => {
-  it("lists exactly the registry's asset Modules — a fixed set, no file input", () => {
-    expect(assetTabModuleIds()).toEqual(ASSET_MODULE_DEFS.map((def) => def.id));
-    // Length tracks the registry rather than a number copied here — an asset
-    // drop lands new ids regularly, and a hardcoded count only ever fails
-    // for the uninteresting reason.
-    expect(assetTabModuleIds()).toHaveLength(ASSET_MODULE_DEFS.length);
+  it("lists every shape once — families under their canonical, lone looks as-is", () => {
+    const ids = assetTabModuleIds();
+    // One tile per shape: no two tiles share a stem, and every canonical exists.
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) {
+      expect(id).toBe(canonicalPaletteId(id));
+    }
+    // Nothing lost: every def id canonicalizes onto a listed tile.
+    for (const def of ASSET_MODULE_DEFS) {
+      expect(ids).toContain(canonicalPaletteId(def.id));
+    }
+    // And the dedup does something: fewer tiles than files.
+    expect(ids.length).toBeLessThan(ASSET_MODULE_DEFS.length);
+  });
+});
+
+describe("canonicalPaletteId", () => {
+  it("folds a family's four files onto the _red canonical", () => {
+    expect(canonicalPaletteId("kaykit_platform_6x6x1_blue")).toBe("kaykit_platform_6x6x1_red");
+    expect(canonicalPaletteId("kaykit_platform_6x6x1_red")).toBe("kaykit_platform_6x6x1_red");
+  });
+
+  it("leaves lone looks — bare ids and half-families — alone", () => {
+    expect(canonicalPaletteId("kaykit_ball")).toBe("kaykit_ball");
+    expect(canonicalPaletteId("kaykit_platform_quarter_circle_6x6x1_blue")).toBe(
+      "kaykit_platform_quarter_circle_6x6x1_blue",
+    );
   });
 });
 
@@ -65,9 +87,8 @@ describe("loadAssetVisuals", () => {
       return realFetch(url);
     }, "http://assets.test");
 
-    expect(seen.sort()).toEqual(
-      ASSET_MODULE_DEFS.map((def) => `http://assets.test/${def.id}.glb`).sort(),
-    );
+    // Tab Modules, not registry Modules: families fetch their canonical once.
+    expect(seen.sort()).toEqual(assetTabModuleIds().map((id) => `http://assets.test/${id}.glb`).sort());
   });
 
   it("names the module when its fetch fails", async () => {

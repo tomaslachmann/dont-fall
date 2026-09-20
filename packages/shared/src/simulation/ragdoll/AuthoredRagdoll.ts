@@ -199,6 +199,31 @@ export class AuthoredRagdoll {
     if (this.active) this.byName.get("body")!.applyImpulse(impulse, true);
   }
 
+  /**
+  /**
+   * Catch every slow bone on the belt `flow` under the body — the virtual
+   * belt's stand-in for the friction a real moving deck would give (ADR 0064
+   * never moved a collider, so physics alone drags nothing). A bone already
+   * moving slower than the flow plus `slack` has its horizontal velocity set
+   * to the flow outright and its spin bled by `spinDamp`; anything faster is
+   * untouched, so a Hurl across a belt keeps flying. Vertical velocity is
+   * untouched: a belt carries, it never lifts. Dynamic bones only — the get-up
+   * sweep is kinematic and follows the capsule instead (which rides the belt
+   * itself).
+   */
+  dragByBelt(flow: Vec3, slack: number, spinDamp: number): void {
+    if (!this.active) return;
+    const catchBelow = Math.hypot(flow.x, flow.z) + slack;
+    for (const { body } of this.bones) {
+      if (body.bodyType() !== RAPIER.RigidBodyType.Dynamic) continue;
+      const v = body.linvel();
+      if (Math.hypot(v.x, v.z) >= catchBelow) continue;
+      body.setLinvel({ x: flow.x, y: v.y, z: flow.z }, true);
+      const w = body.angvel();
+      body.setAngvel({ x: w.x * spinDamp, y: w.y * spinDamp, z: w.z * spinDamp }, true);
+    }
+  }
+
   /** Freeze the ragdoll in place (the renderer stops drawing it once bones are empty). */
   deactivate(): void {
     this.endHang(null);
@@ -214,13 +239,21 @@ export class AuthoredRagdoll {
   /** Weight applied to angular speed when comparing against the linear settle threshold. */
   private static readonly ANGULAR_SETTLE_WEIGHT = 0.3;
 
-  /** Fastest bone speed (units/s), linear or weighted angular — for the settled check. */
-  maxSpeed(): number {
+  /**
+   * Fastest bone speed (units/s), linear or weighted angular — for the settled
+   * check. Against `flow` when the body rides a belt, a bone counts whichever
+   * is slower, world or belt frame: riding the belt is rest, and so is lying
+   * genuinely still (pinned against a wall on a belt, the flow's own doing).
+   */
+  maxSpeed(flow?: Vec3): number {
+    const fx = flow?.x ?? 0;
+    const fz = flow?.z ?? 0;
     let max = 0;
     for (const { body } of this.bones) {
       const v = body.linvel();
       const w = body.angvel();
-      max = Math.max(max, Math.hypot(v.x, v.y, v.z), Math.hypot(w.x, w.y, w.z) * AuthoredRagdoll.ANGULAR_SETTLE_WEIGHT);
+      const linear = flow ? Math.min(Math.hypot(v.x, v.y, v.z), Math.hypot(v.x - fx, v.y, v.z - fz)) : Math.hypot(v.x, v.y, v.z);
+      max = Math.max(max, linear, Math.hypot(w.x, w.y, w.z) * AuthoredRagdoll.ANGULAR_SETTLE_WEIGHT);
     }
     return max;
   }
@@ -337,14 +370,23 @@ export class AuthoredRagdoll {
   /**
    * One tick of the sweep, before the world steps: every bone carried
    * `eased` (0..1, the caller's smoothstep) of the way from its heap
-   * transform onto `match`'s placed clip pose, on the floor at `floorY`.
+   * transform onto `match`'s placed clip pose, on the floor at `floorY`,
+   * shifted by `follow` — how far the capsule has travelled since the sweep
+   * began (a belt or a Ride carries it while the bones are kinematic, and
+   * the frozen frame must end where the capsule is, not where the heap was,
+   * or the clip handover pops).
    */
-  sweepStep(match: GetUpMatch, floorY: number, eased: number): void {
+  sweepStep(match: GetUpMatch, floorY: number, eased: number, follow: Vec3 = ZERO): void {
     for (const [i, { body }] of this.bones.entries()) {
       const target = getUpTargetOf(match, i, floorY, this.spec);
       const from = this.sweepFrom[i];
       if (!target || !from) continue;
-      body.setNextKinematicTranslation(lerpVec3(from.position, target.position, eased));
+      const placed = {
+        x: target.position.x + follow.x,
+        y: target.position.y + follow.y,
+        z: target.position.z + follow.z,
+      };
+      body.setNextKinematicTranslation(lerpVec3(from.position, placed, eased));
       body.setNextKinematicRotation(slerpQuat(from.rotation, target.rotation, eased));
     }
   }

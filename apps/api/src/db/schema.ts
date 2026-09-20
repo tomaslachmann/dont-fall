@@ -380,6 +380,28 @@ export const accountAvatars = sqliteTable("account_avatars", {
 });
 
 /**
+ * A Track draft (ADR 0114) — the MCP server's working copy. One row per
+ * draft, mutated freely until published or discarded: the opposite
+ * discipline to `tracks` (immutable Revisions). Segments as one JSON column,
+ * like `tracks.data` (ADR 0029); publish metadata as row attributes, like
+ * `tracks` does, so publishing a draft copies the row's fields into a new
+ * Revision without re-reading the builder's mind.
+ */
+export const trackDrafts = sqliteTable("track_drafts", {
+  id: text("id").primaryKey(),
+  name: text("name"),
+  /** `race`|`survival` — what `validate` checks the course against. */
+  roundType: text("round_type").notNull(),
+  /** JSON-serialized `Segment[]`, in authoring order. */
+  data: text("data").notNull(),
+  timeLimitMs: integer("time_limit_ms").notNull(),
+  survivorTarget: integer("survivor_target").notNull(),
+  environment: text("environment").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+/**
  * Client errors the error screen reported (ADR 0110), filed under the support
  * code it showed the Player — so "we logged it with the code below" is true,
  * and the code finds it. First report of a code wins.

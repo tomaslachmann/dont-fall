@@ -2,6 +2,7 @@ import css from "./Inspector.module.css";
 import { TransformPanel } from "../TransformPanel/TransformPanel";
 import { MotionPanelView } from "../MotionPanel/MotionPanelView";
 import { SurfacePanel } from "../SurfacePanel/SurfacePanel";
+import { ColorPanel } from "../ColorPanel/ColorPanel";
 import { LaunchPanel } from "../LaunchPanel/LaunchPanel";
 import { CoursePanel } from "../CoursePanel/CoursePanel";
 import type { BuilderEngine } from "../../engine.js";
@@ -45,6 +46,7 @@ export function Inspector({ engine }: { engine: BuilderEngine }) {
         <MotionPanelView engine={engine} />
         <LaunchPanel engine={engine} />
         <SurfacePanel engine={engine} />
+        <ColorPanel engine={engine} />
       </div>
     </section>
   );

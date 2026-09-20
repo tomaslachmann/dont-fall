@@ -10,7 +10,7 @@ import {
   type RenderCharacter,
   type Vec3,
 } from "@dont-fall/shared";
-import { findSpinningParts, localBounds, lowestDrawnY, lowestMovingY, spinParts } from "@dont-fall/render";
+import { findSpinningParts, localBounds, lowestDrawnY, lowestMovingY, spinParts, templateForPlacement } from "@dont-fall/render";
 import * as THREE from "three";
 import { buildAirColumns } from "../airColumns.js";
 import { buildAssetVisuals } from "../assetVisuals.js";
@@ -35,6 +35,7 @@ export type TrackVisualsConfig = Required<
     | "props"
     | "assetTemplates"
     | "assetPlacements"
+    | "segmentColors"
     | "springs"
     | "movingSegments"
     | "conveyors"
@@ -116,6 +117,7 @@ export const buildTrackVisuals = (
     props,
     assetTemplates,
     assetPlacements,
+    segmentColors,
     springs,
     movingSegments,
     conveyors,
@@ -197,7 +199,7 @@ export const buildTrackVisuals = (
     const template = assetTemplates[config.moduleId];
     if (template) {
       // Collision boxes/trimeshes arrive already scaled (ADR 0062); the visual is scaled here.
-      const visual = template.clone(true);
+      const visual = templateForPlacement(assetTemplates, config.moduleId, segmentColors[config.segmentIndex]).clone(true);
       visual.scale.setScalar(config.scale);
       group.add(visual);
     } else if (config.trimeshes.length > 0) {
@@ -318,9 +320,7 @@ export const buildTrackVisuals = (
     // one transform carries everything it draws.
     if (config.shape.kind === "asset") {
       const group = new THREE.Group();
-      const template = assetTemplates[config.shape.moduleId];
-      if (!template) throw new Error(`asset "${config.shape.moduleId}": no loaded visual template (fetch it before placing)`);
-      const visual = template.clone(true);
+      const visual = templateForPlacement(assetTemplates, config.shape.moduleId, config.shape.color).clone(true);
       visual.scale.setScalar(config.shape.scale);
       group.add(visual);
       setShadowRole(group, "both");

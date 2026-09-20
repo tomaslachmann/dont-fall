@@ -5,10 +5,11 @@ import {
   segmentScale,
   type Module,
   type Quat,
+  type SegmentColorId,
   type Track,
   type Vec3,
 } from "@dont-fall/shared";
-import { shareTextures, type SharedTextureCache } from "@dont-fall/render";
+import { shareTextures, templateForPlacement, type SharedTextureCache } from "@dont-fall/render";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
@@ -118,6 +119,8 @@ export interface AssetVisualPlacement {
   moduleId: string;
   /** Which Segment this instance draws — what lets a per-Segment effect (a Spring's squash, ADR 0069) find it. */
   segmentIndex: number;
+  /** The Segment's paint, when it has one — the instance draws what the paint wears: its authored file, or the placed file tinted flat. */
+  color?: SegmentColorId;
   /** The Segment's own origin — the same vector `resolveTrack` translates collision by. */
   position: Vec3;
   /** The Segment's full orientation — the same `segmentOrientation` `resolveTrack` rotates collision by. */
@@ -151,6 +154,7 @@ export const assetPlacements = (track: Track, library: Record<string, Module>): 
       position: segment.position,
       orientation: segmentOrientation(segment),
       ...(segmentScale(segment) !== 1 ? { scale: segmentScale(segment) } : {}),
+      ...(segment.color === undefined ? {} : { color: segment.color }),
     });
   }
   return placements;
@@ -159,11 +163,13 @@ export const assetPlacements = (track: Track, library: Record<string, Module>): 
 /**
  * Clone one visual instance per placement under a single Group (M8 ticket 03).
  * Clones share the template's geometry/materials (three.js `clone` shares,
- * never duplicates), so four cached templates cover a Track of any length
- * with no per-Segment upload. The Group joins the scene in `createStage`,
- * which frees it with the existing scene-graph sweep on Track reload (M4
- * ticket 01's discipline); the templates stay cached outside the scene for
- * the session.
+ * never duplicates), so the cached templates cover a Track of any length
+ * with no per-Segment upload — one tinted variant per (file, paint) for new
+ * hues, shared by every placement wearing it (authored hues draw their own
+ * file). The Group joins the scene in
+ * `createStage`, which frees it with the existing scene-graph sweep on Track
+ * reload (M4 ticket 01's discipline); the templates stay cached outside the
+ * scene for the session.
  */
 export const buildAssetVisuals = (
   templates: Record<string, THREE.Group>,
@@ -171,8 +177,7 @@ export const buildAssetVisuals = (
 ): THREE.Group => {
   const group = new THREE.Group();
   for (const placement of placements) {
-    const template = templates[placement.moduleId];
-    if (!template) throw new Error(`asset "${placement.moduleId}": no loaded visual template (fetch it before placing)`);
+    const template = templateForPlacement(templates, placement.moduleId, placement.color);
     const instance = template.clone(true);
     instance.position.set(placement.position.x, placement.position.y, placement.position.z);
     instance.quaternion.set(

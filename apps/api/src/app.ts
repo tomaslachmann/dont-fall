@@ -17,6 +17,7 @@ import type { DiscordOAuthConfig, FetchLike } from "./auth/auth.service.js";
 import { openDb, type ApiDb } from "./db/db.js";
 import { syncSeedTrack } from "./tracks/tracks.dao.js";
 import { registerTrackRoutes } from "./tracks/tracks.controller.js";
+import { registerDraftRoutes } from "./tracks/drafts.controller.js";
 import { LobbiesService, type LobbiesDeps } from "./lobbies/lobbies.service.js";
 import { registerLobbyRoutes } from "./lobbies/lobbies.controller.js";
 import { proxyMatchSockets } from "./lobbies/matchSocketProxy.js";
@@ -241,6 +242,7 @@ export const buildApp = async (options: BuildAppOptions = {}): Promise<FastifyIn
 
   app.get("/health", async () => ({ ok: true }));
   registerTrackRoutes(app, db, options.serviceToken);
+  registerDraftRoutes(app, db);
   registerAssetRoutes(app, assetsDir);
   registerAuthRoutes(app, db, {
     ...(options.discord ? { discord: options.discord } : {}),

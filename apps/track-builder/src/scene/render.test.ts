@@ -85,6 +85,29 @@ describe("buildSegmentGroup", () => {
 
     expect(buildSegmentGroup(DECKS, segment)).toBeUndefined();
   });
+
+  it("draws a painted Segment tinted flat, bare ones from the file", () => {
+    const map = new THREE.DataTexture(new Uint8ClampedArray([255, 0, 0, 255]), 1, 1);
+    map.needsUpdate = true;
+    const template = new THREE.Group();
+    template.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ map })));
+    const materialOf = (group: THREE.Group): THREE.MeshStandardMaterial => {
+      let found: THREE.MeshStandardMaterial | undefined;
+      group.traverse((object) => {
+        const mesh = object as THREE.Mesh;
+        if (mesh.isMesh) found = mesh.material as THREE.MeshStandardMaterial;
+      });
+      return found!;
+    };
+
+    // "deck" is a lone look, so even an authored hue tints (nothing to wear).
+    const painted: Segment = { moduleId: "deck", position: { x: 0, y: 0, z: 0 }, rotation: 0, color: "blue" };
+    const material = materialOf(buildSegmentGroup(DECKS, painted, { deck: template })!);
+    expect(material.map).toBeNull();
+    expect(material.color.getHex()).toBe(new THREE.Color().setHSL(220 / 360, 0.55, 0.55).getHex());
+    const bare: Segment = { moduleId: "deck", position: { x: 0, y: 0, z: 0 }, rotation: 0 };
+    expect(materialOf(buildSegmentGroup(DECKS, bare, { deck: template })!).map).toBe(map);
+  });
 });
 
 describe("removing a Segment (the builder's allocate-then-free discipline)", () => {

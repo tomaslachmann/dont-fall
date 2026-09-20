@@ -249,6 +249,55 @@ describe("buildAssetVisuals", () => {
   });
 });
 
+describe("a painted asset Segment", () => {
+  // Synthetic: what is under test is the paint reaching the instance, not GLB parsing.
+  const piece = {
+    id: "piece",
+    statics: [],
+    asset: { meshes: [] },
+    sockets: [],
+    footprint: { bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } }, clearance: 0.5 },
+  };
+  const redTemplate = (): THREE.Group => {
+    const map = new THREE.DataTexture(new Uint8ClampedArray([255, 0, 0, 255]), 1, 1);
+    map.needsUpdate = true;
+    const template = new THREE.Group();
+    template.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ map })));
+    return template;
+  };
+  const mapOf = (instance: THREE.Object3D): THREE.DataTexture =>
+    (((instance as THREE.Group).children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial)
+      .map as THREE.DataTexture;
+
+  it("carries the paint onto its placement, and says nothing of paint when bare", () => {
+    const placements = assetPlacements(
+      [
+        { moduleId: "piece", position: { x: 0, y: 0, z: 0 }, rotation: 0, color: "pink" },
+        { moduleId: "piece", position: { x: 5, y: 0, z: 0 }, rotation: 0 },
+      ],
+      { piece },
+    );
+    expect(placements[0]!.color).toBe("pink");
+    expect(placements[1]).not.toHaveProperty("color");
+  });
+
+  it("draws a painted placement tinted flat, bare ones from the file", () => {
+    const template = redTemplate();
+    const group = buildAssetVisuals(
+      { piece: template },
+      [
+        { moduleId: "piece", segmentIndex: 0, position: { x: 0, y: 0, z: 0 }, orientation: segmentOrientation({ rotation: 0 }), color: "blue" },
+        { moduleId: "piece", segmentIndex: 1, position: { x: 4, y: 0, z: 0 }, orientation: segmentOrientation({ rotation: 0 }) },
+      ],
+    );
+    // "piece" is a lone look, so even an authored hue tints (nothing to wear).
+    const material = ((group.children[0] as THREE.Group).children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial;
+    expect(material.map).toBeNull();
+    expect(material.color.getHex()).toBe(new THREE.Color().setHSL(220 / 360, 0.55, 0.55).getHex());
+    expect(mapOf(group.children[1]!)).toBe(mapOf(template));
+  });
+});
+
 describe("a scaled asset Segment (ADR 0062)", () => {
   // Synthetic: what is under test is the scale reaching the instance, not GLB parsing.
   const piece = {

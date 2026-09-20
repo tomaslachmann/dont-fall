@@ -14,6 +14,7 @@ import {
   type PropConfig,
   type PropSnapshot,
   type RenderCharacter,
+  type SegmentColorId,
   type SpinnerConfig,
   type Vec3,
   type VolumeConfig,
@@ -86,6 +87,13 @@ export interface StageConfig {
    */
   assetTemplates?: Record<string, THREE.Group>;
   assetPlacements?: AssetVisualPlacement[];
+  /**
+   * Each Segment's paint by index (`track.map((s) => s.color)`) — what Moving
+   * Segments look their hue up by. Still placements carry their own on
+   * `AssetVisualPlacement`, and Asset Props on their shape; this is the third
+   * path's lookup, for configs `resolveTrack` owns.
+   */
+  segmentColors?: ReadonlyArray<SegmentColorId | undefined>;
   /**
    * Every Spring on the Track (ADR 0069), with the Segment each fires for —
    * `resolveTrack`'s `launchPads`/`launchPadOwners`, which the game pairs up.
@@ -354,6 +362,7 @@ export const createStage = ({
   characterModel,
   assetTemplates = {},
   assetPlacements = [],
+  segmentColors = [],
   springs = [],
   movingSegments = [],
   conveyors = [],
@@ -420,6 +429,7 @@ export const createStage = ({
     props,
     assetTemplates,
     assetPlacements,
+    segmentColors,
     springs,
     movingSegments,
     conveyors,

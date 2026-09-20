@@ -839,4 +839,15 @@ describe("an Asset Prop (ADR 0095/0099)", () => {
     expect(resolved.props).toHaveLength(1);
     expect(resolved.conveyors).toEqual([]);
   });
+
+  it("carries the Segment's paint on its shape for the renderer, and nothing when bare", () => {
+    const painted = resolveTrack({ cone: CONE }, [
+      { moduleId: "cone", position: { x: 0, y: 0, z: 0 }, rotation: 0, prop: true, color: "orange" },
+    ]);
+    expect(painted.props[0]!.shape).toMatchObject({ kind: "asset", color: "orange" });
+    const bare = resolveTrack({ cone: CONE }, [
+      { moduleId: "cone", position: { x: 0, y: 0, z: 0 }, rotation: 0, prop: true },
+    ]);
+    expect(bare.props[0]!.shape).not.toHaveProperty("color");
+  });
 });

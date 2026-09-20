@@ -14,4 +14,11 @@ describe("attachmentConflictReason (ADR 0099)", () => {
     expect(attachmentConflictReason({ bounce: true, conveyor: { preset: "fast", angle: 0 } })).toBeUndefined();
     expect(attachmentConflictReason({ bounce: true, ice: true })).toMatch(/^ice and bounce are mutually exclusive/);
   });
+
+  it("lets paint ride on a Prop — visual-only — while everything behavioral stays refused", () => {
+    expect(attachmentConflictReason({ prop: true, color: "red" })).toBeUndefined();
+    expect(attachmentConflictReason({ prop: true, color: "blue", conveyor: { preset: "slow", angle: 0 } })).toMatch(
+      /^prop cannot be combined with a Conveyor — /,
+    );
+  });
 });

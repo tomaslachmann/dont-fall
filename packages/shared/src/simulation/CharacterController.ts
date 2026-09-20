@@ -253,6 +253,11 @@ export class CharacterController {
     this.movement.setRide(ride);
   }
 
+  /** Set this tick's belt flow under a Ragdolling body — `RapierSimulation` calls it before `beginTick`. */
+  setRagdollBelt(flow: Vec3 | undefined): void {
+    this.ragdolls.setBeltFlow(flow);
+  }
+
   /** Whether a swing fired THIS tick (M6 ticket 03) — see `InteractionController.pendingHitFired`. */
   get hitFiredThisTick(): boolean {
     return this.interaction.pendingHitFired;
@@ -568,6 +573,9 @@ export class CharacterController {
     // Player's input does one thing — the Struggle.
     if (mode.body === "held") this.interaction.struggle(input.moveDirection);
     else if (!this.tickingRagdoll) this.beginCapsuleTick(input, mode);
+    // A belt under a Ragdolling body drags it (its collider never moves, so
+    // physics alone would leave it standing still on a running belt).
+    else this.ragdolls.dragOnBelt();
     // A Spin turns the body, whatever the Player's own body turn says.
     if (this.interaction.spinning) this.currentFacing = this.interaction.spinFacing;
   }

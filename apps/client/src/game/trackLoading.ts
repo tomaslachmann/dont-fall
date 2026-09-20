@@ -4,6 +4,7 @@ import {
   assetIdsOf,
   createAssetLibraryLoader,
   resolveEnvironmentId,
+  visualAssetIdsOf,
   type EnvironmentId,
   type Module,
   type Track,
@@ -140,7 +141,9 @@ export const createTrackLoading = (host: string | undefined): TrackLoading => {
     return pending;
   };
   const loadVisualTemplates = async (track: Track): Promise<Record<string, THREE.Group>> => {
-    const ids = assetIdsOf(track);
+    // Paint files included: an authored hue wears its own file (collision
+    // above keeps `assetIdsOf` — physics never reads paint).
+    const ids = visualAssetIdsOf(track);
     const loaded = await Promise.all(ids.map(loadTemplate));
     return Object.fromEntries(ids.map((id, i) => [id, loaded[i]!]));
   };

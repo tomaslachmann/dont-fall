@@ -3,6 +3,7 @@ import { IDENTITY_QUAT, type Quat } from "../math/quat.js";
 import { lengthVec3, scaleVec3, vec3, type Vec3 } from "../math/vec3.js";
 import { PROP_PUSH_SCALE } from "../tuning/world.js";
 import type { SolidShape } from "../track/asset.js";
+import type { SegmentColorId } from "../track/SegmentColor.js";
 import { PROP_GROUPS } from "./collisionGroups.js";
 import { solidColliderDesc } from "./MovingSegment.js";
 
@@ -20,10 +21,10 @@ export type PropShape =
    * An Asset Prop (ADR 0095): a placed Asset a Character can shove around,
    * colliding as the authored solid parts a Moving Segment collides as — and
    * for the same reason (a hollow trimesh on a body that moves traps whatever
-   * ends up inside it). `moduleId`/`scale` are what the renderer draws it
-   * with; nothing in the simulation reads them.
+   * ends up inside it). `moduleId`/`scale`/`color` are what the renderer draws
+   * it with; nothing in the simulation reads them.
    */
-  | { kind: "asset"; moduleId: string; scale: number; parts: PropSolidPart[] };
+  | { kind: "asset"; moduleId: string; scale: number; parts: PropSolidPart[]; color?: SegmentColorId };
 
 export interface PropConfig {
   shape: PropShape;

@@ -281,6 +281,7 @@ const resolveCollision: Family = (placed, out) => {
             position: scaleVec3(part.position, scale),
             rotation: part.rotation,
           })),
+          ...(segment.color === undefined ? {} : { color: segment.color }),
         },
         center: segment.position,
         rotation: placed.orientation,

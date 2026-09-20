@@ -9,6 +9,7 @@ export type { PuffLook } from "./environment/cloudPuffs.js";
 export { findSpinningParts, spinParts, spinRate } from "./spinningParts.js";
 export { shareTextures } from "./assets/shareTextures.js";
 export type { SharedTextureCache } from "./assets/shareTextures.js";
+export { templateForPlacement } from "./assetVariants.js";
 export { deckSheetGeometry, deckRectGeometry } from "./deckSheet.js";
 export { loadDeckTexture, tileDeckTexture } from "./deckTexture.js";
 export type { DecodeDeckImage, DeckTilingOptions } from "./deckTexture.js";

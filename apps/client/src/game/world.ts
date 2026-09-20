@@ -81,6 +81,7 @@ export const buildWorld = async (deps: WorldDeps, ref: TrackRef, spawn: Vec3): P
     // clones with its scene-graph sweep, and the new one clones afresh.
     assetTemplates: await deps.loading.loadVisualTemplates(track),
     assetPlacements: assetPlacements(track, library),
+    segmentColors: track.map((segment) => segment.color),
     springs: springTriggers(resolved.launchPads, resolved.launchPadOwners),
     movingSegments: resolved.movingSegments,
     conveyors: resolved.conveyors,

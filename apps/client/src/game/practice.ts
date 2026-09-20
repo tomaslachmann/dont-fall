@@ -120,6 +120,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     characterModel,
     assetTemplates: await loadVisualTemplates(track),
     assetPlacements: assetPlacements(track, library),
+    segmentColors: track.map((segment) => segment.color),
     springs: springTriggers(resolved.launchPads, resolved.launchPadOwners),
     bounceDecks: resolved.bounceDecks,
     movingSegments: resolved.movingSegments,

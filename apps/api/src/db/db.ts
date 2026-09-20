@@ -239,6 +239,22 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
   // or a "log out everywhere" feature, would need to query by account.
   db.run(sql`CREATE INDEX IF NOT EXISTS idx_sessions_account_id ON sessions (account_id)`);
 
+  // Track drafts (ADR 0114): brand-new table, so plain
+  // `CREATE TABLE IF NOT EXISTS` — no backfill, nothing to migrate.
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS track_drafts (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      round_type TEXT NOT NULL,
+      data TEXT NOT NULL,
+      time_limit_ms INTEGER NOT NULL,
+      survivor_target INTEGER NOT NULL,
+      environment TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+
   // Spectator wagering (ticket 14): brand-new tables, so plain
   // `CREATE TABLE IF NOT EXISTS` — no backfill, nothing to migrate.
   db.run(sql`

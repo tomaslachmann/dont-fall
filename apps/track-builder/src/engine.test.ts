@@ -760,6 +760,80 @@ describe("asset visuals", () => {
     for (let i = 0; i < 200 && !engine.assetsLoaded; i += 1) await flush(5);
     expect(engine.assetsLoaded).toBe(true);
   });
+
+  it("tops up legacy files for a Track loaded after the tab stream settled", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/tracks/abc"))
+          return Response.json({
+            id: "abc",
+            name: null,
+            track: [{ moduleId: "kaykit_platform_6x6x1_blue", position: { x: 0, y: 0, z: 0 }, rotation: 0 }],
+            timeLimitMs: 60000,
+            survivorTarget: 4,
+          });
+        return new Response(triangleGlb() as unknown as BodyInit);
+      }),
+    );
+    engine.ensureAssetTemplates();
+    for (let i = 0; i < 200 && !engine.assetsLoaded; i += 1) await flush(5);
+    // Deduped tiles never fetch the blue file — the Track's own top-up does.
+    expect(engine.templateFor("kaykit_platform_6x6x1_blue")).toBeUndefined();
+    await engine.loadTrackById("abc");
+    for (let i = 0; i < 50 && !engine.templateFor("kaykit_platform_6x6x1_blue"); i += 1) await flush(5);
+    expect(engine.templateFor("kaykit_platform_6x6x1_blue")).toBeDefined();
+  });
+
+  it("tops up the paint file when the inspector repaints a Segment", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        seen.push(url);
+        return new Response(triangleGlb() as unknown as BodyInit);
+      }),
+    );
+    engine.ensureAssetTemplates();
+    for (let i = 0; i < 200 && !engine.assetsLoaded; i += 1) await flush(5);
+    expect(engine.templateFor("kaykit_platform_6x6x1_blue")).toBeUndefined();
+
+    engine.placeModule("kaykit_platform_6x6x1_red");
+    engine.setSegmentColor("blue");
+    for (let i = 0; i < 50 && !engine.templateFor("kaykit_platform_6x6x1_blue"); i += 1) await flush(5);
+    expect(seen.some((url) => url.endsWith("kaykit_platform_6x6x1_blue.glb"))).toBe(true);
+    expect(engine.templateFor("kaykit_platform_6x6x1_blue")).toBeDefined();
+    // A flat tint needs no file — repainting orange fetches nothing new.
+    const calls = seen.length;
+    engine.setSegmentColor("orange");
+    await flush(10);
+    expect(seen.length).toBe(calls);
+  });
+});
+
+describe("family placement paint", () => {
+  it("paints a family placement its file's own color, and leaves lone looks colorless", () => {
+    engine.placeModule("kaykit_platform_6x6x1_red");
+    expect(engine.track[0]).toMatchObject({ moduleId: "kaykit_platform_6x6x1_red", color: "red" });
+    engine.placeModule("kaykit_platform_4x4x1_blue");
+    expect(engine.track[1]).toMatchObject({ moduleId: "kaykit_platform_4x4x1_blue", color: "blue" });
+    engine.placeModule("kaykit_ball");
+    expect(engine.track[2]).toMatchObject({ moduleId: "kaykit_ball" });
+    expect(engine.track[2]!.color).toBeUndefined();
+  });
+
+  it("repaints the primary family Segment, and never a lone look", () => {
+    engine.placeModule("kaykit_platform_6x6x1_red");
+    engine.placeModule("kaykit_ball");
+    engine.select(0);
+    engine.setSegmentColor("purple");
+    expect(engine.track[0]!.color).toBe("purple");
+    engine.select(1);
+    engine.setSegmentColor("purple");
+    expect(engine.track[1]!.color).toBeUndefined();
+    engine.select(undefined);
+    expect(() => engine.setSegmentColor("purple")).not.toThrow();
+  });
 });
 
 describe("a Spring's height (ADR 0069)", () => {

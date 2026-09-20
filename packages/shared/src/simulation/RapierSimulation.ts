@@ -8,6 +8,7 @@ import { characterSnapshot, type CharacterSnapshot, type HeldPhase, type Elimina
 import { CAPSULE_BOTTOM_OFFSET, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, GROUND_SNAP_DISTANCE, GRAVITY_Y, SEAT_CLEAR_MAX_LIFT, SEAT_CLEAR_STEP, SURFACE_GROUND_NORMAL_MIN_Y } from "../tuning/character.js";
 import { TICK_DT } from "../tuning/clock.js";
 import { BUMP_IMPULSE_SCALE, BUMP_LIFT_RATIO, HIT_FACING_COS_MIN, HIT_LIFT_RATIO, HIT_RANGE, ELIMINATION_CREDIT_TICKS } from "../tuning/fight.js";
+import { RAGDOLL_BELT_REACH } from "../tuning/knockdown.js";
 import { DEFAULT_KILL_PLANE_Y, MOVING_SEGMENT_LIFT_RATIO, SPIKED_IMPACT_MAGNITUDE, SPIKED_LIFT_RATIO } from "../tuning/world.js";
 import { DEFAULT_SURFACE, surfaceConfig, type SurfaceId } from "../track/Surface.js";
 import { passesThroughGate } from "../track/Gate.js";
@@ -20,7 +21,7 @@ import { hitImpactMagnitude } from "./HitController.js";
 import { isDownMotionState, isPlayerDrivenMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import type { FinishZone } from "./FinishZone.js";
-import { STATIC_GROUPS } from "./collisionGroups.js";
+import { GROUP_CHARACTER, GROUP_RAGDOLL, STATIC_GROUPS } from "./collisionGroups.js";
 import type { LaunchPadConfig } from "./LaunchPad.js";
 import { MirrorCharacter } from "./MirrorCharacter.js";
 import { slipRoll } from "./slipRoll.js";
@@ -606,6 +607,30 @@ export class RapierSimulation {
   }
 
   /**
+   * The belt flow under a Ragdolling body, if it lies (or tumbles low) over
+   * one. A belt is virtual — its collider never moves — so without this the
+   * drag has nothing to read and a down body stands still on a running belt
+   * (found live 2026-09-20). Only Ragdoll proper: a Held body belongs to its
+   * hold, and GettingUp's capsule rides the belt itself while the sweep
+   * follows it. Characters and bones never count as the floor below.
+   */
+  private beltUnderRagdoll(character: CharacterController): Vec3 | undefined {
+    if (character.motionState !== "Ragdoll") return undefined;
+    const at = character.position;
+    const hit = this.world.castRay(
+      new RAPIER.Ray({ x: at.x, y: at.y, z: at.z }, { x: 0, y: -1, z: 0 }),
+      RAGDOLL_BELT_REACH,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (collider) => ((collider.collisionGroups() >>> 16) & (GROUP_CHARACTER | GROUP_RAGDOLL)) === 0,
+    );
+    return hit ? this.staticConveyorByHandle.get(hit.collider.handle) : undefined;
+  }
+
+  /**
    * Moving Segments that moved into `character` this step (ADR 0061): each one
    * pushes the capsule out along its contact normal (taken by the next sweep),
    * and the closing speed there — the Segment's velocity at the contact point
@@ -1122,6 +1147,7 @@ export class RapierSimulation {
       if (this.progress.get(id)!.eliminated) continue;
       character.clearHold();
       character.setRide(this.rideFor(character));
+      character.setRagdollBelt(this.beltUnderRagdoll(character));
     }
     this.holds.assertBeforeStep();
     for (const [id, hold] of this.ownHolds) this.characters.get(id)?.holdAs(hold.role, hold.phase);

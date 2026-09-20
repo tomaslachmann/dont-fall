@@ -121,6 +121,30 @@ describe("loading only the Track's Assets (memory-footprint ticket 01)", () => {
     expect(second.kaykit_arch_blue).toBe(first.kaykit_arch_blue);
   });
 
+  it("fetches a painted Segment's authored file for visuals, never for collision", async () => {
+    const requested = servingAssets();
+    const loading = createTrackLoading("example.test");
+    const track: Track = [{ moduleId: "kaykit_arch_red", position: { x: 0, y: 0, z: 0 }, rotation: 0, color: "blue" }];
+
+    const [library, templates] = await Promise.all([loading.loadLibrary(track), loading.loadVisualTemplates(track)]);
+
+    expect(requested.sort()).toEqual(["kaykit_arch_blue.glb", "kaykit_arch_red.glb"]);
+    expect(Object.keys(templates).sort()).toEqual(["kaykit_arch_blue", "kaykit_arch_red"]);
+    expect(library.kaykit_arch_red?.asset).toBeDefined();
+    expect(library.kaykit_arch_blue).toBeUndefined();
+  });
+
+  it("a flat tint needs no file beyond the placed one", async () => {
+    const requested = servingAssets();
+    const loading = createTrackLoading("example.test");
+    const track: Track = [{ moduleId: "kaykit_arch_red", position: { x: 0, y: 0, z: 0 }, rotation: 0, color: "orange" }];
+
+    const templates = await loading.loadVisualTemplates(track);
+
+    expect(requested).toEqual(["kaykit_arch_red.glb"]);
+    expect(Object.keys(templates)).toEqual(["kaykit_arch_red"]);
+  });
+
   it("names a file that failed to download, and downloads it again on the next try", async () => {
     let failures = 1;
     const requested = servingAssets();

@@ -19,6 +19,12 @@
 # mode: the one SQLite file at `apps/api/data/track-service.sqlite` (a
 # compose bind mount, so also visible from inside containers).
 #
+# The track-builder MCP server (apps/mcp-track-builder, ADR 0114) is stdio —
+# the MCP client spawns it per session, so this script can't host it. Pass
+# --mcp to start what it needs instead (the API is already here; the builder
+# serves the thumbnail page `screenshot_draft` renders through) and print
+# the `mcpServers` snippet to add to the client config. Implies --builder.
+#
 # The API runs via Docker by default (ticket 13 — matching how it actually
 # runs in practice). Pass --api=local to run it as a plain tsx watch
 # process instead: hot-reloads on every API change with no compose rebuild,
@@ -38,14 +44,16 @@ export SERVICE_TOKEN="${SERVICE_TOKEN:-local-dev-betting-token}"
 
 WITH_BUILDER=0
 WITH_DB_GUI=0
+WITH_MCP=0
 API_MODE="docker"
 for arg in "$@"; do
   case "$arg" in
     --builder|-b) WITH_BUILDER=1 ;;
     --db-gui) WITH_DB_GUI=1 ;;
+    --mcp) WITH_MCP=1; WITH_BUILDER=1 ;;
     --api=docker|--api=local) API_MODE="${arg#--api=}" ;;
     *)
-      echo "Usage: pnpm dev [--api=docker|local] [--builder|-b] [--db-gui]" >&2
+      echo "Usage: pnpm dev [--api=docker|local] [--builder|-b] [--db-gui] [--mcp]" >&2
       exit 1
       ;;
   esac
@@ -118,6 +126,23 @@ if [ "$WITH_DB_GUI" = 1 ]; then
     sleep 0.3
   done
   echo "db-gui ready at http://localhost:8082"
+fi
+if [ "$WITH_MCP" = 1 ]; then
+  echo "Waiting for the builder (the MCP server screenshots through it)..."
+  until curl -sf http://localhost:5174/thumbnail.html >/dev/null 2>&1; do
+    sleep 0.3
+  done
+  echo "MCP prerequisites ready. Add this to the client config:"
+  echo "{"
+  echo '  "mcpServers": {'
+  echo '    "dont-fall-track-builder": {'
+  echo '      "command": "pnpm",'
+  echo '      "args": ["--filter", "@dont-fall/mcp-track-builder", "start"],'
+  echo "      \"cwd\": \"$(pwd)\","
+  echo '      "env": { "TRACK_API_URL": "http://localhost:8081" }'
+  echo "    }"
+  echo "  }"
+  echo "}"
 fi
 
 # Everything above runs in the background and this waits on it — bash defers
