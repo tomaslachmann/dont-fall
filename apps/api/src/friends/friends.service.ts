@@ -22,10 +22,9 @@ import {
   ensureFriendCode,
   incomingRequests,
   listFriends,
+  liveInvites,
   markInvitesDelivered,
   pendingBetween,
-  pendingInvites,
-  recordBeat,
   removeFriendship,
   sendRequest,
 } from "./friends.dao.js";
@@ -45,6 +44,12 @@ export interface FriendsEnv {
   presence: PresenceSource;
   /** Overridable clock; production callers omit it. */
   now?: () => number;
+  /**
+   * Pushes a Lobby invite over the recipient's Account socket (ADR 0112) —
+   * `true` when one was open to take it. Absent, or `false`, the invite
+   * waits for that socket's next connect.
+   */
+  pushLobbyInvite?: (toAccountId: string, invite: LobbyInviteView) => boolean;
 }
 
 /** A sent Lobby invite stops being offered after five minutes. */
@@ -151,35 +156,29 @@ export const unfriend = (db: ApiDb, accountId: string, friendAccountId: string):
 });
 
 /**
- * `POST /friends/heartbeat` — "I am here", the only write presence needs. Also
- * the moment pending Lobby invites surface: each invite is delivered on
- * exactly one heartbeat (the toast's one shot), then marked so it never
- * repeats.
+ * The Lobby invites an Account socket pushes when it connects (ADR 0112) —
+ * every unexpired one this Account holds, whether or not it has been sent
+ * before. A send is only ever "the socket accepted the bytes", which a
+ * half-open connection the ping sweep has not caught yet does too, so an
+ * invite pushed once and never again is an invite lost for good; the client
+ * drops a duplicate by id. `deliveredAt` stays what it was — the record that
+ * one reached a socket at least once, not permission to forget it.
  */
-export const heartbeat = (
-  db: ApiDb,
-  env: FriendsEnv,
-  accountId: string,
-): { ok: true; invites: LobbyInviteView[] } => {
-  const now = clock(env)();
-  recordBeat(db, accountId, now);
-  const invites = pendingInvites(db, accountId, now);
+export const invitesOnConnect = (db: ApiDb, accountId: string, nowMs: number): LobbyInviteView[] => {
+  const invites = liveInvites(db, accountId, nowMs);
   markInvitesDelivered(
     db,
-    invites.map((invite) => invite.id),
-    now,
+    invites.filter((invite) => invite.deliveredAt === null).map((invite) => invite.id),
+    nowMs,
   );
-  return {
-    ok: true,
-    invites: invites.map((invite) => ({
-      id: invite.id,
-      fromAccountId: invite.fromAccountId,
-      fromDisplayName: invite.fromDisplayName,
-      fromColor: invite.fromColor,
-      lobby: invite.lobbyRef,
-      sentAt: invite.createdAt,
-    })),
-  };
+  return invites.map((invite) => ({
+    id: invite.id,
+    fromAccountId: invite.fromAccountId,
+    fromDisplayName: invite.fromDisplayName,
+    fromColor: invite.fromColor,
+    lobby: invite.lobbyRef,
+    sentAt: invite.createdAt,
+  }));
 };
 
 /**
@@ -235,7 +234,9 @@ const parseLobbyRef = (value: unknown): LobbyRef | undefined => {
 
 /**
  * `POST /friends/invite` — invite a friend to a Lobby. Friends-only (403 for
- * strangers); the invite itself is a bearer capability that expires.
+ * strangers); the invite itself is a bearer capability that expires. Pushed
+ * at once when the friend's Account socket is open (ADR 0112), and stored
+ * either way, so one sent to a closed game arrives on its next connect.
  */
 export const inviteFriend = (
   db: ApiDb,
@@ -254,15 +255,24 @@ export const inviteFriend = (
     throw new ServiceError(403, "you can only invite friends");
   }
   const now = clock(env)();
-  return {
-    id: createInvite(db, {
-      fromAccountId,
-      toAccountId: body.accountId,
-      lobbyRef: lobby,
-      createdAt: now,
-      expiresAt: now + INVITE_TTL_MS,
-    }),
+  const id = createInvite(db, {
+    fromAccountId,
+    toAccountId: body.accountId,
+    lobbyRef: lobby,
+    createdAt: now,
+    expiresAt: now + INVITE_TTL_MS,
+  });
+  const from = getAccountById(db, fromAccountId);
+  const view: LobbyInviteView = {
+    id,
+    fromAccountId,
+    fromDisplayName: from?.displayName ?? "Unknown player",
+    fromColor: from?.color ?? 0,
+    lobby,
+    sentAt: now,
   };
+  if (env.pushLobbyInvite?.(body.accountId, view) === true) markInvitesDelivered(db, [id], now);
+  return { id };
 };
 
 /**

@@ -107,23 +107,29 @@ in its ticket:
 
 - **Parties**: invite friends into a party from the menu, and a Quick Match seats the party
   together (PlaySelect's BRINGING).
-- **Voice chat**: OFF / PARTY / ALL, where PARTY is your party.
+- **Voice chat**: OFF / PARTY / ALL, where PARTY is your party. Settled in **ADR 0111**.
 - **Drafts**: a Track has an owning Account and may be a draft. The main menu's BUILD tile counts
   your drafts.
 
 ### Presentation choices
 
-- **Emotes and a victory pose** play outside a Round only: Character Select (PLAY EMOTE), your bean
-  in the Lobby, and the MatchOver podium. They are stored on the Account like a Hat, with no change
-  to the Round protocol. The set is what the rig has: Win, Shrug, Sulk, Wobble and Punch. The
-  user's choice, over an in-Round emote key.
+- **Emotes and a victory pose** play outside a Round only. The emote plays on your bean in the main
+  menu and in Character Select (PLAY EMOTE). The victory pose plays on your Profile and on the
+  MatchOver podium when you win; 2nd and 3rd keep their sulk and shrug. VICTORY POSE steps through
+  the set and shows each pose as it is picked. Both are stored on the Account like a Hat, with no
+  change to the Round protocol. The podium reads the winner's pose from its Account when the result
+  is read, so it is a signature and not a record. The set is what the rig has: Win, Shrug, Sulk,
+  Wobble and Punch. The user's choice, over an in-Round emote key; the Lobby, which has no 3D bean,
+  plays neither.
 - **The Dash meter** becomes the mock DashFeedback's charge card (DASH CHARGE, the key, one pip for
   the one Dash, RECHARGES IN), and it blinks while the Dash is ready. The DashFeedback overlay
   itself is not ported.
 - **The pause menu** (the mock's SettingsModal) opens on Esc in a Round and holds three real
   settings: **screen shake** on impact (OFF / LOW / FULL, a camera shake that does not exist yet),
   **nameplates** over other beans (OFF / ON, which do not exist yet), and voice chat. The same
-  settings live on Settings → GAMEPLAY.
+  settings live in Settings where the design puts them: screen shake on AUDIO beside voice chat,
+  nameplates on GAMEPLAY. The sheet opens when the Player lets go of the mouse mid-Match (Esc, or
+  the window losing focus) or presses Esc with it free; × takes the mouse back.
 
 ### Not built now
 
@@ -138,5 +144,5 @@ Elimination card. Their controls stay as they are until their own milestone.
   `eliminated` and taken from the server on reconcile; nothing else in the step reads it.
 - `POST /rewards/claim` stops taking rounds from the client, so a client cannot mint earnings.
 - Public Lobbies stop waiting for a host, which ADR 0040 assumed they would.
-- Parties, voice chat, public-Lobby auto-start and drafts are the four decisions left open. Each is
-  settled with the user before its ticket is built.
+- Parties, public-Lobby auto-start and drafts are the three decisions left open. Each is settled
+  with the user before its ticket is built. Voice chat, the fourth, is settled in ADR 0111.

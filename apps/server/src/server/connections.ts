@@ -16,16 +16,42 @@ import { seatForJoin, seatOf, type Seat } from "./seats.js";
  */
 
 /**
+ * Whether this connection may sit down, and with what place in line: a
+ * Reservation's own `joinOrder` (ADR 0112), or `null` for an ordinary
+ * connection, which takes the next one free the moment it registers.
+ */
+type Admission = { seated: false } | { seated: true; joinOrder: number | null };
+
+/**
  * A full server refuses the next connection outright rather than ever seating
  * a Character past `maxPlayers` (grilling session, 2026-09). Checked first and
  * synchronously, before this handler awaits anything. The cap counts every
  * connection this process holds, spectators included — that is what a
- * Player-facing "N SLOTS OPEN" means.
+ * Player-facing "N SLOTS OPEN" means — and every live Reservation (ADR 0112),
+ * so a stranger cannot take a seat a Party member is walking into.
+ *
+ * A connection carrying `?reservation=<token>` of a live Reservation uses it
+ * up and takes that seat instead, which is why it passes even when the
+ * connections plus the Reservations fill the server: the seat was counted
+ * when it was granted. It takes that Reservation's *place in line* too, so
+ * arrival order does not decide who hosts (review finding, 2026-09-19 — see
+ * `Reservations.grant`). An unknown, expired or spent token is an ordinary
+ * connection. Used up here, before any await, so two connections can never
+ * both spend one.
  */
-const ensureCapacity = (rt: MatchRuntime, socket: WebSocket): boolean => {
-  if (rt.sockets.size < rt.config.maxPlayers) return true;
+const ensureCapacity = (rt: MatchRuntime, socket: WebSocket, req: IncomingMessage): Admission => {
+  const token = new URL(req.url ?? "/", "http://match-server").searchParams.get("reservation");
+  const reserved = token === null ? null : rt.reservations.use(token);
+  // `!== null` rather than truthiness: join order 0 is a real place in line,
+  // and the very one a Party host walking into a fresh Lobby holds.
+  if (reserved !== null) {
+    // One fewer bean arriving: the Lobby's start blocker changed (ADR 0057).
+    rt.snapshotDirty = true;
+    return { seated: true, joinOrder: reserved };
+  }
+  if (rt.sockets.size + rt.reservations.liveCount() < rt.config.maxPlayers) return { seated: true, joinOrder: null };
   socket.close(4003, truncateForCloseReason(`server is full (${rt.config.maxPlayers} players)`));
-  return false;
+  return { seated: false };
 };
 
 /**
@@ -81,14 +107,29 @@ const maybeReloadTrack = async (rt: MatchRuntime, socket: WebSocket, req: Incomi
   return true;
 };
 
-/** Seats the connection, gives it its id, and welcomes it. */
-const registerConnection = (rt: MatchRuntime, socket: WebSocket, seat: Seat): string => {
+/**
+ * Seats the connection, gives it its id, and welcomes it. `reservedJoinOrder`
+ * is the place in line a spent Reservation kept for it (ADR 0112), `null` for
+ * an ordinary connection, which takes the next one.
+ */
+const registerConnection = (rt: MatchRuntime, socket: WebSocket, seat: Seat, reservedJoinOrder: number | null): string => {
   const id = randomUUID();
+  // A reserved connection takes the place its Reservation kept; anyone else
+  // takes the next one free, and only then is one spent (`reserveSeats` has
+  // already advanced the counter past every place it reserved).
+  const joinOrder = reservedJoinOrder ?? rt.joinCount;
+  if (reservedJoinOrder === null) rt.joinCount += 1;
+  // The spawn slot is the place in line, reserved or not — `buildSimulationFor`
+  // re-seats every Player from their own `joinOrder` on every Track pick and
+  // every later Round, so a reserved connection given any other spawn index
+  // would jump to a different slot the first time the world was rebuilt under
+  // it. Its block was claimed before it arrived, so the slot is its own; an
+  // unspent Reservation's slot is simply skipped, the same way the monotonic
+  // counter already skips one when a Player leaves.
+  //
   // The loaded Track's own start frame — free placement puts the start
   // platform anywhere, so M1's world coords are never right (playtest bug, 2026-09).
-  const spawn = trackSpawn(rt.fetched.track, rt.joinCount, rt.library);
-  const joinOrder = rt.joinCount;
-  rt.joinCount += 1;
+  const spawn = trackSpawn(rt.fetched.track, joinOrder, rt.library);
   rt.sockets.set(id, socket);
   rt.inputs.add(id);
   // A newcomer has nothing yet, so the next tick must push even though the
@@ -182,14 +223,18 @@ const wireLifecycle = (rt: MatchRuntime, id: string, socket: WebSocket): void =>
     // 0089): a Round held in LOADING by the client that just dropped starts
     // for whoever is left.
     rt.loaded.delete(id);
+    // …and out of the Lobby's voice room (ADR 0111), which is this roster and
+    // nothing a client says.
+    rt.accountRoster.changed(rt.lobbyPlayers.values());
   });
 };
 
 /** One connection, start to finish. Refusals close the socket and return without seating anyone. */
 export const handleConnection = async (rt: MatchRuntime, socket: WebSocket, req: IncomingMessage): Promise<void> => {
-  if (!ensureCapacity(rt, socket)) return;
+  const admission = ensureCapacity(rt, socket, req);
+  if (!admission.seated) return;
   if (!(await maybeReloadTrack(rt, socket, req))) return;
-  const id = registerConnection(rt, socket, seatForJoin(rt));
+  const id = registerConnection(rt, socket, seatForJoin(rt), admission.joinOrder);
   wireMessages(rt, id, socket);
   wireLifecycle(rt, id, socket);
 };

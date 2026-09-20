@@ -1,7 +1,13 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { IDENTITY_QUAT } from "../math/quat.js";
 import { vec3, type Vec3 } from "../math/vec3.js";
-import { RAGDOLL_ANGULAR_DAMPING, RAGDOLL_CONTACT_SKIN, RAGDOLL_FRICTION, RAGDOLL_LINEAR_DAMPING, RAGDOLL_SOLVER_ITERATIONS } from "../tuning/knockdown.js";
+import {
+  RAGDOLL_ANGULAR_DAMPING,
+  RAGDOLL_CONTACT_SKIN,
+  RAGDOLL_FRICTION,
+  RAGDOLL_LINEAR_DAMPING,
+  RAGDOLL_SOLVER_ITERATIONS,
+} from "../tuning/knockdown.js";
 import { RAGDOLL_GROUPS } from "./collisionGroups.js";
 import {
   jointRestPoint,
@@ -28,15 +34,56 @@ interface Bone {
  * it into the standing pose and lets physics take over, {@link deactivate} freezes
  * it. `SimState` never holds any of these handles (ADR 0009).
  */
+/**
+ * The collider a bone wears, by {@link BoneSpec.shape}. A body is not all one
+ * shape — a torso is closer to a box, a joint to a ball, a limb to a capsule
+ * — so each bone says which it is, and `"capsule"` is what it has always been.
+ *
+ * A capsule reads `halfHeight` as its cylinder alone, with `radius` adding to
+ * both ends, which is that shape's own convention. A box has no caps, so for
+ * one of those all three of `radius`, `halfHeight` and `depth` are plain
+ * half-extents; it is rounded to within a hair of its thinnest axis, which is
+ * what makes a flattened one read as an egg rather than a brick.
+ */
+const shapeFor = (spec: BoneSpec): RAPIER.ColliderDesc => {
+  if (spec.shape === "hull" && spec.hullPoints && spec.hullPoints.length >= 4) {
+    const flat = new Float32Array(spec.hullPoints.length * 3);
+    for (const [i, point] of spec.hullPoints.entries()) {
+      flat[i * 3] = point.x;
+      flat[i * 3 + 1] = point.y;
+      flat[i * 3 + 2] = point.z;
+    }
+    const hull = RAPIER.ColliderDesc.convexHull(flat);
+    // Rapier answers null for points it cannot wrap — degenerate, or too few.
+    // A bone with no collider at all would fall through the world silently.
+    if (hull) return hull;
+  }
+  if ((spec.shape ?? "capsule") === "capsule") return RAPIER.ColliderDesc.capsule(spec.halfHeight, spec.radius);
+  const depth = spec.depth ?? spec.radius;
+  const roundness = Math.min(1, Math.max(0, spec.roundness ?? 1));
+  // Rounded to within a hair of the thinnest axis at most, so the box never
+  // collapses to nothing in the direction it is being rounded from.
+  const border = Math.min(spec.radius, spec.halfHeight, depth) * 0.95 * roundness;
+  return border <= 0
+    ? RAPIER.ColliderDesc.cuboid(spec.radius, spec.halfHeight, depth)
+    : RAPIER.ColliderDesc.roundCuboid(spec.radius - border, spec.halfHeight - border, depth - border, border);
+};
+
 export class Ragdoll {
   private readonly world: RAPIER.World;
   private readonly bones: Bone[] = [];
   private readonly byName = new Map<string, RAPIER.RigidBody>();
   private active = false;
 
-  constructor(world: RAPIER.World) {
+  /**
+   * `specs` lets a caller try a different body without forking this class:
+   * `apps/client/src/rubber` hands it a flattened torso to see how it
+   * settles. The game always uses the default, so nothing here changes for a
+   * Match until that experiment is settled.
+   */
+  constructor(world: RAPIER.World, specs: readonly BoneSpec[] = RAGDOLL_BONES) {
     this.world = world;
-    for (const spec of RAGDOLL_BONES) {
+    for (const spec of specs) {
       const body = world.createRigidBody(
         RAPIER.RigidBodyDesc.fixed()
           .setTranslation(spec.restCenter.x, spec.restCenter.y, spec.restCenter.z)
@@ -45,8 +92,10 @@ export class Ragdoll {
           .setAdditionalSolverIterations(RAGDOLL_SOLVER_ITERATIONS) // ticket 08: survive a dash-crash into a Prop
           .setCanSleep(false),
       );
+      const offset = spec.colliderOffset;
       const collider = world.createCollider(
-        RAPIER.ColliderDesc.capsule(spec.halfHeight, spec.radius)
+        shapeFor(spec)
+          .setTranslation(offset?.x ?? 0, offset?.y ?? 0, offset?.z ?? 0)
           .setMass(spec.mass)
           .setFriction(RAGDOLL_FRICTION)
           .setContactSkin(RAGDOLL_CONTACT_SKIN)
@@ -58,10 +107,16 @@ export class Ragdoll {
       this.byName.set(spec.name, body);
     }
 
-    for (const spec of RAGDOLL_BONES) {
+    for (const spec of specs) {
       if (!spec.parent) continue;
-      const parentSpec = RAGDOLL_BONES.find((b) => b.name === spec.parent)!;
-      const joint = jointRestPoint(spec, parentSpec);
+      const parentSpec = specs.find((b) => b.name === spec.parent)!;
+      // A bone that carries its own collider offset is sitting on a rig
+      // pivot, so that pivot is where it turns; anything else meets its
+      // parent halfway between the two shapes, as it always has.
+      const joint =
+        spec.colliderOffset === undefined
+          ? jointRestPoint(spec, parentSpec)
+          : spec.restCenter;
       const anchorParent = {
         x: joint.x - parentSpec.restCenter.x,
         y: joint.y - parentSpec.restCenter.y,
@@ -91,6 +146,7 @@ export class Ragdoll {
           throw new Error(`Ragdoll: "${spec.name}" wanted a limited hinge but Rapier returned an unlimitable joint`);
         }
         link.setLimits(spec.hinge.min, spec.hinge.max);
+
       }
       // Bones that share a joint always overlap at it, so now that bones see
       // each other at all (`RAGDOLL_GROUPS`) their contact would be a
@@ -117,7 +173,7 @@ export class Ragdoll {
         },
         false,
       );
-      body.setRotation(IDENTITY_QUAT, false);
+      body.setRotation(spec.restRotation ?? IDENTITY_QUAT, false);
       body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
       body.setLinvel(velocity, true);
       body.setAngvel(ZERO, true);
@@ -211,7 +267,7 @@ export class Ragdoll {
     }
   }
 
-  /** Per-bone world transforms in {@link RAGDOLL_BONES} order. */
+  /** Per-bone world transforms, in the order of the skeleton this was built from. */
   readBones(): BoneSnapshot[] {
     return this.bones.map(({ body }) => {
       const t = body.translation();

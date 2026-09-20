@@ -4,6 +4,8 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../app.js";
+import { openDb, type ApiDb } from "../db/db.js";
+import { recordBeat } from "../friends/friends.dao.js";
 import type { LobbyStatus } from "../lobbies/lobbies.service.js";
 
 /**
@@ -26,14 +28,16 @@ const fakeMatchServers = () => {
 };
 
 let dir: string;
+let db: ApiDb;
 let app: FastifyInstance;
 let fakes: ReturnType<typeof fakeMatchServers>;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "api-settings-test-"));
+  db = openDb(join(dir, "test.sqlite"));
   fakes = fakeMatchServers();
   app = await buildApp({
-    dbPath: join(dir, "test.sqlite"),
+    db,
     apiUrl: "http://localhost:8081",
     maxPlayers: 4,
     lobbies: {
@@ -65,8 +69,9 @@ describe("GET /game-settings", () => {
         url: "/auth/signup",
         payload: { email, password: "correct horse battery staple", displayName: email.split("@")[0] },
       });
-      const { token } = signup.json() as { token: string };
-      await app.inject({ method: "POST", url: "/friends/heartbeat", headers: { authorization: `Bearer ${token}` } });
+      const { account } = signup.json() as { account: { id: string } };
+      // The Account socket's beat (ADR 0112) — its own suite proves the socket writes it.
+      recordBeat(db, account.id, Date.now());
     };
     await beat("amy@example.com");
     await beat("bo@example.com");

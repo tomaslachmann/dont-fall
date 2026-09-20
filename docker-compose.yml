@@ -48,6 +48,11 @@ services:
       # servers share the process env, so no further wiring is needed. Never
       # ship a real deployment on this default.
       SERVICE_TOKEN: "${SERVICE_TOKEN:-local-dev-betting-token}"
+      # Voice chat's relay (ADR 0111) — a worker thread of this service with
+      # a port of its own. Deliberately not published to the host: nginx
+      # reaches it over the compose network (`/api/voice`), and a stack with
+      # no nginx in front gets it through the API's own upgrade handler.
+      VOICE_PORT: "8083"
     volumes:
       # Deliberately the old volume name: the SQLite file inside keeps its
       # path (`/data/track-service.sqlite`), so existing dev data survives

@@ -180,6 +180,11 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): TickSc
     // points on that specific tick.
     let precomputedState: SimState | undefined;
     try {
+      // ADR 0112: a Reservation nobody used stops holding its seat and the
+      // Lobby's start. Every live read already ignores an expired one; this
+      // sweeps them, and a Lobby sitting idle only broadcasts on change (ADR
+      // 0057) — the host's Start button freeing up is one.
+      if (rt.reservations.dropExpired()) rt.snapshotDirty = true;
       // Decided before anything is simulated, and committed below only once
       // the tick has actually succeeded — the same discipline `serverTick`
       // itself follows, so a failed tick retries this exact decision rather

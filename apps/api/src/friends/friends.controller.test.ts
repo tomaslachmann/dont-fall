@@ -21,6 +21,10 @@ const fakeMatchServers = () => {
       return { port, close: async () => void statuses.delete(port) };
     }),
     fetchLobbyStatus: vi.fn(async (port: number) => statuses.get(port) ?? null),
+    // A signed-in create reserves the creator's seat (ADR 0112) — always granted here.
+    reserveSeats: vi.fn(async (_port: number, accountIds: readonly string[]) =>
+      Object.fromEntries(accountIds.map((id) => [id, `reservation-${id}`])),
+    ),
   };
 };
 
@@ -47,7 +51,7 @@ beforeEach(async () => {
     db,
     apiUrl: "http://localhost:8081",
     maxPlayers: 4,
-    lobbies: { startMatchServer: fakes.startMatchServer, fetchLobbyStatus: fakes.fetchLobbyStatus },
+    lobbies: { startMatchServer: fakes.startMatchServer, fetchLobbyStatus: fakes.fetchLobbyStatus, reserveSeats: fakes.reserveSeats },
   });
 });
 
@@ -63,7 +67,6 @@ describe("friends routes (M9 ticket 12)", () => {
       app.inject({ method: "GET", url: "/friends/code" }),
       app.inject({ method: "GET", url: "/friends/requests" }),
       app.inject({ method: "GET", url: "/friends/recent" }),
-      app.inject({ method: "POST", url: "/friends/heartbeat" }),
       app.inject({ method: "POST", url: "/friends/requests", payload: {} }),
       app.inject({ method: "POST", url: "/friends/requests/accept-all" }),
       app.inject({ method: "POST", url: "/friends/requests/x/accept" }),
@@ -107,7 +110,7 @@ describe("friends routes (M9 ticket 12)", () => {
     }
   });
 
-  it("a friend seated in a broker Lobby reads in-lobby with the Lobby's own ref", async () => {
+  it("a friend seated in their own FRIENDS Lobby reads in-lobby with its ref (ADR 0110)", async () => {
     const amy = makeAccount("Amy");
     const bo = makeAccount("Bo");
 
@@ -117,7 +120,7 @@ describe("friends routes (M9 ticket 12)", () => {
     await app.inject({ method: "POST", url: `/friends/requests/${inbox.requests[0].id}/accept`, headers: auth(bo.token) });
 
     const created = (
-      await app.inject({ method: "POST", url: "/lobbies", payload: { isPrivate: true } })
+      await app.inject({ method: "POST", url: "/lobbies", headers: auth(bo.token), payload: { isPrivate: true, privacy: "friends" } })
     ).json() as { code: string };
     const port = [...fakes.statuses.keys()][0]!;
     fakes.statuses.set(port, { playerCount: 1, maxPlayers: 4, phase: "LOBBY", accounts: [bo.id], round: null });
@@ -145,7 +148,23 @@ describe("friends routes (M9 ticket 12)", () => {
     });
   });
 
-  it("heartbeat surfaces a sent invite exactly once; strangers cannot invite", async () => {
+  it("an invite-only Lobby is never shown to friends as joinable (ADR 0110)", async () => {
+    const amy = makeAccount("Amy");
+    const bo = makeAccount("Bo");
+    const code = (await app.inject({ method: "GET", url: "/friends/code", headers: auth(bo.token) })).json().code;
+    await app.inject({ method: "POST", url: "/friends/requests", headers: auth(amy.token), payload: { code } });
+    const inbox = (await app.inject({ method: "GET", url: "/friends/requests", headers: auth(bo.token) })).json();
+    await app.inject({ method: "POST", url: `/friends/requests/${inbox.requests[0].id}/accept`, headers: auth(bo.token) });
+
+    await app.inject({ method: "POST", url: "/lobbies", headers: auth(bo.token), payload: { isPrivate: true, privacy: "invite-only" } });
+    const port = [...fakes.statuses.keys()][0]!;
+    fakes.statuses.set(port, { playerCount: 1, maxPlayers: 4, phase: "LOBBY", accounts: [bo.id], round: null });
+
+    const overview = (await app.inject({ method: "GET", url: "/friends", headers: auth(amy.token) })).json();
+    expect(overview.friends[0].presence).toEqual({ status: "in-lobby", slotsOpen: 3, joinable: false });
+  });
+
+  it("a friend can invite to a Lobby; strangers cannot", async () => {
     const amy = makeAccount("Amy");
     const bo = makeAccount("Bo");
     const cy = makeAccount("Cy");
@@ -170,13 +189,6 @@ describe("friends routes (M9 ticket 12)", () => {
       payload: { accountId: bo.id, lobby: { kind: "public", lobbyId: "lobby-1" } },
     });
     expect(invited.statusCode).toBe(201);
-
-    const first = (await app.inject({ method: "POST", url: "/friends/heartbeat", headers: auth(bo.token) })).json();
-    expect(first.invites).toEqual([
-      expect.objectContaining({ fromDisplayName: "Amy", lobby: { kind: "public", lobbyId: "lobby-1" } }),
-    ]);
-    const second = (await app.inject({ method: "POST", url: "/friends/heartbeat", headers: auth(bo.token) })).json();
-    expect(second.invites).toEqual([]);
   });
 
   it("decline, accept-all, and unfriend round-trip over HTTP", async () => {

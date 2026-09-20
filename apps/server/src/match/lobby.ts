@@ -70,6 +70,10 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
           ?.close(SEAT_TAKEN_OVER_CLOSE_CODE, truncateForCloseReason("this account joined the Match somewhere else"));
       }
       rt.snapshotDirty = true;
+      // ADR 0111: this seat now has an Account, so the Lobby's voice room has
+      // one more member. Nothing else here changes the roster — a seat is
+      // anonymous until this resolves.
+      rt.accountRoster.changed(rt.lobbyPlayers.values());
     });
     return true;
   }

@@ -1,3 +1,4 @@
+import type { LobbyPrivacy } from "@dont-fall/shared";
 import { randomUUID } from "node:crypto";
 
 /**
@@ -23,6 +24,10 @@ export interface LobbyEntry {
    * matters for reaping it.
    */
   lastNonEmptyAt: number;
+  /** A private Lobby's WHO CAN JOIN (ADR 0110) — `null` for a public one. */
+  privacy: LobbyPrivacy | null;
+  /** The Account that created it — whose friends a FRIENDS Lobby shows up for (ADR 0110). */
+  creatorAccountId: string | null;
 }
 
 const CODE_LENGTH = 6;
@@ -46,7 +51,11 @@ export class LobbyRegistry {
   private readonly byCode = new Map<string, string>(); // code -> id
 
   /** Registers a new Lobby, generating a unique join code only if `isPrivate`. Returns the entry so the caller can read the code/id back. */
-  add(port: number, isPrivate: boolean): LobbyEntry {
+  add(
+    port: number,
+    isPrivate: boolean,
+    options: { privacy?: LobbyPrivacy; creatorAccountId?: string | null } = {},
+  ): LobbyEntry {
     const id = randomUUID();
     let code: string | undefined;
     if (isPrivate) {
@@ -55,7 +64,16 @@ export class LobbyRegistry {
       } while (this.byCode.has(code));
     }
     const now = Date.now();
-    const entry: LobbyEntry = { id, code, isPrivate, port, createdAt: now, lastNonEmptyAt: now };
+    const entry: LobbyEntry = {
+      id,
+      code,
+      isPrivate,
+      port,
+      createdAt: now,
+      lastNonEmptyAt: now,
+      privacy: isPrivate ? (options.privacy ?? "invite-only") : null,
+      creatorAccountId: options.creatorAccountId ?? null,
+    };
     this.byId.set(id, entry);
     if (code) this.byCode.set(code, id);
     return entry;

@@ -4,6 +4,7 @@ import {
   MAX_PLAYERS,
   PLAYERS_TO_START,
   ROUND_END_MS,
+  SEAT_RESERVATION_TTL_MS,
   STANDINGS_READY_TIMEOUT_MS,
 } from "@dont-fall/shared";
 import type { TrackFetchRetryOptions } from "../track/trackSource.js";
@@ -47,6 +48,8 @@ export interface TestOverrides {
   survivorTargetOverride?: number;
   /** Force this Match's own length over `DEFAULT_MATCH_LENGTH` (M7 ticket 04, ADR 0049). */
   matchLengthOverride?: number;
+  /** Keep a Reservation for this long instead of {@link SEAT_RESERVATION_TTL_MS} (ADR 0112). */
+  reservationTtlMs?: number;
   /** Bound the startup Track fetch's retries (ticket 12); production uses `fetchTrack`'s own defaults. */
   trackFetchMaxWaitMs?: number;
   trackFetchRetryDelayMs?: number;
@@ -87,6 +90,20 @@ export interface StartServerConfig extends TestOverrides {
    * included — it is what a Player-facing "N SLOTS OPEN" means.
    */
   maxPlayers?: number;
+  /**
+   * The secret `POST /reservations` expects (ADR 0112) — generated per
+   * process by the API's `LobbiesService` and handed to every Match server it
+   * starts, never configured. Unset, the route answers 404 and nothing can
+   * reserve a seat here.
+   */
+  reservationSecret?: string;
+  /**
+   * Called with the Accounts seated here whenever that set changes (ADR
+   * 0111) — the API's voice relay follows it, since a voice room is a
+   * Lobby's own roster and nothing a client says. Unset, nobody is told and
+   * the roster is never walked.
+   */
+  onAccountRoster?: (accountIds: readonly string[]) => void;
 }
 
 /**
@@ -104,11 +121,15 @@ export interface ServerRuntimeConfig {
   playersToStart: number;
   /** How many connections this server accepts before refusing the next one outright (grilling session, 2026-09). */
   maxPlayers: number;
+  /** How long a Reservation keeps its seat before it lapses (ADR 0112). */
+  reservationTtlMs: number;
   timeLimitMsOverride?: number | undefined;
   /** Force this Match's `RoundRules.survivorTarget` over whatever Track it loads (M5 ticket 05). */
   survivorTargetOverride?: number | undefined;
   /** Force this Match's own length over `DEFAULT_MATCH_LENGTH` (M7 ticket 04, ADR 0049). */
   matchLengthOverride?: number | undefined;
+  /** What `POST /reservations` must be sent with (ADR 0112); absent, reservations are off. */
+  reservationSecret?: string | undefined;
 }
 
 /**
@@ -138,7 +159,9 @@ export const buildRuntimeConfig = (config: StartServerConfig, env: NodeJS.Proces
   standingsReadyTimeoutMs: config.standingsReadyTimeoutMs ?? STANDINGS_READY_TIMEOUT_MS,
   playersToStart: config.playersToStart ?? readPositiveIntEnv(env, "PLAYERS_TO_START", PLAYERS_TO_START),
   maxPlayers: config.maxPlayers ?? readPositiveIntEnv(env, "MAX_PLAYERS", MAX_PLAYERS),
+  reservationTtlMs: config.reservationTtlMs ?? SEAT_RESERVATION_TTL_MS,
   ...(config.timeLimitMsOverride !== undefined ? { timeLimitMsOverride: config.timeLimitMsOverride } : {}),
   ...(config.survivorTargetOverride !== undefined ? { survivorTargetOverride: config.survivorTargetOverride } : {}),
   ...(config.matchLengthOverride !== undefined ? { matchLengthOverride: config.matchLengthOverride } : {}),
+  ...(config.reservationSecret !== undefined ? { reservationSecret: config.reservationSecret } : {}),
 });

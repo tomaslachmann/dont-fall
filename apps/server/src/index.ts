@@ -36,5 +36,12 @@ if (isMain) {
   });
 }
 
-export { startServer } from "./matchServer.js";
-export type { MatchServer, PortRange, ServerRuntimeConfig, StartServerConfig } from "./matchServer.js";
+export { RESERVATION_SECRET_HEADER, startServer } from "./matchServer.js";
+export type {
+  MatchServer,
+  PortRange,
+  ReservationGrant,
+  ReservationRequest,
+  ServerRuntimeConfig,
+  StartServerConfig,
+} from "./matchServer.js";

@@ -38,11 +38,11 @@ describe("match results service", () => {
       expect(() => getMatchResult(db, "m1")).toThrowError(/no finished Match/);
 
       expect(saveMatchResult(db, RESULT)).toEqual({ matchId: "m1" });
-      expect(getMatchResult(db, "m1")).toEqual(RESULT);
+      expect(getMatchResult(db, "m1")).toEqual({ ...RESULT, victoryPoses: {} });
 
       // A retried save is a no-op, never an overwrite.
       saveMatchResult(db, { ...RESULT, totalFalls: { p1: 99, p2: 99 } });
-      expect(getMatchResult(db, "m1")).toEqual(RESULT);
+      expect(getMatchResult(db, "m1")).toEqual({ ...RESULT, victoryPoses: {} });
 
       expect(() => getMatchResult(db, "no-such-match")).toThrowError(/no finished Match/);
     } finally {
@@ -79,7 +79,7 @@ describe("match results service", () => {
       const { accountIds: _dropped, ...legacy } = RESULT;
 
       expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
-      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, accountIds: {} });
+      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, accountIds: {}, victoryPoses: {} });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -92,7 +92,7 @@ describe("match results service", () => {
       const { colors: _dropped, ...legacy } = RESULT;
 
       expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
-      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, colors: {} });
+      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, colors: {}, victoryPoses: {} });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -105,7 +105,7 @@ describe("match results service", () => {
       const { skins: _dropped, ...legacy } = RESULT;
 
       expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
-      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, skins: {} });
+      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, skins: {}, victoryPoses: {} });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -118,7 +118,7 @@ describe("match results service", () => {
       const { survivalMs: _survival, grabsBroken: _grabs, ...legacy } = RESULT;
 
       expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
-      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, survivalMs: {}, grabsBroken: {} });
+      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, survivalMs: {}, grabsBroken: {}, victoryPoses: {} });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -131,7 +131,7 @@ describe("match results service", () => {
       const { hats: _dropped, ...legacy } = RESULT;
 
       expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
-      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, hats: {} });
+      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, hats: {}, victoryPoses: {} });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -144,7 +144,7 @@ describe("match results service", () => {
       const { roundTrackIds: _dropped, ...legacy } = RESULT;
 
       expect(saveMatchResult(db, legacy)).toEqual({ matchId: "m1" });
-      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, roundTrackIds: [] });
+      expect(getMatchResult(db, "m1")).toEqual({ ...legacy, roundTrackIds: [], victoryPoses: {} });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -201,7 +201,7 @@ describe("match results routes", () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(read.statusCode).toBe(200);
-    expect(read.json()).toEqual(RESULT);
+    expect(read.json()).toEqual({ ...RESULT, victoryPoses: {} });
 
     const missing = await app.inject({
       method: "GET",
@@ -209,5 +209,25 @@ describe("match results routes", () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(missing.statusCode).toBe(404);
+  });
+
+  it("names each authed seat's victory pose as its Account has it now, not as it was (ADR 0110)", async () => {
+    const token = await signupToken();
+    const auth = { authorization: `Bearer ${token}` };
+    const me = (await app.inject({ method: "GET", url: "/auth/me", headers: auth })).json() as { id: string };
+    await app.inject({
+      method: "POST",
+      url: "/internal/match-results",
+      headers: { "x-service-token": "test-service-token" },
+      payload: { ...RESULT, accountIds: { p1: me.id, p2: "acc-gone" } },
+    });
+
+    const before = (await app.inject({ method: "GET", url: "/matches/m1", headers: auth })).json();
+    // The seat whose Account no longer exists simply has no pose.
+    expect(before.victoryPoses).toEqual({ p1: "win" });
+
+    await app.inject({ method: "PUT", url: "/auth/me/cosmetics", headers: auth, payload: { victoryPose: "punch" } });
+    const after = (await app.inject({ method: "GET", url: "/matches/m1", headers: auth })).json();
+    expect(after.victoryPoses).toEqual({ p1: "punch" });
   });
 });

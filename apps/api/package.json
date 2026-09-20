@@ -20,7 +20,8 @@
     "@fastify/cors": "^11.1.0",
     "better-sqlite3": "^11.8.1",
     "drizzle-orm": "^0.38.4",
-    "fastify": "^5.12.4"
+    "fastify": "^5.12.4",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -29,7 +30,6 @@
     "drizzle-kit": "^0.30.4",
     "tsx": "^4.23.13",
     "typescript": "^5.7.3",
-    "vitest": "^3.0.5",
-    "ws": "^8.21.3"
+    "vitest": "^3.0.5"
   }
 }

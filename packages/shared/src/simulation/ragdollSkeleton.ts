@@ -27,6 +27,91 @@ export interface BoneSpec {
   radius: number;
   mass: number;
   /**
+   * What the bone is made of. Absent — which every bone in
+   * {@link RAGDOLL_BONES} is — means `"capsule"`, as it always has been.
+   *
+   * Nothing in the game sets it. A body is not all one shape: a torso is
+   * closer to a box, a joint closer to a ball, a limb to a capsule, and
+   * having only one of those to choose from is what the demo
+   * (`apps/client/src/rubber`) kept running into.
+   */
+  shape?: "capsule" | "box" | "hull";
+
+  /**
+   * The points a `"hull"` bone is wrapped around, in the bone's own frame.
+   * Absent — which every bone in {@link RAGDOLL_BONES} is — means the bone is
+   * one of the primitives above.
+   *
+   * Nothing in the game sets it. A convex hull is what an authored rig reaches
+   * for when a body part is not honestly a box or a capsule: it takes the
+   * shape the artist actually modelled rather than the nearest primitive to
+   * it. Rapier builds the hull itself, so these need not be a hull already.
+   */
+  hullPoints?: readonly Vec3[];
+
+  /**
+   * How far a `"box"` is rounded off, 0 (sharp corners) to 1 (rounded to the
+   * limit of its thinnest axis). Absent means fully rounded.
+   *
+   * This is what makes one shape enough. Rapier's capsule has a single
+   * radius, so it is round in cross-section by definition — no depth of its
+   * own, and nothing flattened can be built from one. A rounded box has three
+   * independent half-extents *and* soft ends, so at equal width and depth it
+   * is a capsule, flattened it is the slab a torso wants, and at roundness 0
+   * it is a crate. The game's own bones stay capsules; everything authored
+   * goes through here.
+   */
+  roundness?: number;
+
+  /**
+   * Half-thickness front to back (local Z). Read only by `"box"`, where it is
+   * the third half-extent; the round shapes are as deep as they are wide.
+   * Absent — which every bone in {@link RAGDOLL_BONES} is —
+   * means a capsule, as it always has been.
+   *
+   * Setting it also changes how the other two are read: a box has no caps, so
+   * `radius` and `halfHeight` become plain half-extents rather than a
+   * capsule's radius and cylinder half-length.
+   *
+   * Nothing in the game sets it. It exists so a caller can hand
+   * {@link import("./Ragdoll.js").Ragdoll} a different skeleton to try:
+   * `apps/client/src/rubber` builds one with a flattened torso, to see
+   * whether a body shaped like BLIP really is settles on its back rather than
+   * its side. Until that is settled the game's own ragdoll is untouched.
+   */
+  depth?: number;
+
+  /**
+   * How the bone is turned in the rest pose. Absent — which every bone in
+   * {@link RAGDOLL_BONES} is — means upright, as it always has been.
+   *
+   * Nothing in the game sets it. BLIP's arms and legs stick out sideways and
+   * a `BoneSpec` otherwise describes a shape along its own Y, so a skeleton
+   * shaped like BLIP cannot be written without this; the demo
+   * (`apps/client/src/rubber`) is where that is being worked out.
+   *
+   * One thing to know before using it: Rapier takes a hinge's axis once and
+   * reads it in *both* bodies' local frames (see {@link BoneSpec.hinge}). A
+   * parent and child turned the same way still agree, so a whole limb may be
+   * rotated as one; turning only half of a hinged pair would not.
+   */
+  restRotation?: Quat;
+
+  /**
+   * Where the collider sits relative to the body, in the bone's own frame.
+   * Absent — which every bone in {@link RAGDOLL_BONES} is — means centred on
+   * it, as it always has been.
+   *
+   * An authored ragdoll puts its bodies on the rig's own pivots and offsets
+   * the shape from there, which is the only way to say "the thigh's body is
+   * at the hip, and its capsule hangs below". Setting it also moves where a
+   * bone joins its parent: the joint goes to this bone's own pivot rather
+   * than halfway between two collider centres, because a pivot is what the
+   * rig actually rotates about.
+   */
+  colliderOffset?: Vec3;
+
+  /**
    * How this bone hangs off its parent (M6 ticket 05, ADR 0047). A hinge:
    * one axis and how far it may swing either way.
    *

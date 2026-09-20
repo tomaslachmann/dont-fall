@@ -9,7 +9,6 @@ import {
   declineFriendRequest,
   friendRequests,
   friendsOverview,
-  heartbeat,
   inviteFriend,
   ownFriendCode,
   recentPlayers,
@@ -34,7 +33,11 @@ export const brokerPresenceSource = (lobbies: LobbiesService): PresenceSource =>
       playerCount: status.playerCount,
       maxPlayers: status.maxPlayers,
       ...(entry.isPrivate
-        ? { isPrivate: true as const, code: entry.code ?? "" }
+        ? {
+            isPrivate: true as const,
+            code: entry.code ?? "",
+            friendsOf: entry.privacy === "friends" ? entry.creatorAccountId : null,
+          }
         : { isPrivate: false as const }),
       accountIds: status.accounts,
     })),
@@ -45,8 +48,13 @@ export const brokerPresenceSource = (lobbies: LobbiesService): PresenceSource =>
  * set the status. Every route needs a Bearer [REDACTED] (`whoAmI` 401s without one);
  * request/invite/presence rules all live in `friends.service.ts`.
  */
-export const registerFriendsRoutes = (app: FastifyInstance, db: ApiDb, lobbies: LobbiesService): void => {
-  const env: FriendsEnv = { presence: brokerPresenceSource(lobbies) };
+export const registerFriendsRoutes = (
+  app: FastifyInstance,
+  db: ApiDb,
+  lobbies: LobbiesService,
+  push: Pick<FriendsEnv, "pushLobbyInvite"> = {},
+): void => {
+  const env: FriendsEnv = { presence: brokerPresenceSource(lobbies), ...push };
   const me = (request: FastifyRequest): string => whoAmI(db, bearerToken(request.headers.authorization)).id;
 
   app.get("/friends", async (request) => friendsOverview(db, env, me(request)));
@@ -56,8 +64,6 @@ export const registerFriendsRoutes = (app: FastifyInstance, db: ApiDb, lobbies: 
   app.get("/friends/requests", async (request) => friendRequests(db, me(request)));
 
   app.get("/friends/recent", async (request) => recentPlayers(db, me(request)));
-
-  app.post("/friends/heartbeat", async (request) => heartbeat(db, env, me(request)));
 
   app.post("/friends/requests", async (request, reply) => {
     const body = (request.body ?? {}) as { accountId?: unknown; code?: unknown };

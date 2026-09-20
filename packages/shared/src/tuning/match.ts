@@ -177,3 +177,35 @@ export const TRACK_FETCH_RETRY_DELAY_MS = 1_000;
  * budget on one stuck attempt instead of retrying.
  */
 export const TRACK_FETCH_ATTEMPT_TIMEOUT_MS = 5_000;
+
+// --- Parties (M15 ticket 16, ADR 0112) --------------------------------------
+
+/**
+ * The most Accounts one Party holds, pending invites included (ADR 0112, the
+ * user's choice). A public Lobby of {@link MAX_PLAYERS} stays mostly
+ * strangers; bigger groups have FRIENDS private Lobbies.
+ */
+export const PARTY_MAX_SIZE = 4;
+
+/** How long a Party code works before the host is shown a new one — the card's "works for 10 minutes". */
+export const PARTY_CODE_TTL_MS = 10 * 60_000;
+
+/** How long a Party invite waits for an answer — the Lobby invite's own TTL. */
+export const PARTY_INVITE_TTL_MS = 5 * 60_000;
+
+/**
+ * How long a member's Account socket may stay closed before they drop out of
+ * their Party — the online window friends presence already uses, so a page
+ * reload or a network blip never costs anyone their Party.
+ */
+export const PARTY_OFFLINE_GRACE_MS = 90_000;
+
+/** How often the API records a presence beat for each open Account socket (ADR 0110's 30 s cadence). */
+export const ACCOUNT_BEAT_MS = 30_000;
+
+/**
+ * How long a Lobby keeps a seat for an Account the broker sent there (ADR
+ * 0112). Long enough for a client to open its socket; short enough that one
+ * that never arrives does not hold a Lobby's start for long.
+ */
+export const SEAT_RESERVATION_TTL_MS = 15_000;

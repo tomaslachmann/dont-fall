@@ -1,4 +1,5 @@
-import { matchPlacements, type PersistedMatchResult, type RoundResult } from "@dont-fall/shared";
+import { matchPlacements, type EmoteId, type MatchResultResponse, type PersistedMatchResult } from "@dont-fall/shared";
+import { getAccountsByIds } from "../auth/accounts.dao.js";
 import type { ApiDb } from "../db/db.js";
 import { ServiceError } from "../http/errors.js";
 import {
@@ -116,7 +117,10 @@ export const saveMatchResult = (db: ApiDb, body: unknown): { matchId: string } =
  * `GET /matches/:id`. 404 when nothing was ever saved under this id (a page
  * opened before the save landed, or a mistyped id).
  */
-export const getMatchResult = (db: ApiDb, matchId: string): PersistedMatchResult & { results: RoundResult[] } => {
+export const getMatchResult = (
+  db: ApiDb,
+  matchId: string,
+): MatchResultResponse => {
   const result = readMatchResult(db, matchId);
   if (!result) throw new ServiceError(404, `no finished Match "${matchId}"`);
   // Pre-2b rows carry no `accountIds` map — default it so the type stays honest.
@@ -131,5 +135,21 @@ export const getMatchResult = (db: ApiDb, matchId: string): PersistedMatchResult
     hats: result.hats ?? {},
     survivalMs: result.survivalMs ?? {},
     grabsBroken: result.grabsBroken ?? {},
+    victoryPoses: victoryPosesOf(db, result.accountIds ?? {}),
   };
+};
+
+/**
+ * Each authed seat's victory pose (ADR 0110) — read from its Account now, not
+ * stored with the Match: it is a signature, what the podium plays for whoever
+ * won, and a Player who changes it changes it everywhere.
+ */
+const victoryPosesOf = (db: ApiDb, accountIds: Record<string, string>): Record<string, EmoteId> => {
+  const accounts = getAccountsByIds(db, [...new Set(Object.values(accountIds))]);
+  return Object.fromEntries(
+    Object.entries(accountIds).flatMap(([seat, accountId]) => {
+      const account = accounts.get(accountId);
+      return account ? [[seat, account.victoryPose] as const] : [];
+    }),
+  );
 };

@@ -127,6 +127,8 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
       display_name TEXT NOT NULL,
       avatar_url TEXT,
       avatar_uploaded_at INTEGER,
+      emote TEXT,
+      victory_pose TEXT,
       role TEXT NOT NULL DEFAULT '${sql.raw(DEFAULT_ACCOUNT_ROLE)}',
       friend_code TEXT UNIQUE,
       created_at INTEGER NOT NULL,
@@ -200,6 +202,9 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
   if (!accountColumns.some((c) => c.name === "avatar_uploaded_at")) {
     sqlite.exec("ALTER TABLE accounts ADD COLUMN avatar_uploaded_at INTEGER");
   }
+  // ADR 0110: the picked emote and victory pose. Additive, nullable — NULL is the default.
+  if (!accountColumns.some((c) => c.name === "emote")) sqlite.exec("ALTER TABLE accounts ADD COLUMN emote TEXT");
+  if (!accountColumns.some((c) => c.name === "victory_pose")) sqlite.exec("ALTER TABLE accounts ADD COLUMN victory_pose TEXT");
   // ADR 0110: the error screen's reports, filed by support code. New table.
   db.run(sql`
     CREATE TABLE IF NOT EXISTS client_errors (
@@ -378,6 +383,18 @@ export const openDb = (path: string): BetterSQLite3Database<typeof schema> => {
     CREATE TABLE IF NOT EXISTS presence_beats (
       account_id TEXT PRIMARY KEY,
       beat_at INTEGER NOT NULL
+    )
+  `);
+
+  // Voice chat Mutes (ADR 0111) — one row per (muter, muted) pair, so a
+  // Player Muted once stays Muted in every later Match. New table, nothing
+  // to migrate.
+  db.run(sql`
+    CREATE TABLE IF NOT EXISTS voice_mutes (
+      account_id TEXT NOT NULL,
+      muted_account_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (account_id, muted_account_id)
     )
   `);
 

@@ -1,13 +1,21 @@
 /**
- * Rebindable controls (M9 controls): every gameplay shortcut — movement,
- * jump, dash, hit, grab, spectator cycle — as data, not constants in
- * `input.ts`. The client resolves held devices through these, the Settings
+ * Rebindable controls (M9 controls): every shortcut a Player holds —
+ * movement, jump, dash, hit, grab, spectator cycle, and Push-to-talk (ADR
+ * 0111) — as data, not constants in `input.ts`. The client resolves held devices through these, the Settings
  * CONTROLS tab edits them, and the API stores one record per Account. Like
  * cosmetics, shared owns the shape and the rules; the API only persists
  * what this module already blessed.
  */
 
-/** Every gameplay action a control can drive — UI chrome (Esc-back, form keys) is never bindable. */
+/**
+ * Every action a control can drive — UI chrome (Esc-back, form keys) is never
+ * bindable.
+ *
+ * All of them are gameplay but `talk`, which holds Push-to-talk (ADR 0111):
+ * it is not a sim input, never reaches `sampleInput`, and is listened for at
+ * the app level so it works on a Screen as well as in a Round. Key bindings
+ * therefore stopped meaning "gameplay actions only" the day it was added.
+ */
 export const BINDING_ACTIONS = [
   "forward",
   "back",
@@ -18,6 +26,7 @@ export const BINDING_ACTIONS = [
   "hit",
   "grab",
   "spectateNext",
+  "talk",
 ] as const;
 export type BindingAction = (typeof BINDING_ACTIONS)[number];
 
@@ -50,7 +59,8 @@ export const isBindableControl = (control: unknown): control is string =>
 
 /**
  * Today's hardcoded layout, as data (WASD + arrows, Space, both Shifts, F,
- * G, C). Cloned, never handed out, by {@link resolveBindings} — see below.
+ * G, C, and V for Push-to-talk — the design's own caption). Cloned, never
+ * handed out, by {@link resolveBindings} — see below.
  */
 export const DEFAULT_BINDINGS: KeyBindings = {
   forward: ["KeyW", "ArrowUp"],
@@ -62,6 +72,7 @@ export const DEFAULT_BINDINGS: KeyBindings = {
   hit: ["KeyF"],
   grab: ["KeyG"],
   spectateNext: ["KeyC"],
+  talk: ["KeyV"],
 };
 
 /** A deep-enough copy: fresh arrays, so editing the result never touches the source. */
@@ -90,6 +101,27 @@ export const invalidBindingsReason = (value: unknown): string | undefined => {
     }
   }
   return undefined;
+};
+
+/**
+ * A stored record as it can still be played with, or `null` when there is
+ * nothing in it to read — what both **read** paths use (the API's stored
+ * column, the client's localStorage mirror).
+ *
+ * Unlike {@link invalidBindingsReason}, which is the PUT's validation and
+ * demands a complete record, this never rejects one for a *missing* action:
+ * {@link resolveBindings} fills those from the defaults. Without that,
+ * adding an action — `talk` was the first (ADR 0111) — would silently reset
+ * every custom layout ever saved, on the very upgrade that added it.
+ *
+ * `null` is reserved for a value with no action in it at all: that is nothing
+ * stored, not a partial record.
+ */
+export const storedBindings = (value: unknown): KeyBindings | null => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (!BINDING_ACTIONS.some((action) => Array.isArray(record[action]))) return null;
+  return resolveBindings(record);
 };
 
 /**

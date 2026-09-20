@@ -1,4 +1,4 @@
-import { DEFAULT_API_PORT } from "@dont-fall/shared";
+import { DEFAULT_API_PORT, DEFAULT_VOICE_PORT } from "@dont-fall/shared";
 import { defaultAssetsDir } from "./assets/assets.service.js";
 import type { DiscordOAuthConfig, FetchLike } from "./auth/auth.service.js";
 import type { PortRange } from "@dont-fall/server";
@@ -38,6 +38,12 @@ export interface ApiConfig {
   matchPortRange?: PortRange;
   /** Lobbies test seams (reaper cadences, match-server/status doubles). Absent in production. */
   lobbies?: Pick<LobbiesDeps, "startMatchServer" | "fetchLobbyStatus" | "statusPollIntervalMs" | "idleGraceMs">;
+  /**
+   * Voice chat's relay (ADR 0111): the worker thread's own port, `VOICE_PORT`
+   * or {@link DEFAULT_VOICE_PORT}. Always set here, which is what turns voice
+   * on — a test building the app without it spawns no thread.
+   */
+  voice: { port: number };
 }
 
 /**
@@ -51,6 +57,12 @@ const resolveMatchPortRange = (env: NodeJS.ProcessEnv): PortRange | undefined =>
   const max = Number(env.LOBBY_PORT_MAX);
   if (!Number.isInteger(min) || !Number.isInteger(max) || min < 1 || max > 65535 || min > max) return undefined;
   return { min, max };
+};
+
+/** A port from the environment, or `fallback` when it is absent or not a usable one. */
+const readPort = (value: string | undefined, fallback: number): number => {
+  const port = Number(value);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : fallback;
 };
 
 export const resolveConfig = (env: NodeJS.ProcessEnv = process.env): ApiConfig => {
@@ -72,5 +84,6 @@ export const resolveConfig = (env: NodeJS.ProcessEnv = process.env): ApiConfig =
     maxPlayers: resolveMaxPlayers(undefined),
     ...(env.SERVICE_TOKEN ? { serviceToken: env.SERVICE_TOKEN } : {}),
     ...(matchPortRange ? { matchPortRange } : {}),
+    voice: { port: readPort(env.VOICE_PORT, DEFAULT_VOICE_PORT) },
   };
 };

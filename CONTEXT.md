@@ -23,9 +23,25 @@ _Avoid_: user, gamer
 
 **Friend**:
 A mutual connection between two Accounts, formed by request/accept. Carries presence (Online / In
-Match / Idle) between Friends. Distinct from a Party — DON'T FALL has no matchmaking concept of a
-party (ADR 0040); Friends is purely social.
-_Avoid_: party, contact, buddy
+Match / Idle) between Friends. Distinct from a Party: a Friend is a standing connection, a Party is
+who you play with right now.
+_Avoid_: contact, buddy
+
+**Party**:
+Up to four Accounts who play together: they go into a Lobby as one, wherever their Party host takes
+them, and are seated together (ADR 0112). Everyone signed in is in one; alone, it is a party of one.
+Lasts while its members are online.
+_Avoid_: group, squad, team (a Team Round's word)
+
+**Party host**:
+The member of a Party who moves it, invites and removes: the earliest to have joined. The others
+follow.
+_Avoid_: leader, owner (a Lobby's host is the Lobby's own)
+
+**Party code**:
+The six characters that let anyone join a Party for ten minutes, shown only to its Party host.
+Distinct from a Join Code, which opens a Lobby, and a friend code, which finds an Account.
+_Avoid_: invite code
 
 **Character**:
 The in-world body a Player controls — a kinematic capsule with an attached
@@ -132,6 +148,11 @@ _Avoid_: password, invite code
 Joining whatever open, joinable public Lobby is available, or a freshly created one if
 none is — never a queue with an open-ended wait (ADR 0054).
 _Avoid_: matchmaking (implies skill-based pairing, which this isn't)
+
+**Reservation**:
+A seat a Lobby keeps for one Account for a few seconds after the broker sends it there, so a Party
+walking in behind its host is never split or started without (ADR 0112).
+_Avoid_: hold (a Grab's word), booking
 
 **Loading**:
 The phase between a Round being started and its Countdown: every Player's client
@@ -560,10 +581,41 @@ atoms gameplay actions bind to; UI chrome (Esc-back, form keys) is never one.
 _Avoid_: key, button (when you mean the bindable concept)
 
 **Key bindings**:
-The mapping from gameplay actions (move, jump, dash, hit, grab,
-spectate-next) to the Controls that drive them. One record per Account,
-edited in Settings; guests keep theirs on their own machine.
+The mapping from a Player's actions (move, jump, dash, hit, grab,
+spectate-next, and Push-to-talk, the one that is not a gameplay action) to
+the Controls that drive them. One record per Account, edited in Settings;
+guests keep theirs on their own machine.
 _Avoid_: shortcuts, hotkeys, keymap
+
+### Voice chat
+
+**Voice chat**:
+Players talking to each other out loud, from joining a Lobby until they leave the podium at the end
+of its Match (ADR 0111). Never part of the simulation.
+_Avoid_: voice (already the audio engine's word for one playing sound, and the announcer's), VOIP,
+comms
+
+**Voice chat scope**:
+Whom a Player's Voice chat reaches: OFF, PARTY or ALL. OFF neither sends nor hears.
+_Avoid_: channel, mode
+
+**Voice link**:
+Two Players who hear each other: neither is OFF, and they share a Party or both chose ALL. Always
+both ways.
+
+**Push-to-talk**:
+Sending Voice chat only while its Control is held. The other way to talk is open mic, which sends
+whenever the Player's own voice is loud enough.
+_Avoid_: PTT (except as a label), voice activation (for push-to-talk)
+
+**Speaking**:
+The cue that a Player's Voice chat is being heard right now.
+_Avoid_: talking indicator, voice activity
+
+**Mute**:
+One Player silencing another for themselves only, remembered on their Account. Distinct from
+OFF, which silences both ways.
+_Avoid_: block (reserved for something stronger, if one is ever built), ignore
 
 ### Presentation
 
@@ -610,6 +662,12 @@ this game's concept word.
 Its own subdomain. These terms mean this exact thing in code, commits, and ADRs;
 concrete numbers (30 Hz, delays, window sizes) live in `docs/networking-model.md`,
 not here.
+
+**Account socket**:
+The one connection a signed-in client keeps to the API, outside any Lobby, over which the API tells
+it what arrived unasked (its Party, Party and Lobby invites, "follow your Party host") and it says
+where it is (ADR 0112). Distinct from the Lobby's socket to its Match server.
+_Avoid_: presence socket, notification channel, heartbeat (what it replaced)
 
 **Tick**:
 One step of the fixed-rate authoritative simulation. The unit of game time. The

@@ -13,11 +13,13 @@ import { createServerAssetLoader } from "./track/assetSource.js";
 import { fetchTrack } from "./track/trackSource.js";
 
 export type { PortRange, ServerRuntimeConfig, StartServerConfig, TestOverrides } from "./server/config.js";
+export { RESERVATION_SECRET_HEADER, type ReservationGrant, type ReservationRequest } from "./server/statusHttp.js";
 
 /**
  * Booting one authoritative Match server (ADR 0002): a fixed-30 Hz
  * `RapierSimulation` with every connected client's Character in it, a
- * WebSocket for the game and a `GET /status` for the broker, on one port.
+ * WebSocket for the game and, for the broker, a `GET /status` and a
+ * `POST /reservations` (ADR 0112), on one port.
  *
  * This file is the bootstrap and nothing else. What each step *is* lives
  * beside it: `server/config.ts` (what a caller asked for, resolved),
@@ -55,6 +57,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       matchId,
       ...runtimeConfig,
       ...(perf.profileClock !== null ? { profileClock: perf.profileClock } : {}),
+      ...(config.onAccountRoster ? { onAccountRoster: config.onAccountRoster } : {}),
       assets,
     },
     bootTrack,

@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import {
-  invalidBindingsReason,
+  DEFAULT_EMOTE,
+  DEFAULT_VICTORY_POSE,
+  emoteById,
   randomBearerToken,
+  type EmoteId,
   resolveAccountRole,
+  storedBindings,
   type AccountRole,
   type KeyBindings,
 } from "@dont-fall/shared";
@@ -19,6 +23,9 @@ export interface Account {
   avatarUrl: string | null;
   /** When this Account last uploaded an avatar (ADR 0110) — the version on its picture's address; `null` for none. */
   avatarUploadedAt: number | null;
+  /** The emote it plays, and its victory pose (ADR 0110) — the defaults until picked. */
+  emote: EmoteId;
+  victoryPose: EmoteId;
   /** This Account's role — `"player"` for everyone, `"admin"` reserved for future administration tooling. No writer yet. */
   role: AccountRole;
   /** Lifetime match earnings — the economy's persisted half. */
@@ -52,14 +59,19 @@ export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Stored bindings JSON into a record — `null` for never-saved AND for
- * anything that no longer parses or validates (a corrupt row degrades to
- * defaults on the client, never to a broken Account).
+ * anything that no longer parses (a corrupt row degrades to defaults on the
+ * client, never to a broken Account).
+ *
+ * `storedBindings`, not the PUT's own validation (ADR 0111): a row saved
+ * before an action existed keeps every key its owner chose, with the new
+ * action on its default, instead of reading as invalid and resetting the
+ * whole layout. `talk` was the first action to arrive after this column had
+ * rows in it.
  */
 const toBindings = (stored: string | null): KeyBindings | null => {
   if (stored === null) return null;
   try {
-    const parsed: unknown = JSON.parse(stored);
-    return invalidBindingsReason(parsed) ? null : (parsed as KeyBindings);
+    return storedBindings(JSON.parse(stored));
   } catch {
     return null;
   }
@@ -72,6 +84,8 @@ const toAccount = (row: typeof accounts.$inferSelect): Account => ({
   displayName: row.displayName,
   avatarUrl: row.avatarUrl,
   avatarUploadedAt: row.avatarUploadedAt,
+  emote: emoteById(row.emote)?.id ?? DEFAULT_EMOTE,
+  victoryPose: emoteById(row.victoryPose)?.id ?? DEFAULT_VICTORY_POSE,
   role: resolveAccountRole(row.role),
   xp: row.xp,
   coins: row.coins,
@@ -86,6 +100,8 @@ export interface CosmeticsPatch {
   color?: number;
   skin?: string | null;
   hat?: string | null;
+  emote?: EmoteId;
+  victoryPose?: EmoteId;
 }
 
 /**

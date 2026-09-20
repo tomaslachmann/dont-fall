@@ -12,10 +12,16 @@ import { ONLINE_WINDOW_MS } from "./presence.js";
 // lines, two owners, no reason to couple the modules.
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
-const generateCode = (): string =>
-  Array.from({ length: FRIEND_CODE_LENGTH }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join(
-    "",
-  );
+/**
+ * `length` random characters of the friend code's alphabet. A Party code is
+ * drawn from here too (ADR 0112): the same glyphs a human can read aloud,
+ * never the same namespace — nothing stores it, and a lookup tries a live
+ * Party code before a friend code.
+ */
+export const randomFriendAlphabetCode = (length: number): string =>
+  Array.from({ length }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join("");
+
+const generateCode = (): string => randomFriendAlphabetCode(FRIEND_CODE_LENGTH);
 
 /**
  * This Account's friend code (M9 ticket 12) — generated lazily on first
@@ -233,13 +239,17 @@ export const listFriends = (
 /**
  * Beans online (`GET /game-settings`, ADR 0110): every Account whose presence
  * heartbeat is younger than the same window friends presence reads as online.
- * Every signed-in client beats app-wide, so a Player in the menu counts, not
- * only one seated in a Lobby.
+ * The API beats for every open Account socket (ADR 0112), so a Player in the
+ * menu counts, not only one seated in a Lobby.
  */
 export const countOnlineAccounts = (db: ApiDb, nowMs: number): number =>
   db.select({ online: count() }).from(presenceBeats).where(gt(presenceBeats.beatAt, nowMs - ONLINE_WINDOW_MS)).get()?.online ?? 0;
 
-/** Records this Account's presence heartbeat — one row per Account, latest wins. */
+/**
+ * Records this Account's presence heartbeat — one row per Account, latest
+ * wins. Its one writer is the Account socket (ADR 0112): on connect, then
+ * every `ACCOUNT_BEAT_MS` while it stays open.
+ */
 export const recordBeat = (db: ApiDb, accountId: string, nowMs: number): void => {
   db.insert(presenceBeats)
     .values({ accountId, beatAt: nowMs })
@@ -260,7 +270,10 @@ export const beatsFor = (db: ApiDb, accountIds: string[]): Map<string, number> =
   );
 };
 
-/** Stores a lobby invite in flight — delivery happens on the recipient's next heartbeat. */
+/**
+ * Stores a lobby invite in flight — pushed at once over the recipient's
+ * Account socket when it is open, otherwise on its next connect (ADR 0112).
+ */
 export const createInvite = (
   db: ApiDb,
   invite: { fromAccountId: string; toAccountId: string; lobbyRef: LobbyRef; createdAt: number; expiresAt: number },
@@ -271,11 +284,15 @@ export const createInvite = (
 };
 
 /**
- * This Account's undelivered, unexpired invites — with each sender's name
- * attached. Prunes this Account's expired rows on the way (lazy, like
- * session pruning: the read that would surface them deletes them instead).
+ * This Account's unexpired invites — with each sender's name attached, and
+ * whether one has been sent before. Delivered ones are included on purpose
+ * (ADR 0112): an invite is marked delivered as soon as a socket accepted the
+ * bytes, including a half-open one nobody has noticed yet, and leaving it out
+ * here would lose it for good. Prunes this Account's expired rows on the way
+ * (lazy, like session pruning: the read that would surface them deletes them
+ * instead).
  */
-export const pendingInvites = (
+export const liveInvites = (
   db: ApiDb,
   accountId: string,
   nowMs: number,
@@ -286,6 +303,7 @@ export const pendingInvites = (
   fromColor: number;
   lobbyRef: LobbyRef;
   createdAt: number;
+  deliveredAt: number | null;
 }[] => {
   db.delete(lobbyInvites)
     .where(and(eq(lobbyInvites.toAccountId, accountId), lte(lobbyInvites.expiresAt, nowMs)))
@@ -298,15 +316,16 @@ export const pendingInvites = (
       fromColor: accounts.color,
       lobbyRef: lobbyInvites.lobbyRef,
       createdAt: lobbyInvites.createdAt,
+      deliveredAt: lobbyInvites.deliveredAt,
     })
     .from(lobbyInvites)
     .innerJoin(accounts, eq(accounts.id, lobbyInvites.fromAccountId))
-    .where(and(eq(lobbyInvites.toAccountId, accountId), isNull(lobbyInvites.deliveredAt)))
+    .where(eq(lobbyInvites.toAccountId, accountId))
     .orderBy(lobbyInvites.createdAt)
     .all();
 };
 
-/** Marks invites delivered — each invite surfaces on exactly one heartbeat. */
+/** Marks invites delivered — `deliveredAt` records that one reached a socket at least once. */
 export const markInvitesDelivered = (db: ApiDb, ids: string[], nowMs: number): void => {
   if (ids.length === 0) return;
   db.update(lobbyInvites).set({ deliveredAt: nowMs }).where(inArray(lobbyInvites.id, ids)).run();

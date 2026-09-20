@@ -5,6 +5,7 @@ import {
   controlLabel,
   findConflicts,
   invalidBindingsReason,
+  storedBindings,
   isBindableControl,
   resolveBindings,
   type KeyBindings,
@@ -52,6 +53,7 @@ describe("DEFAULT_BINDINGS", () => {
       hit: ["KeyF"],
       grab: ["KeyG"],
       spectateNext: ["KeyC"],
+      talk: ["KeyV"],
     });
     expect(Object.keys(DEFAULT_BINDINGS).sort()).toEqual([...BINDING_ACTIONS].sort());
   });
@@ -137,5 +139,27 @@ describe("findConflicts", () => {
     const bindings: KeyBindings = { ...DEFAULT_BINDINGS, hit: ["KeyF"], grab: ["KeyF"] };
     expect(findConflicts(bindings)).toEqual([{ control: "KeyF", actions: ["grab", "hit"] }]);
     expect(findConflicts(DEFAULT_BINDINGS)).toEqual([]);
+  });
+});
+
+describe("storedBindings", () => {
+  it("keeps a record saved before an action existed, with that action on its default", () => {
+    const { talk: _added, ...before } = DEFAULT_BINDINGS;
+    const read = storedBindings({ ...before, jump: ["KeyJ"] });
+    expect(read?.jump).toEqual(["KeyJ"]);
+    expect(read?.talk).toEqual(DEFAULT_BINDINGS.talk);
+  });
+
+  it("reads nothing from a value with no action in it at all", () => {
+    expect(storedBindings(null)).toBeNull();
+    expect(storedBindings([])).toBeNull();
+    expect(storedBindings({})).toBeNull();
+    expect(storedBindings({ fly: ["KeyF"] })).toBeNull();
+  });
+
+  it("drops what it cannot use rather than rejecting the record", () => {
+    const read = storedBindings({ ...DEFAULT_BINDINGS, hit: ["Escape", "KeyH"], grab: "KeyG" });
+    expect(read?.hit).toEqual(["KeyH"]);
+    expect(read?.grab).toEqual(DEFAULT_BINDINGS.grab);
   });
 });

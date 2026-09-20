@@ -7,7 +7,7 @@
  *
  * Feel: `character`, `movement`, `surfaces`, `knockdown`, `fight`, `world`,
  * all counting in `clock`'s ticks. Configuration: `netcode`, `match`,
- * `economy`, `authoring`, `hud`. Import the file you mean; this index is the
+ * `economy`, `authoring`, `hud`, `voice`. Import the file you mean; this index is the
  * package's public face, so `@dont-fall/shared` still exports every one.
  */
 export * from "./clock.js";
@@ -22,3 +22,4 @@ export * from "./match.js";
 export * from "./economy.js";
 export * from "./authoring.js";
 export * from "./hud.js";
+export * from "./voice.js";

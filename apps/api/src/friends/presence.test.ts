@@ -10,6 +10,7 @@ const seat = (overrides: {
   lobbyId?: string;
   isPrivate?: boolean;
   code?: string;
+  friendsOf?: string | null;
   phase?: string;
   round?: number | null;
   playerCount?: number;
@@ -21,7 +22,7 @@ const seat = (overrides: {
   playerCount: overrides.playerCount ?? 2,
   maxPlayers: overrides.maxPlayers ?? 10,
   ...(overrides.isPrivate
-    ? { isPrivate: true as const, code: overrides.code ?? "CODE42" }
+    ? { isPrivate: true as const, code: overrides.code ?? "CODE42", friendsOf: overrides.friendsOf ?? null }
     : { isPrivate: false as const }),
 });
 
@@ -36,9 +37,9 @@ describe("derivePresence", () => {
     expect(presence).toEqual({ status: "in-lobby", slotsOpen: 3, lobby: { kind: "public", lobbyId: "lobby-1" }, joinable: true });
   });
 
-  it("a private lobby travels by join code; a full one is not joinable", () => {
+  it("the creator's FRIENDS Lobby travels by join code; a full one is not joinable", () => {
     const seats = new Map([
-      ["a", seat({ isPrivate: true, code: "ABC123", playerCount: 10, maxPlayers: 10 })],
+      ["a", seat({ isPrivate: true, code: "ABC123", friendsOf: "a", playerCount: 10, maxPlayers: 10 })],
     ]);
 
     const presence = derivePresence(["a"], new Map(), seats, NOW).get("a");
@@ -49,6 +50,16 @@ describe("derivePresence", () => {
       lobby: { kind: "private", code: "ABC123" },
       joinable: false,
     });
+  });
+
+  it("an invite-only Lobby, or someone else's FRIENDS Lobby, shows no way in (ADR 0110)", () => {
+    const seats = new Map([
+      ["a", seat({ isPrivate: true, code: "ABC123", friendsOf: null })],
+      ["b", seat({ isPrivate: true, code: "XYZ789", friendsOf: "host" })],
+    ]);
+    const presence = derivePresence(["a", "b"], new Map(), seats, NOW);
+    expect(presence.get("a")).toEqual({ status: "in-lobby", slotsOpen: 8, joinable: false });
+    expect(presence.get("b")).toEqual({ status: "in-lobby", slotsOpen: 8, joinable: false });
   });
 
   it("COUNTDOWN through RESULTS all read in-match with the running Round — never a lobby ref", () => {

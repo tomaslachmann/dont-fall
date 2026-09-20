@@ -3,8 +3,10 @@ import {
   MAX_AVATAR_BYTES,
   invalidBindingsReason,
   invalidBodyColorReason,
+  invalidEmoteReason,
   invalidHatReason,
   invalidSkinReason,
+  type EmoteId,
   lockedHatReason,
   lockedSkinReason,
   randomBearerToken,
@@ -203,7 +205,7 @@ export const whoAmI = (db: ApiDb, token: string | undefined): Account => {
 export const updateCosmetics = (
   db: ApiDb,
   token: string | undefined,
-  input: { color?: unknown; skin?: unknown; hat?: unknown },
+  input: { color?: unknown; skin?: unknown; hat?: unknown; emote?: unknown; victoryPose?: unknown },
 ): Account => {
   const account = token ? getAccountBySessionToken(db, token) : undefined;
   if (!account) throw new ServiceError(401, "not logged in");
@@ -227,8 +229,19 @@ export const updateCosmetics = (
     if (locked) throw new ServiceError(403, locked);
     patch.hat = input.hat as string | null;
   }
-  if (patch.color === undefined && patch.skin === undefined && patch.hat === undefined) {
-    throw new ServiceError(400, "nothing to equip: send color, skin, hat, or any combination");
+  // ADR 0110: the emote and victory pose, free like colours.
+  if (input.emote !== undefined) {
+    const reason = invalidEmoteReason(input.emote);
+    if (reason) throw new ServiceError(400, `emote ${reason}`);
+    patch.emote = input.emote as EmoteId;
+  }
+  if (input.victoryPose !== undefined) {
+    const reason = invalidEmoteReason(input.victoryPose);
+    if (reason) throw new ServiceError(400, `victoryPose ${reason}`);
+    patch.victoryPose = input.victoryPose as EmoteId;
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new ServiceError(400, "nothing to equip: send color, skin, hat, emote, victoryPose, or any combination");
   }
   const updated = setCosmetics(db, account.id, patch);
   if (!updated) throw new ServiceError(401, "not logged in");
@@ -254,9 +267,17 @@ export const updateBindings = (
   return updated;
 };
 
-/** Ends a session (logout). Deleting an already-gone/unknown token is a no-op, not an error. */
-export const logout = (db: ApiDb, token: string | undefined): void => {
-  if (token) deleteSession(db, token);
+/**
+ * Ends a session (logout), answering the Account it belonged to so its
+ * Account socket can go with it (ADR 0112) — everything that socket carries
+ * is for a signed-in Account. Deleting an already-gone/unknown token is a
+ * no-op, not an error, and answers `undefined`.
+ */
+export const logout = (db: ApiDb, token: string | undefined): string | undefined => {
+  if (!token) return undefined;
+  const account = getAccountBySessionToken(db, token);
+  deleteSession(db, token);
+  return account?.id;
 };
 
 /**

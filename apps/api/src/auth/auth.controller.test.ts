@@ -450,6 +450,39 @@ describe("PUT /auth/me/cosmetics (M9 ticket 15)", () => {
       }
     });
   });
+
+  describe("emotes and a victory pose (ADR 0110)", () => {
+    it("starts every Account on the default emote and victory pose", async () => {
+      const { token } = (await signup()).json() as { token: string };
+      const me = await app.inject({ method: "GET", url: "/auth/me", headers: { authorization: `Bearer ${token}` } });
+      expect(me.json()).toMatchObject({ emote: "wobble", victoryPose: "win" });
+    });
+
+    it("stores both, alone or beside a colour, and leaves the other slots as they were", async () => {
+      const { token } = (await signup()).json() as { token: string };
+
+      expect((await save(token, { emote: "punch" })).json()).toMatchObject({ emote: "punch", victoryPose: "win", color: 0 });
+      expect((await save(token, { victoryPose: "sulk", color: 3 })).json()).toMatchObject({
+        emote: "punch",
+        victoryPose: "sulk",
+        color: 3,
+      });
+      const me = await app.inject({ method: "GET", url: "/auth/me", headers: { authorization: `Bearer ${token}` } });
+      expect(me.json()).toMatchObject({ emote: "punch", victoryPose: "sulk" });
+    });
+
+    it("refuses anything outside the rig's set, naming the set", async () => {
+      const { token } = (await signup()).json() as { token: string };
+
+      for (const body of [{ emote: "dab" }, { victoryPose: "Death_B" }, { emote: null }, { victoryPose: 3 }]) {
+        const res = await save(token, body);
+        expect(res.statusCode).toBe(400);
+        expect(JSON.stringify(res.json())).toMatch(/must be one of: win, shrug, sulk, wobble, punch/);
+      }
+      const me = await app.inject({ method: "GET", url: "/auth/me", headers: { authorization: `Bearer ${token}` } });
+      expect(me.json()).toMatchObject({ emote: "wobble", victoryPose: "win" });
+    });
+  });
 });
 
 describe("PUT /auth/me/bindings (M9 controls)", () => {

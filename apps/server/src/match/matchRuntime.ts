@@ -32,7 +32,9 @@ import { httpMatchResultsNotifier, type MatchResultsNotifier } from "./matchResu
 import { httpTrackPlayRecorder, type TrackPlayRecorder } from "./trackPlays.js";
 import { httpPersonalBestRecorder, type PersonalBestRecorder } from "./personalBests.js";
 import { drawRound, type RoundSlotPick } from "./roundDraw.js";
+import { AccountRoster } from "../server/accountRoster.js";
 import type { ServerRuntimeConfig } from "../server/config.js";
+import { Reservations } from "../server/reservations.js";
 import type { FetchedTrack } from "../track/trackSource.js";
 
 /** One Round's fully-resolved plan (M7 ticket 05) — what {@link MatchRuntime.matchStructure} holds per slot. */
@@ -40,6 +42,12 @@ export interface MatchStructureEntry {
   fetched: FetchedTrack;
   roundType: RoundType;
 }
+
+/**
+ * What {@link MatchRuntime.reserveSeats} answered (ADR 0112): a token per
+ * Account, or why nobody got one, in words.
+ */
+export type SeatReservation = { granted: Record<string, string> } | { refused: string };
 
 /**
  * Everything `startServer`'s config resolved to, fixed for the life of the
@@ -66,6 +74,12 @@ export interface MatchConfig extends ServerRuntimeConfig {
    * complete and nothing is loaded.
    */
   assets?: AssetLibraryLoader | undefined;
+  /**
+   * Called with the Accounts seated here whenever that set changes (ADR
+   * 0111) — see {@link MatchRuntime.accountRoster}. Absent in every test and
+   * in a standalone server: nobody is listening, so nothing is walked.
+   */
+  onAccountRoster?: ((accountIds: readonly string[]) => void) | undefined;
 }
 
 /**
@@ -103,6 +117,15 @@ export class MatchRuntime {
   readonly spectators = new Set<string>();
 
   readonly inputs = new InputRouter();
+
+  /**
+   * Seats kept for Accounts the broker sent here that have not connected yet
+   * (ADR 0112) — each counts as taken in the capacity check and in
+   * `/status.playerCount`, and while any is live the Lobby cannot start.
+   * Not Match-scoped: a Track pick resets the Lobby under a Party still
+   * walking in, and its seats must survive that.
+   */
+  readonly reservations: Reservations;
 
   /** The world. Replaced wholesale by a Playtest reload or a Lobby Track pick. */
   simulation: RapierSimulation;
@@ -342,7 +365,14 @@ export class MatchRuntime {
   /** What the Round clock read when the Round ended, so it stops rather than springs back. */
   finalTimeLeftMs = 0;
 
-  /** Monotonic across the process so each joiner gets a distinct spawn slot. */
+  /**
+   * Monotonic across the process so each joiner gets a distinct spawn slot,
+   * and a distinct place in line (`LobbyPlayer.joinOrder`, which is what
+   * `resolveHostId` reads). Advanced one at a time by a connection
+   * registering, and a whole block at a time by {@link reserveSeats}, which
+   * claims the places the Party walking in will take (ADR 0112) — so a
+   * Reservation nobody spends leaves a gap here.
+   */
   joinCount = 0;
 
   /**
@@ -406,6 +436,15 @@ export class MatchRuntime {
    */
   readonly personalBests: PersonalBestRecorder;
 
+  /**
+   * Who is seated here by Account (ADR 0111), reported to whoever started
+   * this server whenever it changes. The API's voice relay is the one
+   * listener: a voice room *is* the Lobby's roster. Told by the two places
+   * that can move it — an `auth` binding a seat to an Account, and a socket
+   * closing.
+   */
+  readonly accountRoster: AccountRoster;
+
   constructor(
     readonly config: MatchConfig,
     fetched: FetchedTrack,
@@ -424,6 +463,8 @@ export class MatchRuntime {
     this.accounts = accounts;
     this.personalBests = personalBests;
     this.matchLength = config.matchLengthOverride ?? DEFAULT_MATCH_LENGTH;
+    this.reservations = new Reservations(config.reservationTtlMs);
+    this.accountRoster = new AccountRoster(config.onAccountRoster);
     // The Match starts with no players; ticket 01's single-player default
     // Character is opted out here rather than added and immediately disposed.
     const built = this.buildSimulationFor(fetched.track);
@@ -498,12 +539,61 @@ export class MatchRuntime {
 
   /**
    * Why this Lobby can't start right now, in words a Player can read, or
-   * `undefined` when it can (M5 ticket 07). One expression, read by both the
+   * `undefined` when it can (M5 ticket 07, ADR 0112). One expression, read by both the
    * `start` gate that refuses and the snapshot field that explains — so what
    * a Player is told and what the server enforces can never disagree.
    */
   startBlockedReason(): string | undefined {
-    return roundStartBlockedReason(this.roundType, this.trackHasFinishZone);
+    const trackReason = roundStartBlockedReason(this.roundType, this.trackHasFinishZone);
+    if (trackReason !== undefined) return trackReason;
+    // ADR 0112: a Party following its host into this Lobby is never started
+    // without, which would land it as spectators. Second to the Track's
+    // reason because that one is the host's to fix; this one clears itself
+    // within a Reservation's lifetime, whether the beans arrive or not.
+    const arriving = this.reservations.liveCount();
+    if (arriving > 0) return `Waiting for ${arriving} ${arriving === 1 ? "bean" : "beans"} to arrive.`;
+    return undefined;
+  }
+
+  /**
+   * Reserves a seat for every one of `accountIds`, or for none (ADR 0112) — a
+   * Party is seated together or refused, never split by whoever connects
+   * between two of its members.
+   *
+   * Refused outside LOBBY, and once a `start` is queued: `match.phase` only
+   * leaves LOBBY on the tick after `start` (see `startRequested`), and a seat
+   * granted in that window would be a bean walking into a Round already
+   * loading. Refused, too, when the connections plus the seats already kept
+   * leave no room for all of them — the same cap `ensureCapacity` holds a
+   * connection to.
+   *
+   * Synchronous from the checks to the grant, so no connection, `start` or
+   * other request can land between the two.
+   */
+  reserveSeats(accountIds: readonly string[]): SeatReservation {
+    if (this.match.phase !== "LOBBY") return { refused: "this Lobby's Match has already started" };
+    if (this.startRequested) return { refused: "this Lobby is starting" };
+    const taken = this.sockets.size + this.reservations.liveCount();
+    const needed = this.reservations.seatsNeededFor(accountIds);
+    if (taken + needed > this.config.maxPlayers) {
+      const free = Math.max(0, this.config.maxPlayers - taken);
+      return { refused: `no room for ${accountIds.length} (${free} of ${this.config.maxPlayers} seats free)` };
+    }
+    // The seats kept here claim a contiguous block of join orders starting at
+    // the next free one, so who hosts this Lobby stops depending on whose
+    // socket wins the race in (review finding, 2026-09-19) — see
+    // `Reservations.grant`. Advanced by what the grant actually took: an
+    // Account already holding a live Reservation keeps the place it already
+    // has, and takes no second one. A Reservation nobody spends simply leaves
+    // its number unused — a gap no reader of `joinOrder` minds
+    // (`resolveHostId` takes the lowest, `trackSpawn` the number modulo its
+    // twelve slots).
+    const { tokens, joinOrdersTaken } = this.reservations.grant(accountIds, this.joinCount);
+    this.joinCount += joinOrdersTaken;
+    // The Lobby's start blocker changed, and an idle Lobby only broadcasts on
+    // change (ADR 0057) — this is one, as `loaded` is.
+    this.snapshotDirty = true;
+    return { granted: tokens };
   }
 
   /**

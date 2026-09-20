@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   M1_TRACK,
   MODULE_LIBRARY,
+  SEAT_RESERVATION_TTL_MS,
   createAssetLibraryLoader,
   initPhysics,
   type AssetLibraryLoader,
@@ -56,6 +57,7 @@ const configWith = (assets?: AssetLibraryLoader): MatchConfig => ({
   standingsReadyTimeoutMs: 0,
   playersToStart: 1,
   maxPlayers: 4,
+  reservationTtlMs: SEAT_RESERVATION_TTL_MS,
   matchLengthOverride: 2,
   ...(assets === undefined ? {} : { assets }),
 });

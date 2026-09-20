@@ -13,8 +13,8 @@ import {
   declineFriendRequest,
   friendRequests,
   friendsOverview,
-  heartbeat,
   inviteFriend,
+  invitesOnConnect,
   ownFriendCode,
   recentPlayers,
   sendFriendRequest,
@@ -61,7 +61,7 @@ const seat = (overrides: {
   playerCount: overrides.playerCount ?? 2,
   maxPlayers: overrides.maxPlayers ?? 8,
   ...(overrides.isPrivate
-    ? { isPrivate: true as const, code: overrides.code ?? "CODE42" }
+    ? { isPrivate: true as const, code: overrides.code ?? "CODE42", friendsOf: overrides.accountIds[0] ?? null }
     : { isPrivate: false as const }),
   accountIds: overrides.accountIds,
 });
@@ -198,8 +198,8 @@ describe("unfriend", () => {
   });
 });
 
-describe("heartbeat", () => {
-  it("delivers each pending invite exactly once, and never an expired one", () => {
+describe("Lobby invites over the Account socket (ADR 0112)", () => {
+  it("hands an invite sent while nobody was listening over on connect", () => {
     const a = makeAccount("Amy");
     const b = makeAccount("Bo");
     const env = envWithSeats([]);
@@ -208,21 +208,34 @@ describe("heartbeat", () => {
     acceptFriendRequest(db, env, b, id);
     inviteFriend(db, env, a, { accountId: b, lobby: { kind: "private", code: "ABC123" } });
 
-    const first = heartbeat(db, env, b);
-    expect(first).toEqual({
-      ok: true,
-      invites: [
-        {
-          id: expect.any(String),
-          fromAccountId: a,
-          fromDisplayName: "Amy",
-          fromColor: 0,
-          lobby: { kind: "private", code: "ABC123" },
-          sentAt: NOW,
-        },
-      ],
-    });
-    expect(heartbeat(db, env, b).invites).toEqual([]);
+    expect(invitesOnConnect(db, b, NOW)).toEqual([
+      {
+        id: expect.any(String),
+        fromAccountId: a,
+        fromDisplayName: "Amy",
+        fromColor: 0,
+        lobby: { kind: "private", code: "ABC123" },
+        sentAt: NOW,
+      },
+    ]);
+  });
+
+  it("pushes a live invite again on the next connect — a send is only ever a socket taking the bytes", () => {
+    const a = makeAccount("Amy");
+    const b = makeAccount("Bo");
+    // Bo's socket is open and takes the invite, then dies without a close
+    // (a half-open connection): nothing else would ever mention it again.
+    const env: FriendsEnv = { ...envWithSeats([]), pushLobbyInvite: () => true };
+
+    const { id } = sendFriendRequest(db, env, a, { accountId: b });
+    acceptFriendRequest(db, env, b, id);
+    const invite = inviteFriend(db, env, a, { accountId: b, lobby: { kind: "public", lobbyId: "lobby-1" } });
+
+    expect(invitesOnConnect(db, b, NOW).map((row) => row.id)).toEqual([invite.id]);
+    // And again on the connect after that — the client drops a duplicate by id.
+    expect(invitesOnConnect(db, b, NOW + 1_000).map((row) => row.id)).toEqual([invite.id]);
+    // Until it expires.
+    expect(invitesOnConnect(db, b, NOW + 60 * 60_000)).toEqual([]);
   });
 
   it("an invite past expiry never surfaces", () => {
@@ -234,8 +247,35 @@ describe("heartbeat", () => {
     acceptFriendRequest(db, env, b, id);
     inviteFriend(db, env, a, { accountId: b, lobby: { kind: "public", lobbyId: "lobby-9" } });
 
-    const lateEnv: FriendsEnv = { ...env, now: () => NOW + 60 * 60_000 };
-    expect(heartbeat(db, lateEnv, b).invites).toEqual([]);
+    expect(invitesOnConnect(db, b, NOW + 60 * 60_000)).toEqual([]);
+  });
+
+  it("pushes an invite to an open socket at once and marks it delivered; a closed one gets it on connect", () => {
+    const a = makeAccount("Amy");
+    const b = makeAccount("Bo");
+    const c = makeAccount("Cy");
+    const pushed: { to: string; lobby: unknown }[] = [];
+    const env: FriendsEnv = {
+      ...envWithSeats([]),
+      pushLobbyInvite: (to, invite) => {
+        if (to !== b) return false;
+        pushed.push({ to, lobby: invite.lobby });
+        return true;
+      },
+    };
+    for (const friend of [b, c]) {
+      const { id } = sendFriendRequest(db, env, a, { accountId: friend });
+      acceptFriendRequest(db, env, friend, id);
+    }
+
+    inviteFriend(db, env, a, { accountId: b, lobby: { kind: "public", lobbyId: "lobby-1" } });
+    inviteFriend(db, env, a, { accountId: c, lobby: { kind: "public", lobbyId: "lobby-1" } });
+
+    expect(pushed).toEqual([{ to: b, lobby: { kind: "public", lobbyId: "lobby-1" } }]);
+    // Both are still there to hand over on a connect: the one nobody could
+    // hear, and the one a socket took but may never have shown.
+    expect(invitesOnConnect(db, b, NOW)).toHaveLength(1);
+    expect(invitesOnConnect(db, c, NOW)).toHaveLength(1);
   });
 });
 

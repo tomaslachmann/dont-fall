@@ -193,3 +193,30 @@ export const lockedHatReason = (hat: string | null, xp: number): string | undefi
  */
 export const hatsUnlockedBetween = (xpBefore: number, xpAfter: number): HatDef[] =>
   HATS.filter((hat) => !isHatUnlocked(hat, xpBefore) && isHatUnlocked(hat, xpAfter));
+
+/**
+ * The emotes a bean can do (ADR 0110) — what the rig has clips for, and
+ * nothing it doesn't. An Account picks one to play (the main menu, Character
+ * Select's PLAY EMOTE) and one as its victory pose (its Profile, the podium
+ * when it wins). Free, like colours: no level gate.
+ */
+export const EMOTES = [
+  { id: "win", name: "WIN" },
+  { id: "shrug", name: "SHRUG" },
+  { id: "sulk", name: "SULK" },
+  { id: "wobble", name: "WOBBLE" },
+  { id: "punch", name: "PUNCH" },
+] as const;
+export type EmoteId = (typeof EMOTES)[number]["id"];
+
+/** What an Account plays before it picks: the wobble the turntable always did, and the win the podium always did. */
+export const DEFAULT_EMOTE: EmoteId = "wobble";
+export const DEFAULT_VICTORY_POSE: EmoteId = "win";
+
+/** The emote `id` names, or `undefined` for anything that isn't one. */
+export const emoteById = (id: unknown): (typeof EMOTES)[number] | undefined =>
+  typeof id === "string" ? EMOTES.find((emote) => emote.id === id) : undefined;
+
+/** Why `emote` isn't an emote, or `undefined` when it is. */
+export const invalidEmoteReason = (emote: unknown): string | undefined =>
+  emoteById(emote) ? undefined : `must be one of: ${EMOTES.map((known) => known.id).join(", ")}`;

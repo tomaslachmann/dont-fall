@@ -11,9 +11,21 @@ export type LobbySeat = {
   round: number | null;
   playerCount: number;
   maxPlayers: number;
-} & ({ isPrivate: true; code: string } | { isPrivate: false });
+} & (
+  | {
+      isPrivate: true;
+      code: string;
+      /**
+       * Whose friends this Lobby shows up for, with one-click JOIN (ADR 0110)
+       * — its creator's, when WHO CAN JOIN is FRIENDS; `null` for an
+       * invite-only Lobby, which no friend is shown as joinable.
+       */
+      friendsOf: string | null;
+    }
+  | { isPrivate: false }
+);
 
-/** A beat this fresh reads online — the client beats every 30s, so three missed beats still hold. */
+/** A beat this fresh reads online — the API beats every 30s for each open Account socket (ADR 0112), so three missed beats still hold. */
 export const ONLINE_WINDOW_MS = 90_000;
 /** Past this a silent Account reads offline — between the windows, idle. */
 export const IDLE_WINDOW_MS = 10 * 60_000;
@@ -36,11 +48,16 @@ export const derivePresence = (
     const seat = seats.get(id);
     if (seat !== undefined) {
       if (seat.phase === "LOBBY") {
+        // ADR 0110: a private Lobby is reachable from presence only as its
+        // creator's FRIENDS Lobby; otherwise the friend is just "in a Lobby".
+        const shown = !seat.isPrivate || seat.friendsOf === id;
         out.set(id, {
           status: "in-lobby",
           slotsOpen: Math.max(0, seat.maxPlayers - seat.playerCount),
-          lobby: seat.isPrivate ? { kind: "private", code: seat.code } : { kind: "public", lobbyId: seat.lobbyId },
-          joinable: seat.playerCount < seat.maxPlayers,
+          ...(shown
+            ? { lobby: seat.isPrivate ? { kind: "private" as const, code: seat.code } : { kind: "public" as const, lobbyId: seat.lobbyId } }
+            : {}),
+          joinable: shown && seat.playerCount < seat.maxPlayers,
         });
       } else {
         out.set(id, { status: "in-match", ...(seat.round === null ? {} : { round: seat.round }) });

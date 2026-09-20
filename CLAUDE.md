@@ -538,7 +538,61 @@ meter as the mock's charge card, a pause menu with real screen shake and namepla
 setup (ROUNDS, FRIENDS / INVITE ONLY), matchmade public Lobbies with a real queue and a SURVIVAL queue,
 parties, voice chat and drafts. The last four are settled with the user before their tickets are built.
 Not now: password reset, the shop, the Ragdoll overlay, the Elimination card. Tickets 01–18 in
-`.scratch/m15-real-screens/issues/`.
+`.scratch/m15-real-screens/issues/`: 01–14, 16 and 17 are done on tests; 15 (matchmade public Lobbies)
+and 18 (drafts) wait on their design questions.
+
+**A Party follows its host, done on tests** — M15 ticket 16 (**ADR 0112**), settled with the user in
+three question rounds on 2026-09-19 plus their own design drop (`ui/PartyStrip.tsx`, the `Party` and
+`InviteFriends` mocks). Four Accounts; only the **Party host** moves the Party, and it follows
+everywhere the host goes (Quick Match, PLAY AGAIN, a created private Lobby, a code, a friend's JOIN,
+an accepted Lobby invite); PLAY waits for everyone to be back in the menus; the host leaving the
+Party's Lobby takes the Party out, while a member entering a *different* Lobby leaves the Party.
+Friends, recent players and anyone with the ten-minute **Party code** (SHARE LINK `/party/<code>`)
+can join. It lives in the API's memory and lasts while its members are online.
+
+Two mechanisms carry it, and both fix something older. **The Account socket**: one WebSocket per
+signed-in client at `/account`, pushing the Party, Party and Lobby invites, `follow`, `left` and
+`removed`, and taking back only where the client is (`menu` / `lobby` / `match`). It replaces the
+client heartbeat — which four Screens each ran, so a Lobby invite handed to exactly one of them was
+routinely thrown away — and `POST /friends/heartbeat` is gone. **Reservations**: the broker asks a
+Lobby's Match server to hold every member's seat (all or none, `SEAT_RESERVATION_TTL_MS`), they count
+in capacity and `/status`, a Lobby cannot start while one is live, and a Reservation holds a place in
+line so the Party host is still the Lobby host when a member's socket lands first. Ticket 15's
+auto-start must treat a held seat as a bean present but not ready; ticket 17 reads `PartiesService`
+for voice PARTY.
+
+Review found, and this ticket fixed, what tests had not: a member could take the Lobby host role from
+the host who pressed "YOU HOST"; a re-grant refreshed a Reservation's deadline, so a client that never
+connected could block any public Lobby's Start; an offline member held PLAY for the whole 90 s grace;
+a second tab's takeover read as the host leaving the Lobby and pulled the members out of it; a
+logged-out session kept its Account socket, its presence and its pushes. **Waiting on the user:**
+everything visual and live — the strip and invite card on a real stage, the menu hero's four-bean
+formation (every number a first guess), and the follow-into-a-Lobby flow in two browsers.
+
+**Voice chat, done on tests** — M15 ticket 17 (**ADR 0111**), settled with the user in three question
+rounds on 2026-09-19. Opus over our own WebSocket to a relay in a `worker_thread` of the API with a
+port of its own, so no voice byte crosses the loop every Lobby Ticks on (nginx routes `/api/voice`
+straight to it). OFF / PARTY / ALL, linked both ways by one pure rule in `packages/shared`;
+push-to-talk on a rebindable `talk` (V) with an open-mic gate; a voice placed at its speaker's
+Character and never silenced; Mutes on the Account; the cue on Avatars, nameplates and a HUD row;
+the rows on Settings → AUDIO and in the pause sheet, which now opens on the Lobby and Standings too.
+The client's session lives above the routes, so walking from `/lobby` to the podium never ends it.
+
+What building it settled, and the ADR's "As built" records: a voice socket **can beat its own Lobby's
+first roster** to the relay, so the two 4001 refusals had to be told apart by reason — one redials,
+one is final; `VoicePeer.linked` became the link rule **alone**, because a Mute that removed a peer
+from the list would have removed the only row that could unmute them; the jitter buffer holds no
+audio at all, only the clock where a speaker's scheduled audio runs out; and capture takes its own
+48 kHz `AudioContext`, since the page's shared one runs at whatever the hardware gives it.
+
+Found by its own tests rather than by review: the CONTROLS pane was **crashing** (the `talk` action
+had landed in shared without its row, and the pane's own sanity check fires on that mismatch), and
+`loadMutes` trusted the response shape — a body without `muted` put `undefined` in the store and every
+reader crashed on it.
+
+**Waiting on the user:** all of it is unheard. Echo with speakers rather than headphones on each
+browser; latency on a lossy link; the placed voice's falloff; the open-mic gate's threshold; a
+Bluetooth headset with the microphone open; and how every cue looks.
 
 **Also open: M9** — Design screens reconciliation (`.scratch/m9-design-screens-reconciliation/issues/`).
 A new design-screens drop (`apps/client/src/test_components/`) turned out to assume six systems

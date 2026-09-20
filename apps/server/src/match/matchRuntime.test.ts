@@ -9,6 +9,7 @@ import {
   initPhysics,
   M1_TRACK,
   RapierSimulation,
+  SEAT_RESERVATION_TTL_MS,
   loadAssetLibrary,
   resolveTrack,
   trackSpawn,
@@ -41,6 +42,7 @@ const config: MatchConfig = {
   standingsReadyTimeoutMs: 0,
   playersToStart: 2,
   maxPlayers: 10,
+  reservationTtlMs: SEAT_RESERVATION_TTL_MS,
 };
 
 const seat = (

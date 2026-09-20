@@ -81,6 +81,9 @@ export const accounts = sqliteTable("accounts", {
    * The bytes live in `account_avatars`.
    */
   avatarUploadedAt: integer("avatar_uploaded_at"),
+  /** The picked emote and victory pose (ADR 0110) — NULL until picked, which reads as the defaults. */
+  emote: text("emote"),
+  victoryPose: text("victory_pose"),
   /**
    * This Account's role (shared's `AccountRole`) — `"player"` for everyone,
    * `"admin"` reserved for future administration tooling. No writer yet:
@@ -322,10 +325,11 @@ export const friendships = sqliteTable(
 );
 
 /**
- * Lobby invites in flight (M9 ticket 12) — written by INVITE, read once by
- * the recipient's next presence heartbeat (which marks them delivered), and
- * lazily pruned past `expiresAt`. Accepting is joining (no server-side
- * accept exists — the JOIN is the accept); declining is a local dismiss.
+ * Lobby invites in flight (M9 ticket 12) — written by INVITE, pushed once
+ * over the recipient's Account socket, at once or on its next connect
+ * (ADR 0112; that marks them delivered), and lazily pruned past
+ * `expiresAt`. Accepting is joining (no server-side accept exists — the
+ * JOIN is the accept); declining is a local dismiss.
  */
 export const lobbyInvites = sqliteTable("lobby_invites", {
   id: text("id").primaryKey(),
@@ -347,6 +351,22 @@ export const presenceBeats = sqliteTable("presence_beats", {
   accountId: text("account_id").primaryKey(),
   beatAt: integer("beat_at").notNull(),
 });
+
+/**
+ * Whom an Account has Muted (ADR 0111) — one row per (muter, muted) pair,
+ * kept on the Account so a Player stays Muted in every later Match. Hearing
+ * only: a Mute never stops the muter being heard *by* the Player they Muted,
+ * which is what OFF is for.
+ */
+export const voiceMutes = sqliteTable(
+  "voice_mutes",
+  {
+    accountId: text("account_id").notNull(),
+    mutedAccountId: text("muted_account_id").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.accountId, table.mutedAccountId] })],
+);
 
 /**
  * Each Account's uploaded avatar (ADR 0110): a 256² WebP, at most

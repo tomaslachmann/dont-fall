@@ -15,6 +15,15 @@ export type FriendPresenceStatus = "in-lobby" | "in-match" | "online" | "idle" |
  */
 export type LobbyRef = { kind: "private"; code: string } | { kind: "public"; lobbyId: string };
 
+/**
+ * Who may find a private Lobby (ADR 0110) — PlaySelect's WHO CAN JOIN.
+ * `friends`: the host's friends see it and join with one click; its code
+ * works for anyone. `invite-only`: a code or an invite, and nobody is shown
+ * it as joinable.
+ */
+export const LOBBY_PRIVACIES = ["friends", "invite-only"] as const;
+export type LobbyPrivacy = (typeof LOBBY_PRIVACIES)[number];
+
 export interface FriendPresence {
   status: FriendPresenceStatus;
   /** In a Match: which Round is running (the mock's "ROUND 2"). */
@@ -23,7 +32,11 @@ export interface FriendPresence {
   slotsOpen?: number;
   /** Idle/offline: when the friend was last seen (ms epoch, for "2 DAYS AGO"). Absent when never. */
   lastSeenAt?: number;
-  /** In a Lobby: how a JOIN would travel. Always present there — the JOIN button's own gate is `joinable`. */
+  /**
+   * In a Lobby: how a JOIN would travel — a public Lobby, or the friend's own
+   * FRIENDS Lobby (ADR 0110). Absent for any other private one: an invite-only
+   * Lobby is never shown to friends as joinable.
+   */
   lobby?: LobbyRef;
   /** In a Lobby, LOBBY phase, capacity left — the JOIN button's own gate. */
   joinable?: boolean;

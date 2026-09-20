@@ -1,3 +1,4 @@
+import type { EmoteId } from "../cosmetics.js";
 import type { RoundResult } from "./Score.js";
 
 /**
@@ -70,3 +71,10 @@ export interface PersistedMatchResult {
   grabsBroken: Record<string, number>;
   endedAtMs: number;
 }
+
+/**
+ * What `GET /matches/:id` answers: the stored result, plus each authed seat's
+ * victory pose (ADR 0110) as its Account has it at read time — a signature,
+ * not a record, so it is never stored with the Match.
+ */
+export type MatchResultResponse = PersistedMatchResult & { victoryPoses: Record<string, EmoteId> };

@@ -16,9 +16,9 @@ import {
   ensureFriendCode,
   incomingRequests,
   listFriends,
+  liveInvites,
   markInvitesDelivered,
   pendingBetween,
-  pendingInvites,
   recordBeat,
   removeFriendship,
   sendRequest,
@@ -227,7 +227,7 @@ describe("coPlayedWith", () => {
 });
 
 describe("lobby invites", () => {
-  it("an invite is read once, then marked delivered — and expires lazily", () => {
+  it("an invite keeps surfacing while it lives, carrying when it was first delivered — and expires lazily", () => {
     const a = makeAccount("Amy");
     const b = makeAccount("Bo");
 
@@ -238,22 +238,22 @@ describe("lobby invites", () => {
       createdAt: 1_000,
       expiresAt: 2_000,
     });
+    const row = {
+      id,
+      fromAccountId: a,
+      fromDisplayName: "Amy",
+      fromColor: 0,
+      lobbyRef: { kind: "private", code: "ABC123" },
+      createdAt: 1_000,
+    };
 
-    expect(pendingInvites(db, b, 1_500)).toEqual([
-      {
-        id,
-        fromAccountId: a,
-        fromDisplayName: "Amy",
-        fromColor: 0,
-        lobbyRef: { kind: "private", code: "ABC123" },
-        createdAt: 1_000,
-      },
-    ]);
+    expect(liveInvites(db, b, 1_500)).toEqual([{ ...row, deliveredAt: null }]);
 
+    // Delivered once is not gone: the socket it reached may have been dead.
     markInvitesDelivered(db, [id], 1_500);
-    expect(pendingInvites(db, b, 1_600)).toEqual([]);
+    expect(liveInvites(db, b, 1_600)).toEqual([{ ...row, deliveredAt: 1_500 }]);
 
-    // An undelivered invite past expiry never surfaces — and is pruned by the read.
+    // Past expiry it never surfaces — and is pruned by the read.
     createInvite(db, {
       fromAccountId: a,
       toAccountId: b,
@@ -261,7 +261,6 @@ describe("lobby invites", () => {
       createdAt: 1_000,
       expiresAt: 1_100,
     });
-    expect(pendingInvites(db, b, 1_500)).toEqual([]);
-    expect(pendingInvites(db, b, 1_600)).toEqual([]);
+    expect(liveInvites(db, b, 2_500)).toEqual([]);
   });
 });
