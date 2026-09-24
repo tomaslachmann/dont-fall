@@ -7,6 +7,7 @@ import { AuthoredRagdoll, modelYawOfFacing } from "../ragdoll/AuthoredRagdoll.js
 import { getUpFloorY, matchGetUp, type GetUpMatch } from "../ragdoll/getUp.js";
 import type { BoneSnapshot } from "../ragdollSkeleton.js";
 import type { Capsule } from "./Capsule.js";
+import { getUpSpot } from "./getUpSpot.js";
 import type { MovementController } from "./MovementController.js";
 
 interface PendingImpact {
@@ -353,7 +354,9 @@ export class RagdollController {
    * the heap is matched to its `GetUp_X` clip, the bones go kinematic and are
    * carried onto that clip's first frame over {@link GETUP_DRIVE_TICKS}. The
    * capsule waits where the clip's own origin will be, so nothing about the
-   * Character's place changes again when the clip takes over.
+   * Character's place changes again when the clip takes over — or, where
+   * that would start it inside still geometry, at the nearest spot clear of
+   * it ({@link getUpSpot}).
    */
   private beginGettingUp(tickCount: number): void {
     this.getupBones = this.ragdoll.readBones();
@@ -361,22 +364,21 @@ export class RagdollController {
     this.getupStartRoot = this.ragdoll.rootPosition();
     this.pendingImpact = null;
     this.sweep = matchGetUp(this.getupBones);
+    let wanted: Vec3;
     if (this.sweep) {
       this.sweepFloorY = getUpFloorY(this.getupBones, this.sweep);
       this.ragdoll.startSweep();
-      this.capsule.body.setTranslation(
-        { x: this.sweep.originX, y: this.sweepFloorY + CAPSULE_BOTTOM_OFFSET, z: this.sweep.originZ },
-        false,
-      );
+      wanted = vec3(this.sweep.originX, this.sweepFloorY + CAPSULE_BOTTOM_OFFSET, this.sweep.originZ);
     } else {
       // No match (a spec with no get-up pose, or a heap with no chest to
       // read): the old behaviour — freeze and stand up where the pelvis is.
       this.ragdoll.deactivate();
-      this.capsule.body.setTranslation(
-        { x: this.getupStartRoot.x, y: this.getupStartRoot.y + GETUP_CAPSULE_LIFT, z: this.getupStartRoot.z },
-        false,
-      );
+      wanted = vec3(this.getupStartRoot.x, this.getupStartRoot.y + GETUP_CAPSULE_LIFT, this.getupStartRoot.z);
     }
+    // Never inside still geometry (M17 ticket 06b): a spot clear of it, or
+    // `wanted` itself. The sweep follows the capsule (`advanceGetUp`), so a
+    // moved capsule carries the clip's pose along with it.
+    this.capsule.body.setTranslation(getUpSpot(this.capsule, wanted, this.getupStartRoot), false);
     this.capsule.collider.setEnabled(true);
     this.movement.velocity = vec3();
   }
