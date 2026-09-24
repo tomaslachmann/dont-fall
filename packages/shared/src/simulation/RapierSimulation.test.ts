@@ -1039,6 +1039,90 @@ describe("RapierSimulation — Fall & Respawn", () => {
     for (let i = 0; i < 5; i += 1) sim.tick({ [DEFAULT_CHARACTER_ID]: NORTH });
     expect(sim.snapshot().characters[DEFAULT_CHARACTER_ID]!.respawnCount).toBe(1);
   });
+
+  describe("a Respawn never lands inside another Character (M17 ticket 06b)", () => {
+    // Someone stands on the Checkpoint's respawn point; the fallers start in
+    // the Checkpoint's trigger to the east and walk off the north edge.
+    const RESPAWN = { x: 0, y: CAPSULE_BOTTOM_OFFSET + 0.1, z: 0 };
+    const withCheckpointAt = (respawn: typeof RESPAWN, fallers: string[]) => {
+      const checkpoint: Checkpoint = {
+        respawn,
+        trigger: { center: { x: 2.5, y: 0.5, z: 0 }, halfExtents: { x: 1.5, y: 2, z: 1 } },
+      };
+      const sim = new RapierSimulation({ statics: [PLATFORM], checkpoints: [checkpoint], killPlaneY: -8, withDefaultCharacter: false });
+      sim.addCharacter("stander", respawn);
+      fallers.forEach((id, i) => sim.addCharacter(id, { x: 2 + i * 1.5, y: RESPAWN.y, z: 0 }));
+      return sim;
+    };
+    const idle = (ids: string[]) => Object.fromEntries(ids.map((id) => [id, IDLE_INPUTS]));
+    const flat = (a: { x: number; z: number }, b: { x: number; z: number }) => Math.hypot(a.x - b.x, a.z - b.z);
+    /** Fallers walk north until every one of them has Respawned, then everyone settles. */
+    const fallAndSettle = (sim: RapierSimulation, fallers: string[]) => {
+      const everyone = ["stander", ...fallers];
+      for (let t = 0; t < 15; t += 1) sim.tick(idle(everyone));
+      for (let t = 0; t < 300; t += 1) {
+        sim.tick({ ...idle(everyone), ...Object.fromEntries(fallers.map((id) => [id, NORTH])) });
+        if (fallers.every((id) => sim.snapshot().characters[id]!.respawnCount === 1)) break;
+      }
+      for (const id of fallers) expect(sim.snapshot().characters[id]!.respawnCount).toBe(1);
+      for (let t = 0; t < 30; t += 1) sim.tick(idle(everyone));
+      return sim.snapshot().characters;
+    };
+
+    it("puts the faller beside the Character standing on the respawn point, on the floor, not inside it", () => {
+      const characters = fallAndSettle(withCheckpointAt(RESPAWN, ["faller"]), ["faller"]);
+      const stander = characters["stander"]!;
+      const faller = characters["faller"]!;
+      expect(flat(faller.position, stander.position)).toBeGreaterThanOrEqual(2 * CAPSULE_RADIUS - 0.05);
+      expect(flat(faller.position, RESPAWN)).toBeLessThan(2); // near the Checkpoint, not anywhere
+      expect(faller.grounded).toBe(true);
+      expect(faller.fallCount).toBe(1);
+      // The stander was never shoved off its spot by a capsule landing in it.
+      expect(flat(stander.position, RESPAWN)).toBeLessThan(0.05);
+    });
+
+    it("both can walk away afterwards — neither is locked against the other", () => {
+      const sim = withCheckpointAt(RESPAWN, ["faller"]);
+      fallAndSettle(sim, ["faller"]);
+      const before = sim.snapshot().characters;
+      const EAST = input({ moveDirection: { x: 1, y: 0, z: 0 } });
+      const WEST = input({ moveDirection: { x: -1, y: 0, z: 0 } });
+      // Wait out the respawn wobble, then each walks away from the other.
+      for (let t = 0; t < RESPAWN_WOBBLE_TICKS + 5; t += 1) sim.tick(idle(["stander", "faller"]));
+      const faller = before["faller"]!.position.x >= before["stander"]!.position.x ? EAST : WEST;
+      const stander = faller === EAST ? WEST : EAST;
+      const from = sim.snapshot().characters;
+      for (let t = 0; t < 15; t += 1) sim.tick({ stander, faller });
+      const to = sim.snapshot().characters;
+      expect(flat(to["faller"]!.position, from["faller"]!.position)).toBeGreaterThan(1);
+      expect(flat(to["stander"]!.position, from["stander"]!.position)).toBeGreaterThan(1);
+    });
+
+    it("two Characters Respawning on the same Tick at an occupied point take two different free spots", () => {
+      const fallers = ["a", "b"];
+      const characters = fallAndSettle(withCheckpointAt(RESPAWN, fallers), fallers);
+      const ids = ["stander", ...fallers];
+      for (const [i, first] of ids.entries()) {
+        for (const second of ids.slice(i + 1)) {
+          expect(flat(characters[first]!.position, characters[second]!.position)).toBeGreaterThanOrEqual(2 * CAPSULE_RADIUS - 0.05);
+        }
+      }
+    });
+
+    it("never picks a spot over the void — a respawn point at the platform's edge sends the faller inward", () => {
+      // PLATFORM ends at x = 4: the first spot tried east of the point is over nothing.
+      const edge = { ...RESPAWN, x: 3.6 };
+      const characters = fallAndSettle(withCheckpointAt(edge, ["faller"]), ["faller"]);
+      expect(characters["faller"]!.fallCount).toBe(1); // one Fall — the Respawn did not drop it again
+      expect(characters["faller"]!.grounded).toBe(true);
+      expect(flat(characters["faller"]!.position, characters["stander"]!.position)).toBeGreaterThanOrEqual(2 * CAPSULE_RADIUS - 0.05);
+    });
+
+    it("picks the same spot every time, so a client's prediction agrees with the server", () => {
+      const run = () => fallAndSettle(withCheckpointAt(RESPAWN, ["faller"]), ["faller"])["faller"]!.position;
+      expect(run()).toEqual(run());
+    });
+  });
 });
 
 describe("RapierSimulation — what a Fall does is a RoundRules field (M5 tickets 03/04, ADR 0042)", () => {

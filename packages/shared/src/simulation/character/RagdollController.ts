@@ -86,6 +86,16 @@ export class RagdollController {
     return this.pendingRespawn !== null;
   }
 
+  /** Where the queued Respawn will put the capsule, if one is queued. */
+  get pendingRespawnPoint(): Vec3 | undefined {
+    return this.pendingRespawn ? { ...this.pendingRespawn.point } : undefined;
+  }
+
+  /** Send the queued Respawn somewhere else — `RapierSimulation` moves it off another Character. */
+  moveRespawn(point: Vec3): void {
+    if (this.pendingRespawn) this.pendingRespawn.point = { ...point };
+  }
+
   /**
    * Whether the ragdoll has come to rest, so the state machine may stand it
    * up. A non-authoritative (client-prediction) Character never trusts its own

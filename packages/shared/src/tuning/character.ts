@@ -78,6 +78,19 @@ export const SEAT_CLEAR_STEP = 0.5;
 export const SEAT_CLEAR_MAX_LIFT = 6;
 
 /**
+ * A Respawn never lands inside another Character (M17 ticket 06b): two
+ * capsules put 0.3–0.55 m apart barely move either way, so both are locked.
+ * When someone stands on the respawn point, the Respawn tries rings of spots
+ * around it, this far apart, and takes the first one that is clear, has floor
+ * under it and is not behind a wall. It gives up after
+ * {@link RESPAWN_CLEAR_RINGS} rings and uses the point itself.
+ */
+export const RESPAWN_CLEAR_STEP = 0.8;
+export const RESPAWN_CLEAR_RINGS = 3;
+/** How far below a spot's capsule the floor may be for the spot to count as standing ground (m). */
+export const RESPAWN_FLOOR_REACH = 1;
+
+/**
  * How quickly the Character's body closes on the direction it runs (1/s):
  * every second it covers all but e^−rate of the turn still left, so a turn
  * slows into a soft stop instead of halting on the spot (user call,

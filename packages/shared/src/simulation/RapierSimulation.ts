@@ -5,7 +5,7 @@ import { addVec3, dotVec3, lengthVec3, normalizeVec3, rotateVec3ByQuat, scaleVec
 import { phaseLocksInput, phaseNeedsPhysicsStep, type MatchPhase } from "../match/MatchPhase.js";
 import { DEFAULT_ROUND_RULES, type RoundRules } from "../match/RoundRules.js";
 import { characterSnapshot, type CharacterSnapshot, type HeldPhase, type EliminationCredit, type EliminationHow, type RagdollCause, type ReconcileBase, type SimState } from "../state/SimState.js";
-import { CAPSULE_BOTTOM_OFFSET, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, GROUND_SNAP_DISTANCE, GRAVITY_Y, SEAT_CLEAR_MAX_LIFT, SEAT_CLEAR_STEP, SURFACE_GROUND_NORMAL_MIN_Y } from "../tuning/character.js";
+import { CAPSULE_BOTTOM_OFFSET, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, GROUND_SNAP_DISTANCE, GRAVITY_Y, RESPAWN_CLEAR_RINGS, RESPAWN_CLEAR_STEP, RESPAWN_FLOOR_REACH, SEAT_CLEAR_MAX_LIFT, SEAT_CLEAR_STEP, SURFACE_GROUND_NORMAL_MIN_Y } from "../tuning/character.js";
 import { TICK_DT } from "../tuning/clock.js";
 import { BUMP_IMPULSE_SCALE, BUMP_LIFT_RATIO, HIT_FACING_COS_MIN, HIT_LIFT_RATIO, HIT_RANGE, ELIMINATION_CREDIT_TICKS } from "../tuning/fight.js";
 import { RAGDOLL_BELT_REACH } from "../tuning/knockdown.js";
@@ -21,7 +21,7 @@ import { hitImpactMagnitude } from "./HitController.js";
 import { isDownMotionState, isPlayerDrivenMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import type { FinishZone } from "./FinishZone.js";
-import { GROUP_CHARACTER, GROUP_RAGDOLL, STATIC_GROUPS } from "./collisionGroups.js";
+import { CHARACTER_GROUPS, collisionGroups, GROUP_CHARACTER, GROUP_PROP, GROUP_RAGDOLL, STATIC_GROUPS } from "./collisionGroups.js";
 import type { LaunchPadConfig } from "./LaunchPad.js";
 import { MirrorCharacter } from "./MirrorCharacter.js";
 import { slipRoll } from "./slipRoll.js";
@@ -519,6 +519,66 @@ export class RapierSimulation {
         return !blocked;
       });
       if (!blocked) return lift === 0 ? point : { x: point.x, y: point.y + lift, z: point.z };
+    }
+    return point;
+  }
+
+  /**
+   * Every Respawn landing this tick, moved off any Character already standing
+   * on its point (M17 ticket 06b): two capsules put 0.3–0.55 m apart barely
+   * move either way, so both were locked. Runs at the top of the tick, before
+   * anything moves, so it reads the world exactly as the last step left it —
+   * a pure function of the state, with no randomness, which the client's own
+   * prediction repeats. A client sees other Characters as mirrors at their
+   * last snapshot pose, so while one is moving near the point the predicted
+   * spot can differ from the server's, and the snapshot corrects it like any
+   * other misprediction. Two Respawns on one tick take the spots in Character
+   * order, and the later one steers clear of the earlier one's.
+   */
+  private clearRespawns(): void {
+    const taken: Vec3[] = [];
+    for (const character of this.characters.values()) {
+      const point = character.pendingRespawnPoint;
+      if (!point) continue;
+      const spot = this.freeRespawnSpot(point, character.colliderHandle, taken);
+      if (spot !== point) character.moveRespawn(spot);
+      taken.push(spot);
+    }
+  }
+
+  /**
+   * `point` itself when no Character stands on it; otherwise the first spot on
+   * rings around it (`RESPAWN_CLEAR_STEP` apart, starting due +x) that nothing
+   * the capsule collides with occupies, that has floor under it, and that no
+   * wall stands between. The authored point is only ever checked for
+   * Characters — anything else there is the Track's, as before. No free spot
+   * anywhere keeps the point.
+   */
+  private freeRespawnSpot(point: Vec3, ownHandle: number, taken: readonly Vec3[]): Vec3 {
+    const shape = new RAPIER.Capsule(CAPSULE_HALF_HEIGHT - 0.02, CAPSULE_RADIUS - 0.02);
+    const own = this.world.getCollider(ownHandle);
+    const standingIn = (spot: Vec3): boolean =>
+      taken.some((t) => Math.hypot(t.x - spot.x, t.z - spot.z) < 2 * CAPSULE_RADIUS && Math.abs(t.y - spot.y) < 2 * CAPSULE_BOTTOM_OFFSET);
+    const occupied = (spot: Vec3, groups: number): boolean =>
+      this.world.intersectionWithShape(spot, IDENTITY_QUAT, shape, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, groups, own) !== null;
+    // Characters, bones and Props are never floor or wall: they move.
+    const solid = (collider: RAPIER.Collider) => ((collider.collisionGroups() >>> 16) & (GROUP_CHARACTER | GROUP_RAGDOLL | GROUP_PROP)) === 0;
+    const firstHit = (from: Vec3, dir: Vec3, reach: number): boolean =>
+      this.world.castRay(new RAPIER.Ray(from, dir), reach, true, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS, undefined, undefined, undefined, solid) !== null;
+
+    if (!standingIn(point) && !occupied(point, collisionGroups(GROUP_CHARACTER, GROUP_CHARACTER))) return point;
+    for (let ring = 1; ring <= RESPAWN_CLEAR_RINGS; ring += 1) {
+      const radius = ring * RESPAWN_CLEAR_STEP;
+      const count = 6 * ring;
+      for (let k = 0; k < count; k += 1) {
+        const angle = (2 * Math.PI * k) / count;
+        const dir = { x: Math.cos(angle), y: 0, z: Math.sin(angle) };
+        const spot = { x: point.x + dir.x * radius, y: point.y, z: point.z + dir.z * radius };
+        if (standingIn(spot) || occupied(spot, CHARACTER_GROUPS)) continue;
+        if (!firstHit(spot, { x: 0, y: -1, z: 0 }, CAPSULE_BOTTOM_OFFSET + RESPAWN_FLOOR_REACH)) continue;
+        if (firstHit(point, dir, radius)) continue;
+        return spot;
+      }
     }
     return point;
   }
@@ -1107,6 +1167,7 @@ export class RapierSimulation {
       this.tickCount += 1;
       return;
     }
+    this.clearRespawns();
     // Queue each Spinner's rotation for the tick about to run — it must be
     // queued before `world.step()` applies it, the same way each Character's
     // own `setNextKinematicTranslation` works.

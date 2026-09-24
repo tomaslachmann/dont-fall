@@ -476,6 +476,16 @@ export class CharacterController {
     return this.ragdolls.hasPendingRespawn;
   }
 
+  /** Where the queued Respawn will put this Character, if one is queued. */
+  get pendingRespawnPoint(): Vec3 | undefined {
+    return this.ragdolls.pendingRespawnPoint;
+  }
+
+  /** Send the queued Respawn to `point` instead (M17 ticket 06b) — see `RagdollController.moveRespawn`. */
+  moveRespawn(point: Vec3): void {
+    this.ragdolls.moveRespawn(point);
+  }
+
   /** Fire a launch pad (M3.7 ticket 02, ADR 0069) — see `MovementController.triggerLaunchPad`. */
   triggerLaunchPad(velocity: Vec3): void {
     this.movement.triggerLaunchPad(velocity);
