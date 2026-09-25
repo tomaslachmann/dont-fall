@@ -226,4 +226,38 @@ leg's walls and spiked circles are its rides). The main session should re-measur
 
 ### Regression set (second session, run once at the end, 07h's uncommitted `deckRider.ts` in the tree)
 
-REGRESSION_PLACEHOLDER
+Run as the ticket asks: every `src/bot/*.test.ts` (17 files in parallel, `difficulty` and `races` excluded
+as known reds), then the four outcome reds again one at a time off parallel load, `apps/server`'s
+`matchRuntime.bots` + `matchRuntime.botFill`, and the three typechecks.
+
+| item | result |
+|---|---|
+| `neverStepsOff -t "every Motion stopped"` | **9 / 9 green**, 0 own Falls, 12/12 on every Track and level (sequential) |
+| `apps/server` `matchRuntime.bots`, `matchRuntime.botFill` | **2 files, 12 tests green** |
+| typecheck `packages/shared`, `apps/server`, `apps/track-builder` | **green** (`bombHome.scratch.test.ts`'s unused `RAPIER` is a scratch file, not this ticket's) |
+| `sweeperHold.test.ts` — the two new unit tests, the 07a acceptance A / B / C and base0 | green |
+| `movingWorld.test.ts` (with the new `near` bound test), `fight`, `fightRace`, `TreeBot`, `belts`, `links`, `neverStranded`, `edgeGuard`, `navMesh`, `profile`, `perceptionDelay`, `sectionHarness` | green |
+| `trapHold` D and S | wall-clock under load (known red) |
+| `transfers` table build and T1/T2/T3 think µs; `deckRider` "finds the platforms" ms and base HARD think | wall-clock under load (07h's suites, their As built says the same) |
+
+**Four outcome reds, rerun sequentially and still red — none attributable here, all recorded for the
+main session:**
+
+- **`neverStepsOff` "Motion running", base race at EASY (step-off 2) and NORMAL (step-off 1).** HARD, and
+  Spin Cycle and Slip Stream at every level, are green. The three step-offs are at (3.3, 4.6, −197.3),
+  (0.9, 4.5, −211.6) and (−1.4, 4.5, −214.2): y 4.5–4.6 against a 4.9 deck, z −197 … −214 — the moving
+  rows, exactly the place and reading 07h's As built traces ("y 2.6–3.6 … the rows are 1.5 m thick", "one
+  step-off left at EASY at (2.6, 4.7, −216.2)"). 07h round 2 is in the tree uncommitted and records base
+  EASY as a known red with one step-off; NORMAL's one is new against its table. Nothing in this ticket
+  touches a ride, and both of this session's changes are proven exact, so the A/B that would tell 07h's
+  round-2 `deckRider.ts` from the first session's hold changes (`BOT_HOLD_MIN_SPEED_WALKING`, the
+  through-the-swath scan, the arc) is the main session's to run once 07h is committed.
+- **`sweeperHold` "the base race's wrecking-ball leg … strictly EASY > NORMAL > HARD"**: passed 12 / 12 / 12,
+  obstacle Falls HARD 1, NORMAL 1, **EASY 0** (one Bump). The leg is near-perfect at every level now, so
+  the strict ordering fails on noise of one Fall. Most likely the first session's hold changes (a bar's
+  window checked all the way through helps EASY most, since its look only ever reached the swath's
+  edge); an assert that wants EASY to fall more than NORMAL on a leg both pass 12/12 with ≤ 1 Fall is
+  asking for a difference the leg no longer has. Not changed here: the main session decides whether the
+  assert or the play is right.
+- **`transfers` T1 at NORMAL, stranded 1** and **`deckRider` base at EASY, passed 1 (≥ 3)**: 07h's (the
+  latter its documented known red).
