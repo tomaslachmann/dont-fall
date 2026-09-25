@@ -52,6 +52,7 @@ import {
   movementDirection,
   resolveRoundRules,
   resolveTrack,
+  ridePlanCost,
   scaleVec3,
   trackSpawn,
   trackSpawnYaw,
@@ -103,6 +104,8 @@ interface RunResult {
   bots?: DurationSummary;
   /** Building the Round's navmesh, once (the Bots run). */
   navBuildMs?: number;
+  /** The ride planning's share of the Bots' think over the measured ticks (M17 ticket 07h): ms in all, plans asked, plan-cache misses. */
+  ridePlan?: { ms: number; plans: number; misses: number };
   falls: number;
   /** Share of measured Character-ticks spent down (`Ragdoll`/`GettingUp`) — the heavier path. */
   downShare: number;
@@ -207,7 +210,9 @@ const runBots = (library: Record<string, Module>, track: Track, count: number, l
   const timingSums = emptySimulationTimings();
   let downTicks = 0;
   let state = sim.snapshot();
+  let planBefore = ridePlanCost();
   for (let n = 0; n < WARMUP_TICKS + TICKS; n += 1) {
+    if (n === WARMUP_TICKS) planBefore = ridePlanCost();
     const thinkStarted = performance.now();
     const inputs: Record<string, SimInputs> = {};
     for (const [id, bot] of bots) {
@@ -244,6 +249,10 @@ const runBots = (library: Record<string, Module>, track: Track, count: number, l
     timingMeans: summariseTimings(timingSums, TICKS),
     bots: think.summary(),
     navBuildMs,
+    ridePlan: (() => {
+      const after = ridePlanCost();
+      return { ms: after.ms - planBefore.ms, plans: after.plans - planBefore.plans, misses: after.misses - planBefore.misses };
+    })(),
     falls: Object.values(state.characters).reduce((sum, c) => sum + c.fallCount, 0),
     downShare: downTicks / (TICKS * (count + 1)),
   };
@@ -370,6 +379,10 @@ const main = async (): Promise<void> => {
     );
   }
   for (const r of results) if (r.navBuildMs !== undefined) console.log(`\n${r.scenario}: navmesh built once in ${fmt(r.navBuildMs)} ms.`);
+  for (const r of results) {
+    if (r.ridePlan === undefined) continue;
+    console.log(`${r.scenario}: ride planning ${fmt(r.ridePlan.ms)} ms over ${r.ticks} ticks (${fmt((r.ridePlan.ms * 1000) / r.ticks)} µs per tick), ${r.ridePlan.plans} plans asked, ${r.ridePlan.misses} plan-cache misses.`);
+  }
   console.log("\nstep … char. updates are means per tick. step/collision/solver/user changes are Rapier's own profiler; moving seg. and the two char. columns are timed around the shared step's own loops, outside world.step().");
 };
 

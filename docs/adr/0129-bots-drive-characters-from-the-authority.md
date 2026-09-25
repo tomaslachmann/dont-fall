@@ -357,3 +357,26 @@ reliable, but it makes every Track more work).
   HARD), finish 86.6 / 132.6 / 144.2 s → 94.1 / 106.2 / 91.6 s. HARD is fastest now; the order is not yet
   strict (NORMAL's two unfinished runs, and obstacle Falls flat at ~0.6 a run at every level on that leg),
   and the ticket records where the levels do not separate and why.
+
+**Ticket 07i, spinning crosses (2026-09-25).**
+
+- **A bar no straight walk clears is walked round with its rotation.** 07g measured a cross with an arm
+  past any point every 24 Ticks against a 37-Tick walk through its swath, so every hold ran to its cap
+  and gave up into the arms. `SweeperHold` now finds an arc: when the hold would stand, the blocking body
+  turns flat about a fixed pivot, and no start Tick over one turn clears the straight corridor, the walk
+  is *played* (`accelerate`, the guard's own model) along an arc round the pivot at each of a few radii,
+  both ways round, and the earliest start Tick some arc is clear of every near sweeper at every Tick is
+  taken, jittered by the profile's `timingErrorTicks`; the arc is then a count from the stand, like a
+  link's script, bent toward the plan by what the Bot sees. The guard vets every move of it (never steps
+  off); an arc that is not found leaves 07g's hold and give-up (never stranded). A spinning body's
+  occupancy over a turn is asked in its own frame (a turn back, not a pose), so a start Tick costs a sine.
+- **A noticed swath is checked all the way through.** The look-ahead is how far off a Bot notices a
+  sweeper; it was also how far *into* a swath the corridor was checked, and no level's look covers a
+  34–46 Tick crossing, so a single bar with a good window still hit every level mid-swath.
+- **"Too slow to Stagger" is a closing speed.** A Bot walking into a bar brings its own walk, so a hub
+  turning at 2.7 u/s staggered every Bot off Spin Cycle's catwalk (40 in 120 s at HARD) while the hold let
+  it walk in; `BOT_HOLD_MIN_SPEED_WALKING` is that speed less the walk. Measured, the ticket's three legs
+  at HARD: Spin Cycle Cp 0 → 1 obstacle Falls 45 → 15; the cross's give-ups 32 → 3; the arc and the
+  windows are found but the legs' Falls are elsewhere on them now (the staggered pair at the lane's edge,
+  the catwalk's queue, Slip Stream's walls and spiked circles), and no target on Falls is met. The
+  numbers and the next fixes are in the ticket.

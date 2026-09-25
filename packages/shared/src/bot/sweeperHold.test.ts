@@ -2,6 +2,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { BotLevel } from "../match/LobbyBots.js";
 import { at, gantry, onTop, slide, spin, wreckingBall } from "../track/authoring.js";
 import { BASE_RACE_TRACK } from "../track/baseRace.js";
+import { SLIP_STREAM_TRACK } from "../track/slipStream.js";
+import { SPIN_CYCLE_TRACK } from "../track/spinCycle.js";
 import type { Track } from "../track/Track.js";
 import { TICK_DT } from "../tuning/clock.js";
 import { loadTestLibrary, obstacleFalls, playSection, type SectionOutcome } from "./sectionHarness.js";
@@ -60,6 +62,10 @@ const TRACKS: Record<string, { track: Track; leg: number; capSeconds: number }> 
   C: { track: TRACK_C, leg: 0, capSeconds: 45 },
   base0: { track: BASE_RACE_TRACK, leg: 0, capSeconds: 60 },
   base1: { track: BASE_RACE_TRACK, leg: 1, capSeconds: 60 },
+  // M17 ticket 07i: the three legs whose spin bars no straight walk clears (07g's numbers).
+  spin0: { track: SPIN_CYCLE_TRACK, leg: 0, capSeconds: 120 },
+  spin1: { track: SPIN_CYCLE_TRACK, leg: 1, capSeconds: 120 },
+  slip2: { track: SLIP_STREAM_TRACK, leg: 2, capSeconds: 120 },
 };
 
 /** The hook's own time, measured by wrapping `SweeperHold.prototype.hold`: calls and total µs. */
@@ -78,6 +84,8 @@ const timed = function (this: SweeperHold, ...args: Parameters<SweeperHold["hold
 const play = async (name: string, level: BotLevel, seed?: string): Promise<SectionOutcome & { hookUsPerCall: number; gaveUp: number }> => {
   const { track, leg, capSeconds } = TRACKS[name]!;
   const gaveUpBefore = SweeperHold.gaveUp;
+  const arcsBefore = SweeperHold.arcs;
+  const droppedBefore = SweeperHold.arcsDropped;
   hookCost.calls = 0;
   hookCost.us = 0;
   // BOT_NOHOLD=1 (quick loop only): the same run with the hook passing every move through, for a baseline.
@@ -88,10 +96,16 @@ const play = async (name: string, level: BotLevel, seed?: string): Promise<Secti
   } finally {
     SweeperHold.prototype.hold = hold;
   }
-  const result = { ...outcome, hookUsPerCall: hookCost.us / Math.max(1, hookCost.calls), gaveUp: SweeperHold.gaveUp - gaveUpBefore };
+  const result = {
+    ...outcome,
+    hookUsPerCall: hookCost.us / Math.max(1, hookCost.calls),
+    gaveUp: SweeperHold.gaveUp - gaveUpBefore,
+    arcs: SweeperHold.arcs - arcsBefore,
+    arcsDropped: SweeperHold.arcsDropped - droppedBefore,
+  };
   const meanPass = outcome.passTicks.length === 0 ? NaN : (outcome.passTicks.reduce((a, b) => a + b, 0) / outcome.passTicks.length) * TICK_DT;
   console.log(
-    `[sweeperHold] ${name} ${level}: passed ${outcome.passed}, stranded ${outcome.stranded}, slow ${outcome.slow}, obstacle Falls ${obstacleFalls(outcome.falls)} ${JSON.stringify(outcome.falls)}, mean pass ${meanPass.toFixed(1)} s, think ${outcome.thinkUsPerBotTick.toFixed(1)} µs/Bot-Tick, hook ${result.hookUsPerCall.toFixed(2)} µs/call over ${hookCost.calls} calls, gave up ${result.gaveUp}`,
+    `[sweeperHold] ${name} ${level}: passed ${outcome.passed}, stranded ${outcome.stranded}, slow ${outcome.slow}, obstacle Falls ${obstacleFalls(outcome.falls)} ${JSON.stringify(outcome.falls)}, mean pass ${meanPass.toFixed(1)} s, think ${outcome.thinkUsPerBotTick.toFixed(1)} µs/Bot-Tick, hook ${result.hookUsPerCall.toFixed(2)} µs/call over ${hookCost.calls} calls, gave up ${result.gaveUp}, arcs ${result.arcs} (dropped ${result.arcsDropped})`,
   );
   return result;
 };
@@ -107,6 +121,21 @@ describe.skipIf(!process.env.BOT_QUICK)("quick", () => {
     const outcome = await play(name, level, process.env.BOT_SEED);
     for (const line of outcome.where) console.log(`  ${line}`);
   }, 300_000);
+});
+
+describe.skipIf(!!process.env.BOT_QUICK || !process.env.BOT_CROSSES)("spinning crosses (M17 ticket 07i): 12 Bots per level on the three legs 07g measured", () => {
+  const LEVELS: BotLevel[] = ["hard", "normal", "easy"];
+  const TARGETS: Record<BotLevel, { falls: number; passed: number }> = { hard: { falls: 10, passed: 10 }, normal: { falls: 20, passed: 8 }, easy: { falls: 40, passed: 5 } };
+  for (const name of ["spin0", "spin1", "slip2"]) {
+    it(`${name}: obstacle Falls ≤ 10 / 20 / 40, passed ≥ 10 / 8 / 5, stranded 0`, async () => {
+      for (const level of LEVELS) {
+        const out = await play(name, level, `holds:${name}:${level}:0`);
+        expect(out.stranded, `${name} ${level} stranded`).toBe(0);
+        expect(obstacleFalls(out.falls), `${name} ${level} obstacle Falls`).toBeLessThanOrEqual(TARGETS[level].falls);
+        expect(out.passed, `${name} ${level} passed`).toBeGreaterThanOrEqual(TARGETS[level].passed);
+      }
+    }, 900_000);
+  }
 });
 
 describe.skipIf(!!process.env.BOT_QUICK)("timing the sweepers (M17 ticket 07a)", () => {
