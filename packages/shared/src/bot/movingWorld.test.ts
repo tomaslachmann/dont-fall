@@ -10,7 +10,10 @@ import { punchPose } from "../track/Punch.js";
 import { trapDoorPose } from "../track/TrapDoor.js";
 import { buildBotTrack, disposeBotTrack, type BotTrack } from "./Bot.js";
 import { movingWorldOf } from "./movingWorld.js";
+import { BOT_HOLD_MARGIN_M } from "../tuning/bots.js";
+import { CAPSULE_RADIUS } from "../tuning/character.js";
 import { BROKEN_FLAG, GATED_FLAG, LAST_CRACK_FLAG, navCorners } from "./navMesh.js";
+import { besideCrosses } from "./PathBot.js";
 import { loadTestLibrary } from "./sectionHarness.js";
 
 /**
@@ -65,6 +68,47 @@ describe("the moving world (M17 ticket 07)", () => {
     expect(Math.hypot(v.x, v.z)).toBeCloseTo(Math.abs(spinning.config.motion.spin!.speed) * 1, 1);
   });
 
+  it("near: the per-body stray bound (M17 ticket 07i) never drops a body a walk over the window would find, on a clock and off", () => {
+    const { moving } = botTrackOf(SPIN_CYCLE_TRACK);
+    // What `near` answered before the bound: every body's origin walked over [tick, tick + window].
+    const walked = (p: { x: number; y: number; z: number }, reach: number, tick: number, window: number, clock: number | null): number[] => {
+      const out: number[] = [];
+      for (const body of moving.sweepers) {
+        const within = body.radius + reach;
+        for (let t = tick; t <= tick + window; t += 1) {
+          const q = moving.poseAt(body.index, t, clock).position;
+          if (Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z) <= within) {
+            out.push(body.index);
+            break;
+          }
+        }
+      }
+      return out;
+    };
+    // A seeded walk of points over the Track's extent, about the bodies' own heights.
+    let s = 12345;
+    const draw = (): number => ((s = (s * 1103515245 + 12345) % 2147483648) / 2147483648);
+    let found = 0;
+    let asked = 0;
+    for (const clock of [null, 40]) {
+      for (let n = 0; n < 400; n += 1) {
+        const body = moving.sweepers[Math.floor(draw() * moving.sweepers.length)]!;
+        const rest = moving.poseAt(body.index, 0, null).position;
+        const p = { x: rest.x + (draw() - 0.5) * 30, y: rest.y + (draw() - 0.5) * 4, z: rest.z + (draw() - 0.5) * 30 };
+        const tick = Math.floor(draw() * 600);
+        const window = Math.floor(draw() * 24);
+        const expected = walked(p, 8, tick, window, clock);
+        const got = moving.near(p, 8, tick, window, clock, ["sweeper"]).map((b) => b.index);
+        expect(got, `point ${JSON.stringify(p)} tick ${tick} window ${window} clock ${clock}`).toEqual(expected);
+        found += expected.length;
+        asked += 1;
+      }
+    }
+    // The walk is a real test only if it finds bodies sometimes, and misses them sometimes.
+    expect(found).toBeGreaterThan(asked / 4);
+    expect(found).toBeLessThan(asked * moving.sweepers.length);
+  });
+
   it("classifies the base race's and Spin Cycle's bodies by what they are to a runner", () => {
     for (const [name, track] of [
       ["base race", BASE_RACE_TRACK],
@@ -102,6 +146,42 @@ describe("the moving world (M17 ticket 07)", () => {
     // Spin Cycle's carousel: several quarter pieces on one spin.
     const spin = botTrackOf(SPIN_CYCLE_TRACK).moving;
     expect(spin.platforms.some((platform) => platform.bodies.length >= 4)).toBe(true);
+  });
+
+  it("crosses (M17 ticket 07i, round 3): Spin Cycle's cross is its two bars on one axle, and a first plan keeps beside it", () => {
+    const { moving, nav } = botTrackOf(SPIN_CYCLE_TRACK);
+    // The cross 07g measured (Segments 33 and 34): each bar alone has a window, together they have none.
+    const cross = moving.crosses.find((c) => c.bodies.some((body) => body.config.segmentIndex === 33))!;
+    expect(cross).toBeDefined();
+    expect(cross.bodies.map((body) => body.config.segmentIndex).sort()).toEqual([33, 34]);
+    expect(moving.crosses.every((c) => c.bodies.every((body) => body.role === "sweeper" && body.config.motion.spin !== undefined))).toBe(true);
+    console.log(`[movingWorld] Spin Cycle crosses: ${moving.crosses.map((c) => c.bodies.map((b) => b.config.segmentIndex).join("+")).join(" ")}`);
+    // A straight plan through the cross walks through its swath; kept beside it, it joins and keeps out.
+    const { pivot } = cross;
+    const y = pivot.y - 0.5;
+    const from = { x: pivot.x, y, z: pivot.z + 7 };
+    const to = { x: pivot.x, y, z: pivot.z - 7 };
+    const through = navCorners(nav, from, to)!;
+    expect(through).not.toBeNull();
+    const beside = besideCrosses(nav, moving.crosses, from, to, through, undefined);
+    expect(beside).not.toBeNull();
+    const last = beside!.at(-1)!.point;
+    expect(Math.hypot(last.x - to.x, last.z - to.z)).toBeLessThan(1);
+    const swath = cross.radius + CAPSULE_RADIUS + BOT_HOLD_MARGIN_M;
+    const nearest = (corners: { point: { x: number; z: number } }[]): number => {
+      let best = Infinity;
+      for (let i = 1; i < corners.length; i += 1) {
+        const a = corners[i - 1]!.point;
+        const b = corners[i]!.point;
+        for (let t = 0; t <= 1; t += 0.05) best = Math.min(best, Math.hypot(a.x + (b.x - a.x) * t - pivot.x, a.z + (b.z - a.z) * t - pivot.z));
+      }
+      return best;
+    };
+    expect(nearest(beside!)).toBeGreaterThan(swath - 0.5);
+    expect(nearest(through)).toBeLessThan(swath - 0.5);
+    // A single bar is never a cross, however fast: every cross is at least two bodies on one axle.
+    expect(moving.crosses.every((c) => c.bodies.length >= 2)).toBe(true);
+    expect(moving.crosses.some((c) => c.bodies.some((body) => [36, 37, 119].includes(body.config.segmentIndex)))).toBe(false);
   });
 
   it("poses a trap door's leaf and a glove by their own clocks, and knows when each is solid", () => {

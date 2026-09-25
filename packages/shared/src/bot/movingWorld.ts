@@ -6,8 +6,17 @@ import type { MotionClock, MotionPose, SegmentMotion } from "../track/Motion.js"
 import { punchLanded } from "../track/Punch.js";
 import { trapDoorShut } from "../track/TrapDoor.js";
 import type { ResolvedTrack } from "../track/resolveTrack.js";
-import { BOT_LOOK_AHEAD_TICKS_MAX, BOT_RIDE_DECK_MIN_M2, BOT_RIDE_HULL_SIMPLIFY_M, BOT_RIDE_NEAR_FLOOR_M, BOT_RIDE_TOP_TOLERANCE_M, NAV_AGENT_CLIMB } from "../tuning/bots.js";
-import { CAPSULE_BOTTOM_OFFSET } from "../tuning/character.js";
+import {
+  BOT_CROSS_PROBE_RADIUS_SHARE,
+  BOT_HOLD_MARGIN_M,
+  BOT_LOOK_AHEAD_TICKS_MAX,
+  BOT_RIDE_DECK_MIN_M2,
+  BOT_RIDE_HULL_SIMPLIFY_M,
+  BOT_RIDE_NEAR_FLOOR_M,
+  BOT_RIDE_TOP_TOLERANCE_M,
+  NAV_AGENT_CLIMB,
+} from "../tuning/bots.js";
+import { CAPSULE_BOTTOM_OFFSET, CAPSULE_RADIUS, WALK_SPEED } from "../tuning/character.js";
 import { TICK_DT } from "../tuning/clock.js";
 import { BROKEN_FLAG, LAST_CRACK_FLAG, navFloorWithin, type TrackNav } from "./navMesh.js";
 
@@ -47,6 +56,15 @@ export interface MovingBody {
   readonly spiked: boolean;
 }
 
+/** Sweepers on one axle that together leave no straight window (M17 ticket 07i, round 3): Spin Cycle's cross is two bars. */
+export interface Cross {
+  readonly bodies: readonly MovingBody[];
+  /** The axle, in world space: the bodies' shared rest origin. */
+  readonly pivot: Vec3;
+  /** The furthest any of them reaches from the pivot. */
+  readonly radius: number;
+}
+
 /** Floor bodies moving as one: Spin Cycle's carousel is eight quarter pieces with one spin. */
 export interface Platform {
   readonly index: number;
@@ -73,6 +91,15 @@ export interface MovingWorld {
   readonly gates: readonly MovingBody[];
   readonly fragile: readonly MovingBody[];
   readonly platforms: readonly Platform[];
+  /**
+   * Crosses (M17 ticket 07i, round 3): two or more sweepers on one axle,
+   * spinning about a fixed pivot, that together no straight walk through their
+   * swath clears — at the best point of a ring inside the swath, the longest
+   * gap between arms over one turn is shorter than a walk across the swath's
+   * width. A first plan keeps beside one where the lane has room
+   * (`PathFollower`). A single bar, however fast, is never one.
+   */
+  readonly crosses: readonly Cross[];
   /** World pose of body `i` at `tick`. Cached per (body, tick) in a ring of `BOT_LOOK_AHEAD_TICKS_MAX + 2` Ticks; a new clock flushes it. */
   poseAt(i: number, tick: number, clock: MotionClock): MotionPose;
   /** World velocity of world point `p` on body `i` over tick → tick + 1 (`motionPointVelocity`'s rule, through the pose cache). */
@@ -436,6 +463,30 @@ export const movingWorldOf = (resolved: ResolvedTrack, nav: TrackNav): MovingWor
   const poses: MotionPose[] = new Array<MotionPose>(ring * n);
   let cachedClock: MotionClock | undefined;
   const moves = bodies.map((b) => originMoves(b.config));
+  // Where each body's origin rests, and the furthest it ever strays from there (M17 ticket 07i): `near`
+  // rejects a far body with one hypot against these instead of walking its origin over the look window
+  // (Spin Cycle's 68 sweepers cost `SweeperHold` 107 µs a decision that way). Exact for a body posed by
+  // one periodic Motion of its own, whose origin's path is the one cycle at pace 1 sampled here, plus a
+  // Tick's step for the phases a Ramp lands between samples; any other body (a chain of Motions, a trap
+  // door, a glove) keeps the walk.
+  const rests = bodies.map((b) => movingSegmentPose(b.config, 0, null).position);
+  const strays = bodies.map((b, i) => {
+    if (!moves[i]) return 0;
+    const { motion, under, trapDoor, punch } = b.config;
+    const kinds = [motion.spin, motion.swing, motion.slide].filter((m) => m !== undefined).length;
+    if (kinds !== 1 || under !== undefined || trapDoor !== undefined || punch !== undefined) return Number.POSITIVE_INFINITY;
+    const rest = rests[i]!;
+    let stray = 0;
+    let step = 0;
+    let previous = rest;
+    for (let tick = 1; tick <= periodTicksOf(motion) + 1; tick += 1) {
+      const p = movingSegmentPose(b.config, tick, null).position;
+      stray = Math.max(stray, Math.hypot(p.x - rest.x, p.y - rest.y, p.z - rest.z));
+      step = Math.max(step, Math.hypot(p.x - previous.x, p.y - previous.y, p.z - previous.z));
+      previous = p;
+    }
+    return stray + step;
+  });
   const poseAt = (i: number, tick: number, clock: MotionClock): MotionPose => {
     if (clock !== cachedClock) {
       cachedClock = clock;
@@ -456,6 +507,74 @@ export const movingWorldOf = (resolved: ResolvedTrack, nav: TrackNav): MovingWor
   let polysFor: TrackNav | null = null;
   const applied = new Map<number, number>();
 
+  const occupies: MovingWorld["occupies"] = (i, tick, clock, p, grow) => {
+    const local = unapply(poseAt(i, tick, clock), p);
+    const yLo = local.y - CAPSULE_BOTTOM_OFFSET;
+    const yHi = local.y + CAPSULE_BOTTOM_OFFSET;
+    for (const h of bodies[i]!.hitboxes) {
+      if (yHi < h.yMin || yLo > h.yMax) continue;
+      const dx = local.x - h.cx;
+      const dz = local.z - h.cz;
+      const c = Math.cos(h.yaw);
+      const s = Math.sin(h.yaw);
+      const u = dx * c + dz * s;
+      const v = -dx * s + dz * c;
+      if (Math.abs(u) <= h.hx + grow && Math.abs(v) <= h.hz + grow) return true;
+    }
+    return false;
+  };
+
+  // A cross (M17 ticket 07i, round 3): a sweeper spinning about its own fixed origin whose longest gap
+  // between arms, at the best of eight points on a ring inside its swath, is shorter than a walk
+  // across the swath. Asked once per world, off the clock, with the hold's own margin.
+  // Two bars on one axle at one speed are one cross (Spin Cycle's 33/34): each alone has a window, together they have none.
+  const grow = CAPSULE_RADIUS + BOT_HOLD_MARGIN_M;
+  const spinKey = (body: MovingBody): string | null => {
+    const { motion, under, trapDoor, punch } = body.config;
+    if (motion.spin === undefined || motion.spin.speed === 0 || motion.swing !== undefined || motion.slide !== undefined) return null;
+    if ((under !== undefined && under.length > 0) || trapDoor !== undefined || punch !== undefined || moves[body.index]) return null;
+    return `${axisLineKey(body.config, motion.spin.axis, motion.spin.pivot)}:${motion.spin.speed}`;
+  };
+  const axles = new Map<string, MovingBody[]>();
+  for (const body of sweepers) {
+    const key = spinKey(body);
+    if (key === null) continue;
+    const group = axles.get(key);
+    if (group === undefined) axles.set(key, [body]);
+    else group.push(body);
+  }
+  const isCross = (group: readonly MovingBody[]): boolean => {
+    // Never a single bar (07i round 3, measured: routed beside Spin Cycle's staggered pair and its catwalk bars, twelve
+    // Bots jammed at the lane's edge and were Bumped off it; the hold and its window are for a bar).
+    if (group.length < 2) return false;
+    const first = group[0]!;
+    const period = periodTicksOf(first.config.motion);
+    if (period < 2) return false;
+    const radius = group.reduce((r, b) => Math.max(r, b.radius), 0);
+    const crossing = Math.ceil((2 * (radius + grow)) / WALK_SPEED / TICK_DT);
+    const rest = rests[first.index]!;
+    const r = BOT_CROSS_PROBE_RADIUS_SHARE * radius;
+    let bestGap = 0;
+    for (let k = 0; k < 8 && bestGap < crossing; k += 1) {
+      const angle = (k / 8) * 2 * Math.PI;
+      const p = { x: rest.x + r * Math.cos(angle), y: rest.y, z: rest.z + r * Math.sin(angle) };
+      // The longest free run over one turn, the turn read twice so a run across the seam counts whole.
+      let run = 0;
+      let gap = 0;
+      for (let tick = 0; tick < 2 * period; tick += 1) {
+        if (group.some((b) => occupies(b.index, tick % period, null, p, grow))) run = 0;
+        else gap = Math.max(gap, (run += 1));
+      }
+      bestGap = Math.max(bestGap, Math.min(gap, period));
+    }
+    return bestGap < crossing;
+  };
+  const crosses: Cross[] = [];
+  for (const group of axles.values()) {
+    if (!isCross(group)) continue;
+    crosses.push({ bodies: group, pivot: rests[group[0]!.index]!, radius: group.reduce((r, b) => Math.max(r, b.radius), 0) });
+  }
+
   return {
     bodies,
     floors,
@@ -463,6 +582,7 @@ export const movingWorldOf = (resolved: ResolvedTrack, nav: TrackNav): MovingWor
     gates,
     fragile,
     platforms,
+    crosses,
     poseAt,
     velocityAt: (i, tick, clock, p) => {
       const local = unapply(poseAt(i, tick, clock), p);
@@ -479,27 +599,14 @@ export const movingWorldOf = (resolved: ResolvedTrack, nav: TrackNav): MovingWor
       }
       return true;
     },
-    occupies: (i, tick, clock, p, grow) => {
-      const local = unapply(poseAt(i, tick, clock), p);
-      const yLo = local.y - CAPSULE_BOTTOM_OFFSET;
-      const yHi = local.y + CAPSULE_BOTTOM_OFFSET;
-      for (const h of bodies[i]!.hitboxes) {
-        if (yHi < h.yMin || yLo > h.yMax) continue;
-        const dx = local.x - h.cx;
-        const dz = local.z - h.cz;
-        const c = Math.cos(h.yaw);
-        const s = Math.sin(h.yaw);
-        const u = dx * c + dz * s;
-        const v = -dx * s + dz * c;
-        if (Math.abs(u) <= h.hx + grow && Math.abs(v) <= h.hz + grow) return true;
-      }
-      return false;
-    },
+    occupies,
     near: (p, reach, tick, window, clock, roles) => {
       const out: MovingBody[] = [];
       for (const body of bodies) {
         if (roles !== undefined && !roles.includes(body.role)) continue;
         const within = body.radius + reach;
+        const rest = rests[body.index]!;
+        if (Math.hypot(rest.x - p.x, rest.y - p.y, rest.z - p.z) > within + strays[body.index]!) continue;
         const at = poseAt(body.index, tick, clock).position;
         if (Math.hypot(at.x - p.x, at.y - p.y, at.z - p.z) <= within) {
           out.push(body);

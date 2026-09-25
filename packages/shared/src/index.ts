@@ -114,3 +114,5 @@ export * from "./bot/perceptionDelay.js";
 // Moving Segments and traps (M17 ticket 07): the moving bodies, the hooks and the section harness.
 export * from "./bot/movingWorld.js";
 export * from "./bot/hooks.js";
+// The ride planning's cost, logged by `pnpm bench:sim` (M17 ticket 07h, round 2).
+export { ridePlanCost } from "./bot/deckRider.js";

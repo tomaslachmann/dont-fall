@@ -1,5 +1,5 @@
 import { addVec3, dotVec3, lengthVec3, lerpVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../../math/vec3.js";
-import { GRAVITY_Y, GROUND_SNAP_DISTANCE, GROUND_STICK_SPEED, WALK_SPEED } from "../../tuning/character.js";
+import { CHARACTER_CONTROLLER_OFFSET, GRAVITY_Y, GROUND_SNAP_DISTANCE, GROUND_STICK_SPEED, WALK_SPEED } from "../../tuning/character.js";
 import { TICK_DT } from "../../tuning/clock.js";
 import { IMPACT_KNOCKBACK_DECAY, IMPACT_KNOCKBACK_LIFT, IMPACT_KNOCKBACK_MIN, IMPACT_KNOCKBACK_SCALE } from "../../tuning/knockdown.js";
 import { MOVE_ACCEL_FACTOR, MOVE_FRICTION_FACTOR, SLIDE_STEER_BLEND } from "../../tuning/movement.js";
@@ -101,6 +101,15 @@ export class MovementController {
   private keptRideVelocity: Vec3 | undefined;
   /** How far a Moving Segment that moved into this capsule pushes it out, taken by the next sweep (ADR 0061). */
   private pendingPush: Vec3 | undefined;
+  /**
+   * Whether this tick's own sweep asked to go down and got almost nowhere
+   * (M17 ticket 07k) — set by {@link sweepCapsule}, read by
+   * {@link settleOnGround}. On the floor that is the ordinary ground-stick
+   * clamp being blocked, and `grounded` says so. Off the floor it is a
+   * capsule that something is holding in place from every side: inside a
+   * solid, where nothing else will ever move it again.
+   */
+  private blockedBelow = false;
 
   constructor(private readonly capsule: Capsule) {}
 
@@ -391,14 +400,13 @@ export class MovementController {
     const ownVelocity = this.keptRideVelocity ? addVec3(this.velocity, this.keptRideVelocity) : this.velocity;
     const push = this.pendingPush ?? vec3();
     this.pendingPush = undefined;
-    this.capsule.controller.computeColliderMovement(
-      this.capsule.collider,
-      addVec3(scaleVec3(ownVelocity, TICK_DT), push),
-      undefined,
-      CHARACTER_GROUPS,
-    );
+    const wanted = addVec3(scaleVec3(ownVelocity, TICK_DT), push);
+    this.capsule.controller.computeColliderMovement(this.capsule.collider, wanted, undefined, CHARACTER_GROUPS);
     const ownMovement = this.capsule.controller.computedMovement();
     const corrected = vec3(ownMovement.x, ownMovement.y, ownMovement.z);
+    // Less than a tenth of the descent asked for: blocked, not slowed. A
+    // slide down a steep face still makes most of it.
+    this.blockedBelow = wanted.y < 0 && corrected.y > wanted.y * 0.1;
     return corrected;
   }
 
@@ -430,6 +438,26 @@ export class MovementController {
       if (drop !== undefined) {
         corrected.y -= drop;
         this.grounded = true;
+      }
+    }
+    // The mirror case (M17 ticket 07k): a sweep that could not go down at all
+    // and did not land either. Only a capsule held from every side does that,
+    // and the one way that happens is being inside a solid — the Ride's sweep
+    // used to slide a rider whose head another Character landed on down into
+    // its own carrier, which that sweep ignores (fixed in `sweepRide`), and a
+    // correction can put a predicted capsule anywhere. Rapier's controller
+    // never depenetrates: from inside, every sweep meets the faces round it at
+    // no distance, `computedGrounded` stays false, and gravity piles into
+    // `velocity.y` with nothing to spend it on (−843 u/s measured after 1300
+    // ticks). Lifted out onto what buried it, and landed there: the fall
+    // speed it piled up was never a fall, so the peak the landing is judged
+    // by is let go of first.
+    if (!this.grounded && this.blockedBelow && takeoff === null) {
+      const lift = surface.solidExitAbove();
+      if (lift !== undefined) {
+        corrected.y += lift + CHARACTER_CONTROLLER_OFFSET;
+        this.grounded = true;
+        this.airbornePeakFallSpeed = 0;
       }
     }
     if (this.grounded) this.keptRideVelocity = undefined;
@@ -545,6 +573,15 @@ export class MovementController {
     this.capsule.controller.enableSnapToGround(GROUND_SNAP_DISTANCE);
     const movement = this.capsule.controller.computedMovement();
     const carried = vec3(movement.x, movement.y, movement.z);
+    // Never further down than the carrier itself goes (M17 ticket 07k, found
+    // by the Bots): what this sweep meets it slides along, and another
+    // Character landing on the rider's head is a face that slopes *down* —
+    // the controller slid a rider 0.18 down the underside of that capsule in
+    // one tick, twice, into the floor it stood on, which this sweep cannot see
+    // because it is the carrier. Below a rider there is only its carrier, so
+    // no obstacle can legitimately take it lower than the carry does; a wall
+    // still blocks sideways, a ceiling still blocks a rise.
+    carried.y = Math.max(carried.y, Math.min(ride.displacement.y, 0));
     this.rideVelocity = scaleVec3(carried, 1 / TICK_DT);
     return carried;
   }

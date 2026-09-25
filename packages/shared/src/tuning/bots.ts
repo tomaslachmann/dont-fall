@@ -1,6 +1,6 @@
 import type { BotLevel } from "../match/LobbyBots.js";
 import { WALKABLE_SLOPE_MAX_ANGLE } from "./movement.js";
-import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS } from "./character.js";
+import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, WALK_SPEED as WALK_SPEED_FOR_BOTS } from "./character.js";
 import { ICE_CRASH_MIN_SPEED } from "./surfaces.js";
 import { IMPACT_STAGGER_MIN } from "./knockdown.js";
 import { MOVING_SEGMENT_IMPACT_SCALE } from "./world.js";
@@ -759,3 +759,109 @@ export const BOT_HOLD_STOP_M = 1;
  * stood at Checkpoint 4 for the whole run.
  */
 export const BOT_HOLD_MAX_TICKS_PER_LOOK = 8;
+
+// --- Spinning crosses (M17 ticket 07i) --------------------------------------
+// `SweeperHold`'s arc: a spinning bar a straight walk never clears (a cross
+// has an arm past any point every 24 Ticks, a walk through its swath takes
+// 37) is passed by walking *with* its rotation, along an arc the gap between
+// two arms carries round. First guesses.
+
+/** Ticks between the start Ticks tried for an arc, over one turn of the bar. */
+export const BOT_ARC_DELAY_STEP_TICKS = 2;
+
+/** The arc's radius, as shares of the bar's swept radius, in the order they are tried. */
+export const BOT_ARC_RADIUS_SHARES: readonly number[] = [0.85, 0.75, 0.9, 0.65, 0.55];
+
+/** The most Ticks one arc may take, stand to exit: a half turn's walk and a wait for the ramp. */
+export const BOT_ARC_MAX_TICKS = 120;
+
+/** How many Ticks ahead of where it should be on the arc a Bot aims, on top of its view's lag. */
+export const BOT_ARC_AIM_AHEAD_TICKS = 3;
+
+/** How far, across the ground, a Bot may be off where its arc puts it before it drops the arc and decides afresh. */
+export const BOT_ARC_OFF_M = 1.5;
+
+/** How far, across the ground, from the arc's exit the Bot counts as through. */
+export const BOT_ARC_DONE_M = 0.6;
+
+/** After an arc search finds nothing round a bar, how many Ticks pass before it is tried again there. */
+export const BOT_ARC_RETRY_TICKS = 60;
+
+/**
+ * Metres a bar's hitbox is grown by, beyond the capsule's own radius, before
+ * it counts as crossing an arc: less than {@link BOT_HOLD_MARGIN_M}, since an
+ * arc is played Tick by Tick against exact poses, and the gap between a
+ * cross's arms at the radius a Bot can keep pace at is only a few tenths wide.
+ */
+export const BOT_ARC_MARGIN_M = 0.15;
+
+/**
+ * Where a spinning sweeper is asked whether it is a cross (M17 ticket 07i,
+ * round 3): eight points on a ring at this share of its swept radius, and it
+ * is a cross if even the best of them is never free of an arm for as long as
+ * a walk across the swath takes. Half way out, where a bar's hub does not
+ * count and its tip's width does not yet narrow the gap.
+ */
+export const BOT_CROSS_PROBE_RADIUS_SHARE = 0.5;
+
+/**
+ * Metres beyond a cross's swath (its swept radius, the capsule and
+ * {@link BOT_HOLD_MARGIN_M}) a first plan's via point beside it is put, so the
+ * walk in to it and out of it clips no arm. First guess.
+ */
+export const BOT_CROSS_BESIDE_M = 0.5;
+
+// --- Rides with a crowd (M17 ticket 07h, round 2) -----------------------------
+// `DeckRider` again: a Bot held at a still entry by those ahead of it asks the
+// planner again with the queue as it stands, and goes to another entry when
+// that is cheaper. First guess.
+
+/**
+ * Ticks between a waiting Bot's re-plans while someone is ahead of it at its
+ * entry (or on its landing). A re-plan is a Dijkstra over the ride table, so
+ * not every Tick; and never sooner after the wait began than
+ * {@link BOT_REPLAN_TICKS}, since only then does `PathFollower` plan afresh
+ * the Tick the ride lets go of the Bot.
+ */
+export const BOT_RIDE_HANDOFF_TICKS = 30;
+
+/**
+ * The cell, in metres, a ride plan's start-walks (from where the Bot stands to
+ * every still end of its floor) are cached by: a plan from anywhere in the
+ * cell reuses the first's lengths, at most a cell's diagonal off. A changed
+ * queue signature used to miss the plan cache and pay every navmesh walk again.
+ */
+export const BOT_RIDE_START_CELL_M = 2;
+
+/**
+ * A sweeper slower than this at a point only shoves a Bot *walking into
+ * it* (M17 ticket 07i): the closing speed a Moving Segment staggers from
+ * (`MOVING_SEGMENT_STAGGER_SPEED`) less the walk the Bot brings. 07a's
+ * {@link BOT_HOLD_MIN_SPEED} read the bar's speed alone, so a bar's hub
+ * turning at 2.7 u/s was walked into and Staggered every Bot off Spin
+ * Cycle's catwalk (Segment 119, measured: 40 Staggers in 120 s at HARD).
+ */
+export const BOT_HOLD_MIN_SPEED_WALKING = Math.max(0, IMPACT_STAGGER_MIN / MOVING_SEGMENT_IMPACT_SCALE - WALK_SPEED_FOR_BOTS);
+
+// ---------------------------------------------------------------------------
+// A sweeper riding a moving deck (M17 ticket 07l)
+// ---------------------------------------------------------------------------
+
+/**
+ * How far past a riding sweeper's swept radius plus the capsule a Bot aboard
+ * keeps, in metres: its waiting spot, its walk across the deck and a
+ * transfer's landing all stay outside `radius + CAPSULE_RADIUS + this`
+ * (M17 ticket 07l). Measured on the base race's spiked square: a transfer
+ * aimed at the deck's middle came down 3.7 m from the bar's pivot, skidded
+ * to 3.36 against a swept 3.04 + 0.35, and was knocked down where it stood.
+ */
+export const BOT_RIDE_SWATH_MARGIN_M = 0.3;
+
+/** A sweeper whose origin sits within this height of a deck's top, inside its outline and fixed in its frame, rides it. */
+export const BOT_RIDE_SWATH_LEVEL_M = 2;
+
+/** Ticks after a transfer's landing over which the landing point must stay clear of a riding sweeper: the skid a landing keeps its carry through. */
+export const BOT_RIDE_SWATH_SKID_TICKS = 6;
+
+/** Radians past the tangent a walk round a swath leads, so the walk skirts the circle rather than grazing it. */
+export const BOT_RIDE_SWATH_LEAD_RAD = 0.15;

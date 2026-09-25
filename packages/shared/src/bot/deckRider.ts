@@ -9,11 +9,13 @@ import {
   BOT_LINK_RUNUP_M,
   BOT_LINK_START_ALONG_M,
   BOT_PATH_EDGE_MARGIN_M,
+  BOT_REPLAN_TICKS,
   BOT_RIDE_BOARD_SPEED,
   BOT_RIDE_CARRY_MARGIN,
   BOT_RIDE_CHAIN_MAX,
   BOT_RIDE_COST_M,
   BOT_RIDE_EXIT_INSET_M,
+  BOT_RIDE_HANDOFF_TICKS,
   BOT_RIDE_JUMP_FLIGHT_TICKS,
   BOT_RIDE_JUMP_REACH_M,
   BOT_RIDE_LIP_M,
@@ -21,19 +23,27 @@ import {
   BOT_RIDE_RIM_INSET_M,
   BOT_RIDE_RUNUP_MAX_M,
   BOT_RIDE_SPREAD_M,
+  BOT_RIDE_START_CELL_M,
+  BOT_RIDE_SWATH_LEAD_RAD,
+  BOT_RIDE_SWATH_LEVEL_M,
+  BOT_RIDE_SWATH_MARGIN_M,
+  BOT_RIDE_SWATH_SKID_TICKS,
   BOT_RIDE_TOP_TOLERANCE_M,
   BOT_RIDE_WAIT_MAX_TICKS,
   BOT_RIDE_WALK_GAP_M,
   BOT_STALL_MOVE_M,
   BOT_STALL_TICKS,
+  BOT_HOLD_MARGIN_M,
+  BOT_HOLD_MIN_SPEED_WALKING,
+  NAV_AGENT_CLIMB,
 } from "../tuning/bots.js";
-import { WALK_SPEED } from "../tuning/character.js";
+import { CAPSULE_BOTTOM_OFFSET, CAPSULE_RADIUS, WALK_SPEED } from "../tuning/character.js";
 import { TICK_DT } from "../tuning/clock.js";
 import { JUMP_HOLD_MAX_TICKS } from "../tuning/movement.js";
 import type { BotTrack } from "./Bot.js";
 import type { HookContext, RideHook } from "./hooks.js";
 import { LinkRun } from "./links.js";
-import type { Platform } from "./movingWorld.js";
+import type { MovingBody, Platform } from "./movingWorld.js";
 import { navCorners, navFloorWithin, navStandsOn, type NavCorner } from "./navMesh.js";
 import type { Steering } from "./PathBot.js";
 import type { BotProfile } from "./profile.js";
@@ -75,11 +85,14 @@ const JUMP_LANDS_M = JUMP_AT + BOT_RIDE_JUMP_REACH_M;
 const runTicks = (metres: number): number => (metres <= JUMP_AT ? RUN_TICKS : RUN_TICKS + Math.ceil((metres - JUMP_AT) / (WALK_SPEED * TICK_DT)));
 
 interface JumpOff {
+  /** The heading in world at the take-off, held through the air. */
   readonly direction: Vec3;
   /** Metres run before jump is pressed: from the Bot's spot to the rim, at least {@link JUMP_AT}. */
   readonly runUp: number;
   readonly runTicks: number;
   readonly takeOff: Vec3;
+  /** The take-off in the platform frame: the run-up is the deck-frame line from `source` to here. */
+  readonly takeOffLocal: Vec3;
   readonly lands: Vec3;
   /** The deck's velocity at the take-off, which the Character keeps in the air. */
   readonly carry: Vec3;
@@ -93,30 +106,45 @@ interface JumpOff {
  * velocity of what it rode (`MovementController.leaveRide`), so the line
  * aims upstream of `still` by the deck's velocity over the flight.
  */
-const jumpOff = (track: BotTrack, deck: RideDeck, platform: Platform, source: Vec3, still: Vec3, at: number, clock: MotionClock): JumpOff => {
+const jumpOff = (track: BotTrack, deck: RideDeck, platform: Platform, source: Vec3, aimAt: Vec3, at: number, clock: MotionClock): JumpOff => {
+  const first = solveJumpOff(track, deck, platform, source, aimAt, at, clock);
+  const shift = roomyShift(track, first.lands, first.direction);
+  return shift === null ? first : solveJumpOff(track, deck, platform, source, { x: aimAt.x + shift.x, y: aimAt.y, z: aimAt.z + shift.z }, at, clock);
+};
+
+const solveJumpOff = (track: BotTrack, deck: RideDeck, platform: Platform, source: Vec3, still: Vec3, at: number, clock: MotionClock): JumpOff => {
   const { moving } = track;
   const body = platform.bodies[0]!.index;
   const start = moving.toWorld(platform, at, clock, source);
   const flight = BOT_RIDE_JUMP_FLIGHT_TICKS * TICK_DT;
   let direction = unit(start, still);
   let runUp = JUMP_AT;
+  let ticks = RUN_TICKS;
   let takeOff = start;
+  let takeOffLocal = source;
   let carry = vec3();
   // The carry turns the line, and the line decides where the rim is met: twice over settles it. The run-up is marched in the
   // deck's frame (M17 ticket 07h): a Bot running on a deck is carried with it, so where its line leaves the outline is a
   // question in that frame, and the take-off is that point as the deck will have brought it (marched in world against the
   // deck's later pose, the take-off was wrong by the carry over the run-up, 1.3 m on a 5 u/s slide; measured: HARD landings
-  // 1–3 m off along the slide's axis).
+  // 1–3 m off along the slide's axis). The line's deck-frame direction is the one that *is* `direction` in world at the
+  // take-off (07h round 2): on a spin the frame turns during the run-up, so a line laid along `direction` at `at` came off
+  // the rim 8° round on two carousels, and a heading held in world through the turning run left the line — T2 HARD 12 → 8.
+  // (Falling back to `LinkRun`'s world line on a turning deck instead was tried and measured: two carousels 10, two spinning
+  // squares 10 / 9 / 7 → 7 / 7 / 6, so the line is followed in the deck's frame on every deck.)
   for (let pass = 0; pass < 2; pass += 1) {
+    const off = at + ticks;
+    const w = moving.toWorld(platform, off, clock, source);
+    const along = unit(source, moving.toLocal(platform, off, clock, { x: w.x + direction.x, y: w.y, z: w.z + direction.z }));
     runUp = JUMP_AT;
     for (let t = JUMP_AT + RUNUP_STEP_M; t <= BOT_RIDE_RUNUP_MAX_M; t += RUNUP_STEP_M) {
-      const p = { x: start.x + direction.x * t, y: start.y, z: start.z + direction.z * t };
-      if (hullDistance(deck.hull, moving.toLocal(platform, at, clock, p)) > -BOT_RIDE_RIM_INSET_M / 2) break;
+      if (hullDistance(deck.hull, { x: source.x + along.x * t, z: source.z + along.z * t }) > -BOT_RIDE_RIM_INSET_M / 2) break;
       runUp = t;
     }
-    const local = moving.toLocal(platform, at, clock, { x: start.x + direction.x * runUp, y: start.y, z: start.z + direction.z * runUp });
-    takeOff = moving.toWorld(platform, at + runTicks(runUp), clock, local);
-    carry = moving.velocityAt(body, at + runTicks(runUp), clock, takeOff);
+    ticks = runTicks(runUp);
+    takeOffLocal = { x: source.x + along.x * runUp, y: source.y, z: source.z + along.z * runUp };
+    takeOff = moving.toWorld(platform, at + ticks, clock, takeOffLocal);
+    carry = moving.velocityAt(body, at + ticks, clock, takeOff);
     direction = unit(takeOff, { x: still.x - carry.x * flight, y: still.y, z: still.z - carry.z * flight });
   }
   const lands = {
@@ -124,7 +152,29 @@ const jumpOff = (track: BotTrack, deck: RideDeck, platform: Platform, source: Ve
     y: still.y,
     z: takeOff.z + direction.z * BOT_RIDE_JUMP_REACH_M + carry.z * flight,
   };
-  return { direction, runUp, runTicks: runTicks(runUp), takeOff, lands, carry };
+  return { direction, runUp, runTicks: ticks, takeOff, takeOffLocal, lands, carry };
+};
+
+/**
+ * How far across the jump's line its aim moves so that where it *lands* has
+ * a path's edge margin of floor either side (07h round 2), or null when it
+ * has, or has none either way (a beam, or a transfer's aim on a deck's
+ * middle, off the navmesh both ways). A jump's flight is a fixed reach, so
+ * it comes down past the still by design; a Bot spread across the deck jumps
+ * at the still diagonally, and the landing probe read along the line and
+ * along the carry, never across: an EASY landing 0.35 m wide of the model
+ * came down on a row's side (measured, the crowd rows: every step-off left
+ * once a top landing stopped being pushed for the still).
+ */
+const roomyShift = (track: BotTrack, lands: Vec3, along: Vec3): { x: number; z: number } | null => {
+  const box = { x: 0.1, y: BOT_RIDE_TOP_TOLERANCE_M, z: 0.1 };
+  const beside = (side: number): boolean =>
+    navFloorWithin(track.nav, { x: lands.x - along.z * side * BOT_PATH_EDGE_MARGIN_M, y: lands.y, z: lands.z + along.x * side * BOT_PATH_EDGE_MARGIN_M }, box) !== null;
+  const left = beside(1);
+  const right = beside(-1);
+  if (left === right) return null;
+  const toward = left ? 1 : -1;
+  return { x: -along.z * toward * BOT_PATH_EDGE_MARGIN_M, z: along.x * toward * BOT_PATH_EDGE_MARGIN_M };
 };
 
 /** A transfer's landing (M17 ticket 07e): the deck it goes to, in world at `at`, its middle. */
@@ -154,10 +204,162 @@ const jumpOffEnd = (track: BotTrack, table: RideTable, deck: RideDeck, platform:
   return { ...jump, landTick };
 };
 
+type XZ = { x: number; z: number };
+
+/**
+ * A sweeper riding a deck (M17 ticket 07l): a bar spinning on the base
+ * race's spinning squares rides with the square, so in the deck's frame it
+ * sweeps a disc about a fixed pivot. Nothing aboard is vetted by the sweeper
+ * hold (a ride's Steering is committed), so the rider keeps out of the disc
+ * itself: its waiting spot, its walk across the deck, and a transfer's
+ * landing, which was aimed at the deck's middle — the bar's pivot (measured,
+ * the base race's spiked square: every Obstacle Fall on the leg within 3 m of
+ * that pivot).
+ */
+interface Swath {
+  readonly body: MovingBody;
+  /** The pivot in the platform frame. */
+  readonly pivot: XZ;
+  /** The swept radius plus the capsule plus {@link BOT_RIDE_SWATH_MARGIN_M}. */
+  readonly radius: number;
+}
+
+const swathCache = new WeakMap<RideTable, Map<string, readonly Swath[]>>();
+
+/** The sweepers riding `platform` as of `tick`, in its frame. Empty on most decks. */
+const swathsOn = (track: BotTrack, table: RideTable, platform: Platform, tick: number, clock: MotionClock): readonly Swath[] => {
+  let cache = swathCache.get(table);
+  if (cache === undefined) swathCache.set(table, (cache = new Map()));
+  const key = `${platform.index}:${tick}:${clock ?? "-"}`;
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  if (cache.size > 256) cache.clear();
+  const { moving } = track;
+  const deck = table.decks[platform.index]!;
+  const centre = moving.toWorld(platform, tick, clock, { x: deck.centroid.x, y: deck.y, z: deck.centroid.z });
+  let reach = 0;
+  for (const v of deck.hull) reach = Math.max(reach, Math.hypot(v.x - deck.centroid.x, v.z - deck.centroid.z));
+  const quarter = Math.max(1, Math.round(platform.periodTicks / 4));
+  const out: Swath[] = [];
+  for (const body of moving.near(centre, reach, tick, 0, clock, ["sweeper"])) {
+    const pose = moving.poseAt(body.index, tick, clock);
+    const local = moving.toLocal(platform, tick, clock, pose.position);
+    if (Math.abs(local.y - deck.y) > BOT_RIDE_SWATH_LEVEL_M) continue;
+    if (hullDistance(deck.hull, local) > 0) continue;
+    // Fixed in the deck's frame: its origin is at the same local point a quarter period on.
+    const later = moving.toLocal(platform, tick + quarter, clock, moving.poseAt(body.index, tick + quarter, clock).position);
+    if (Math.hypot(later.x - local.x, later.z - local.z) > 0.1) continue;
+    // And moving against the deck: a bar fixed to it is scenery to the walk.
+    const tip = { x: pose.position.x + body.radius, y: pose.position.y, z: pose.position.z };
+    const vb = moving.velocityAt(body.index, tick, clock, tip);
+    const vd = moving.velocityAt(platform.bodies[0]!.index, tick, clock, tip);
+    if (!body.spiked && Math.hypot(vb.x - vd.x, vb.z - vd.z) < BOT_HOLD_MIN_SPEED_WALKING) continue;
+    out.push({ body, pivot: { x: local.x, z: local.z }, radius: body.radius + CAPSULE_RADIUS + BOT_RIDE_SWATH_MARGIN_M });
+  }
+  cache.set(key, out);
+  return out;
+};
+
+const swathAt = (swaths: readonly Swath[], p: XZ): Swath | null => swaths.find((s) => Math.hypot(p.x - s.pivot.x, p.z - s.pivot.z) < s.radius) ?? null;
+
+/** The swath the straight walk from `a` to `b` passes through, or null. */
+const swathAcross = (swaths: readonly Swath[], a: XZ, b: XZ): Swath | null => {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const len2 = dx * dx + dz * dz;
+  for (const s of swaths) {
+    const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((s.pivot.x - a.x) * dx + (s.pivot.z - a.z) * dz) / len2));
+    if (Math.hypot(a.x + dx * t - s.pivot.x, a.z + dz * t - s.pivot.z) < s.radius) return s;
+  }
+  return null;
+};
+
+/** `p` pushed radially out of any swath it is in. */
+const outOfSwaths = (swaths: readonly Swath[], p: XZ): XZ => {
+  let q = p;
+  for (const s of swaths) {
+    const d = Math.hypot(q.x - s.pivot.x, q.z - s.pivot.z);
+    if (d >= s.radius) continue;
+    const u = d === 0 ? { x: 1, z: 0 } : { x: (q.x - s.pivot.x) / d, z: (q.z - s.pivot.z) / d };
+    q = { x: s.pivot.x + u.x * s.radius, z: s.pivot.z + u.z * s.radius };
+  }
+  return q;
+};
+
+/**
+ * The platform-frame direction to walk from `from` for `to` keeping out of
+ * `swaths`, or null when the straight walk is clear: radially out when
+ * inside one, else round the one in the way on a circle hugging it, the
+ * shorter way toward `to`, kept inside `deck`'s outline. (A tangent from
+ * the Bot's own point was tried first: it led out to the rim, the rim push
+ * led back into the swath, and the Bot walked to and fro at the mid-edge,
+ * where the ring between the two is a hand wide.)
+ */
+const aroundSwaths = (swaths: readonly Swath[], deck: RideDeck, from: XZ, to: XZ): XZ | null => {
+  const inside = swathAt(swaths, from);
+  if (inside !== null) {
+    const d = Math.hypot(from.x - inside.pivot.x, from.z - inside.pivot.z);
+    return d === 0 ? { x: 1, z: 0 } : { x: (from.x - inside.pivot.x) / d, z: (from.z - inside.pivot.z) / d };
+  }
+  const s = swathAcross(swaths, from, to);
+  if (s === null) return null;
+  const R = s.radius + RUNUP_STEP_M / 2;
+  const af = Math.atan2(from.z - s.pivot.z, from.x - s.pivot.x);
+  const at = Math.atan2(to.z - s.pivot.z, to.x - s.pivot.x);
+  const turn = Math.atan2(Math.sin(at - af), Math.cos(at - af));
+  const a = af + Math.sign(turn || 1) * Math.min(Math.abs(turn), BOT_RIDE_SWATH_LEAD_RAD + RUNUP_STEP_M * 2 / R);
+  let p: XZ = { x: s.pivot.x + R * Math.cos(a), z: s.pivot.z + R * Math.sin(a) };
+  while (hullDistance(deck.hull, p) > -BOT_EDGE_MARGIN_M && Math.hypot(p.x - s.pivot.x, p.z - s.pivot.z) > RUNUP_STEP_M) p = insetToward(p, s.pivot, RUNUP_STEP_M);
+  const d = Math.hypot(p.x - from.x, p.z - from.z);
+  return d < 1e-6 ? null : { x: (p.x - from.x) / d, z: (p.z - from.z) / d };
+};
+
+/** Whether a riding sweeper occupies world point `p` at `at`. */
+const swathOccupied = (track: BotTrack, swaths: readonly Swath[], at: number, clock: MotionClock, p: Vec3): boolean => {
+  const grow = CAPSULE_RADIUS + BOT_HOLD_MARGIN_M;
+  return swaths.some((s) => track.moving.occupies(s.body.index, at, clock, p, grow) && track.moving.solidAt(s.body.index, at, undefined));
+};
+
+/**
+ * Whether a transfer's landing on `target` at `landTick` is clear of every
+ * riding sweeper through the skid, and the walk radially out of the swath
+ * from there is clear Tick by Tick (M17 ticket 07l). A landing aimed at the
+ * deck's middle comes down inside the swath by design; what makes it safe is
+ * the bar being elsewhere for as long as the walk out takes.
+ */
+const landingClearOfSwaths = (track: BotTrack, table: RideTable, target: Platform, lands: Vec3, landTick: number, clock: MotionClock): boolean => {
+  const swaths = swathsOn(track, table, target, landTick, clock);
+  if (swaths.length === 0) return true;
+  const { moving } = track;
+  for (let k = 0; k <= BOT_RIDE_SWATH_SKID_TICKS; k += 1) {
+    if (swathOccupied(track, swaths, landTick + k, clock, moving.toWorld(target, landTick + k, clock, moving.toLocal(target, landTick, clock, lands)))) return false;
+  }
+  let p: XZ = moving.toLocal(target, landTick, clock, lands);
+  let at = landTick + BOT_RIDE_SWATH_SKID_TICKS;
+  const step = WALK_SPEED * TICK_DT;
+  const y = table.decks[target.index]!.y;
+  for (let n = 0; n < 90; n += 1) {
+    const s = swathAt(swaths, p);
+    if (s === null) break;
+    const d = Math.hypot(p.x - s.pivot.x, p.z - s.pivot.z);
+    const u = d === 0 ? { x: 1, z: 0 } : { x: (p.x - s.pivot.x) / d, z: (p.z - s.pivot.z) / d };
+    p = { x: p.x + u.x * step, z: p.z + u.z * step };
+    at += 1;
+    if (swathOccupied(track, swaths, at, clock, moving.toWorld(target, at, clock, { x: p.x, y, z: p.z }))) return false;
+  }
+  return true;
+};
+
 /** A planned way across: a chain of rides, by link index. */
 interface Across {
   readonly rides: readonly number[];
 }
+
+/** What every `planAcross` in this process has cost (07h round 2): logged by `pnpm bench:sim`, never asserted. */
+const planCost = { ms: 0, plans: 0, misses: 0 };
+
+/** The ride planning's share so far: wall-clock ms over every plan asked, and how many missed the per-Bot plan cache. */
+export const ridePlanCost = (): { readonly ms: number; readonly plans: number; readonly misses: number } => ({ ...planCost });
 
 /**
  * The ride hook (M17 ticket 07b): the planner across moving floors
@@ -167,6 +369,10 @@ interface Across {
 export class DeckRider implements RideHook {
   /** How many waits ran past `BOT_RIDE_WAIT_MAX_TICKS` and went at the nearest pass. Logged, not asserted. */
   gaveUp = 0;
+  /** How many waits behind someone were handed to another entry live (07h round 2). Logged, not asserted. */
+  handedOff = 0;
+  /** The next Tick a held wait may ask the planner again. */
+  private handOffAt = 0;
   private state: State = "off";
   private ride: RideLink | null = null;
   private platform: Platform | null = null;
@@ -178,6 +384,8 @@ export class DeckRider implements RideHook {
   private run: LinkRun | null = null;
   /** A jump off a deck (M17 ticket 07h): the one heading held from the stand to the landing; null while a `LinkRun` steers instead. */
   private jumpHeading: Vec3 | null = null;
+  /** That jump's run-up, in the platform frame (07h round 2): followed as the deck turns it, so the heading at the press is `jumpHeading`. */
+  private jumpLine: { readonly from: Vec3; readonly to: Vec3 } | null = null;
   /** A jump's run: the first Tick jump is held, counted from a fresh stand, and whether the Bot has been seen off the ground since. */
   private pressAt = 0;
   private left = false;
@@ -207,6 +415,8 @@ export class DeckRider implements RideHook {
     const track = ctx.view.track;
     const table = rideTableOf(track);
     if (table.links.length === 0) return null;
+    const started = performance.now();
+    planCost.plans += 1;
     const clock = ctx.view.runningFromTick ?? null;
     const aboard = track.moving.platformUnder(from, ctx.view.tick, clock);
     const nearest = aboard !== null ? `aboard ${aboard.index}` : `node ${table.componentOf(from)}`;
@@ -225,12 +435,14 @@ export class DeckRider implements RideHook {
     const key = `${nearest}|${Math.round(goal.x)},${Math.round(goal.y)},${Math.round(goal.z)}|${signature}`;
     let across = this.plans.get(key);
     if (across === undefined) {
+      planCost.misses += 1;
       // A Bot ahead at a still entry costs a turn of its platform's period standing behind it, in metres of walk.
       across = dijkstra(table, aboard, from, goal, (entry) => (queued.get(entry) ?? 0) * track.moving.platforms[entry.platform]!.periodTicks * TICK_DT * WALK_SPEED);
       this.plans.set(key, across);
     }
-    if (across === null) return null;
-    return compose(track, table, aboard, from, goal, across);
+    const corners = across === null ? null : compose(track, table, aboard, from, goal, across);
+    planCost.ms += performance.now() - started;
+    return corners;
   }
 
   steer(ctx: HookContext): Steering | null {
@@ -289,6 +501,7 @@ export class DeckRider implements RideHook {
     this.platform = null;
     this.run = null;
     this.jumpHeading = null;
+    this.jumpLine = null;
     this.boardLocal = null;
     this.boardSpot = null;
     this.spotWalkUntil = 0;
@@ -426,11 +639,11 @@ export class DeckRider implements RideHook {
         // In turn: whoever is nearer the point the run heads for goes first (the links' rule). A wait that gave up goes regardless.
         const dest = boarding ? this.rimAhead(ctx, deck, source) : end.to === null ? end.still : transferAim(track, table, end, tick + JUMP_TICKS, clock);
         if (this.forcedAt === null && this.someoneAhead(ctx, dest)) {
-          return boarding ? STAND : this.holdAboard(ctx, table, seenTick);
+          return boarding ? this.handOff(ctx, table) : this.holdAboard(ctx, table, seenTick);
         }
         // Boarding, the spot the jump comes down on must be free too: those waiting to alight stand where the landings are
         // (measured on the base race's first row: landers came down on the waiters' backs and both went off the rim).
-        if (this.forcedAt === null && boarding && end.jump && this.landingTaken(ctx, deck, aim, seenTick)) return STAND;
+        if (this.forcedAt === null && boarding && end.jump && this.landingTaken(ctx, deck, aim, seenTick)) return this.handOff(ctx, table);
         return this.depart(ctx, table, end, boarding, source);
       }
       case "boarding":
@@ -479,7 +692,10 @@ export class DeckRider implements RideHook {
               return { moveDirection: unit(self.position, safe), dash: false, jump: false, committed: true };
             }
           }
-          return { moveDirection: this.jumpHeading, dash: false, jump, committed: true };
+          // Before the press the run is the deck-frame line as the deck has turned it (a spin turns the frame during the
+          // run-up); from the press on it is the aim, which is that line's heading at the take-off.
+          const heading = tick < this.pressAt && this.jumpLine !== null ? unit(moving.toWorld(platform, tick, clock, this.jumpLine.from), moving.toWorld(platform, tick, clock, this.jumpLine.to)) : this.jumpHeading;
+          return { moveDirection: heading, dash: false, jump, committed: true };
         }
         if (tick < this.walkUntil) {
           const target = boarding ? moving.toWorld(platform, tick, clock, this.boardLocal!) : ride.exit.still;
@@ -493,8 +709,17 @@ export class DeckRider implements RideHook {
         // Down beside the still floor rather than on it — its centre off the navmesh, on the row's bevel — a Bot that stands
         // slides off (M17 ticket 07h, measured: two HARD Bots a hand's width past the beam's and the 4 × 4 row's side, standing
         // still at 4–7 u/s down the bevel). For the floor it aimed at, until it is on it.
-        if (ride.exit.to === null && self.grounded && navFloorWithin(track.nav, self.position, { x: 0.05, y: BOT_RIDE_TOP_TOLERANCE_M, z: 0.05 }) === null) {
+        // Only when it is *down* a face, by more than a step the walker climbs (07h round 2): landed on the floor's top a
+        // hand's width inside its edge, the probe read null too (the navmesh's own erosion there), and the push for the still,
+        // steered live off a view 15 Ticks late, walked an EASY Bot 2 m past the still and off the row's far side — eight of
+        // eleven crowd step-offs at EASY, at one spot.
+        if (ride.exit.to === null && self.grounded && ride.exit.still.y - (self.position.y - CAPSULE_BOTTOM_OFFSET) > NAV_AGENT_CLIMB && navFloorWithin(track.nav, self.position, { x: 0.05, y: BOT_RIDE_TOP_TOLERANCE_M, z: 0.05 }) === null) {
           if (tick - this.waitSince <= BOT_STALL_TICKS) return { moveDirection: unit(self.position, ride.exit.still), dash: false, committed: true };
+        }
+        // Landed on another deck inside a riding sweeper's swath (07l): out of it first, standing still there was the knockdown.
+        if (ride.exit.to !== null && self.grounded && moving.platformUnder(self.position, seenTick, clock) === platform) {
+          const out = this.outOfSwath(ctx, table, platform, seenTick);
+          if (out !== null) return out;
         }
         if (!this.fresh(ctx, seenTick) && tick - this.waitSince <= ctx.stale.max + 10) return STAND;
         this.reset();
@@ -509,6 +734,7 @@ export class DeckRider implements RideHook {
   private arrive(boarding: boolean, tick: number, landedOn: Platform | null): Steering {
     this.run = null;
     this.jumpHeading = null;
+    this.jumpLine = null;
     this.boardLocal = null;
     this.state = boarding ? "aboard" : "landing";
     if (landedOn !== null) this.platform = landedOn;
@@ -543,8 +769,8 @@ export class DeckRider implements RideHook {
       return { moveDirection: unit(self.position, end.still), dash: false, committed: true };
     }
     // Boarding, the run-up is a link's; alighting, it is from the Bot's own spot to the rim.
-    const { direction, runUp } = boarding
-      ? { direction: unit(self.position, moving.toWorld(platform, tick + JUMP_TICKS, clock, this.boardAim(deck, end))), runUp: JUMP_AT }
+    const { direction, runUp, takeOffLocal } = boarding
+      ? { direction: unit(self.position, moving.toWorld(platform, tick + JUMP_TICKS, clock, this.boardAim(deck, end))), runUp: JUMP_AT, takeOffLocal: null }
       : jumpOffEnd(ctx.view.track, table, deck, platform, source, end, tick, clock);
     // The Bot sets out from a fresh stand (`fresh`), so the run-up is a count of Ticks from here, as a link's replay is: read off
     // a view as late as `stale.max`, the press came where a stale view put it, a metre early from a near-stand or late over the edge
@@ -564,7 +790,32 @@ export class DeckRider implements RideHook {
     // measured (0.8–2.6 m along the carry) and, here, HARD landings 1–3 m off along a slide's axis. Held, the flight is the model's.
     this.run = null;
     this.jumpHeading = direction;
-    return { moveDirection: direction, dash: false, jump: false, committed: true };
+    this.jumpLine = takeOffLocal === null ? null : { from: source, to: takeOffLocal };
+    const heading = this.jumpLine === null ? direction : unit(moving.toWorld(platform, tick, clock, this.jumpLine.from), moving.toWorld(platform, tick, clock, this.jumpLine.to));
+    return { moveDirection: heading, dash: false, jump: false, committed: true };
+  }
+
+  /**
+   * Held at a still entry by someone ahead (07h round 2): every
+   * {@link BOT_RIDE_HANDOFF_TICKS}, ask the planner again with the queue as it
+   * stands, and if the way it finds now starts at another entry, let go of the
+   * Bot so `PathFollower` plans afresh at once (its plan is older than
+   * {@link BOT_REPLAN_TICKS} by then). Otherwise stand. The queue cost only ever
+   * counted at planning time before, so twelve Bots that planned one cheapest
+   * entry stayed in one line there (07d, the spinning squares: one aboard a
+   * window, the last after 21 s).
+   */
+  private handOff(ctx: HookContext, table: RideTable): Steering | null {
+    const { tick } = ctx;
+    if (tick - this.waitSince < BOT_REPLAN_TICKS || tick < this.handOffAt) return STAND;
+    this.handOffAt = tick + BOT_RIDE_HANDOFF_TICKS;
+    const goal = ctx.path.at(-1)?.point;
+    if (goal === undefined) return STAND;
+    const first = this.planAcross(ctx, ctx.self.position, goal)?.find((c) => c.ride !== undefined)?.ride;
+    if (first === undefined || table.links[first]!.entry === this.ride!.entry) return STAND;
+    this.handedOff += 1;
+    this.reset();
+    return null;
   }
 
   /** Whether another Character aboard stands within {@link BOT_LINK_QUEUE_M} of `aim` (platform frame), as both are seen at `seenTick`. */
@@ -639,7 +890,9 @@ export class DeckRider implements RideHook {
     const seen = moving.toLocal(platform, seenTick, clock, self.position);
     const target = this.aboardTarget(ctx, table);
     const now = moving.toWorld(platform, tick, clock, seen);
-    if (hullDistance(deck.hull, seen) > -(BOT_EDGE_MARGIN_M + BOT_RIDE_RIM_INSET_M)) {
+    // On a deck a sweeper rides, the rim inset is let go (07l): between the swath and the rim there is no room for it.
+    const swaths = swathsOn(ctx.view.track, table, platform, tick, clock);
+    if (hullDistance(deck.hull, seen) > -(BOT_EDGE_MARGIN_M + (swaths.length > 0 ? 0 : BOT_RIDE_RIM_INSET_M))) {
       const centre = moving.toWorld(platform, tick, clock, { x: deck.centroid.x, y: deck.y, z: deck.centroid.z });
       return { moveDirection: unit(now, centre), dash: false, committed: true };
     }
@@ -649,7 +902,27 @@ export class DeckRider implements RideHook {
       this.quiet = 0;
       return STAND;
     }
+    // Round a sweeper riding the deck, never through its swath (07l): out of it radially, else along its tangent.
+    const around = aroundSwaths(swaths, deck, seen, target);
+    if (around !== null) {
+      const ahead = moving.toWorld(platform, tick, clock, { x: seen.x + around.x, y: seen.y, z: seen.z + around.z });
+      return this.unpinned(tick, self.position, { moveDirection: unit(now, ahead), dash: false, committed: true });
+    }
     return this.unpinned(tick, self.position, { moveDirection: unit(now, moving.toWorld(platform, tick, clock, target)), dash: false, committed: true });
+  }
+
+  /** Aboard `platform` and seen inside a riding sweeper's swath (07l): the committed walk radially out of it, else null. */
+  private outOfSwath(ctx: HookContext, table: RideTable, platform: Platform, seenTick: number): Steering | null {
+    const { tick, clock, self } = ctx;
+    const { moving } = ctx.view.track;
+    const swaths = swathsOn(ctx.view.track, table, platform, tick, clock);
+    if (swaths.length === 0) return null;
+    const seen = moving.toLocal(platform, seenTick, clock, self.position);
+    const out = aroundSwaths(swaths, table.decks[platform.index]!, seen, seen);
+    if (out === null) return null;
+    const now = moving.toWorld(platform, tick, clock, seen);
+    const ahead = moving.toWorld(platform, tick, clock, { x: seen.x + out.x, y: seen.y, z: seen.z + out.z });
+    return { moveDirection: unit(now, ahead), dash: false, committed: true };
   }
 
   /**
@@ -688,6 +961,8 @@ export class DeckRider implements RideHook {
     while (hullDistance(deck.hull, spot) > -margin && Math.hypot(spot.x - deck.centroid.x, spot.z - deck.centroid.z) > RUNUP_STEP_M) {
       spot = insetToward(spot, deck.centroid, RUNUP_STEP_M);
     }
+    // Never under a sweeper riding the deck (07l): a spot inset by a slow level's lag sat right under the spiked bar.
+    spot = outOfSwaths(swathsOn(ctx.view.track, table, this.platform!, ctx.tick, ctx.clock), spot);
     return { x: spot.x, y: deck.y, z: spot.z };
   }
 
@@ -698,11 +973,18 @@ export class DeckRider implements RideHook {
     const platform = this.platform!;
     const deck = table.decks[platform.index]!;
     const seen = moving.toLocal(platform, seenTick, clock, ctx.self.position);
-    if (hullDistance(deck.hull, seen) > -(BOT_EDGE_MARGIN_M + BOT_RIDE_RIM_INSET_M)) {
+    const swaths = swathsOn(ctx.view.track, table, platform, tick, clock);
+    if (hullDistance(deck.hull, seen) > -(BOT_EDGE_MARGIN_M + (swaths.length > 0 ? 0 : BOT_RIDE_RIM_INSET_M))) {
       const now = moving.toWorld(platform, tick, clock, seen);
       const centre = moving.toWorld(platform, tick, clock, { x: deck.centroid.x, y: deck.y, z: deck.centroid.z });
       this.quiet = 0;
       return { moveDirection: unit(now, centre), dash: false, committed: true };
+    }
+    // And never standing under a sweeper riding the deck (07l).
+    const out = this.outOfSwath(ctx, table, platform, seenTick);
+    if (out !== null) {
+      this.quiet = 0;
+      return out;
     }
     return STAND;
   }
@@ -826,6 +1108,8 @@ const transferScore = (track: BotTrack, table: RideTable, deck: RideDeck, platfo
   const jump = jumpOffEnd(track, table, deck, platform, source, end, at, clock);
   const straight = unit(moving.toWorld(platform, at, clock, source), transferAim(track, table, end, jump.landTick, clock));
   if (straight.x * jump.direction.x + straight.z * jump.direction.z < AIM_COS_MIN) return 1;
+  // A sweeper riding the other deck must be away from the landing for as long as the walk out of its swath takes (07l).
+  if (!landingClearOfSwaths(track, table, target, jump.lands, jump.landTick, clock)) return 1;
   const takeOffGap = hullDistance(deck.hull, moving.toLocal(platform, at + jump.runTicks, clock, jump.takeOff)) + BOT_RIDE_RIM_INSET_M / 2;
   let landGap = -Infinity;
   for (const k of [0, 3]) {
@@ -862,6 +1146,61 @@ const bestPass = (track: BotTrack, table: RideTable, deck: RideDeck, platform: P
 };
 
 /**
+ * A ride table's adjacency, built once per table (07h round 2, the planner's
+ * cost): the rides from each end and off each platform, the still ends each
+ * end can walk to, and the start-walks from a Bot's floor, keyed by a
+ * {@link BOT_RIDE_START_CELL_M} cell. `dijkstra` scanned every link per node
+ * (126 ends × 1784 links on the base race) and paid every start-walk again
+ * whenever the queue signature changed.
+ */
+interface Adjacency {
+  readonly linksFrom: readonly (readonly number[])[];
+  readonly linksOff: readonly (readonly number[])[];
+  /** Per end, the still ends of its component (itself left out); a transfer end has none. */
+  readonly walksFrom: readonly (readonly number[])[];
+  /** Per component, its still ends. */
+  readonly endsOf: ReadonlyMap<number, readonly number[]>;
+  readonly startWalks: Map<string, readonly (number | null)[]>;
+}
+
+const adjacencies = new WeakMap<RideTable, Adjacency>();
+
+const adjacencyOf = (table: RideTable): Adjacency => {
+  let adjacency = adjacencies.get(table);
+  if (adjacency !== undefined) return adjacency;
+  const { ends, links, component } = table;
+  const index = new Map<RideEnd, number>(ends.map((end, i) => [end, i]));
+  const linksFrom: number[][] = ends.map(() => []);
+  const linksOff: number[][] = [];
+  links.forEach((link, k) => {
+    linksFrom[index.get(link.entry)!]!.push(k);
+    (linksOff[link.exit.platform] ??= []).push(k);
+  });
+  const endsOf = new Map<number, number[]>();
+  component.forEach((c, i) => {
+    if (c === TRANSFER_COMPONENT) return;
+    const list = endsOf.get(c);
+    if (list === undefined) endsOf.set(c, [i]);
+    else list.push(i);
+  });
+  const walksFrom = ends.map((_, i) => (component[i] === TRANSFER_COMPONENT ? [] : endsOf.get(component[i]!)!.filter((j) => j !== i)));
+  adjacency = { linksFrom, linksOff: ends.length === 0 ? [] : linksOff, walksFrom, endsOf, startWalks: new Map() };
+  adjacencies.set(table, adjacency);
+  return adjacency;
+};
+
+/** The walk lengths from `from` to every still end of its component, cached by the cell `from` stands in. */
+const startWalksFrom = (table: RideTable, adjacency: Adjacency, from: Vec3, fromComponent: number): readonly (number | null)[] => {
+  const cell = `${fromComponent}|${Math.round(from.x / BOT_RIDE_START_CELL_M)},${Math.round(from.y / BOT_RIDE_START_CELL_M)},${Math.round(from.z / BOT_RIDE_START_CELL_M)}`;
+  let lengths = adjacency.startWalks.get(cell);
+  if (lengths === undefined) {
+    lengths = table.ends.map((end, i) => (table.component[i] === fromComponent ? table.walk(from, end.still) : null));
+    adjacency.startWalks.set(cell, lengths);
+  }
+  return lengths;
+};
+
+/**
  * The cheapest way from `from` to `goal` through rides (Dijkstra). Nodes are
  * `from`, `goal` and every end's still; edges are navmesh walks (cached per
  * pair for the Track) and rides (`BOT_RIDE_COST_M` plus the hull crossed plus
@@ -871,6 +1210,7 @@ const bestPass = (track: BotTrack, table: RideTable, deck: RideDeck, platform: P
  */
 const dijkstra = (table: RideTable, aboard: Platform | null, from: Vec3, goal: Vec3, queue: (entry: RideEnd) => number = () => 0): Across | null => {
   const { ends, links } = table;
+  const adjacency = adjacencyOf(table);
   const n = ends.length;
   const FROM = n;
   const GOAL = n + 1;
@@ -898,15 +1238,13 @@ const dijkstra = (table: RideTable, aboard: Platform | null, from: Vec3, goal: V
     };
     if (u === FROM) {
       if (aboard !== null) {
-        links.forEach((link, k) => {
-          if (link.exit.platform === aboard.index) relax(index.get(link.exit)!, 0, k);
-        });
+        for (const k of adjacency.linksOff[aboard.index] ?? []) relax(index.get(links[k]!.exit)!, 0, k);
       } else {
-        ends.forEach((end, i) => {
-          if (table.component[i] !== fromComponent) return;
-          const length = table.walk(from, end.still);
+        const lengths = startWalksFrom(table, adjacency, from, fromComponent);
+        for (const i of adjacency.endsOf.get(fromComponent) ?? []) {
+          const length = lengths[i]!;
           if (length !== null) relax(i, length, null);
-        });
+        }
       }
       continue;
     }
@@ -918,21 +1256,21 @@ const dijkstra = (table: RideTable, aboard: Platform | null, from: Vec3, goal: V
       if (other >= 0 && !done[other]) relax(other, BOT_RIDE_COST_M, null);
     } else {
       // Walks from here, on the same still floor.
-      ends.forEach((other, i) => {
-        if (i === u || table.component[i] !== component || done[i]) return;
-        const length = table.walk(end.still, other.still);
+      for (const i of adjacency.walksFrom[u]!) {
+        if (done[i]) continue;
+        const length = table.walk(end.still, ends[i]!.still);
         if (length !== null) relax(i, length, null);
-      });
+      }
     }
     if (component === goalComponent) {
       const length = table.walk(end.still, goal);
       if (length !== null) relax(GOAL, length, null);
     }
     // Rides from here.
-    links.forEach((link, k) => {
-      if (link.entry !== end) return;
+    for (const k of adjacency.linksFrom[u]!) {
+      const link = links[k]!;
       relax(index.get(link.exit)!, BOT_RIDE_COST_M + link.across + link.wait + queue(link.entry), k);
-    });
+    }
   }
   if (dist[GOAL] === Infinity) return null;
   const chain: number[] = [];
