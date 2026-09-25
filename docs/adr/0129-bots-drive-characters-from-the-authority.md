@@ -380,6 +380,17 @@ reliable, but it makes every Track more work).
   windows are found but the legs' Falls are elsewhere on them now (the staggered pair at the lane's edge,
   the catwalk's queue, Slip Stream's walls and spiked circles), and no target on Falls is met. The
   numbers and the next fixes are in the ticket.
+- **The hold's cost was `near`, not the arc** (the second session, the same day). Profiled part by part on
+  Spin Cycle Cp 0 → 1 at HARD, `decide` was 130 µs a call, and 1180 of its 1523 ms were `moving.near`
+  walking every sweeper's origin over the look window each decision — Spin Cycle has 68 sweepers, 20 of
+  them swinging or sliding, against the base race's 24 that 07g's "2–16 µs" was measured on; the arc
+  search, `inSwath` and the through-the-swath scan together were 100 ms. `near` now keeps, per body, where
+  its origin rests and the furthest it ever strays (one cycle at pace 1 sampled at build, plus a Tick's
+  step for the phases a Ramp lands between samples; exact for a body posed by one Motion of its own, and
+  no bound at all for a chain, a trap door or a glove), and rejects a far body with one hypot. Held to the
+  old walk on 800 seeded asks, on a clock and off. The spinning body's own frame (`spinAbout`,
+  `turnedBack`, held to the poses on 6,804 points) stays, tabled per search, and every leg's outcome is
+  bit-identical before and after both changes. Hook cost on that leg 46 → 16 µs a call.
 
 **Ticket 07h round 2, the crowd rows met (2026-09-25).**
 

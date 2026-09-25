@@ -264,7 +264,14 @@ Tick for Tick).
    the start-walks from the Bot's floor to every still end of its component are cached by a
    `BOT_RIDE_START_CELL_M` (2 m) cell (`startWalksFrom`), so a changed queue signature no longer pays every
    navmesh walk again. The bench logs the share (`ridePlanCost`, printed by `pnpm bench:sim`; that is the
-   `scripts/bench-simulation.ts` edit): (filled below).
+   `scripts/bench-simulation.ts` edit). `pnpm bench:sim --players 12 --bots 11 --level hard --ticks 6000`,
+   **beside 07i's suites** (the same run's Bots-row tick p50 read 2.96 ms against 07d's 0.87 on this scenario,
+   so this machine was ~3.4× slower than 07d's numbers were taken on): ride planning **208 ms over 6000
+   Ticks = 35 µs per Tick**, 352 plans asked, 248 plan-cache misses (one every 24 Ticks, ~0.84 ms a miss
+   under the load); bots p50 0.480 / **p95 1.380** (07d: 0.120 / 0.520). Scaled by the 3.4×, p95 reads
+   ~0.41 — **the ≤ 0.40 target is not shown met**; the share is small (35 µs of a Tick's mean), and the
+   tail is now the 248 misses' Dijkstra itself plus 07i's holds. Needs a run alone before anything is
+   concluded; NORMAL and EASY not run (budget).
 
 ### The one new red: T1 NORMAL, a Character pinned inside a Moving Segment (the simulation's, not the rider's)
 
