@@ -10,7 +10,7 @@ import {
   WALL_NORMAL_MAX_Y,
 } from "../tuning/character.js";
 import { TICK_DT } from "../tuning/clock.js";
-import { GRAB_CARRY_DISTANCE, GRAB_CARRY_LIFT, GRAB_TURN_SPEED_MULTIPLIER } from "../tuning/fight.js";
+import { GRAB_CARRY_DISTANCE, GRAB_CARRY_LIFT } from "../tuning/fight.js";
 import { IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, STAGGER_TICKS, WALL_IMPACT_LIFT_RATIO, WALL_IMPACT_MIN_SPEED, WALL_IMPACT_SCALE } from "../tuning/knockdown.js";
 import { SHOVING_IMPACT_CAUSES, type HeldPhase, type ReconcileBase, type RagdollCause } from "../state/SimState.js";
 import { createCapsule, type Capsule } from "./character/Capsule.js";
@@ -74,11 +74,6 @@ const CHARACTERS_ONLY = collisionGroups(GROUP_CHARACTER, GROUP_CHARACTER);
 const isNotCharacter = (collider: RAPIER.Collider): boolean =>
   ((collider.collisionGroups() >>> 16) & GROUP_CHARACTER) === 0;
 
-/**
- * The most a grabber's facing may turn in one tick (ADR 0104): the body's top
- * turn speed (ADR 0085), slowed by what it is carrying.
- */
-const CARRY_TURN_STEP = FACING_TURN_SPEED_MAX * GRAB_TURN_SPEED_MULTIPLIER * TICK_DT;
 
 /** What {@link CharacterController.snapshot} reports back to `RapierSimulation` each tick. */
 export interface CharacterState {
@@ -111,6 +106,8 @@ export interface CharacterState {
   grabCooldownMs: number;
   /** The id of whoever this Character is currently grabbing, or `null` (M6.1) — drives the renderer's own arm-reach pose. `null` for the HELD side of a hold too; only the grabber's own row is ever non-null. */
   grabbingId: string | null;
+  /** Which Prop this Character carries, by index, or `null` (ADR 0125) — the Prop's half of {@link grabbingId}. */
+  carryingProp: number | null;
   /** The id of whoever is currently grabbing this Character, or `null` (M6.1) — the reverse of {@link grabbingId}. Lets a client tell "am I involved in a hold at all, as either role." */
   heldByGrabberId: string | null;
   /** Which part of its hold this Character is in, or `null` while nobody holds it (ADR 0104). */
@@ -123,6 +120,10 @@ export interface CharacterState {
   lastWiggleYaw: number | null;
   /** How long this Character has been Spinning someone, in ms (ADR 0104). */
   spinMs: number;
+  /** The Tick this Character's Lift started, or `null` (ADR 0128). */
+  liftStartTick: number | null;
+  /** How far into a Toss's wind-up this Character is, in ms, or `null` (ADR 0128). */
+  tossMs: number | null;
   /** Current horizontal speed (units/s) contributed by an active Dash burst; 0 when not dashing. Drives the speed-lines effect directly — no noisy derivation from position needed. */
   dashSpeed: number;
   /** Rises every time a launch pad fires (M3.7 ticket 02). */
@@ -300,6 +301,11 @@ export class CharacterController {
     return this.interaction.takeHurl();
   }
 
+  /** Whether a Toss let go of its Prop this tick (ADR 0128) — consumed by `GrabHolds`. */
+  takeToss(): boolean {
+    return this.interaction.takeToss();
+  }
+
   /** Whether this tick's Spin ran too long (ADR 0104) — consumed by `GrabHolds`. */
   takeDizzy(): boolean {
     return this.interaction.takeDizzy();
@@ -334,6 +340,16 @@ export class CharacterController {
     this.interaction.grabbingId = id;
   }
 
+  /** Sets which Prop this Character carries, or `null` (ADR 0125) — see `InteractionController.carryingProp`. */
+  setCarryingProp(index: number | null): void {
+    this.interaction.carryingProp = index;
+  }
+
+  /** Sets the Tick this Character's Lift started, or `null` (ADR 0128) — see `InteractionController.liftStartTick`. */
+  setLiftStartTick(tick: number | null): void {
+    this.interaction.liftStartTick = tick;
+  }
+
   /**
    * What the snapshot says about the hold this Character is held in (M6.1,
    * ADR 0104): by whom, which part of it, and until which Tick — all `null`
@@ -356,8 +372,8 @@ export class CharacterController {
   }
 
   /** This Character is at `role`'s end of a hold this tick — see `InteractionController.holdAs`. */
-  holdAs(role: HoldRole, phase: HeldPhase | null = null): void {
-    this.interaction.holdAs(role, phase);
+  holdAs(role: HoldRole, phase: HeldPhase | null = null, carriedMass: number | null = null, lifting = false): void {
+    this.interaction.holdAs(role, phase, carriedMass, lifting);
   }
 
   /**
@@ -377,9 +393,9 @@ export class CharacterController {
    * wall is pulled in rather than put inside it, and a release never starts a
    * Ragdoll inside the geometry.
    */
-  carryPoint(): Vec3 {
+  carryPoint(distance = GRAB_CARRY_DISTANCE, lift = GRAB_CARRY_LIFT): Vec3 {
     const at = this.capsule.body.translation();
-    const from = vec3(at.x, at.y + GRAB_CARRY_LIFT, at.z);
+    const from = vec3(at.x, at.y + lift, at.z);
     const ahead = forwardOf(this.currentFacing);
     const hit = this.capsule.world.castShape(
       from,
@@ -387,7 +403,7 @@ export class CharacterController {
       ahead,
       this.capsule.collider.shape,
       CHARACTER_CONTROLLER_OFFSET,
-      GRAB_CARRY_DISTANCE,
+      distance,
       false,
       undefined,
       CHARACTER_GROUPS,
@@ -395,7 +411,7 @@ export class CharacterController {
       undefined,
       isNotCharacter,
     );
-    const reach = hit ? hit.time_of_impact : GRAB_CARRY_DISTANCE;
+    const reach = hit ? hit.time_of_impact : distance;
     return vec3(from.x + ahead.x * reach, from.y, from.z + ahead.z * reach);
   }
 
@@ -582,13 +598,15 @@ export class CharacterController {
 
   /**
    * A grabber's facing this tick (ADR 0104): toward where its Player turned
-   * it, but no further in one tick than {@link CARRY_TURN_STEP} — the owning
-   * client turns the body that slowly itself, so this only ever bites on a
-   * client that does not.
+   * it, but no further in one tick than the body's top turn speed (ADR 0085)
+   * slowed by what it carries — a Character, or a Prop by its weight (ADR
+   * 0125). The owning client turns the body that slowly itself, so this only
+   * ever bites on a client that does not.
    */
   private carryTurn(wanted: number): number {
+    const step = FACING_TURN_SPEED_MAX * this.interaction.carryTurnMultiplier * TICK_DT;
     const turn = wrapAngle(wanted - this.currentFacing);
-    return this.currentFacing + Math.max(-CARRY_TURN_STEP, Math.min(CARRY_TURN_STEP, turn));
+    return this.currentFacing + Math.max(-step, Math.min(step, turn));
   }
 
   /** The other half of {@link beginTick}, run after the shared `world.step()`. */
@@ -629,7 +647,9 @@ export class CharacterController {
     const slides = mode.velocity === "slide";
 
     // ADR 0104: a grabber's hands are full — no jump while carrying anyone.
-    const takeoff = movement.beginJump(fullControl && movement.jumpPressed && !interaction.holding, surface);
+    // ADR 0125: a Prop light enough is the exception, and costs height by weight.
+    const jumpScale = interaction.carryJumpMultiplier;
+    const takeoff = movement.beginJump(fullControl && movement.jumpPressed && jumpScale > 0, surface, jumpScale);
     movement.leaveRide();
     const dashBurst = this.beginActionVerbs(input, move, fullControl, slides);
 
@@ -828,12 +848,15 @@ export class CharacterController {
       hitChargeMs: this.interaction.hit.chargeMs,
       grabCooldownMs: this.interaction.grab.cooldownMs,
       grabbingId: this.interaction.grabbingId,
+      carryingProp: this.interaction.carryingProp,
       heldByGrabberId: this.interaction.heldByGrabberId,
       heldPhase: this.interaction.reportedHeldPhase,
       holdEndsTick: this.interaction.holdEndsTick,
       escapeProgress: this.interaction.escapeProgress,
       lastWiggleYaw: this.interaction.lastWiggleYaw,
       spinMs: this.interaction.spinning ? this.interaction.spinMs : 0,
+      liftStartTick: this.interaction.liftStartTick,
+      tossMs: this.interaction.tossMs,
       launchPadEpoch: this.movement.launchPadEpoch,
       facing: this.currentFacing,
       bones,

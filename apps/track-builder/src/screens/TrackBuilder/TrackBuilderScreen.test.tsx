@@ -72,8 +72,9 @@ describe("TrackBuilderScreen", () => {
       expect(screen.getByText("PLAYTEST")).toBeDefined();
       expect(screen.getByText("Empty track")).toBeDefined();
 
-      // Place through a real asset row: the fan, whose field replaced the updraft's.
-      fireEvent.click(screen.getByRole("tab", { name: /^FAN/ }));
+      // Place through a real asset row: the fan, whose field replaced the
+      // updraft's — it lists under Launcher, with the Springs (ADR 0122).
+      fireEvent.click(screen.getByRole("tab", { name: /^LAUNCHER/ }));
       fireEvent.click(screen.getByText("fan"));
       expect(engine.track).toHaveLength(1);
       expect(screen.queryByText("Empty track")).toBeNull();

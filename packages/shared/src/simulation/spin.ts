@@ -39,5 +39,5 @@ export const forwardOf = (facing: number): Vec3 => vec3(Math.sin(facing), 0, -Ma
  */
 export const spinTangentOf = (facing: number): Vec3 => vec3(Math.cos(facing), 0, Math.sin(facing));
 
-/** How fast (units/s) the carry point moves on the Spin's `ticks`-th tick — the swung body's speed. */
-export const carrySpeedAt = (ticks: number): number => spinSpeedAt(ticks) * GRAB_CARRY_DISTANCE;
+/** How fast (units/s) the carry point moves on the Spin's `ticks`-th tick — the swung body's speed, or a Prop's `radius` out (ADR 0125). */
+export const carrySpeedAt = (ticks: number, radius = GRAB_CARRY_DISTANCE): number => spinSpeedAt(ticks) * radius;

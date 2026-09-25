@@ -88,12 +88,18 @@ const browserSocketUrl = async (
   }
 };
 
+/** `captureDraftScreenshot`'s own knobs, beside the draft id. */
+export interface CaptureOptions {
+  /** Also draws the NAVMESH overlay (M17 ticket 02) — `thumbnail.html?nav=1`. */
+  navmesh?: boolean;
+}
+
 /**
  * Renders one draft to its JPEG data URL. Throws naming the leg that failed
  * (Chrome missing, page unreachable, draft unfetchable, capture empty) — the
  * tool surfaces it as a tool error the LLM can act on.
  */
-export const captureDraftScreenshot = async (draftId: string, config: ChromeRenderConfig): Promise<string> => {
+export const captureDraftScreenshot = async (draftId: string, config: ChromeRenderConfig, opts?: CaptureOptions): Promise<string> => {
   const profile = mkdtempSync(join(tmpdir(), "dont-fall-draft-shot-"));
   let chrome: ChildProcess | null = null;
   let cdp: Cdp | null = null;
@@ -129,7 +135,9 @@ export const captureDraftScreenshot = async (draftId: string, config: ChromeRend
         { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false },
         sessionId,
       );
-      const url = `${config.pageUrl}?draft=${encodeURIComponent(draftId)}&api=${encodeURIComponent(config.apiUrl)}`;
+      const url =
+        `${config.pageUrl}?draft=${encodeURIComponent(draftId)}&api=${encodeURIComponent(config.apiUrl)}` +
+        (opts?.navmesh ? "&nav=1" : "");
       await cdp.send("Page.navigate", { url }, sessionId);
       const started = Date.now();
       for (;;) {
@@ -158,6 +166,6 @@ export const captureDraftScreenshot = async (draftId: string, config: ChromeRend
 };
 
 /** `createChromeRenderer`'s knobs, all with production defaults in `../tools/screenshot.ts`. */
-export const createChromeRenderer = (config: ChromeRenderConfig): ((draftId: string) => Promise<string>) => {
-  return (draftId) => captureDraftScreenshot(draftId, config);
+export const createChromeRenderer = (config: ChromeRenderConfig): ((draftId: string, opts?: CaptureOptions) => Promise<string>) => {
+  return (draftId, opts) => captureDraftScreenshot(draftId, config, opts);
 };

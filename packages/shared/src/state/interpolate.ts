@@ -4,6 +4,7 @@ import { lerpVec3, type Vec3 } from "../math/vec3.js";
 import type { CharacterMotionState } from "../simulation/CharacterStateMachine.js";
 import type { PropSnapshot } from "../simulation/Prop.js";
 import type { BoneSnapshot } from "../simulation/ragdollSkeleton.js";
+import { TICK_MS } from "../tuning/clock.js";
 import type { HeldPhase, RagdollCause, SimState } from "./SimState.js";
 
 interface Posed {
@@ -63,12 +64,23 @@ export interface RenderCharacter {
   launchPadEpoch: number;
   /** Not interpolated — taken straight from `next`, like `dashing`. Drives a grabbing Character's arm-reach pose (M6.1); `null` for everyone not currently grabbing someone. */
   grabbingId: string | null;
+  /** Not interpolated — which Prop this Character carries, by index (ADR 0125). */
+  carryingProp: number | null;
   /** Not interpolated — the reverse of {@link grabbingId} (M6.1): whether (and by whom) this Character is currently held, which locks its own rendered facing to the server's frozen value instead of steering it from movement input. */
   heldByGrabberId: string | null;
   /** Not interpolated — which part of its hold a Held Character is in (ADR 0104): kicking in its Struggle, or hanging Limp. */
   heldPhase: HeldPhase | null;
   /** Not interpolated — how long this Character has been Spinning someone (ADR 0104); the whoosh and the wind-up follow it. */
   spinMs: number;
+  /**
+   * How long this Character has been Lifting a Prop, in ms, or `null` (ADR
+   * 0128) — counted from the replicated start Tick to the Tick being drawn,
+   * sub-tick included, so `Pickup_Ground` plays smoothly rather than in
+   * 33 ms steps.
+   */
+  liftMs: number | null;
+  /** How far into a Toss's wind-up this Character is, in ms, or `null` (ADR 0128) — blended across the tick like {@link liftMs}. */
+  tossMs: number | null;
 }
 
 export interface RenderState {
@@ -83,6 +95,11 @@ const clamp01 = (t: number): number => (t < 0 ? 0 : t > 1 ? 1 : t);
 const interpolatePosed = <T extends Posed>(prev: T[], next: T[], t: number): T[] =>
   next.map((n, i) => {
     const p = prev[i] ?? n;
+    // A Projectile that was parked and is now in flight (or the reverse) has
+    // teleported, not travelled (ADR 0119) — blending through it would fly a
+    // ball in from inside the cannon it was waiting in.
+    const teleported = (p as { live?: boolean }).live !== (n as { live?: boolean }).live;
+    if (teleported) return { ...n };
     return { ...n, position: lerpVec3(p.position, n.position, t), rotation: slerpQuat(p.rotation, n.rotation, t) };
   });
 
@@ -103,6 +120,7 @@ export const interpolateState = (
   alpha: number,
 ): RenderState => {
   const characters: Record<string, RenderCharacter> = {};
+  const drawnTick = prev.tick + (next.tick - prev.tick) * clamp01(alpha);
   for (const [id, n] of Object.entries(next.characters)) {
     const p = prev.characters[id] ?? n;
     const bodySwapped = p.bones.length !== n.bones.length;
@@ -129,9 +147,12 @@ export const interpolateState = (
       grabEpoch: n.grabEpoch,
       launchPadEpoch: n.launchPadEpoch,
       grabbingId: n.grabbingId,
+      carryingProp: n.carryingProp,
       heldByGrabberId: n.heldByGrabberId,
       heldPhase: n.heldPhase,
       spinMs: n.spinMs,
+      liftMs: n.liftStartTick === null ? null : Math.max(0, (drawnTick - n.liftStartTick) * TICK_MS),
+      tossMs: n.tossMs === null ? null : p.tossMs === null ? n.tossMs : p.tossMs + (n.tossMs - p.tossMs) * clamp01(alpha),
     };
   }
 

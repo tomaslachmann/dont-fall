@@ -6,15 +6,14 @@ import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import {
   ASSET_MODULE_DEFS,
+  assetPaletteIds,
   MODULE_LIBRARY,
   readAssetModel,
 } from "@dont-fall/shared";
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import {
-  assetTabModuleIds,
   builderLibrary,
-  canonicalPaletteId,
   extractVisualRoot,
   loadAssetVisuals,
   loadAssetVisualsProgressive,
@@ -27,37 +26,6 @@ const realFetch = async (url: string): Promise<Uint8Array> => {
   const fileName = url.substring(url.lastIndexOf("/") + 1);
   return new Uint8Array(readFileSync(path.join(assetsRoot, fileName)));
 };
-
-describe("assetTabModuleIds", () => {
-  it("lists every shape once — families under their canonical, lone looks as-is", () => {
-    const ids = assetTabModuleIds();
-    // One tile per shape: no two tiles share a stem, and every canonical exists.
-    expect(new Set(ids).size).toBe(ids.length);
-    for (const id of ids) {
-      expect(id).toBe(canonicalPaletteId(id));
-    }
-    // Nothing lost: every def id canonicalizes onto a listed tile.
-    for (const def of ASSET_MODULE_DEFS) {
-      expect(ids).toContain(canonicalPaletteId(def.id));
-    }
-    // And the dedup does something: fewer tiles than files.
-    expect(ids.length).toBeLessThan(ASSET_MODULE_DEFS.length);
-  });
-});
-
-describe("canonicalPaletteId", () => {
-  it("folds a family's four files onto the _red canonical", () => {
-    expect(canonicalPaletteId("kaykit_platform_6x6x1_blue")).toBe("kaykit_platform_6x6x1_red");
-    expect(canonicalPaletteId("kaykit_platform_6x6x1_red")).toBe("kaykit_platform_6x6x1_red");
-  });
-
-  it("leaves lone looks — bare ids and half-families — alone", () => {
-    expect(canonicalPaletteId("kaykit_ball")).toBe("kaykit_ball");
-    expect(canonicalPaletteId("kaykit_platform_quarter_circle_6x6x1_blue")).toBe(
-      "kaykit_platform_quarter_circle_6x6x1_blue",
-    );
-  });
-});
 
 describe("builderLibrary", () => {
   it("is exactly the asset Modules — nothing procedural places (ADR 0078)", () => {
@@ -88,7 +56,7 @@ describe("loadAssetVisuals", () => {
     }, "http://assets.test");
 
     // Tab Modules, not registry Modules: families fetch their canonical once.
-    expect(seen.sort()).toEqual(assetTabModuleIds().map((id) => `http://assets.test/${id}.glb`).sort());
+    expect(seen.sort()).toEqual(assetPaletteIds().map((id) => `http://assets.test/${id}.glb`).sort());
   });
 
   it("names the module when its fetch fails", async () => {
@@ -121,9 +89,12 @@ describe("extractVisualRoot (the twin of the client's role filter)", () => {
     const shared = readAssetModel(new Uint8Array(readFileSync(path.join(assetsRoot, `${moduleId}.glb`))));
     template.updateMatrixWorld(true);
     const points: [number, number, number][] = [];
+    // A bomb's effects are drawn and never read (ADR 0126): no part of the visual half.
+    const isEffect = (object: THREE.Object3D | null): boolean =>
+      object !== null && (object.userData.role === "effect" || isEffect(object.parent));
     template.traverse((object) => {
       const mesh = object as THREE.Mesh;
-      if (!mesh.isMesh) return;
+      if (!mesh.isMesh || isEffect(mesh)) return;
       const attribute = mesh.geometry.getAttribute("position") as THREE.BufferAttribute;
       const vertex = new THREE.Vector3();
       for (let i = 0; i < attribute.count; i += 1) {

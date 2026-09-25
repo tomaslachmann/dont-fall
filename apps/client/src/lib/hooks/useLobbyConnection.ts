@@ -102,6 +102,7 @@ export const useLobbyConnection = (
       setMatchLength: (matchLength) => connectionRef.current?.setMatchLength(matchLength),
       pickRoundSlot: (roundIndex, trackId, roundType) =>
         connectionRef.current?.pickRoundSlot(roundIndex, trackId, roundType),
+      setBots: (bots) => connectionRef.current?.setBots(bots),
       start: () => connectionRef.current?.start(),
       standingsReady: () => connectionRef.current?.standingsReady(),
     }),

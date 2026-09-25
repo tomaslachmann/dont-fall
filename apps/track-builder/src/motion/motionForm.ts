@@ -1,4 +1,4 @@
-import type { Box, MotionSlide, MotionSpin, MotionSwing, Module, Vec3 } from "@dont-fall/shared";
+import type { Box, MotionRamp, MotionSlide, MotionSpin, MotionSwing, Module, Vec3 } from "@dont-fall/shared";
 
 /**
  * Where a Spin or Swing turns about, named off the Module's Footprint (ADR
@@ -67,6 +67,9 @@ export const defaultSlide = (module: Module): MotionSlide => ({
   easing: "easeInOut",
   pause: 0.5,
 });
+
+/** A Ramp (ADR 0123): twice as fast a minute into the Round — a first guess an author moves. */
+export const defaultRamp = (): MotionRamp => ({ multiplier: 2, seconds: 60 });
 
 /** A number field's value, or `fallback` for an empty/garbled one — the panel never writes NaN into a Track. */
 export const readNumber = (text: string, fallback: number): number => {

@@ -5,7 +5,10 @@ import { addVec3, rotateVec3ByQuat, scaleVec3, subVec3, type Quat, type Vec3 } f
 import { TICK_DT } from "../tuning/clock.js";
 import { IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN } from "../tuning/knockdown.js";
 import { MOVING_SEGMENT_IMPACT_SCALE } from "../tuning/world.js";
-import { motionPose, type MotionPose, type SegmentMotion } from "../track/Motion.js";
+import { motionChainPose, type MotionClock, type MotionPose, type SegmentMotion } from "../track/Motion.js";
+import type { FragileDef } from "../track/Fragile.js";
+import { punchLanded, punchPose, type PunchCycle, type PunchPiece } from "../track/Punch.js";
+import { trapDoorPose, trapDoorShut, type TrapDoorCycle } from "../track/TrapDoor.js";
 import type { SolidShape } from "../track/asset.js";
 import type { Hazard } from "../track/Module.js";
 import type { SurfaceId } from "../track/Surface.js";
@@ -21,12 +24,40 @@ export interface MovingSegmentConfig {
   /** Index of the Segment in its Track — how the renderer and the builder find its visual. */
   segmentIndex: number;
   moduleId: string;
+  /**
+   * The Part of its Asset this body is (ADR 0116), when the Segment resolved
+   * into more than one — what tells a renderer which slice of the Asset's
+   * visual to pose with it. Absent when the body is the whole Segment, which
+   * is every Moving Segment before the DF traps.
+   */
+  part?: string;
   /** The Segment's rest placement. */
   position: Vec3;
   orientation: Quat;
   /** The Segment's uniform scale (ADR 0062) — already baked into `boxes`/`trimeshes`; its Motion's translation still needs it. */
   scale: number;
+  /**
+   * What poses this body. A trap door leaf's is empty: its `trapDoor` clock
+   * poses it instead, and the body follows the swing with its colliders
+   * switched off, so what is drawn and what could be collided with are the
+   * same object either way.
+   */
   motion: SegmentMotion;
+  /**
+   * The Motions of the Parts this one hangs from, outermost first (ADR 0116)
+   * — applied before its own, so a cannon's barrel turns with its carriage.
+   */
+  under?: SegmentMotion[];
+  /** A trap door leaf's clock (ADR 0117): how it swings, and therefore when it is a floor. */
+  trapDoor?: TrapDoorCycle;
+  /** A punching glove's swing (ADR 0121), and which piece of it this body is — solid only while the fist is out. */
+  punch?: { cycle: PunchCycle; piece: PunchPiece };
+  /**
+   * A floor that breaks under you (ADR 0118). It never moves — this body
+   * exists so its colliders can be switched off, which `FragileFloors` does
+   * as Characters arrive on it.
+   */
+  fragile?: FragileDef;
   boxes: { box: Box; surface: SurfaceId; conveyor?: Vec3 }[];
   trimeshes: { vertices: Vec3[]; indices: number[]; surface: SurfaceId; hazard?: Hazard; conveyor?: Vec3 }[];
   /**
@@ -57,12 +88,23 @@ export const solidColliderDesc = (shape: SolidShape): RAPIER.ColliderDesc | null
  * The Moving Segment's world pose at `tick` (fractional for rendering): the
  * Motion's local pose, then the Segment's placement — so a rest-local point
  * `p` is at `orientation·(motion.rotation·p + motion.position) + position`.
+ * `clock` is the Motion Clock its Ramp counts from (ADR 0123).
  */
 export const movingSegmentPose = (
-  config: Pick<MovingSegmentConfig, "position" | "orientation" | "motion"> & { scale?: number },
+  config: Pick<MovingSegmentConfig, "position" | "orientation" | "motion"> & {
+    under?: SegmentMotion[];
+    trapDoor?: TrapDoorCycle;
+    punch?: { cycle: PunchCycle; piece: PunchPiece };
+    scale?: number;
+  },
   tick: number,
+  clock: MotionClock = null,
 ): MotionPose => {
-  const local = motionPose(config.motion, tick);
+  const local = config.trapDoor
+    ? trapDoorPose(config.trapDoor, tick)
+    : config.punch
+      ? punchPose(config.punch.cycle, tick, config.punch.piece)
+      : motionChainPose([...(config.under ?? []), config.motion], tick, clock);
   return {
     rotation: mulQuat(config.orientation, local.rotation),
     position: addVec3(rotateVec3ByQuat(scaleVec3(local.position, config.scale ?? 1), config.orientation), config.position),
@@ -124,10 +166,12 @@ export class MovingSegment {
   /** Handles of {@link colliders} — what a Ride's carry sweep ignores. */
   readonly colliderHandles = new Set<number>();
   private readonly body: RAPIER.RigidBody;
+  /** Whether its colliders are on — always true but for a trap door leaf between shut and shut (ADR 0117). */
+  private solid = true;
 
-  constructor(world: RAPIER.World, config: MovingSegmentConfig, tick: number) {
+  constructor(world: RAPIER.World, config: MovingSegmentConfig, tick: number, clock: MotionClock = null) {
     this.config = config;
-    const pose = movingSegmentPose(config, tick);
+    const pose = movingSegmentPose(config, tick, clock);
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.kinematicPositionBased()
         .setTranslation(pose.position.x, pose.position.y, pose.position.z)
@@ -178,6 +222,37 @@ export class MovingSegment {
       });
     }
     for (const { collider } of this.colliders) this.colliderHandles.add(collider.handle);
+    if (config.trapDoor || config.punch) this.setSolid(this.solidAt(tick));
+  }
+
+  /**
+   * A trap door leaf is a floor only while it is shut (ADR 0117): its
+   * colliders are switched off the instant the authored swing starts and back
+   * on the Tick it is shut again — binary both ways, so nothing ever lands on
+   * a half-shut leaf, and a Character over an opening one simply falls. Every
+   * other Moving Segment is solid throughout and this does nothing.
+   */
+  /** Switch this body's colliders on or off — a trap door's clock does it, and so does a fragile floor's state. */
+  setSolid(solid: boolean): void {
+    if (solid === this.solid) return;
+    this.solid = solid;
+    for (const { collider } of this.colliders) collider.setEnabled(solid);
+  }
+
+  /**
+   * Whether this body is something to stand on at `tick`: always, but for a
+   * trap door leaf, which is one only while it is shut (ADR 0117), and a
+   * broken fragile floor, which is nothing at all. A Ride asks about the Tick
+   * it would be carried *to*, because a leaf that is about to fall carries
+   * nobody — the floor stops existing, and what was on it falls straight down
+   * rather than being flung along the swing.
+   */
+  solidAt(tick: number): boolean {
+    if (this.config.trapDoor) return trapDoorShut(this.config.trapDoor, tick);
+    // A glove that is not out is not there at all (ADR 0121) — and the pieces
+    // that are only ever drawn are never solid.
+    if (this.config.punch) return this.config.punch.piece === "glove" && punchLanded(this.config.punch.cycle, tick);
+    return this.solid;
   }
 
   /**
@@ -197,8 +272,9 @@ export class MovingSegment {
    * `world.step()` — back as a kinematic body, so the step still gives it the
    * velocity a Prop or a ragdoll it touches needs.
    */
-  tick(tick: number): void {
-    const pose = movingSegmentPose(this.config, tick);
+  tick(tick: number, clock: MotionClock): void {
+    if (this.config.trapDoor || this.config.punch) this.setSolid(this.solidAt(tick));
+    const pose = movingSegmentPose(this.config, tick, clock);
     this.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
     this.body.setNextKinematicTranslation(pose.position);
     this.body.setNextKinematicRotation(pose.rotation);
@@ -209,8 +285,9 @@ export class MovingSegment {
    * client's reconcile replay, ADR 0027), so the first replayed tick sweeps
    * against where the Segment really is rather than where it was.
    */
-  place(tick: number): void {
-    const pose = movingSegmentPose(this.config, tick);
+  place(tick: number, clock: MotionClock): void {
+    if (this.config.trapDoor || this.config.punch) this.setSolid(this.solidAt(tick));
+    const pose = movingSegmentPose(this.config, tick, clock);
     this.body.setTranslation(pose.position, false);
     this.body.setRotation(pose.rotation, false);
   }

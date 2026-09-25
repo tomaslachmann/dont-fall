@@ -3,11 +3,11 @@ import { describe, expect, it } from "vitest";
 import { assetPackOf, filterAssetIds, packLabel, type AssetFilterState } from "./assetFilter.js";
 
 const byId: Record<string, AssetCategory> = {
-  kaykit_floor_wood_2x2: "platform",
-  kaykit_arch_blue: "obstacle",
+  kaykit_floor_wood_2x2: "floor",
+  kaykit_arch_blue: "sweeper",
   kaykit_tree_pine: "scenery",
-  trap_arch: "obstacle",
-  trap_spikes: "obstacle",
+  trap_arch: "sweeper",
+  trap_spikes: "sweeper",
 };
 const ids = Object.keys(byId);
 const all: AssetFilterState = { query: "", category: null, pack: null, saved: null, sort: "asc" };
@@ -31,17 +31,17 @@ describe("filterAssetIds", () => {
   });
 
   it("narrows category → pack → saved set → query, in that order", () => {
-    expect(filterAssetIds(ids, byId, { ...all, category: "obstacle" })).toEqual([
+    expect(filterAssetIds(ids, byId, { ...all, category: "sweeper" })).toEqual([
       "kaykit_arch_blue",
       "trap_arch",
       "trap_spikes",
     ]);
-    expect(filterAssetIds(ids, byId, { ...all, category: "obstacle", pack: "trap" })).toEqual([
+    expect(filterAssetIds(ids, byId, { ...all, category: "sweeper", pack: "trap" })).toEqual([
       "trap_arch",
       "trap_spikes",
     ]);
     expect(
-      filterAssetIds(ids, byId, { ...all, category: "obstacle", pack: "trap", saved: new Set(["trap_spikes"]) }),
+      filterAssetIds(ids, byId, { ...all, category: "sweeper", pack: "trap", saved: new Set(["trap_spikes"]) }),
     ).toEqual(["trap_spikes"]);
     expect(filterAssetIds(ids, byId, { ...all, query: "ARCH" })).toEqual(["kaykit_arch_blue", "trap_arch"]);
   });

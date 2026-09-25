@@ -35,9 +35,12 @@ const running = (overrides: Partial<RenderCharacter> = {}): RenderCharacter => (
   grabEpoch: 0,
   launchPadEpoch: 0,
   grabbingId: null,
+  carryingProp: null,
   heldByGrabberId: null,
   heldPhase: null,
   spinMs: 0,
+  liftMs: null,
+  tossMs: null,
   ...overrides,
 });
 

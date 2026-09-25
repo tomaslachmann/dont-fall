@@ -7,6 +7,7 @@ export * from "./state/SimState.js";
 export * from "./state/interpolate.js";
 export * from "./state/errorOffset.js";
 export * from "./input/movementDirection.js";
+export * from "./input/bodyFacing.js";
 export * from "./timing/roundClock.js";
 export * from "./timing/durationHistogram.js";
 export * from "./match/Lobby.js";
@@ -38,6 +39,7 @@ export * from "./simulation/slipRoll.js";
 export * from "./simulation/HitController.js";
 export * from "./simulation/GrabController.js";
 export * from "./simulation/spin.js";
+export * from "./simulation/propCarry.js";
 export * from "./simulation/collisionGroups.js";
 export * from "./simulation/ragdollSkeleton.js";
 export { Ragdoll } from "./simulation/Ragdoll.js";
@@ -74,6 +76,13 @@ export * from "./track/assetModules.js";
 export * from "./track/baseRace.js";
 export * from "./track/authoredTracks.js";
 export * from "./track/Motion.js";
+export * from "./track/PartMotions.js";
+export * from "./track/TrapDoor.js";
+export * from "./track/Fragile.js";
+export * from "./track/Bomb.js";
+export * from "./track/Shooter.js";
+export * from "./track/BeltPath.js";
+export * from "./track/Punch.js";
 export * from "./track/modules.js";
 export * from "./track/Draft.js";
 export * from "./net/protocol.js";
@@ -83,3 +92,25 @@ export * from "./net/lead.js";
 export * from "./social/Friends.js";
 export * from "./social/Party.js";
 export * from "./voice/Voice.js";
+// Bots (M17, ADR 0129).
+export * from "./bot/navInput.js";
+export * from "./bot/navMesh.js";
+export * from "./bot/Bot.js";
+export * from "./bot/PathBot.js";
+// Bots filling a Lobby (M17 ticket 10, ADR 0129).
+export * from "./match/LobbyBots.js";
+export * from "./match/botIdentity.js";
+// The tree Bot and its Race goal (M17 ticket 04, ADR 0129).
+export * from "./bot/TreeBot.js";
+export * from "./bot/raceGoal.js";
+export * from "./bot/forks.js";
+export * from "./bot/random.js";
+// Links a navmesh cannot see: jumps, Springs, slides (M17 ticket 05, ADR 0129).
+export * from "./bot/links.js";
+export * from "./bot/linkProof.js";
+// Difficulty and the per-Bot spread (M17 ticket 08, ADR 0129).
+export * from "./bot/profile.js";
+export * from "./bot/perceptionDelay.js";
+// Moving Segments and traps (M17 ticket 07): the moving bodies, the hooks and the section harness.
+export * from "./bot/movingWorld.js";
+export * from "./bot/hooks.js";

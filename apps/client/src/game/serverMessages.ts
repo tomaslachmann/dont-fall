@@ -76,6 +76,10 @@ const applyRoundClock = (session: GameSession, message: SnapshotMessage): void =
   // guess at the Track's bare default, which a Match-level override can
   // disagree with.
   session.world.localSim.syncRoundRules(message.roundRules);
+  // The Motion Clock every Ramp counts from (ADR 0123), announced from the
+  // Countdown on — adopted the same way, so a ramped Segment is predicted
+  // exactly where the server has it.
+  session.world.localSim.syncMotionClock(message.runningFromTick);
 };
 
 const applyRoster = (session: GameSession, message: SnapshotMessage): void => {
@@ -155,6 +159,8 @@ const raiseRoundHud = (session: GameSession, message: SnapshotMessage): void => 
     liveRace: message.liveRace,
     checkpoints: session.world.checkpointCount,
     nicknameOf: (id) => session.roster.known.get(id) ?? id,
+    propLabelOf: (index) => session.world.propLabels[index] ?? "PROP",
+    bombs: message.state.bombs ?? [],
     leftIds: message.dnf.map((entry) => entry.id),
     tick: message.state.tick,
     // ADR 0104: a hold's meter and wind-up move on the press, not a round trip later.
@@ -272,6 +278,9 @@ const reconcile = (session: GameSession, message: SnapshotMessage): void => {
   // hears about it here — before the replay below, which has to walk (or
   // Struggle) the way the server now says this Character is.
   session.world.localSim.syncOwnHold(session.myId, character);
+  // ADR 0118: another Player's arrivals on a fragile floor only ever arrive
+  // here, and this world keeps whatever it has predicted since this Tick.
+  session.world.localSim.syncFragileToSnapshot(message.state.fragile, message.state.tick);
   session.world.predictionLoop.reconcile(
     character,
     message.state.tick,

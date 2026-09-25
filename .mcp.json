@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "dont-fall-track-builder": {
+      "command": "pnpm",
+      "args": ["--filter", "@dont-fall/mcp-track-builder", "start"],
+      "env": {
+        "TRACK_API_URL": "http://localhost:8081",
+        "THUMBNAIL_PAGE_URL": "http://localhost:5174/thumbnail.html"
+      }
+    }
+  }
+}

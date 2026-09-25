@@ -61,21 +61,22 @@ const VARIANTS = ["neutral", "blue", "green", "red", "yellow"] as const;
 const PROMOTED_SOCKETED_IDS = new Set(["kaykit_floor_wood_2x2"]);
 
 /**
- * Asset category by stem — reviewed in the builder, not guessed at runtime.
- * Platform is what a route is built out of, including the pieces holding it
- * up (pillars, struts, bracing) that nobody stands on; Scenery dresses or
- * bounds it (railings, signs, flags, and the collectible and
- * lever/button shapes, which have no mechanic yet). Gates are what a Player
- * passes through — hoops and arches (Checkpoints) and the finish signs (ADR 0068).
- * Springs are their own category (ADR 0069): they are neither route nor
- * hazard, and an author looking for one is looking for exactly them.
+ * Asset category by stem (ADR 0122) — reviewed in the builder, not guessed at
+ * runtime. Floor is what a route is walked on; Structure is what holds that
+ * route up or walls it in (pillars, struts, bracing, barriers, pipes) and is
+ * not stood on; Scenery dresses or marks it (railings, signs, flags, and the
+ * collectible and lever/button shapes, which have no mechanic yet). Gates are
+ * what a Player passes through — hoops and arches (Checkpoints) and the finish
+ * signs (ADR 0068). Launchers throw a Character (ADR 0069/0075). Props are the
+ * loose shapes a Character shoves: the balls and the cone.
  */
 const CATEGORY_RULES: CategoryRules = [
-  [/^(floor_wood|platform_wood|platform|barrier|pillar|structure|strut|bracing|pipe)_/, "platform"],
-  [/^(spring|spring_pad)$/, "spring"],
-  [/^(ball|bomb|bomb_[AB])$/, "obstacle"],
+  [/^(floor_wood|platform_wood|platform)_/, "floor"],
+  [/^(barrier|pillar|structure|strut|bracing|pipe)_/, "structure"],
+  [/^(spring|spring_pad)$/, "launcher"],
+  [/^(ball|cone)$/, "prop"],
   [/^(arch|arch_tall|arch_wide|hoop|hoop_angled|signage_finish|signage_finish_wide)$/, "gate"],
-  [/^(cone|sign|signage_.*|railing_.*|flag_[ABC])$/, "scenery"],
+  [/^(sign|signage_.*|railing_.*|flag_[ABC])$/, "scenery"],
   [/^(button_base|lever_.*|diamond|heart|star|power)$/, "scenery"],
 ];
 
@@ -90,6 +91,12 @@ const LAUNCH_RULES: LaunchRules = [
   [/^spring$/, LAUNCH_HEIGHT_PRESETS.high],
   [/^spring_pad$/, LAUNCH_HEIGHT_PRESETS.medium],
 ];
+
+/**
+ * Stems the pack still ships that the game no longer uses. The bombs are
+ * `pnpm convert:bomb`'s now (ADR 0126): animated, black, and the only ones.
+ */
+const RETIRED_STEMS = /^(bomb|bomb_[AB])$/;
 
 const idFor = (stem: string, variant: (typeof VARIANTS)[number]): string =>
   variant === "neutral" ? `kaykit_${stem}` : `kaykit_${stem}_${variant}`;
@@ -118,6 +125,7 @@ for (const variant of VARIANTS) {
     const hash = geometryHash(writeGlb(json, bin));
     const stem = file.replace(/\.gltf$/, "").replace(new RegExp(`_${variant}$`), "");
     const id = idFor(stem, variant);
+    if (RETIRED_STEMS.test(stem)) continue;
     if (seen.has(hash)) {
       console.log(`  skip ${variant}/${file}: same geometry as ${seen.get(hash)}`);
       continue;

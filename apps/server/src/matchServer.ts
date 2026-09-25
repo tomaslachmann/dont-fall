@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { MODULE_LIBRARY, assetIdsOf, initPhysics } from "@dont-fall/shared";
+import { MODULE_LIBRARY, assetIdsOf, initNavigation, initPhysics } from "@dont-fall/shared";
 import { WebSocketServer } from "ws";
 import { startMatchLoop } from "./match/matchLoop.js";
 import { MatchRuntime } from "./match/matchRuntime.js";
@@ -36,6 +36,9 @@ export interface MatchServer {
 export const startServer = async (config: StartServerConfig = {}): Promise<MatchServer> => {
   assertValidPortRange(config.portRange);
   await initPhysics();
+  // Recast's WASM, for every Bot this Match may seat (ADR 0129): once per
+  // process, like Rapier's, so no Round's navmesh ever waits on it.
+  await initNavigation();
 
   const runtimeConfig = buildRuntimeConfig(config, process.env);
 
@@ -124,6 +127,7 @@ export const startServer = async (config: StartServerConfig = {}): Promise<Match
       rt.closed = true;
       loop.stop();
       perf.stop();
+      rt.bots.dispose();
       for (const socket of rt.sockets.values()) socket.close();
       // `wss` was created with `{ server: httpServer }`, so closing it stops
       // only the WebSocket layer (`ws`'s documented behaviour for an

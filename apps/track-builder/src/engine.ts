@@ -3,9 +3,13 @@ import {
   DEFAULT_ENVIRONMENT_ID,
   ENVIRONMENT_PRESETS,
   assetColorFamilyOf,
+  assetPaletteIds,
   hasMotion,
+  motionPartNames,
   resolveEnvironmentId,
   moduleHasBounceSurface,
+  segmentMotionOf,
+  trapDoorCurveSeconds,
   segmentScale,
   SURFACE_ATTACHMENTS,
   TICK_RATE_HZ,
@@ -21,25 +25,35 @@ import {
   type SurfaceAttachmentKey,
   type Track,
   type TrackListing,
+  type RoundType,
+  type TrackDraftListing,
   type TrackRoundDefaults,
   type Vec3,
   launchHeightOf,
+  type BombTiming,
+  type PunchTiming,
+  type ShooterTiming,
+  type TrapDoorCycle,
+  shooterDefOf,
 } from "@dont-fall/shared";
 import type * as THREE from "three";
 import {
+  listDrafts,
   listTracks,
+  loadDraft,
   loadTrack,
   publishPlaytestTrack,
+  saveDraft,
   saveTrack,
 } from "./api/api.js";
 import {
   assetCategoryById,
-  assetTabModuleIds,
   builderLibrary,
   loadAssetVisuals,
   loadAssetVisualsProgressive,
 } from "./assets/assets.js";
 import { loadDeckTexture } from "@dont-fall/render";
+import { buildBotNav, type BotNavOverlay } from "./bot/buildBotNav.js";
 import { createMotionPanel, type MotionPanel } from "./motion/motionPanel.js";
 import { PreviewScheduler, type PreviewSlot } from "./scene/previewScheduler.js";
 import { templateParts } from "./scene/render.js";
@@ -61,8 +75,22 @@ import {
   compactCheckpoints,
   setCheckpointRespawn,
   setSegmentAttachment,
+  setSegmentPartMotion,
   setSegmentCheckpoint,
   setSegmentLaunch,
+  setSegmentFragile,
+  setSegmentBomb,
+  setSegmentPunch,
+  setSegmentShooter,
+  setSegmentTrapDoor,
+  SHOOTER_STEP,
+  SHOOTER_STEP_FINE,
+  FRAGILE_RETURN_STEP,
+  FRAGILE_RETURN_STEP_FINE,
+  BOMB_STEP,
+  BOMB_STEP_FINE,
+  TRAPDOOR_PERIOD_STEP,
+  TRAPDOOR_PERIOD_STEP_FINE,
   setSegmentStart,
   stepCheckpointOrder,
   worldToSegmentLocal,
@@ -98,6 +126,23 @@ export interface LoadedTrackMeta {
 }
 
 /**
+ * The stored Draft this builder session is editing, if any (ADR 0115) — a
+ * Draft the MCP server or an earlier session left in the API, opened through
+ * Browse. While one is open SAVE writes back to it rather than publishing a
+ * Revision, so work handed to an LLM and work done by hand meet in one place.
+ * `roundType` is carried untouched: the builder has no notion of it (a Round
+ * type is picked in the Lobby, ADR 0041), but a Draft does, and a save must
+ * not drop it.
+ */
+export interface LoadedDraftMeta {
+  id: string;
+  name: string;
+  timeLimitMs: number;
+  survivorTarget: number;
+  roundType: RoundType;
+}
+
+/**
  * The builder's framework-free core: everything `main.ts` used to own except
  * the DOM itself — history, selection, the viewport and motion-panel island
  * handles, palette previews, asset loading, the Motion clock, persistence.
@@ -124,7 +169,11 @@ export interface BuilderEngine {
   readonly templateFor: (moduleId: string) => THREE.Group | undefined;
   readonly browseState: BrowsePanelState;
   readonly browseTracks: readonly TrackListing[];
+  /** Every stored Draft Browse offers beside the Tracks (ADR 0115). */
+  readonly browseDrafts: readonly TrackDraftListing[];
   readonly loadedTrack: LoadedTrackMeta | null;
+  /** The stored Draft being edited, or null when SAVE publishes a Revision as it always has. */
+  readonly loadedDraft: LoadedDraftMeta | null;
   readonly picking: boolean;
   readonly playing: boolean;
   readonly tintVisible: boolean;
@@ -138,6 +187,13 @@ export interface BuilderEngine {
    * authoring canvas (ADR 0063, which stays the default).
    */
   readonly environmentPreview: boolean;
+  /**
+   * Whether the viewport shows the NAVMESH overlay (M17 ticket 02, ADR
+   * 0129): the draft's navmesh and the route a Bot would run over it, built
+   * in the browser from the same `packages/shared` code the server runs.
+   * Nothing is built while this is off.
+   */
+  readonly botNavVisible: boolean;
   /**
    * Whether the builder is framing the save's Thumbnail (ADR 0085) — the
    * viewport goes fullscreen with everything on (the authored Environment,
@@ -220,6 +276,26 @@ export interface BuilderEngine {
    * never switched off, only retuned.
    */
   setSegmentLaunch: (height: number | undefined) => void;
+  /** How often the selected trap door runs (ADR 0117), or `undefined` for its Asset's own clock. */
+  setSegmentTrapDoor: (timing: { period: number; phase: number } | undefined) => void;
+  /** Nudge that period by a whole second, or a tenth on Shift. */
+  stepTrapDoorPeriod: (direction: 1 | -1, fine: boolean) => void;
+  /** How long the selected fragile floor stays gone (ADR 0118), or `undefined` for its Asset's own delay. */
+  setSegmentFragile: (returnSeconds: number | undefined) => void;
+  /** Nudge that delay by a whole second, or a tenth on Shift. */
+  stepFragileReturn: (direction: 1 | -1, fine: boolean) => void;
+  /** The selected bomb's fuse and return (ADR 0126), or `undefined` for its Asset's own clock. */
+  setSegmentBomb: (timing: BombTiming | undefined) => void;
+  /** Nudge one of them by a whole second, or a tenth on Shift. */
+  stepBomb: (field: keyof BombTiming, direction: 1 | -1, fine: boolean) => void;
+  /** When the selected punching glove swings (ADR 0121), or `undefined` for its Asset's own clock. */
+  setSegmentPunch: (timing: PunchTiming | undefined) => void;
+  /** Nudge one of its numbers by one, or a tenth on Shift. */
+  stepPunch: (field: keyof PunchTiming, direction: 1 | -1, fine: boolean) => void;
+  /** What the selected Shooter fires (ADR 0119), or `undefined` for its Asset's own numbers. */
+  setSegmentShooter: (timing: ShooterTiming | undefined) => void;
+  /** Nudge one of its numbers by one, or a tenth on Shift. */
+  stepShooter: (field: Exclude<keyof ShooterTiming, "ammo">, direction: 1 | -1, fine: boolean) => void;
   /** Step the primary Spring's height by one notch — no-op unless it is a Spring. */
   stepLaunchHeight: (direction: 1 | -1, fine: boolean) => void;
   /** Step the primary Segment's belt angle — no-op unless it runs a belt. */
@@ -239,6 +315,8 @@ export interface BuilderEngine {
   /** Picks the Draft's Environment; a live preview follows without a reload. */
   setEnvironment: (environment: EnvironmentId) => void;
   setEnvironmentPreview: (on: boolean) => void;
+  /** Turns the NAVMESH overlay on or off (M17 ticket 02) — building it is deferred to the next debounced edit-quiet spell. */
+  setBotNavVisible: (on: boolean) => void;
 
   setApiUrl: (url: string) => void;
   saveTrack: (name: string, defaults: TrackRoundDefaults) => Promise<void>;
@@ -257,6 +335,15 @@ export interface BuilderEngine {
    */
   confirmPreviewCapture: () => Promise<void>;
   loadTrackById: (id: string) => Promise<void>;
+  /** Opens a stored Draft for editing — SAVE writes back to it until it is closed. */
+  loadDraftById: (id: string) => Promise<void>;
+  /**
+   * Writes the open Draft back to the API: Segments, then name, Round
+   * defaults and Environment. No Thumbnail capture — a Draft has none.
+   */
+  saveDraft: (name: string, defaults: TrackRoundDefaults) => Promise<void>;
+  /** Leaves Draft editing, keeping the Segments on screen: SAVE publishes a Revision again. */
+  closeDraft: () => void;
   fetchTrackList: () => Promise<void>;
   /** Publishes the Draft for playtest — the toolbar passes its own fields, the engine holds no text. */
   playtest: (defaults: TrackRoundDefaults) => Promise<void>;
@@ -288,10 +375,21 @@ const DRAG_THRESHOLD_PX = 5;
 const DEFAULT_API_URL = "http://localhost:8081";
 const RECENT_ASSETS_CAP = 12;
 
+/**
+ * How long a track edit's quiet spell must last before the navmesh rebuilds
+ * (M17 ticket 02) — generation itself runs 42–96 ms (ticket 01), cheap
+ * enough to redo per edit, but a drag or a held nudge key fires many edits a
+ * second, and none of those intermediate Tracks is worth a rebuild.
+ */
+export const BOT_NAV_DEBOUNCE_MS = 400;
+
 export const createBuilderEngine = (opts?: {
   createViewport?: (container: HTMLElement, onCommit: (updates: { index: number; transform: SegmentTransform }[]) => void) => TrackViewport;
+  /** Builds the NAVMESH overlay — injectable so a test never pays for Recast's real WASM. Defaults to the real one. */
+  buildBotNav?: (track: Track, library: Record<string, Module>) => Promise<BotNavOverlay | null>;
 }): BuilderEngine => {
   const createViewport = opts?.createViewport ?? createTrackViewport;
+  const buildBotNavOverlay = opts?.buildBotNav ?? buildBotNav;
   const library = builderLibrary();
   const categories = assetCategoryById();
   const history = new TrackHistory([]);
@@ -316,8 +414,14 @@ export const createBuilderEngine = (opts?: {
   const assetErrors = new Map<string, string>();
   let browseState: BrowsePanelState = "ready";
   let browseTracks: TrackListing[] = [];
+  let browseDrafts: TrackDraftListing[] = [];
   let loadedTrack: LoadedTrackMeta | null = null;
+  let loadedDraft: LoadedDraftMeta | null = null;
   let pivotPick: ((pivot: Vec3) => void) | undefined;
+  /** The Part the MOTION panel last picked on an Asset whose Parts move on their own (ADR 0124). */
+  let motionPart: string | undefined;
+  /** The Part the panel is showing right now, which its edits are written to — `undefined` for the whole Segment. */
+  let shownPart: string | undefined;
   let respawnPick = false;
   let pointerDownAt: { x: number; y: number } | undefined;
   let clockSeconds = 0;
@@ -329,6 +433,42 @@ export const createBuilderEngine = (opts?: {
   const syncEnvironmentView = (): void => {
     viewport?.setEnvironment(environmentPreview ? ENVIRONMENT_PRESETS[environment] : null);
   };
+
+  // ---- NAVMESH overlay (M17 ticket 02) ----
+  let botNavVisible = false;
+  /** The last build pushed to the viewport — re-sent on a viewport remount instead of waiting out the debounce again. */
+  let botNav: BotNavOverlay | null = null;
+  /** Bumped on every toggle-off and every reschedule, so a build that resolves after the Track (or the toggle) already moved on is dropped. */
+  let botNavGeneration = 0;
+  let botNavTimer: ReturnType<typeof setTimeout> | undefined;
+  const clearBotNavTimer = (): void => {
+    if (botNavTimer === undefined) return;
+    clearTimeout(botNavTimer);
+    botNavTimer = undefined;
+  };
+  /** Rebuilds the overlay after a quiet spell — a no-op while the toggle is off, so nothing is built for it. */
+  const scheduleBotNavRebuild = (): void => {
+    if (!botNavVisible) return;
+    clearBotNavTimer();
+    const generation = ++botNavGeneration;
+    botNavTimer = setTimeout(() => {
+      botNavTimer = undefined;
+      void buildBotNavOverlay(history.track, library).then(
+        (result) => {
+          if (generation !== botNavGeneration) return; // a later edit or a toggle-off already moved on
+          botNav = result;
+          viewport?.setBotNav(result);
+        },
+        (err: unknown) => {
+          if (generation !== botNavGeneration) return;
+          console.warn(`DON'T FALL: navmesh preview failed: ${(err as Error).message}`);
+          botNav = null;
+          viewport?.setBotNav(null);
+        },
+      );
+    }, BOT_NAV_DEBOUNCE_MS);
+  };
+
   /** The save waiting on its Thumbnail while `previewing`, dropped on cancel. */
   let pendingSave: { name: string; defaults: TrackRoundDefaults } | null = null;
   /** The authoring view as capture mode found it — restored on confirm and on cancel. */
@@ -364,6 +504,10 @@ export const createBuilderEngine = (opts?: {
 
   const primary = (): number | undefined => [...selected].at(-1);
 
+  /** The authored swing of the Segment at `index`, if its Asset has leaves (ADR 0117). */
+  const trapDoorCycleOfSegment = (index: number): TrapDoorCycle | undefined =>
+    library[history.track[index]!.moduleId]?.parts?.find((part) => part.trapDoor !== undefined)?.trapDoor;
+
   /** A Module's separate parts, once per asset Module — templates never change in a session. */
   const partsByModule = new Map<string, Box[]>();
   const partsOf = (moduleId: string): Box[] => {
@@ -380,6 +524,9 @@ export const createBuilderEngine = (opts?: {
 
   /** Full viewport rebuild or the transform-only fast path (a move/rotate never re-chains). */
   const syncTrackView = (transformOnly: boolean): void => {
+    // The Track's collision changed either way (a move/rotate moves it too) —
+    // a no-op while the NAVMESH toggle is off.
+    scheduleBotNavRebuild();
     // Paint files a repaint (or undo, or duplicate) just asked for — fetched
     // even with no viewport attached (cache warmup; the attach draws them).
     // The rebuild below draws the flat tint meanwhile, and the fetch's own
@@ -453,7 +600,21 @@ export const createBuilderEngine = (opts?: {
       // A Start, a Checkpoint and a finish sign stay still (ADR 0068): no Motion
       // editor for them — the Course panel says why.
       if (motionLockReason(segment, library) && !hasMotion(segment.motion)) motionPanel?.show(undefined, undefined);
-      else motionPanel?.show(library[segment.moduleId], segment.motion, partsOf(segment.moduleId), segmentScale(segment), list.length);
+      else {
+        // A parted Asset opens on the Motion its own Part runs (ADR 0116), so
+        // the author edits the sweep that is on screen instead of starting
+        // from a blank spin. Editing writes it onto the Segment, which is what
+        // overrides the Asset's default from then on.
+        //
+        // An Asset with several such Parts (the three-arm sweeper) edits one
+        // of them at a time (ADR 0124): the last one picked while it is still
+        // one of this Asset's, else its first.
+        const module = library[segment.moduleId];
+        const names = module ? motionPartNames(module) : [];
+        shownPart = names.length > 1 ? (motionPart !== undefined && names.includes(motionPart) ? motionPart : names[0]) : undefined;
+        const motion = module ? segmentMotionOf(segment, module, shownPart) : segment.motion;
+        motionPanel?.show(module, motion, partsOf(segment.moduleId), segmentScale(segment), list.length, names, shownPart);
+      }
     }
   };
 
@@ -513,6 +674,44 @@ export const createBuilderEngine = (opts?: {
     );
   };
 
+  /**
+   * Puts `track` on screen as the thing being edited — what a load does after
+   * the fetch, whether the bytes came from a Revision or a stored Draft (ADR
+   * 0115). Both need the same five things: the unknown-Module warning, the
+   * Environment (a preset this build lacks draws the default rather than
+   * failing the load), the asset visuals a Track may place before the Assets
+   * tab was ever opened, a framed viewport, and a cleared selection.
+   * `label` opens the status line, so each caller names what it opened.
+   */
+  const adoptTrack = (track: Track, storedEnvironment: string, label: string): void => {
+    // Warn, never block: a Module the builder doesn't know (a procedural one,
+    // ADR 0078) is skipped by the viewport, so the status names it. No
+    // resolve for warnings — the builder's Modules carry no geometry, so
+    // every gate would read as floorless.
+    const unknown = [...new Set(track.map((segment) => segment.moduleId))].filter(
+      (moduleId) => !Object.hasOwn(library, moduleId),
+    );
+    history.reset(track);
+    const loadedEnvironment = resolveEnvironmentId(storedEnvironment);
+    if (loadedEnvironment.id !== environment) {
+      environment = loadedEnvironment.id;
+      if (environmentPreview) syncEnvironmentView();
+    }
+    // The second call tops up legacy files when the tab stream already
+    // settled (or is still carrying the previous Track's set).
+    if (track.some((segment) => segment.moduleId in categories)) engine.ensureAssetTemplates();
+    ensureTrackTemplates();
+    syncTrackView(false);
+    viewport?.frameTrack();
+    selected = new Set();
+    syncSelectionView();
+    const loaded = `${label} (${history.track.length} Segment(s))`;
+    if (unknown.length > 0) {
+      setStatus(`${loaded} — ${unknown.length} unknown Module(s), not drawn: ${unknown.join(", ")}`, "error");
+    } else if (loadedEnvironment.warning) setStatus(`${loaded} — ${loadedEnvironment.warning}`, "error");
+    else setStatus(loaded, "ok");
+  };
+
   const engine: BuilderEngine = {
     get track() {
       return history.track;
@@ -552,8 +751,14 @@ export const createBuilderEngine = (opts?: {
     get browseTracks() {
       return browseTracks;
     },
+    get browseDrafts() {
+      return browseDrafts;
+    },
     get loadedTrack() {
       return loadedTrack;
+    },
+    get loadedDraft() {
+      return loadedDraft;
     },
     get picking() {
       return pivotPick !== undefined || respawnPick;
@@ -576,6 +781,9 @@ export const createBuilderEngine = (opts?: {
     },
     get environmentPreview() {
       return environmentPreview;
+    },
+    get botNavVisible() {
+      return botNavVisible;
     },
     get previewing() {
       return pendingSave !== null;
@@ -629,6 +837,13 @@ export const createBuilderEngine = (opts?: {
         deckPlans,
       );
       syncSelectionView();
+      // A remount (StrictMode, or the container swap ADR 0085 doesn't
+      // actually use) gets the last build back immediately, then a fresh one
+      // behind the usual debounce in case the Track moved on meanwhile.
+      if (botNavVisible) {
+        viewport.setBotNav(botNav);
+        scheduleBotNavRebuild();
+      }
     },
     detachViewport: () => {
       viewport?.dispose();
@@ -653,7 +868,13 @@ export const createBuilderEngine = (opts?: {
             return;
           }
           // Transform-only: a Motion poses a Segment around where it rests, never re-chains it.
-          applyEdit(setSegmentAttachment(history.track, index, "motion", motion), index, true);
+          applyEdit(
+            shownPart !== undefined
+              ? setSegmentPartMotion(history.track, index, shownPart, motion)
+              : setSegmentAttachment(history.track, index, "motion", motion),
+            index,
+            true,
+          );
         },
         (apply) => {
           pivotPick = apply;
@@ -664,6 +885,11 @@ export const createBuilderEngine = (opts?: {
           playing = false;
           clockSeconds = seconds;
           notifyClock();
+          notify();
+        },
+        (part) => {
+          motionPart = part;
+          syncSelectionView();
           notify();
         },
       );
@@ -881,6 +1107,92 @@ export const createBuilderEngine = (opts?: {
       // resolved launch pad, like a belt's strip.
       applyEdit(setSegmentLaunch(history.track, index, height), index);
     },
+    setSegmentTrapDoor: (timing) => {
+      const index = primary();
+      if (index === undefined) return;
+      const cycle = trapDoorCycleOfSegment(index);
+      if (!cycle) return;
+      applyEdit(setSegmentTrapDoor(history.track, index, timing, trapDoorCurveSeconds(cycle)), index);
+    },
+    stepTrapDoorPeriod: (direction, fine) => {
+      const index = primary();
+      if (index === undefined) return;
+      const cycle = trapDoorCycleOfSegment(index);
+      if (!cycle) return;
+      const segment = history.track[index]!;
+      const step = fine ? TRAPDOOR_PERIOD_STEP_FINE : TRAPDOOR_PERIOD_STEP;
+      engine.setSegmentTrapDoor({
+        period: (segment.trapdoor?.period ?? cycle.period) + direction * step,
+        phase: segment.trapdoor?.phase ?? cycle.phase ?? 0,
+      });
+    },
+    setSegmentFragile: (returnSeconds) => {
+      const index = primary();
+      if (index === undefined || library[history.track[index]!.moduleId]?.fragile === undefined) return;
+      applyEdit(setSegmentFragile(history.track, index, returnSeconds), index);
+    },
+    stepFragileReturn: (direction, fine) => {
+      const index = primary();
+      if (index === undefined) return;
+      const def = library[history.track[index]!.moduleId]?.fragile;
+      if (!def) return;
+      const step = fine ? FRAGILE_RETURN_STEP_FINE : FRAGILE_RETURN_STEP;
+      engine.setSegmentFragile((history.track[index]!.fragile?.returnSeconds ?? def.returnSeconds) + direction * step);
+    },
+    setSegmentBomb: (timing) => {
+      const index = primary();
+      if (index === undefined || library[history.track[index]!.moduleId]?.bomb === undefined) return;
+      applyEdit(setSegmentBomb(history.track, index, timing), index);
+    },
+    stepBomb: (field, direction, fine) => {
+      const index = primary();
+      if (index === undefined) return;
+      const segment = history.track[index]!;
+      const def = library[segment.moduleId]?.bomb;
+      if (!def) return;
+      const step = fine ? BOMB_STEP_FINE : BOMB_STEP;
+      const current = { fuseSeconds: def.fuseSeconds, returnSeconds: def.returnSeconds, ...segment.bomb };
+      engine.setSegmentBomb({ ...current, [field]: current[field] + direction * step });
+    },
+    setSegmentPunch: (timing) => {
+      const index = primary();
+      if (index === undefined || library[history.track[index]!.moduleId]?.punch === undefined) return;
+      applyEdit(setSegmentPunch(history.track, index, timing), index);
+    },
+    stepPunch: (field, direction, fine) => {
+      const index = primary();
+      if (index === undefined) return;
+      const cycle = library[history.track[index]!.moduleId]?.punch;
+      if (!cycle) return;
+      const current = { period: cycle.period, phase: cycle.phase ?? 0, rate: cycle.rate, ...history.track[index]!.punch };
+      const step = fine ? SHOOTER_STEP_FINE : SHOOTER_STEP;
+      engine.setSegmentPunch({ ...current, [field]: (current[field] ?? 0) + direction * step });
+    },
+    setSegmentShooter: (timing) => {
+      const index = primary();
+      if (index === undefined || library[history.track[index]!.moduleId]?.shooter === undefined) return;
+      applyEdit(setSegmentShooter(history.track, index, timing), index);
+    },
+    stepShooter: (field, direction, fine) => {
+      const index = primary();
+      if (index === undefined) return;
+      const def = library[history.track[index]!.moduleId]?.shooter;
+      if (!def) return;
+      const degrees = (radians: number) => Math.round((radians * 180) / Math.PI);
+      const current = {
+        periodSeconds: def.periodSeconds,
+        speed: def.speed,
+        // A Shooter of bombs burns their own fuse unless it has a life of its own (ADR 0127).
+        lifeSeconds: shooterDefOf(def, history.track[index]!.shooter).lifeSeconds,
+        yawDegrees: degrees(def.yaw.amplitude),
+        yawSeconds: def.yaw.period,
+        pitchDegrees: degrees(def.pitch.amplitude),
+        pitchSeconds: def.pitch.period,
+        ...history.track[index]!.shooter,
+      };
+      const step = fine ? SHOOTER_STEP_FINE : SHOOTER_STEP;
+      engine.setSegmentShooter({ ...current, [field]: (current[field] ?? 0) + direction * step });
+    },
     stepLaunchHeight: (direction, fine) => {
       const index = primary();
       if (index === undefined) return;
@@ -997,6 +1309,18 @@ export const createBuilderEngine = (opts?: {
       syncEnvironmentView();
       notify();
     },
+    setBotNavVisible: (on) => {
+      if (on === botNavVisible) return;
+      botNavVisible = on;
+      if (on) scheduleBotNavRebuild();
+      else {
+        clearBotNavTimer();
+        botNavGeneration += 1; // drops a build already in flight
+        botNav = null;
+        viewport?.setBotNav(null);
+      }
+      notify();
+    },
 
     setApiUrl: (url) => {
       apiUrl = url;
@@ -1077,50 +1401,83 @@ export const createBuilderEngine = (opts?: {
     loadTrackById: async (id) => {
       try {
         const stored = await loadTrack(apiUrl, id);
-        // Warn, never block: a Module the builder doesn't know (a procedural
-        // one, ADR 0078) is skipped by the viewport, so the status names it.
-        // No resolve for warnings — the builder's Modules carry no geometry,
-        // so every gate would read as floorless.
-        const unknown = [...new Set(stored.track.map((segment) => segment.moduleId))].filter((moduleId) => !Object.hasOwn(library, moduleId));
-        history.reset(stored.track);
-        // A preset this build lacks (a newer API's) draws the default rather than failing the load.
-        const loadedEnvironment = resolveEnvironmentId(stored.environment);
-        if (loadedEnvironment.id !== environment) {
-          environment = loadedEnvironment.id;
-          if (environmentPreview) syncEnvironmentView();
-        }
+        loadedDraft = null;
         loadedTrack = {
           id: stored.id,
           name: stored.name ?? "",
           timeLimitMs: stored.timeLimitMs,
           survivorTarget: stored.survivorTarget,
         };
-        // A loaded Track may place asset Segments before the Assets tab was
-        // ever opened — fetch their visuals in the background and re-render
-        // when they land, rather than leaving them invisible. The second call
-        // tops up legacy files when the tab stream already settled (or is
-        // still carrying the old Track's set).
-        if (stored.track.some((segment) => segment.moduleId in categories)) engine.ensureAssetTemplates();
-        ensureTrackTemplates();
-        syncTrackView(false);
-        viewport?.frameTrack();
-        selected = new Set();
-        syncSelectionView();
-        const loaded = `loaded "${stored.id}" (${history.track.length} Segment(s))`;
-        if (unknown.length > 0) setStatus(`${loaded} — ${unknown.length} unknown Module(s), not drawn: ${unknown.join(", ")}`, "error");
-        else if (loadedEnvironment.warning) setStatus(`${loaded} — ${loadedEnvironment.warning}`, "error");
-        else setStatus(loaded, "ok");
+        adoptTrack(stored.track, stored.environment, `loaded "${stored.id}"`);
       } catch (err) {
         setStatus(`load failed: ${(err as Error).message}`, "error");
       }
+      notify();
+    },
+    loadDraftById: async (id) => {
+      try {
+        const draft = await loadDraft(apiUrl, id);
+        // A Draft is the same thing this builder has always edited, only kept
+        // in the API (CONTEXT.md) — so it adopts exactly like a Revision, and
+        // only where SAVE goes differs.
+        loadedTrack = null;
+        loadedDraft = {
+          id: draft.id,
+          name: draft.name ?? "",
+          timeLimitMs: draft.timeLimitMs,
+          survivorTarget: draft.survivorTarget,
+          roundType: draft.roundType,
+        };
+        adoptTrack(draft.track, draft.environment, `opened Draft "${draft.id}"`);
+      } catch (err) {
+        setStatus(`draft load failed: ${(err as Error).message}`, "error");
+      }
+      notify();
+    },
+    saveDraft: async (name, defaults) => {
+      const open = loadedDraft;
+      if (!open) {
+        setStatus("no Draft open — SAVE publishes a Revision", "error");
+        notify();
+        return;
+      }
+      setStatus("saving Draft…", "quiet");
+      notify();
+      try {
+        // Half-built is the point of a Draft (ADR 0114 D4), so unlike a
+        // Revision an empty one saves without complaint.
+        const saved = await saveDraft(apiUrl, open.id, history.track, { name: name.trim(), defaults, environment });
+        loadedDraft = {
+          id: saved.id,
+          name: saved.name ?? "",
+          timeLimitMs: saved.timeLimitMs,
+          survivorTarget: saved.survivorTarget,
+          roundType: saved.roundType,
+        };
+        setStatus(`saved Draft "${saved.id}" (${history.track.length} Segment(s))`, "ok");
+      } catch (err) {
+        setStatus(`draft save failed: ${(err as Error).message}`, "error");
+      }
+      notify();
+    },
+    closeDraft: () => {
+      if (!loadedDraft) return;
+      // The Segments stay on screen: leaving a Draft is about where SAVE
+      // goes, never about throwing the work away.
+      loadedDraft = null;
+      setStatus("Draft closed — SAVE publishes a Revision", "quiet");
       notify();
     },
     fetchTrackList: async () => {
       browseState = "loading";
       notify();
       try {
-        browseTracks = await listTracks(apiUrl);
-        browseState = browseTracks.length === 0 ? "empty" : "ready";
+        // Both in one round trip: the panel shows Tracks and Drafts together,
+        // and a Draft the MCP server left is findable without knowing its id.
+        const [tracks, drafts] = await Promise.all([listTracks(apiUrl), listDrafts(apiUrl)]);
+        browseTracks = tracks;
+        browseDrafts = drafts;
+        browseState = tracks.length === 0 && drafts.length === 0 ? "empty" : "ready";
       } catch (err) {
         browseState = "error";
         setStatus(`browse failed: ${(err as Error).message}`, "error");
@@ -1158,7 +1515,7 @@ export const createBuilderEngine = (opts?: {
       // fetch — without the union they would stay invisible. Paint files
       // ride along: an authored hue wears its own file, a flat tint needs
       // nothing beyond the placed one.
-      const ids = [...new Set([...assetTabModuleIds(), ...visualAssetIdsOf(history.track)])];
+      const ids = [...new Set([...assetPaletteIds(), ...visualAssetIdsOf(history.track)])];
       for (const id of ids) pendingTemplates.add(id);
       void loadAssetVisualsProgressive(fetchAssetBytes, `${apiUrl}/assets`, ids, (moduleId, result) => {
         pendingTemplates.delete(moduleId);
@@ -1278,6 +1635,7 @@ export const createBuilderEngine = (opts?: {
       engine.stopLoop();
       engine.detachViewport();
       engine.detachMotionPanel();
+      clearBotNavTimer();
       observer?.disconnect();
       listeners.clear();
       clockListeners.clear();

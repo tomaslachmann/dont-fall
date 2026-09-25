@@ -27,13 +27,17 @@ const assetLibrary = async (): Promise<Record<string, Module>> => ({
   ...(await loadAssetLibrary(realFetch, "http://assets.test")),
 });
 
+/** Whether `object` is, or sits under, a render-only effect (ADR 0126) — drawn, but no part of the shared reader's visual half. */
+const isEffect = (object: THREE.Object3D | null): boolean =>
+  object !== null && (object.userData.role === "effect" || isEffect(object.parent));
+
 /** Every mesh vertex in world space, sorted — comparable against the shared reader's baked positions. */
 const worldPositions = (root: THREE.Object3D): [number, number, number][] => {
   root.updateMatrixWorld(true);
   const points: [number, number, number][] = [];
   root.traverse((object) => {
     const mesh = object as THREE.Mesh;
-    if (!mesh.isMesh) return;
+    if (!mesh.isMesh || isEffect(mesh)) return;
     const attribute = mesh.geometry.getAttribute("position") as THREE.BufferAttribute;
     const vertex = new THREE.Vector3();
     for (let i = 0; i < attribute.count; i += 1) {
@@ -169,6 +173,32 @@ describe("assetPlacements", () => {
     const placements = assetPlacements(track, library);
 
     expect(placements.map((p) => p.moduleId)).toEqual(["kaykit_arch_blue"]);
+  });
+
+  it("places an Asset that moves a Part of itself, and names the Part drawn elsewhere (ADR 0116)", async () => {
+    const library = await assetLibrary();
+    const track = [{ moduleId: "sweeper_2arms", position: { x: 0, y: 0, z: 0 }, rotation: 0 }];
+
+    const placements = assetPlacements(track, library);
+
+    // The base stands here; the rotor is posed by its own Moving Segment
+    // group, so this instance must leave it out.
+    expect(placements).toHaveLength(1);
+    expect(placements[0]!.movingParts).toEqual(["rotor"]);
+  });
+
+  it("draws only the still Parts of one, so nothing is drawn twice", async () => {
+    const library = await assetLibrary();
+    const templates = await loadAssetVisuals(realFetch, "http://assets.test", ["sweeper_2arms"]);
+    const placements = assetPlacements([{ moduleId: "sweeper_2arms", position: { x: 0, y: 0, z: 0 }, rotation: 0 }], library);
+
+    const visuals = buildAssetVisuals(templates, placements);
+
+    const parts = new Set<string>();
+    visuals.traverse((node) => {
+      if ((node as THREE.Mesh).isMesh && typeof node.userData.part === "string") parts.add(node.userData.part as string);
+    });
+    expect([...parts]).toEqual(["base"]);
   });
 });
 

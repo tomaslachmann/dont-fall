@@ -117,7 +117,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_ball",
-    category: "obstacle",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -126,7 +126,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_ball_blue",
-    category: "obstacle",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -135,7 +135,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_ball_green",
-    category: "obstacle",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -144,7 +144,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_ball_red",
-    category: "obstacle",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -153,7 +153,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_ball_yellow",
-    category: "obstacle",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -162,7 +162,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x1",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -171,7 +171,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x1_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -180,7 +180,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x1_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -189,7 +189,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x1_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -198,7 +198,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x1_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -207,7 +207,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x2",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -216,7 +216,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x2_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -225,7 +225,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x2_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -234,7 +234,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x2_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -243,7 +243,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x2_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 0.5, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -252,7 +252,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x4",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 0.5, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -261,7 +261,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x4_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 0.5, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -270,7 +270,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x4_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 0.5, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -279,7 +279,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x4_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 0.5, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -288,7 +288,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_1x1x4_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 0.5, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -297,7 +297,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x1",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -306,7 +306,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x1_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -315,7 +315,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x1_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -324,7 +324,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x1_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -333,7 +333,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x1_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -342,7 +342,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x2",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -351,7 +351,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x2_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -360,7 +360,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x2_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -369,7 +369,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x2_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -378,7 +378,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x2_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -387,7 +387,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x4",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -396,7 +396,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x4_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -405,7 +405,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x4_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -414,7 +414,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x4_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -423,7 +423,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_2x1x4_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -432,7 +432,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x1",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -441,7 +441,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x1_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -450,7 +450,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x1_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -459,7 +459,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x1_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -468,7 +468,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x1_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -477,7 +477,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x2",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1.5, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -486,7 +486,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x2_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1.5, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -495,7 +495,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x2_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1.5, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -504,7 +504,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x2_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1.5, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -513,7 +513,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x2_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1.5, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -522,7 +522,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x4",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1.5, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -531,7 +531,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x4_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1.5, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -540,7 +540,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x4_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1.5, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -549,7 +549,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x4_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1.5, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -558,7 +558,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_3x1x4_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1.5, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -567,7 +567,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x1",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -576,7 +576,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x1_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -585,7 +585,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x1_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -594,7 +594,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x1_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -603,7 +603,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x1_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -612,7 +612,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x2",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -621,7 +621,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x2_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -630,7 +630,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x2_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -639,7 +639,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x2_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -648,7 +648,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x2_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 0.5 } },
       clearance: 0.5,
@@ -657,7 +657,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x4",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -666,7 +666,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x4_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -675,7 +675,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x4_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -684,7 +684,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x4_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -693,7 +693,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_barrier_4x1x4_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 0.5 } },
       clearance: 0.5,
@@ -701,89 +701,8 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
     sockets: [],
   },
   {
-    id: "kaykit_bomb",
-    category: "obstacle",
-    footprint: {
-      bounds: { center: { x: 0, y: 0.504, z: 0 }, halfExtents: { x: 0.4, y: 0.504, z: 0.4 } },
-      clearance: 0.5,
-    },
-    sockets: [],
-  },
-  {
-    id: "kaykit_bomb_A_blue",
-    category: "obstacle",
-    footprint: {
-      bounds: { center: { x: 0, y: 0.504, z: 0 }, halfExtents: { x: 0.4, y: 0.504, z: 0.4 } },
-      clearance: 0.5,
-    },
-    sockets: [],
-  },
-  {
-    id: "kaykit_bomb_A_green",
-    category: "obstacle",
-    footprint: {
-      bounds: { center: { x: 0, y: 0.504, z: 0 }, halfExtents: { x: 0.4, y: 0.504, z: 0.4 } },
-      clearance: 0.5,
-    },
-    sockets: [],
-  },
-  {
-    id: "kaykit_bomb_A_red",
-    category: "obstacle",
-    footprint: {
-      bounds: { center: { x: 0, y: 0.504, z: 0 }, halfExtents: { x: 0.4, y: 0.504, z: 0.4 } },
-      clearance: 0.5,
-    },
-    sockets: [],
-  },
-  {
-    id: "kaykit_bomb_A_yellow",
-    category: "obstacle",
-    footprint: {
-      bounds: { center: { x: 0, y: 0.504, z: 0 }, halfExtents: { x: 0.4, y: 0.504, z: 0.4 } },
-      clearance: 0.5,
-    },
-    sockets: [],
-  },
-  {
-    id: "kaykit_bomb_B_blue",
-    category: "obstacle",
-    footprint: {
-      bounds: { center: { x: 0, y: 0.504, z: 0 }, halfExtents: { x: 0.4, y: 0.504, z: 0.4 } },
-      clearance: 0.5,
-    },
-    sockets: [],
-  },
-  {
-    id: "kaykit_bomb_B_green",
-    category: "obstacle",
-    footprint: {
-      bounds: { center: { x: 0, y: 0.504, z: 0 }, halfExtents: { x: 0.4, y: 0.504, z: 0.4 } },
-      clearance: 0.5,
-    },
-    sockets: [],
-  },
-  {
-    id: "kaykit_bomb_B_red",
-    category: "obstacle",
-    footprint: {
-      bounds: { center: { x: 0, y: 0.504, z: 0 }, halfExtents: { x: 0.4, y: 0.504, z: 0.4 } },
-      clearance: 0.5,
-    },
-    sockets: [],
-  },
-  {
-    id: "kaykit_bomb_B_yellow",
-    category: "obstacle",
-    footprint: {
-      bounds: { center: { x: 0, y: 0.504, z: 0 }, halfExtents: { x: 0.4, y: 0.504, z: 0.4 } },
-      clearance: 0.5,
-    },
-    sockets: [],
-  },
-  {
     id: "kaykit_bracing_large_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.1 } },
       clearance: 0.5,
@@ -792,7 +711,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_bracing_large_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.1 } },
       clearance: 0.5,
@@ -801,7 +720,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_bracing_large_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.1 } },
       clearance: 0.5,
@@ -810,7 +729,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_bracing_large_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.1 } },
       clearance: 0.5,
@@ -819,7 +738,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_bracing_medium_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.3, z: 0 }, halfExtents: { x: 0.3, y: 0.3, z: 0.1 } },
       clearance: 0.5,
@@ -828,7 +747,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_bracing_medium_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.3, z: 0 }, halfExtents: { x: 0.3, y: 0.3, z: 0.1 } },
       clearance: 0.5,
@@ -837,7 +756,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_bracing_medium_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.3, z: 0 }, halfExtents: { x: 0.3, y: 0.3, z: 0.1 } },
       clearance: 0.5,
@@ -846,7 +765,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_bracing_medium_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.3, z: 0 }, halfExtents: { x: 0.3, y: 0.3, z: 0.1 } },
       clearance: 0.5,
@@ -855,7 +774,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_bracing_small_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.3, z: 0 }, halfExtents: { x: 0.1, y: 0.3, z: 0.1 } },
       clearance: 0.5,
@@ -864,7 +783,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_bracing_small_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.3, z: 0 }, halfExtents: { x: 0.1, y: 0.3, z: 0.1 } },
       clearance: 0.5,
@@ -873,7 +792,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_bracing_small_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.3, z: 0 }, halfExtents: { x: 0.1, y: 0.3, z: 0.1 } },
       clearance: 0.5,
@@ -882,7 +801,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_bracing_small_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.3, z: 0 }, halfExtents: { x: 0.1, y: 0.3, z: 0.1 } },
       clearance: 0.5,
@@ -927,7 +846,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_cone",
-    category: "scenery",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 0.325, z: 0 }, halfExtents: { x: 0.25, y: 0.325, z: 0.25 } },
       clearance: 0.5,
@@ -936,7 +855,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_cone_blue",
-    category: "scenery",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 0.325, z: 0 }, halfExtents: { x: 0.25, y: 0.325, z: 0.25 } },
       clearance: 0.5,
@@ -945,7 +864,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_cone_green",
-    category: "scenery",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 0.325, z: 0 }, halfExtents: { x: 0.25, y: 0.325, z: 0.25 } },
       clearance: 0.5,
@@ -954,7 +873,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_cone_red",
-    category: "scenery",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 0.325, z: 0 }, halfExtents: { x: 0.25, y: 0.325, z: 0.25 } },
       clearance: 0.5,
@@ -963,7 +882,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_cone_yellow",
-    category: "scenery",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 0.325, z: 0 }, halfExtents: { x: 0.25, y: 0.325, z: 0.25 } },
       clearance: 0.5,
@@ -1116,7 +1035,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_floor_wood_1x1",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.25, z: 0 }, halfExtents: { x: 0.5, y: 0.25, z: 0.5 } },
       clearance: 0.5,
@@ -1125,7 +1044,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_floor_wood_2x6",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.25, z: 0 }, halfExtents: { x: 3, y: 0.25, z: 1 } },
       clearance: 0.5,
@@ -1134,7 +1053,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_floor_wood_4x4",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.25, z: 0 }, halfExtents: { x: 2, y: 0.25, z: 2 } },
       clearance: 0.5,
@@ -1359,7 +1278,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pillar_1x1x1",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.4, y: 0.5, z: 0.4 } },
       clearance: 0.5,
@@ -1368,7 +1287,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pillar_1x1x2",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 0.4, y: 1, z: 0.4 } },
       clearance: 0.5,
@@ -1377,7 +1296,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pillar_1x1x4",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 0.4, y: 2, z: 0.4 } },
       clearance: 0.5,
@@ -1386,7 +1305,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pillar_1x1x8",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 4, z: 0 }, halfExtents: { x: 0.4, y: 4, z: 0.4 } },
       clearance: 0.5,
@@ -1395,7 +1314,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pillar_2x2x2",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 0.8, y: 1, z: 0.8 } },
       clearance: 0.5,
@@ -1404,7 +1323,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pillar_2x2x4",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 0.8, y: 2, z: 0.8 } },
       clearance: 0.5,
@@ -1413,7 +1332,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pillar_2x2x8",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 4, z: 0 }, halfExtents: { x: 0.8, y: 4, z: 0.8 } },
       clearance: 0.5,
@@ -1422,7 +1341,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_180_A_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.5, z: 0 }, halfExtents: { x: 1, y: 1.5, z: 3 } },
       clearance: 0.5,
@@ -1431,7 +1350,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_180_A_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.5, z: 0 }, halfExtents: { x: 1, y: 1.5, z: 3 } },
       clearance: 0.5,
@@ -1440,7 +1359,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_180_A_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.5, z: 0 }, halfExtents: { x: 1, y: 1.5, z: 3 } },
       clearance: 0.5,
@@ -1449,7 +1368,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_180_A_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.5, z: 0 }, halfExtents: { x: 1, y: 1.5, z: 3 } },
       clearance: 0.5,
@@ -1458,7 +1377,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_180_B_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.495, z: 0 }, halfExtents: { x: 1, y: 1.495, z: 3 } },
       clearance: 0.5,
@@ -1467,7 +1386,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_180_B_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.495, z: 0 }, halfExtents: { x: 1, y: 1.495, z: 3 } },
       clearance: 0.5,
@@ -1476,7 +1395,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_180_B_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.495, z: 0 }, halfExtents: { x: 1, y: 1.495, z: 3 } },
       clearance: 0.5,
@@ -1485,7 +1404,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_180_B_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.495, z: 0 }, halfExtents: { x: 1, y: 1.495, z: 3 } },
       clearance: 0.5,
@@ -1494,7 +1413,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_90_A_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.5, z: 0 }, halfExtents: { x: 1, y: 1.5, z: 1.5 } },
       clearance: 0.5,
@@ -1503,7 +1422,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_90_A_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.5, z: 0 }, halfExtents: { x: 1, y: 1.5, z: 1.5 } },
       clearance: 0.5,
@@ -1512,7 +1431,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_90_A_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.5, z: 0 }, halfExtents: { x: 1, y: 1.5, z: 1.5 } },
       clearance: 0.5,
@@ -1521,7 +1440,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_90_A_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.5, z: 0 }, halfExtents: { x: 1, y: 1.5, z: 1.5 } },
       clearance: 0.5,
@@ -1530,7 +1449,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_90_B_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.5, z: 0 }, halfExtents: { x: 1, y: 1.5, z: 1.5 } },
       clearance: 0.5,
@@ -1539,7 +1458,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_90_B_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.5, z: 0 }, halfExtents: { x: 1, y: 1.5, z: 1.5 } },
       clearance: 0.5,
@@ -1548,7 +1467,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_90_B_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.5, z: 0 }, halfExtents: { x: 1, y: 1.5, z: 1.5 } },
       clearance: 0.5,
@@ -1557,7 +1476,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_90_B_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1.5, z: 0 }, halfExtents: { x: 1, y: 1.5, z: 1.5 } },
       clearance: 0.5,
@@ -1566,7 +1485,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_end_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1.2, y: 0.5, z: 1.2 } },
       clearance: 0.5,
@@ -1575,7 +1494,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_end_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1.2, y: 0.5, z: 1.2 } },
       clearance: 0.5,
@@ -1584,7 +1503,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_end_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1.2, y: 0.5, z: 1.2 } },
       clearance: 0.5,
@@ -1593,7 +1512,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_end_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1.2, y: 0.5, z: 1.2 } },
       clearance: 0.5,
@@ -1602,7 +1521,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_straight_A_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1611,7 +1530,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_straight_A_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1620,7 +1539,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_straight_A_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1629,7 +1548,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_straight_A_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1638,7 +1557,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_straight_B_blue",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1647,7 +1566,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_straight_B_green",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1656,7 +1575,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_straight_B_red",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1665,7 +1584,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_pipe_straight_B_yellow",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1674,7 +1593,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_1x1x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -1683,7 +1602,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_1x1x1_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -1692,7 +1611,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_1x1x1_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -1701,7 +1620,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_1x1x1_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -1710,7 +1629,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_2x2x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -1719,7 +1638,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_2x2x1_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -1728,7 +1647,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_2x2x1_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -1737,7 +1656,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_2x2x1_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -1746,7 +1665,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_2x2x2_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1755,7 +1674,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_2x2x2_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1764,7 +1683,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_2x2x2_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1773,7 +1692,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_2x2x2_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1782,7 +1701,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_2x2x4_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 1 } },
       clearance: 0.5,
@@ -1791,7 +1710,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_2x2x4_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 1 } },
       clearance: 0.5,
@@ -1800,7 +1719,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_2x2x4_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 1 } },
       clearance: 0.5,
@@ -1809,7 +1728,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_2x2x4_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 1 } },
       clearance: 0.5,
@@ -1818,7 +1737,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x2x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -1827,7 +1746,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x2x1_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -1836,7 +1755,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x2x1_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -1845,7 +1764,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x2x1_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -1854,7 +1773,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x2x2_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1863,7 +1782,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x2x2_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1872,7 +1791,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x2x2_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1881,7 +1800,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x2x2_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 1 } },
       clearance: 0.5,
@@ -1890,7 +1809,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x2x4_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 1 } },
       clearance: 0.5,
@@ -1899,7 +1818,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x2x4_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 1 } },
       clearance: 0.5,
@@ -1908,7 +1827,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x2x4_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 1 } },
       clearance: 0.5,
@@ -1917,7 +1836,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x2x4_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 1 } },
       clearance: 0.5,
@@ -1926,7 +1845,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x4x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 2 } },
       clearance: 0.5,
@@ -1935,7 +1854,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x4x1_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 2 } },
       clearance: 0.5,
@@ -1944,7 +1863,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x4x1_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 2 } },
       clearance: 0.5,
@@ -1953,7 +1872,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x4x1_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 2 } },
       clearance: 0.5,
@@ -1962,7 +1881,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x4x2_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 2 } },
       clearance: 0.5,
@@ -1971,7 +1890,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x4x2_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 2 } },
       clearance: 0.5,
@@ -1980,7 +1899,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x4x2_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 2 } },
       clearance: 0.5,
@@ -1989,7 +1908,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x4x2_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 2 } },
       clearance: 0.5,
@@ -1998,7 +1917,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x4x4_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2007,7 +1926,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x4x4_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2016,7 +1935,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x4x4_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2025,7 +1944,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_4x4x4_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2034,7 +1953,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x2x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -2043,7 +1962,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x2x1_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -2052,7 +1971,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x2x1_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -2061,7 +1980,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x2x1_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -2070,7 +1989,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x2x2_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 3, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2079,7 +1998,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x2x2_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 3, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2088,7 +2007,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x2x2_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 3, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2097,7 +2016,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x2x2_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 3, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2106,7 +2025,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x2x4_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 1 } },
       clearance: 0.5,
@@ -2115,7 +2034,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x2x4_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 1 } },
       clearance: 0.5,
@@ -2124,7 +2043,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x2x4_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 1 } },
       clearance: 0.5,
@@ -2133,7 +2052,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x2x4_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 1 } },
       clearance: 0.5,
@@ -2142,7 +2061,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x6x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 3 } },
       clearance: 0.5,
@@ -2151,7 +2070,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x6x1_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 3 } },
       clearance: 0.5,
@@ -2160,7 +2079,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x6x1_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 3 } },
       clearance: 0.5,
@@ -2169,7 +2088,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x6x1_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 3 } },
       clearance: 0.5,
@@ -2178,7 +2097,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x6x2_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 3, y: 1, z: 3 } },
       clearance: 0.5,
@@ -2187,7 +2106,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x6x2_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 3, y: 1, z: 3 } },
       clearance: 0.5,
@@ -2196,7 +2115,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x6x2_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 3, y: 1, z: 3 } },
       clearance: 0.5,
@@ -2205,7 +2124,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x6x2_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 3, y: 1, z: 3 } },
       clearance: 0.5,
@@ -2214,7 +2133,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x6x4_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2223,7 +2142,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x6x4_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2232,7 +2151,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x6x4_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2241,7 +2160,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_6x6x4_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2250,7 +2169,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_arrow_2x2x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -2259,7 +2178,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_arrow_2x2x1_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -2268,7 +2187,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_arrow_2x2x1_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -2277,7 +2196,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_arrow_2x2x1_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -2286,7 +2205,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_arrow_4x4x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 2 } },
       clearance: 0.5,
@@ -2295,7 +2214,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_arrow_4x4x1_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 2 } },
       clearance: 0.5,
@@ -2304,7 +2223,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_arrow_4x4x1_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 2 } },
       clearance: 0.5,
@@ -2313,7 +2232,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_arrow_4x4x1_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 2 } },
       clearance: 0.5,
@@ -2322,7 +2241,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_decorative_1x1x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -2331,7 +2250,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_decorative_1x1x1_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -2340,7 +2259,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_decorative_1x1x1_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -2349,7 +2268,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_decorative_1x1x1_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -2358,7 +2277,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_decorative_2x2x2_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2367,7 +2286,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_decorative_2x2x2_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2376,7 +2295,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_decorative_2x2x2_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2385,7 +2304,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_decorative_2x2x2_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2394,7 +2313,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_hole_6x6x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 3 } },
       clearance: 0.5,
@@ -2403,7 +2322,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_hole_6x6x1_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 3 } },
       clearance: 0.5,
@@ -2412,7 +2331,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_hole_6x6x1_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 3 } },
       clearance: 0.5,
@@ -2421,7 +2340,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_hole_6x6x1_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 3 } },
       clearance: 0.5,
@@ -2430,7 +2349,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_2x2x2_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2439,7 +2358,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_2x2x2_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2448,7 +2367,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_2x2x2_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2457,7 +2376,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_2x2x2_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 1, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2466,7 +2385,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_2x4x4_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2475,7 +2394,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_2x4x4_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2484,7 +2403,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_2x4x4_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2493,7 +2412,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_2x4x4_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2502,7 +2421,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_2x6x4_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2511,7 +2430,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_2x6x4_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2520,7 +2439,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_2x6x4_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2529,7 +2448,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_2x6x4_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 1, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2538,7 +2457,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_4x2x2_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2547,7 +2466,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_4x2x2_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2556,7 +2475,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_4x2x2_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2565,7 +2484,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_4x2x2_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 2, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2574,7 +2493,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_4x4x4_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2583,7 +2502,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_4x4x4_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2592,7 +2511,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_4x4x4_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2601,7 +2520,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_4x4x4_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2610,7 +2529,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_4x6x4_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2619,7 +2538,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_4x6x4_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2628,7 +2547,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_4x6x4_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2637,7 +2556,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_4x6x4_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 2, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2646,7 +2565,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_6x2x2_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 3, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2655,7 +2574,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_6x2x2_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 3, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2664,7 +2583,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_6x2x2_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 3, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2673,7 +2592,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_6x2x2_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 3, y: 1, z: 1 } },
       clearance: 0.5,
@@ -2682,7 +2601,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_6x4x4_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2691,7 +2610,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_6x4x4_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2700,7 +2619,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_6x4x4_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2709,7 +2628,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_6x4x4_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 2 } },
       clearance: 0.5,
@@ -2718,7 +2637,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_6x6x4_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2727,7 +2646,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_6x6x4_green",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2736,7 +2655,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_6x6x4_red",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2745,7 +2664,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_slope_6x6x4_yellow",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2, z: 0 }, halfExtents: { x: 3, y: 2, z: 3 } },
       clearance: 0.5,
@@ -2754,7 +2673,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_wood_1x1x1",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -3204,7 +3123,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_spring",
-    category: "spring",
+    category: "launcher",
     footprint: {
       bounds: { center: { x: 0, y: 1.1, z: 0 }, halfExtents: { x: 0.5, y: 1.1, z: 0.5 } },
       clearance: 0.5,
@@ -3217,7 +3136,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_spring_pad_blue",
-    category: "spring",
+    category: "launcher",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.75, y: 0.5, z: 0.75 } },
       clearance: 0.5,
@@ -3230,7 +3149,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_spring_pad_green",
-    category: "spring",
+    category: "launcher",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.75, y: 0.5, z: 0.75 } },
       clearance: 0.5,
@@ -3243,7 +3162,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_spring_pad_red",
-    category: "spring",
+    category: "launcher",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.75, y: 0.5, z: 0.75 } },
       clearance: 0.5,
@@ -3256,7 +3175,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_spring_pad_yellow",
-    category: "spring",
+    category: "launcher",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.75, y: 0.5, z: 0.75 } },
       clearance: 0.5,
@@ -3305,7 +3224,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_structure_A",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.1, z: 0 }, halfExtents: { x: 1, y: 0.1, z: 1 } },
       clearance: 0.5,
@@ -3314,7 +3233,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_structure_B",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.55, z: 0 }, halfExtents: { x: 1, y: 0.55, z: 1 } },
       clearance: 0.5,
@@ -3323,7 +3242,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_structure_C",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 0.9, y: 1, z: 0.9 } },
       clearance: 0.5,
@@ -3332,7 +3251,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_strut_horizontal",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 0.25, z: 0 }, halfExtents: { x: 1, y: 0.25, z: 0.25 } },
       clearance: 0.5,
@@ -3341,7 +3260,7 @@ export const KAYKIT_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_strut_vertical",
-    category: "platform",
+    category: "structure",
     footprint: {
       bounds: { center: { x: 0, y: 1, z: 0 }, halfExtents: { x: 0.25, y: 1, z: 0.25 } },
       clearance: 0.5,

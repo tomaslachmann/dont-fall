@@ -134,6 +134,34 @@ describe("career service", () => {
     }
   });
 
+  it("a Bot that wins leaves no row, and the Player it beat reads the place it really took (M17 ticket 10)", () => {
+    const { dir, db } = openTestDb();
+    try {
+      seedTracks(db);
+      // A Bot is a seat with no Account (ADR 0129): named, coloured, timed and
+      // scored like anyone, and missing from `accountIds` alone.
+      saveMatchResult(db, {
+        matchId: "m-bot",
+        results: [{ rows: [{ id: "bot", placement: 1, qualified: true }, { id: "p1", placement: 2, qualified: false }] }],
+        roundTrackIds: ["t-green"],
+        nicknames: { bot: "pixelpeach", p1: "Floppo" },
+        accountIds: { p1: "acc-1" },
+        colors: { bot: 3 },
+        hats: { bot: "crown" },
+        totalFalls: { bot: 0, p1: 1 },
+        survivalMs: { bot: 90_000, p1: 20_000 },
+        grabsBroken: { bot: 4, p1: 0 },
+        endedAtMs: 10_000,
+      });
+
+      const career = getCareer(db, "acc-1");
+      expect(career.stats).toMatchObject({ matches: 1, wins: 0, podiums: 1, bestPlacement: 2, bestSurvivalMs: 20_000, grabsBroken: 0 });
+      expect(career.matches[0]).toMatchObject({ matchId: "m-bot", placement: 2 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("a retried save never double-counts a career", () => {
     const { dir, db } = openTestDb();
     try {

@@ -3,7 +3,8 @@ import * as THREE from "three";
 import { clone as cloneRig } from "three/addons/utils/SkeletonUtils.js";
 import { carriedFlail, restCarriedHang, type CarriedHang } from "./carriedFlail.js";
 import { blendFloatStruggle, FloatLimbs } from "./floatPose.js";
-import { GrabAnimations, grabRoleOf } from "./grabAnimation.js";
+import { carrierHands, type CarrierHands } from "./carriedPropHands.js";
+import { GrabAnimations, grabRoleOf, propCarryOf } from "./grabAnimation.js";
 import { JUMP_CROSSFADE_SECONDS, JumpSequences, jumpPoseAt, jumpTimeline, type JumpTimeline } from "./jumpSequence.js";
 import {
   KNOCKDOWN_CROSSFADE_SECONDS,
@@ -59,6 +60,8 @@ interface RemoteRig {
   floatLimbs: FloatLimbs;
   /** Drives this rig's own Punch/HitReact one-shot overlays (M6 ticket 03). */
   hitReactionPlayer: HitReactionPlayer;
+  /** Its hands as drawn, to hold a carried Prop in (ADR 0128). */
+  hands: CarrierHands;
   /** Where this rig's jump pieces sit end to end (ADR 0071) — `null` if it has none. */
   jumpTimeline: JumpTimeline | null;
   /** Looked up once — this rig's own arm bones, for Grab's arm-reach pose (M6.1). */
@@ -117,6 +120,8 @@ export interface RemoteCharacterPool {
    * material, so unchanged rigs are never touched — the closet's guard).
    */
   setColors: (next: ReadonlyMap<string, number | null>) => void;
+  /** The hands of `id`'s rig as last drawn (ADR 0128), or `undefined` for an id with no rig. */
+  hands: (id: string) => CarrierHands | undefined;
   /**
    * Refresh equipped skins by session id (ADR 0091), off the same roster as
    * `setColors` and before `apply` for the same reason. A skin paints over
@@ -226,6 +231,7 @@ export const createRemoteCharacterPool = (
       lean: restGrabberLean(),
       floatLimbs: new FloatLimbs(root),
       hitReactionPlayer: new HitReactionPlayer(),
+      hands: carrierHands(root),
       jumpTimeline: jumpTimeline(actions),
     };
   };
@@ -243,9 +249,13 @@ export const createRemoteCharacterPool = (
       hitReactEpoch,
       grabEpoch,
       grabbingId,
+      carryingProp,
       heldByGrabberId,
       heldPhase,
     } = rc;
+    // A Prop in the hands is a hold the way a Character in them is (ADR 0125),
+    // and so is bending down for one (ADR 0128).
+    const grabbing = grabbingId !== null || carryingProp !== null || rc.liftMs !== null;
     const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
     const moving = horizontalSpeed > MOVING_SPEED_THRESHOLD;
     const nowMs = performance.now();
@@ -260,7 +270,7 @@ export const createRemoteCharacterPool = (
         velocity,
         modelQuaternion: rig.root.quaternion,
         bones: rc.bones,
-        busy: moving || dashing || !grounded || grabbingId !== null || heldByGrabberId !== null,
+        busy: moving || dashing || !grounded || grabbing || heldByGrabberId !== null,
         deltaSeconds,
       },
       rig.actions,
@@ -345,7 +355,7 @@ export const createRemoteCharacterPool = (
     // every frame — so a remote rig cannot pick the rig's forward correction
     // up from the clone the way the local Character does (ADR 0071). Miss it
     // and every other Player runs backwards.
-    const pinned = grabbingId !== null || heldByGrabberId !== null;
+    const pinned = grabbing || heldByGrabberId !== null;
     const modelYaw = Math.PI + MODEL_YAW_OFFSET - yaws.draw(id, { facing, respawnCount, pinned, deltaSeconds });
 
     // The jump sequence reads off replicated state, exactly as it does
@@ -365,12 +375,13 @@ export const createRemoteCharacterPool = (
     // kicks, or hangs Limp (ADR 0104).
     const grabPose = grabAnimations.pose(
       id,
-      grabRoleOf(grabbingId, heldByGrabberId),
+      grabRoleOf(grabbingId, heldByGrabberId, carryingProp, rc.liftMs !== null),
       grabEpoch,
       grounded,
       nowMs,
       rig.actions,
       heldPhase === "limp",
+      propCarryOf(rc, moving && grounded),
     );
 
     // M6 ticket 03: Punch/HitReact take priority over ordinary locomotion
@@ -458,12 +469,13 @@ export const createRemoteCharacterPool = (
       // (`.scratch/physical-ragdoll` ticket 04) — zero for everyone else, and
       // it rocks itself back upright after a throw.
       carriedHangs.delete(id);
-      const lean = advanceGrabberLean(rig.lean, grabbingId !== null ? spinSpeedOf(rc.spinMs) : 0, deltaSeconds);
+      const lean = advanceGrabberLean(rig.lean, grabbing ? spinSpeedOf(rc.spinMs) : 0, deltaSeconds);
       rig.root.rotation.set(-lean, modelYaw, 0);
     }
   };
 
   return {
+    hands: (id) => rigs.get(id)?.hands,
     setColors: (next) => {
       colors.clear();
       for (const [id, color] of next) colors.set(id, color);

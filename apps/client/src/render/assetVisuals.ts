@@ -1,6 +1,7 @@
 import {
   assetFileName,
-  segmentBody,
+  segmentBodies,
+  type BeltPath,
   segmentOrientation,
   segmentScale,
   type Module,
@@ -9,7 +10,14 @@ import {
   type Track,
   type Vec3,
 } from "@dont-fall/shared";
-import { shareTextures, templateForPlacement, type SharedTextureCache } from "@dont-fall/render";
+import {
+  assetPartSubtree,
+  isBombTemplate,
+  restBombLook,
+  shareTextures,
+  templateForPlacement,
+  type SharedTextureCache,
+} from "@dont-fall/render";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
@@ -72,15 +80,23 @@ export const parseAssetVisual = async (moduleId: string, bytes: Uint8Array): Pro
   const exact = new Uint8Array(bytes.byteLength);
   exact.set(bytes);
   let scene: THREE.Group;
+  let clips: THREE.AnimationClip[];
   try {
     const gltf = await new GLTFLoader().parseAsync(exact.buffer, "");
     await shareTextures(gltf, sharedTextures);
     scene = gltf.scene;
+    clips = gltf.animations;
   } catch (err) {
     throw new Error(`asset "${moduleId}": visual parse failed: ${(err as Error).message}`);
   }
   try {
-    return extractVisualRoot(scene);
+    const root = extractVisualRoot(scene);
+    // Kept on the template, and so on every clone of it (`Object3D.copy`):
+    // a bomb plays its clips for looks (ADR 0126), and shows none of its
+    // effects until one does.
+    root.animations = clips;
+    if (isBombTemplate(root)) restBombLook(root);
+    return root;
   } catch (err) {
     throw new Error(`asset "${moduleId}": ${(err as Error).message}`);
   }
@@ -127,6 +143,14 @@ export interface AssetVisualPlacement {
   orientation: Quat;
   /** The Segment's uniform scale (ADR 0062) — the same `segmentScale` `resolveTrack` scales collision by; 1 when absent. */
   scale?: number;
+  /**
+   * The Parts of this Asset drawn somewhere else (ADR 0116) — a sweeper's
+   * rotor, which its own Moving Segment group poses. Absent for every Asset
+   * that is one rigid piece, and the instance is then the whole file.
+   */
+  movingParts?: string[];
+  /** The loop this Asset's slats ride (ADR 0120), when it is a conveyor — drawn at the speed its belt runs. */
+  belt?: BeltPath;
 }
 
 /**
@@ -147,7 +171,12 @@ export const assetPlacements = (track: Track, library: Record<string, Module>): 
     // from its replicated pose (ADR 0095) — the stage builds both itself. The
     // body `resolveTrack` gave it, so an Asset with no solid parts, which
     // cannot be a Prop and stays where it was put, is still drawn here.
-    if (segmentBody(segment, module) !== "still") continue;
+    // A Segment whose Asset has Parts draws its still Parts here and its
+    // moving ones under their own groups (ADR 0116) — the same split
+    // `resolveTrack` made, read from the same place.
+    const bodies = segmentBodies(segment, module);
+    if (!bodies.some((plan) => plan.body === "still")) continue;
+    const movingParts = bodies.flatMap((plan) => (plan.body === "moving" && plan.part !== undefined ? [plan.part] : []));
     placements.push({
       moduleId: segment.moduleId,
       segmentIndex,
@@ -155,6 +184,8 @@ export const assetPlacements = (track: Track, library: Record<string, Module>): 
       orientation: segmentOrientation(segment),
       ...(segmentScale(segment) !== 1 ? { scale: segmentScale(segment) } : {}),
       ...(segment.color === undefined ? {} : { color: segment.color }),
+      ...(movingParts.length > 0 ? { movingParts } : {}),
+      ...(module.belt === undefined ? {} : { belt: module.belt }),
     });
   }
   return placements;
@@ -178,7 +209,8 @@ export const buildAssetVisuals = (
   const group = new THREE.Group();
   for (const placement of placements) {
     const template = templateForPlacement(templates, placement.moduleId, placement.color);
-    const instance = template.clone(true);
+    const moving = new Set(placement.movingParts ?? []);
+    const instance = moving.size === 0 ? template.clone(true) : assetPartSubtree(template, (part) => part === undefined || !moving.has(part));
     instance.position.set(placement.position.x, placement.position.y, placement.position.z);
     instance.quaternion.set(
       placement.orientation.x,

@@ -8,7 +8,7 @@ import type { MovingSegmentConfig } from "../simulation/MovingSegment.js";
 import type { PropConfig } from "../simulation/Prop.js";
 import type { SpinnerConfig } from "../simulation/Spinner.js";
 import type { VolumeConfig } from "../simulation/Volume.js";
-import { PROP_ASSET_DENSITY, PROP_ASSET_MASS_MAX, PROP_ASSET_MASS_MIN } from "../tuning/world.js";
+import { PROJECTILE_MASS, PROP_ASSET_DENSITY, PROP_ASSET_MASS_MAX, PROP_ASSET_MASS_MIN } from "../tuning/world.js";
 import { surfaceAttachmentOf } from "./Attachment.js";
 import { moduleHasBounceSurface, type BounceDeck } from "./BounceOverlay.js";
 import { conveyorWorldVelocity, DEPRECATED_MODULE_IDS, type ConveyorBelt, type DeckFrame } from "./Conveyor.js";
@@ -17,7 +17,14 @@ import { placeGate } from "./Gate.js";
 import { moduleHasIceSurface, type IceDeck } from "./IceOverlay.js";
 import { launchHeightOf, launchVelocityFor } from "./Launch.js";
 import type { Hazard, Module } from "./Module.js";
-import { hasMotion } from "./Motion.js";
+import { hasParts, type AssetPart } from "./AssetPart.js";
+import { bombDefOf } from "./Bomb.js";
+import { fragileDefOf, type FragileDef } from "./Fragile.js";
+import { SHOOTER_BOMB_ASSET_ID, shooterBodies, shooterDefOf, shooterSweepMotion, type ShooterAim } from "./Shooter.js";
+import { BOMB_WARN_SECONDS } from "../tuning/fight.js";
+import { punchCycleOf, type PunchCycle, type PunchPiece } from "./Punch.js";
+import { trapDoorCycleOf, type TrapDoorCycle } from "./TrapDoor.js";
+import { hasMotion, type SegmentMotion } from "./Motion.js";
 import { moduleHasMudSurface, type MudDeck } from "./MudOverlay.js";
 import { DEFAULT_SURFACE, type SurfaceId } from "./Surface.js";
 import {
@@ -89,6 +96,13 @@ export interface ResolvedTrack {
    * Finish Zone, Volumes, Props, Spinners) still resolves at the rest pose.
    */
   movingSegments: MovingSegmentConfig[];
+  /**
+   * Every Shooter the Track places (CONTEXT.md: Shooter, ADR 0119): where it
+   * aims from, and which of `props` are the balls it recycles. The balls
+   * exist from the moment the world is built — their number is known before
+   * the Round runs — and a Round only ever fires and parks them.
+   */
+  shooters: ShooterConfig[];
   /** Every attached belt, for the renderers — physics reads belts off ground colliders, never this (ADR 0064). */
   conveyors: ConveyorBelt[];
   /** Every ice-surfaced deck, for the renderers — physics reads the Surface off ground colliders, never this (ADR 0066). */
@@ -103,6 +117,14 @@ export interface ResolvedTrack {
    * off a gate. The Track still loads; the author has something to fix.
    */
   warnings: string[];
+}
+
+/** One placed Shooter, as the simulation fires it (ADR 0119). */
+export interface ShooterConfig {
+  segmentIndex: number;
+  aim: ShooterAim;
+  /** Indices into {@link ResolvedTrack.props} — this Shooter's own balls, recycled shot after shot. */
+  propIndices: number[];
 }
 
 /**
@@ -121,9 +143,139 @@ export interface ResolvedTrack {
 export type SegmentBody = "still" | "moving" | "prop";
 
 export const segmentBody = (segment: Segment, module: Module): SegmentBody => {
+  // A bomb is a Prop without saying so (ADR 0126): one that cannot be picked
+  // up is not a bomb, so nothing its Segment carries makes it anything else.
+  if (module.bomb !== undefined && (module.asset?.solid?.length ?? 0) > 0) return "prop";
   if (hasMotion(segment.motion)) return "moving";
   if (segment.prop === true && (module.asset?.solid?.length ?? 0) > 0) return "prop";
   return "still";
+};
+
+/**
+ * One body a placed Segment resolves into (ADR 0116). An Asset that is one
+ * rigid piece — every Asset but the DF traps — gives exactly one of these,
+ * naming no Part; an Asset whose Parts actually move gives one per Part.
+ */
+export interface SegmentBodyPlan {
+  body: SegmentBody;
+  /** The Part this body is, or `undefined` when it is the whole Segment. */
+  part?: string;
+  /** What poses it, on a `moving` body. Empty on a trap door leaf, which `trapDoor` poses. */
+  motion?: SegmentMotion;
+  /** A trap door leaf's clock (ADR 0117): what poses it, and when it is a floor. */
+  trapDoor?: TrapDoorCycle;
+  /** A fragile floor (ADR 0118): a body that never moves, so its colliders can be switched off. */
+  fragile?: FragileDef;
+  /** A punching glove's own swing (ADR 0121), and which piece of it this body is. */
+  punch?: { cycle: PunchCycle; piece: PunchPiece };
+  /** The Motions of the Parts this one hangs from, outermost first (ADR 0116). */
+  under?: SegmentMotion[];
+}
+
+/**
+ * What moves a Part (ADR 0124): the Segment's Motion for this Part alone
+ * first — one arm of a three-arm sweeper retuned — then its Motion for the
+ * whole Asset (ADR 0116), then the Part's authored default, so an Asset
+ * dropped into a Track runs without being told to. A `moving` Part with none
+ * of them is simply still, which is how the shooter's pivots sit until
+ * ticket 05 gives them their aim.
+ */
+const partMotion = (segment: Segment, module: Module, part: AssetPart): SegmentMotion | undefined => {
+  if (part.role !== "moving") return undefined;
+  // A Shooter aims its own Parts (ADR 0119). Its two axes are independent and
+  // a Motion is one movement, so neither the Asset's nor the author's Motion
+  // has anything to say here — the sweep in its def does.
+  if (part.aim !== undefined && module.shooter !== undefined) {
+    return shooterSweepMotion(shooterDefOf(module.shooter, segment.shooter)[part.aim]);
+  }
+  const own = segment.partMotions?.[part.name];
+  if (hasMotion(own)) return own;
+  if (hasMotion(segment.motion)) return segment.motion;
+  return hasMotion(part.motion) ? part.motion : undefined;
+};
+
+/**
+ * The clock a `gated` Part runs (ADR 0117): its Asset's authored swing, with
+ * whatever its author retuned about *when* it runs on top. A `gated` Part
+ * with no authored swing has nothing to open it and is simply a floor.
+ */
+const partTrapDoor = (segment: Segment, part: AssetPart): TrapDoorCycle | undefined =>
+  part.role === "gated" && part.trapDoor !== undefined ? trapDoorCycleOf(part.trapDoor, segment.trapdoor) : undefined;
+
+/** The swing a punching glove's Part runs (ADR 0121) — the Asset's own curve, with what its author retuned about when. */
+const partPunch = (segment: Segment, module: Module, part: AssetPart): { cycle: PunchCycle; piece: PunchPiece } | undefined =>
+  part.punch !== undefined && module.punch !== undefined
+    ? { cycle: punchCycleOf(module.punch, segment.punch), piece: part.punch }
+    : undefined;
+
+/**
+ * How `segment` splits into bodies (ADR 0116) — the one place that question
+ * is answered, for `resolveTrack` and for the renderers that have to draw
+ * the same split.
+ *
+ * A `gated` Part (ADR 0117) is a `moving` body carrying its clock: it follows
+ * the authored swing with its colliders switched off, and is a floor only
+ * while shut. One without an authored swing has nothing to open it, and
+ * stays a floor.
+ */
+export const segmentBodies = (segment: Segment, module: Module): SegmentBodyPlan[] => {
+  const body = segmentBody(segment, module);
+  // A floor that breaks (ADR 0118) is a body of its own however still it is:
+  // what is baked into the world cannot be switched off later.
+  const fragile = body !== "prop" && module.fragile !== undefined ? fragileDefOf(module.fragile, segment.fragile) : undefined;
+  const whole: SegmentBodyPlan[] = [
+    fragile !== undefined
+      ? { body: "moving", motion: segment.motion ?? {}, fragile }
+      : { body, ...(body === "moving" ? { motion: segment.motion! } : {}) },
+  ];
+  if (body === "prop" || fragile !== undefined || !hasParts(module.parts)) return whole;
+  const parts = module.parts;
+  // Nothing on this Asset actually moves, so it is one piece — and resolves
+  // byte-identically to the same Asset before it declared any Parts.
+  if (
+    !parts.some(
+      (part) =>
+        partMotion(segment, module, part) !== undefined ||
+        partTrapDoor(segment, part) !== undefined ||
+        partPunch(segment, module, part) !== undefined,
+    )
+  ) {
+    return whole;
+  }
+  /** The Motions of the Parts `part` hangs from, outermost first — a barrel turns with its carriage. */
+  const under = (part: AssetPart): SegmentMotion[] => {
+    const chain: SegmentMotion[] = [];
+    for (let above = parts.find((entry) => entry.name === part.parent); above; above = parts.find((entry) => entry.name === above!.parent)) {
+      const motion = partMotion(segment, module, above);
+      if (motion !== undefined) chain.unshift(motion);
+    }
+    return chain;
+  };
+  return parts.map((part) => {
+    const punch = partPunch(segment, module, part);
+    if (punch !== undefined) return { body: "moving" as const, part: part.name, motion: {}, punch };
+    const trapDoor = partTrapDoor(segment, part);
+    if (trapDoor !== undefined) return { body: "moving" as const, part: part.name, motion: {}, trapDoor };
+    const motion = partMotion(segment, module, part);
+    if (motion === undefined) return { body: "still" as const, part: part.name };
+    const chain = under(part);
+    return { body: "moving" as const, part: part.name, motion, ...(chain.length > 0 ? { under: chain } : {}) };
+  });
+};
+
+/**
+ * The Motion that actually poses this Segment — its own Attachment, or the
+ * default its Asset's moving Part carries (ADR 0116) — or `undefined` when
+ * nothing about it moves. What a renderer that draws one Segment at a time
+ * (the Track builder's viewport) asks, instead of resolving a whole Track.
+ * With `part`, that Part's own (ADR 0124); without, the first moving body's.
+ */
+export const segmentMotionOf = (segment: Segment, module: Module, part?: string): SegmentMotion | undefined => {
+  const moving = segmentBodies(segment, module).filter((plan) => plan.body === "moving");
+  const motion = (part === undefined ? moving[0] : moving.find((plan) => plan.part === part))?.motion;
+  // A trap door leaf's is empty: its clock poses it, and it never deals an
+  // Impact, because it is only ever collidable while it is standing still.
+  return hasMotion(motion) ? motion : undefined;
 };
 
 /** One Segment as every family reads it — placed once, before any of them runs. */
@@ -131,9 +283,13 @@ interface PlacedSegment {
   index: number;
   segment: Segment;
   module: Module;
+  /** Every Module the Track is resolved against — what a Shooter's bombs are made of (ADR 0127). */
+  modules: Record<string, Module>;
   orientation: Quat;
   scale: number;
   body: SegmentBody;
+  /** The bodies this Segment resolves into (ADR 0116) — one, unless its Asset has Parts that move. */
+  bodies: SegmentBodyPlan[];
   /** World-space belt flow, when the Segment carries a Conveyor (ADR 0064). */
   belt: Vec3 | undefined;
   /** What a collision part carries besides its shape and Surface: the Module's hazard (ADR 0061) and the belt. */
@@ -160,16 +316,20 @@ const placeSegment = (index: number, segment: Segment, modules: Record<string, M
   }
   const orientation = segmentOrientation(segment);
   const scale = segmentScale(segment);
-  const belt = segment.conveyor ? conveyorWorldVelocity(segment.conveyor, segment.rotation) : undefined;
+  // A belt may be the Asset's own (ADR 0120); the Segment's always wins.
+  const conveyor = segment.conveyor ?? module.attachments?.conveyor;
+  const belt = conveyor ? conveyorWorldVelocity(conveyor, segment.rotation) : undefined;
   const attachedSurface = surfaceAttachmentOf(segment)?.surface;
   let deck: DeckFrame | undefined;
   return {
     index,
     segment,
     module,
+    modules,
     orientation,
     scale,
     body: segmentBody(segment, module),
+    bodies: segmentBodies(segment, module),
     belt,
     partExtras: {
       ...(module.hazard === undefined ? {} : { hazard: module.hazard }),
@@ -230,23 +390,43 @@ const warnRetiredModule: Family = ({ index, segment }, out) => {
 };
 
 /** Collision — one of three bodies ({@link segmentBody}), each built its own way. */
+/**
+ * The Asset geometry one body owns: everything, for a body that is the whole
+ * Segment, and only what carries that Part's name for a body that is one
+ * Part (ADR 0116).
+ */
+const ofPart = <T extends { part?: string }>(geometry: readonly T[] | undefined, part: string | undefined): T[] =>
+  part === undefined ? [...(geometry ?? [])] : (geometry ?? []).filter((entry) => entry.part === part);
+
 const resolveCollision: Family = (placed, out) => {
+  for (const plan of placed.bodies) resolveBody(placed, plan, out);
+};
+
+const resolveBody = (placed: PlacedSegment, plan: SegmentBodyPlan, out: Resolving): void => {
   const { index, segment, module, scale } = placed;
-  switch (placed.body) {
+  const meshes = ofPart(module.asset?.meshes, plan.part);
+  const solids = ofPart(module.asset?.solid, plan.part);
+  switch (plan.body) {
     case "moving":
       out.movingSegments.push({
         segmentIndex: index,
         moduleId: segment.moduleId,
+        ...(plan.part === undefined ? {} : { part: plan.part }),
         position: segment.position,
         orientation: placed.orientation,
         scale,
-        motion: segment.motion!, // a moving body has one, by definition
-        boxes: module.statics.map((box) => ({
+        motion: plan.motion ?? {},
+        ...(plan.under === undefined ? {} : { under: plan.under }),
+        ...(plan.trapDoor === undefined ? {} : { trapDoor: plan.trapDoor }),
+        ...(plan.punch === undefined ? {} : { punch: plan.punch }),
+        ...(plan.fragile === undefined ? {} : { fragile: plan.fragile }),
+        // A Part owns no procedural boxes: an Asset carries no `statics`.
+        boxes: (plan.part === undefined ? module.statics : []).map((box) => ({
           box: scaleBox(box, scale),
           surface: placed.surfaceOf(box.surface),
           ...(placed.belt === undefined ? {} : { conveyor: placed.belt }),
         })),
-        solids: (module.asset?.solid ?? []).map((part) => ({
+        solids: solids.map((part) => ({
           shape: scaleSolidShape(part.shape, scale),
           position: scaleVec3(part.position, scale),
           rotation: part.rotation,
@@ -254,7 +434,7 @@ const resolveCollision: Family = (placed, out) => {
           ...placed.partExtras,
         })),
         // A hollow trimesh only when the Asset has no solid parts (a file from before ADR 0065).
-        trimeshes: (module.asset?.solid?.length ? [] : (module.asset?.meshes ?? [])).map((mesh) => ({
+        trimeshes: (solids.length > 0 ? [] : meshes).map((mesh) => ({
           vertices: scale === 1 ? mesh.positions : mesh.positions.map((p) => scaleVec3(p, scale)),
           indices: mesh.indices,
           surface: placed.surfaceOf(mesh.surface),
@@ -285,21 +465,22 @@ const resolveCollision: Family = (placed, out) => {
         },
         center: segment.position,
         rotation: placed.orientation,
+        ...(module.bomb === undefined ? {} : { bomb: bombDefOf(module.bomb, segment.bomb) }),
       });
       return;
     }
 
     case "still":
-      for (const box of module.statics) {
+      for (const box of plan.part === undefined ? module.statics : []) {
         out.statics.push(placed.placeBox(box));
         out.staticOwners.push(index);
         out.staticSurfaces.push(placed.surfaceOf(box.surface));
         out.staticConveyors.push(placed.belt);
       }
-      if (segment.prop === true && module.asset !== undefined) {
+      if (plan.part === undefined && segment.prop === true && module.asset !== undefined) {
         out.warnings.push(`Segment ${index} ("${segment.moduleId}") is a Prop but its Asset has no solid parts — it stays where it is`);
       }
-      for (const mesh of module.asset?.meshes ?? []) {
+      for (const mesh of meshes) {
         out.trimeshOwners.push(index);
         out.staticTrimeshes.push({
           vertices: mesh.positions.map((p) => placed.placePoint(p)),
@@ -319,7 +500,12 @@ const resolveCollision: Family = (placed, out) => {
 const resolveDecks: Family = (placed, out) => {
   if (placed.body === "prop") return;
   const { index: segmentIndex, segment, module } = placed;
-  if (placed.belt !== undefined) out.conveyors.push({ segmentIndex, velocity: placed.belt, deck: placed.deck() });
+  if (placed.belt !== undefined) {
+    // An Asset that *is* a belt draws its own flow — the slats riding their
+    // loop say which way it runs, and a chevron strip over them would be a
+    // second answer on one deck (ADR 0120).
+    out.conveyors.push({ segmentIndex, velocity: placed.belt, deck: placed.deck(), ...(module.attachments?.conveyor ? { own: true } : {}) });
+  }
   if (segment.ice === true || moduleHasIceSurface(module)) out.iceDecks.push({ segmentIndex, deck: placed.deck() });
   if (segment.mud === true || moduleHasMudSurface(module)) out.mudDecks.push({ segmentIndex, deck: placed.deck() });
   if (segment.bounce === true || moduleHasBounceSurface(module)) out.bounceDecks.push({ segmentIndex, deck: placed.deck() });
@@ -362,6 +548,54 @@ const resolveModuleBodies: Family = (placed, out) => {
  * every Segment, once there is floor to probe for ({@link
  * resolveGateCheckpoints}); here they only warn when they cannot be one.
  */
+/**
+ * A Shooter's aim and its balls (ADR 0119). The balls are ordinary Props —
+ * bodies the world already replicates — parked at the muzzle with their
+ * colliders off until one is fired, so a Round creates nothing and the
+ * population is whatever `shooterShotsInFlight` said before it began.
+ */
+const resolveShooters: Family = (placed, out) => {
+  const { index, segment, module, scale } = placed;
+  if (module.shooter === undefined) return;
+  let def = shooterDefOf(module.shooter, segment.shooter);
+  // A Shooter's bombs are bomb A (ADR 0127). A world without its geometry — a
+  // builder that has not loaded the file — fires balls rather than nothing.
+  const bombModule = def.ammo === "bomb" ? placed.modules[SHOOTER_BOMB_ASSET_ID] : undefined;
+  const bombParts = bombModule?.asset?.solid;
+  if (def.ammo === "bomb" && (bombParts === undefined || bombParts.length === 0)) {
+    out.warnings.push(`Segment ${index}'s Shooter fires bombs, but "${SHOOTER_BOMB_ASSET_ID}" is not loaded — it fires balls`);
+    def = { ...def, ammo: "ball" };
+  }
+  const aim: ShooterAim = { position: segment.position, orientation: placed.orientation, scale, def };
+  const propIndices: number[] = [];
+  // A bomb as wide as the ball it replaces: its footprint's half-width is its radius.
+  const bombScale = bombModule ? (def.radius * scale) / bombModule.footprint.bounds.halfExtents.x : 1;
+  for (let i = 0; i < shooterBodies(def); i += 1) {
+    propIndices.push(out.props.length);
+    out.props.push({
+      shape:
+        def.ammo === "bomb"
+          ? {
+              kind: "asset",
+              moduleId: SHOOTER_BOMB_ASSET_ID,
+              scale: bombScale,
+              parts: bombParts!.map((part) => ({
+                shape: scaleSolidShape(part.shape, bombScale),
+                position: scaleVec3(part.position, bombScale),
+                rotation: part.rotation,
+              })),
+            }
+          : { kind: "ball", radius: def.radius * scale },
+      center: placed.placePoint(def.muzzle),
+      mass: PROJECTILE_MASS,
+      projectile: true,
+      // Lit by the shot, burning the Shooter's life (ADR 0127); it never goes home.
+      ...(def.ammo === "bomb" ? { bomb: { fuseSeconds: def.lifeSeconds, warnSeconds: BOMB_WARN_SECONDS, returnSeconds: 0 } } : {}),
+    });
+  }
+  out.shooters.push({ segmentIndex: index, aim, propIndices });
+};
+
 const resolveCourse: Family = (placed, out) => {
   const { index, segment, module } = placed;
   if (module.checkpoint) {
@@ -422,6 +656,7 @@ const resolveVolumes: Family = (placed, out) => {
  * A new thing a Segment resolves to is a new family here.
  */
 const SEGMENT_FAMILIES: readonly Family[] = [
+  resolveShooters,
   warnRetiredModule,
   resolveCollision,
   resolveDecks,
@@ -469,6 +704,7 @@ export const resolveTrack = (modules: Record<string, Module>, track: Track): Res
     launchPadOwners: [],
     volumes: [],
     movingSegments: [],
+    shooters: [],
     conveyors: [],
     iceDecks: [],
     mudDecks: [],

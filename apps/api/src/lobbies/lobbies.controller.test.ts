@@ -146,6 +146,16 @@ describe("lobbies", () => {
     expect((await createLobby({ isPrivate: true, privacy: "everyone" })).statusCode).toBe(400);
   });
 
+  it("starts a private Lobby with the Bots it was created with, and refuses settings out of range (M17 ticket 10)", async () => {
+    const res = await createLobby({ isPrivate: true, bots: { enabled: true, max: 3, level: "hard" } });
+    expect(res.statusCode).toBe(201);
+    expect(fakes.started.at(-1)).toMatchObject({ bots: { enabled: true, max: 3, level: "hard" } });
+
+    // This broker's Lobbies hold four: three Bots at most beside the host.
+    expect((await createLobby({ isPrivate: true, bots: { enabled: true, max: 4, level: "hard" } })).statusCode).toBe(400);
+    expect((await createLobby({ isPrivate: true, bots: { enabled: true, max: 1, level: "insane" } })).statusCode).toBe(400);
+  });
+
   it("lists public Lobbies with live occupancy — private ones never appear", async () => {
     await createLobby();
     await createLobby({ isPrivate: true });

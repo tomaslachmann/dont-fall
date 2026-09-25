@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { LobbyPrivacy } from "@dont-fall/shared";
+import type { LobbyBots, LobbyPrivacy } from "@dont-fall/shared";
 import type { ApiDb } from "../db/db.js";
 import { bearerToken } from "../http/cookies.js";
 import { getAccountBySessionToken } from "../auth/accounts.dao.js";
@@ -37,7 +37,7 @@ export const registerLobbyRoutes = (app: FastifyInstance, lobbies: LobbiesServic
   };
 
   app.post("/lobbies", async (request, reply) => {
-    const body = (request.body ?? {}) as { isPrivate?: unknown; matchLength?: unknown; privacy?: unknown };
+    const body = (request.body ?? {}) as { isPrivate?: unknown; matchLength?: unknown; privacy?: unknown; bots?: unknown };
     // ADR 0110: a private Lobby is set up where it is created — its ROUNDS and
     // WHO CAN JOIN, and who created it (whose friends a FRIENDS Lobby shows up for).
     const created = await lobbies.create(
@@ -45,6 +45,8 @@ export const registerLobbyRoutes = (app: FastifyInstance, lobbies: LobbiesServic
       {
         ...(body.matchLength !== undefined ? { matchLength: body.matchLength as number } : {}),
         ...(body.privacy !== undefined ? { privacy: body.privacy as LobbyPrivacy } : {}),
+        // M17 ticket 10: its Bots, validated by the service like the rest.
+        ...(body.bots !== undefined ? { bots: body.bots as LobbyBots } : {}),
       },
       entering(request),
     );

@@ -2,6 +2,7 @@ import { MOVING_SEGMENT_RAGDOLL_SPEED, MOVING_SEGMENT_STAGGER_SPEED, type Module
 import { describe, expect, it } from "vitest";
 import {
   cycleFraction,
+  describeRamp,
   describeSlide,
   describeSpin,
   describeSwing,
@@ -116,5 +117,24 @@ describe("at a Segment's scale (ADR 0062)", () => {
     const spin = { axis: Y, pivot: { x: 0, y: 0.5, z: 0 }, speed: 2 };
     expect(topSpeedAt({ spin }, 0, CORNERS, 3)).toBeCloseTo(3 * topSpeedAt({ spin }, 0, CORNERS), 5);
     expect(describeSlide({ offset: { x: 4, y: 0, z: 0 }, period: 4, easing: "linear" }, CORNERS, 2)).toMatch(/^Travels 8 m/);
+  });
+});
+
+describe("describeRamp (ADR 0123)", () => {
+  // 2 rad/s about the centre puts the far corners at ~6.3 m/s: under the Stagger speed.
+  const spin = { axis: Y, pivot: { x: 0, y: 0.5, z: 0 }, speed: 2 };
+
+  it("judges the Impact at the pace the Ramp tops out at, not the Motion's own", () => {
+    const own = topSpeedAt({ spin }, 0, CORNERS);
+    expect(speedOutcome(own)).toBe("none");
+
+    const ramped = describeRamp({ spin, ramp: { multiplier: 3, seconds: 45 } }, CORNERS);
+    expect(ramped.outcome).toBe(speedOutcome(own * 3));
+    expect(own * 3).toBeGreaterThan(MOVING_SEGMENT_RAGDOLL_SPEED);
+    expect(ramped.text).toMatch(/Speeds up to ×3 over the first 45 s of the Round/);
+  });
+
+  it("says a Ramp below 1 winds the Motion down", () => {
+    expect(describeRamp({ spin, ramp: { multiplier: 0.5, seconds: 10 } }, CORNERS).text).toMatch(/^Slows down to ×0.5/);
   });
 });

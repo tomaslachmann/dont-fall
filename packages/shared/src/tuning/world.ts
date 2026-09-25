@@ -87,3 +87,13 @@ export const LAUNCH_TRIGGER_MARGIN = 0.4;
  * a human. Exact in both directions — `launchHeightToSpeed(h)² / (2·|g|) === h`.
  */
 export const launchHeightToSpeed = (height: number): number => Math.sqrt(2 * Math.abs(GRAVITY_Y) * height);
+
+/**
+ * How many of one Shooter's balls may be in the air at once (ADR 0119).
+ * Its period and lifetime give the number before the Round runs, so this is
+ * the line a publish refuses to cross rather than something measured live.
+ */
+export const SHOOTER_MAX_IN_FLIGHT = 8;
+
+/** What a fired ball weighs — enough to shove a Prop it lands among, light enough not to be a wrecking ball. */
+export const PROJECTILE_MASS = 6;

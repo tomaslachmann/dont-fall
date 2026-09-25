@@ -1,7 +1,7 @@
 import {
   ASSET_MODULE_DEFS,
+  assetPaletteIds,
   ASSET_PLACEMENT_MODULES,
-  assetColorFamilyOf,
   assetFileName,
   attachAssetGeometry,
   deckPlanOf,
@@ -10,38 +10,9 @@ import {
   type DeckPlan,
   type Module,
 } from "@dont-fall/shared";
-import { shareTextures, type SharedTextureCache } from "@dont-fall/render";
+import { isBombTemplate, restBombLook, shareTextures, type SharedTextureCache } from "@dont-fall/render";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-
-/**
- * The palette id `moduleId` lists under: a color family's canonical file, or
- * the id itself for lone looks. Legacy placements (`X_blue`) and family
- * placements (`X_red` + paint) meet on one tile this way — favourites,
- * recents and the in-track set all normalize through here.
- */
-export const canonicalPaletteId = (moduleId: string): string =>
-  assetColorFamilyOf(moduleId)?.canonicalId ?? moduleId;
-
-/**
- * The Assets tab's fixed Module set (M8 ticket 05): exactly the registry's
- * asset Modules — user-uploadable GLBs are a content-pipeline milestone, not
- * a tab feature, so there is deliberately no file input behind this list.
- * Color families list once, under their canonical file — paint moved to the
- * inspector's picker, so the tab shows one tile per shape instead of one per
- * file.
- */
-export const assetTabModuleIds = (): string[] => {
-  const seen = new Set<string>();
-  const ids: string[] = [];
-  for (const def of ASSET_MODULE_DEFS) {
-    const id = canonicalPaletteId(def.id);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    ids.push(id);
-  }
-  return ids;
-};
 
 /** Each tab Module's Asset category — which of the tab's groups lists it. */
 export const assetCategoryById = (): Record<string, AssetCategory> =>
@@ -144,10 +115,12 @@ export const parseAsset = async (moduleId: string, bytes: Uint8Array): Promise<P
   const exact = new Uint8Array(bytes.byteLength);
   exact.set(bytes);
   let scene: THREE.Group;
+  let clips: THREE.AnimationClip[];
   try {
     const gltf = await new GLTFLoader().parseAsync(exact.buffer, "");
     await shareTextures(gltf, sharedTextures);
     scene = gltf.scene;
+    clips = gltf.animations;
   } catch (err) {
     throw new Error(`asset "${moduleId}": visual parse failed: ${(err as Error).message}`);
   }
@@ -157,6 +130,10 @@ export const parseAsset = async (moduleId: string, bytes: Uint8Array): Promise<P
   } catch (err) {
     throw new Error(`asset "${moduleId}": ${(err as Error).message}`);
   }
+  // A bomb is always drawn lying here (ADR 0126): no flames, no burning fuse
+  // — the builder shows a piece as placed, as it does a fragile floor intact.
+  template.animations = clips;
+  if (isBombTemplate(template)) restBombLook(template);
   return { template, plan: parseAssetDeckPlan(moduleId, bytes) };
 };
 
@@ -179,7 +156,7 @@ export const ASSET_LOAD_CONCURRENCY = 8;
 export const loadAssetVisuals = async (
   fetchBytes: (url: string) => Promise<Uint8Array>,
   baseUrl: string,
-  moduleIds: string[] = assetTabModuleIds(),
+  moduleIds: string[] = assetPaletteIds(),
 ): Promise<Record<string, ParsedAsset>> => {
   const loaded: ParsedAsset[] = new Array(moduleIds.length);
   let next = 0;

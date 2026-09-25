@@ -4,6 +4,8 @@ import {
   MAX_MATCH_LENGTH,
   MAX_PLAYERS,
   MIN_MATCH_LENGTH,
+  invalidLobbyBotsReason,
+  type LobbyBots,
   type LobbyEntryGrant,
   type LobbyPrivacy,
   type PartyLobbyView,
@@ -48,6 +50,8 @@ export interface StartMatchServerOptions {
   maxPlayers: number;
   portRange?: PortRange;
   matchLength?: number;
+  /** The Bots it starts with (M17 ticket 10) — PlaySelect's private setup, already validated. */
+  bots?: LobbyBots;
   /** What its `POST /reservations` expects (ADR 0112) — this process's own secret, the same for every Lobby it starts. */
   reservationSecret?: string;
   /** Told the Accounts seated in this Lobby whenever that changes (ADR 0111) — the voice relay's roster. */
@@ -201,6 +205,8 @@ const realStartMatchServer = (opts: StartMatchServerOptions): Promise<MatchServe
     ...(opts.portRange ? { portRange: opts.portRange } : {}),
     // ADR 0110: the length PlaySelect's ROUNDS picked — where the host starts, not a lock.
     ...(opts.matchLength !== undefined ? { matchLengthOverride: opts.matchLength } : {}),
+    // M17 ticket 10: the Bots PlaySelect's setup picked — again where the host starts.
+    ...(opts.bots !== undefined ? { bots: opts.bots } : {}),
     ...(opts.reservationSecret !== undefined ? { reservationSecret: opts.reservationSecret } : {}),
   }).then((server: MatchServer) => ({ port: server.port, close: () => server.close() }));
 
@@ -253,7 +259,7 @@ export class LobbiesService {
   /** Starts one new Lobby end to end: a real `MatchServer`, registered, tracked. */
   async createLobby(
     isPrivate: boolean,
-    setup: { matchLength?: number; privacy?: LobbyPrivacy; creatorAccountId?: string | null } = {},
+    setup: { matchLength?: number; privacy?: LobbyPrivacy; bots?: LobbyBots; creatorAccountId?: string | null } = {},
   ): Promise<LobbyEntry> {
     if (
       setup.matchLength !== undefined &&
@@ -264,6 +270,9 @@ export class LobbiesService {
     if (setup.privacy !== undefined && !LOBBY_PRIVACIES.includes(setup.privacy)) {
       throw new ServiceError(400, `privacy must be one of ${LOBBY_PRIVACIES.join(", ")}`);
     }
+    // The same rule the Lobby's own `setBots` holds a host to (M17 ticket 10).
+    const botsReason = setup.bots === undefined ? undefined : invalidLobbyBotsReason(setup.bots, this.deps.maxPlayers);
+    if (botsReason !== undefined) throw new ServiceError(400, botsReason);
     // The voice room is named by the port this server binds, which is only
     // known once it has — and a roster can change the moment the first
     // connection authenticates. So the last one said before the bind resolved
@@ -277,6 +286,7 @@ export class LobbiesService {
       maxPlayers: this.deps.maxPlayers,
       ...(this.deps.matchPortRange ? { portRange: this.deps.matchPortRange } : {}),
       ...(setup.matchLength !== undefined ? { matchLength: setup.matchLength } : {}),
+      ...(setup.bots !== undefined ? { bots: setup.bots } : {}),
       reservationSecret: this.reservationSecret,
       ...(voice
         ? {
@@ -389,7 +399,7 @@ export class LobbiesService {
    */
   async create(
     isPrivate: boolean,
-    setup: { matchLength?: number; privacy?: LobbyPrivacy },
+    setup: { matchLength?: number; privacy?: LobbyPrivacy; bots?: LobbyBots },
     callerId: string | null = null,
   ): Promise<LobbyEntryGrant & { code: string | null; isPrivate: boolean }> {
     const plan = this.plan(callerId);

@@ -3,6 +3,7 @@ import {
   invalidEnvironmentReason,
   isEnvironmentId,
   invalidTrackCourseReason,
+  invalidPartMotionsTargetReason,
   LAUNCH_HEIGHT_MAX,
   LAUNCH_HEIGHT_MIN,
   MAX_SEGMENT_SCALE,
@@ -76,6 +77,8 @@ export const publishTrack = (db: ApiDb, input: PublishInput): { id: string } => 
   if (unknown.length > 0) throw new ServiceError(400, `unknown Module id(s): ${unknown.join(", ")}`);
   const badCourse = invalidTrackCourseReason(input.track, PUBLISH_MODULES);
   if (badCourse) throw new ServiceError(400, badCourse);
+  const badPartMotions = invalidPartMotionsTargetReason(input.track, PUBLISH_MODULES);
+  if (badPartMotions) throw new ServiceError(400, badPartMotions);
   const badTimeLimit = invalidTimeLimitReason(input.timeLimitMs);
   if (badTimeLimit) throw new ServiceError(400, badTimeLimit);
   const badSurvivorTarget = invalidSurvivorTargetReason(input.survivorTarget);

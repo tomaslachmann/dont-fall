@@ -78,6 +78,22 @@ export const SEAT_CLEAR_STEP = 0.5;
 export const SEAT_CLEAR_MAX_LIFT = 6;
 
 /**
+ * A Respawn never lands a Character inside another (found by the M17 Bot
+ * suites, 2026-09-24): two capsules put 0.3–0.55 m apart barely move either
+ * way and lock each other, and every Fall at a busy Checkpoint put the
+ * next one right on top of the last. Taken on the Checkpoint's own point
+ * when that is clear, otherwise on the first clear spot of rings around it,
+ * this far apart, ring after ring.
+ */
+export const RESPAWN_SPREAD_STEP = 1;
+/** How many rings round a Checkpoint's point a Respawn looks through before it takes the point anyway. */
+export const RESPAWN_SPREAD_RINGS = 3;
+/** The gap a Respawn keeps between its capsule and another Character's, beyond both radii. */
+export const RESPAWN_CLEAR_GAP = 0.2;
+/** How far below a ring spot a floor must be for the spot to count. */
+export const RESPAWN_FLOOR_PROBE = 2.5;
+
+/**
  * How quickly the Character's body closes on the direction it runs (1/s):
  * every second it covers all but e^−rate of the turn still left, so a turn
  * slows into a soft stop instead of halting on the spot (user call,

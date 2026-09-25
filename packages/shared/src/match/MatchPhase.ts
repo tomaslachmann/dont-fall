@@ -237,3 +237,17 @@ export const countdownMsLeft = (state: MatchState, tick: number, countdownMs = C
   const left = countdownMs - (tick - state.phaseStartTick) * TICK_MS;
   return left < 0 ? 0 : left > countdownMs ? countdownMs : left;
 };
+
+/**
+ * The Motion Clock (ADR 0123) at `state`: the Tick the Round runs from, which
+ * every Ramp counts from. Known from the Countdown's first Tick, because the
+ * Countdown ends on exactly `phaseStartTick` plus its length; RUNNING's own
+ * start, and the same Round's through ROUND_END. `null` in every phase
+ * without a Round in it.
+ */
+export const motionClockFor = (state: MatchState, roundStartTick: number, countdownMs = COUNTDOWN_MS): number | null => {
+  if (state.phase === "COUNTDOWN") return state.phaseStartTick + msToTicks(countdownMs);
+  if (state.phase === "RUNNING") return state.phaseStartTick;
+  if (state.phase === "ROUND_END") return roundStartTick;
+  return null;
+};

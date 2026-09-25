@@ -68,12 +68,17 @@ export function Viewport({ engine, browseOpen, onCloseBrowse }: Props) {
         <>
           <div className={css.slotBrowse} onClick={swallow} onPointerDown={swallow}>
             {browseOpen && (
-              <BrowsePanel tracks={engine.browseTracks} state={engine.browseState}
+              <BrowsePanel tracks={engine.browseTracks} drafts={engine.browseDrafts} state={engine.browseState}
                 activeId={engine.loadedTrack?.id ?? null}
+                activeDraftId={engine.loadedDraft?.id ?? null}
                 onClose={onCloseBrowse}
                 onSelect={(id) => {
                   onCloseBrowse();
                   void engine.loadTrackById(id);
+                }}
+                onSelectDraft={(id) => {
+                  onCloseBrowse();
+                  void engine.loadDraftById(id);
                 }} />
             )}
           </div>

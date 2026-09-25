@@ -109,6 +109,11 @@ export const SOUND_SLOTS = {
   // on the effects bus; a Spring settling is the plank knock, quiet and lifted.
   "segment.air_rush": loop("effects", "environment/wind_day_loop.ogg", { gain: 0.5, refDistance: 2, maxDistance: 18, maxLoops: 2 }),
   "segment.spring_settle": effect(variants("segment/slide_stop", 5), { gain: 0.35, priority: 2, maxDistance: 25 }),
+  // A Bomb (ADR 0126): its fuse, the whole timer as one voice that follows it, and its blast.
+  "segment.bomb_fuse": effect(["segment/bomb_fuse.ogg"], { gain: 0.6, priority: 6, refDistance: 3, maxDistance: 35, pitchJitter: 0 }),
+  "segment.bomb_blast": effect(["segment/bomb_blast.ogg"], { priority: 9, refDistance: 6, maxDistance: 70 }),
+  // A Shooter's shot (ADR 0119), where the ball leaves the barrel.
+  "segment.shooter_fire": effect(["segment/shooter_fire.ogg"], { gain: 0.8, priority: 6, refDistance: 4, maxDistance: 55 }),
 
   "environment.wind_day": loop("environment", "environment/wind_day_loop.ogg"),
   "environment.wind_night": loop("environment", "environment/wind_night_loop.ogg"),

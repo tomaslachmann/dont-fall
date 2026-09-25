@@ -11,6 +11,10 @@ export interface SoundedTrack {
   volumes: readonly VolumeConfig[];
   conveyors: readonly unknown[];
   launchPads: readonly unknown[];
+  /** Every Shooter (ADR 0119), each heard firing. */
+  shooters?: readonly unknown[];
+  /** Every Prop, whose Bombs (ADR 0126) tick and go off. */
+  props?: readonly { bomb?: unknown }[];
   /** The Revision's Environment, whose ambience plays under the Round. */
   environment?: EnvironmentId;
 }
@@ -26,5 +30,7 @@ export const stageSoundSlots = (track: SoundedTrack): SoundSlot[] => [
     ...segmentSoundSlots(track.movingSegments, track.spinners),
     ...machineSoundSlots(track),
     ...ambienceSlots(track.environment),
+    ...((track.shooters ?? []).length > 0 ? (["segment.shooter_fire"] as const) : []),
+    ...((track.props ?? []).some((prop) => prop.bomb !== undefined) ? (["segment.bomb_fuse", "segment.bomb_blast"] as const) : []),
   ]),
 ];

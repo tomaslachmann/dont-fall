@@ -115,3 +115,38 @@ the backstop; free publish to new ids or revisions.
   as an overview.
 - Per-segment edits are read-modify-write over `PUT /drafts/:id/segments`:
   one PUT per call is what makes every batch atomic.
+- A stored draft was unreadable by hand until ADR 0115: the Track builder's
+  Browse lists Drafts beside Tracks, opens one, saves back to it and
+  playtests it. D9's "drafts live in the API" is what made that possible; the
+  gap was only that nothing on the authoring side read `/drafts`.
+- Discovery lists at the *palette* level, not the file level: a color family's
+  four files are one entry under its canonical, because color is an Attachment
+  (ADR 0113) — the level the builder's Assets tab has always shown. The
+  shape-level dedup moved out of the builder into shared
+  (`assetPaletteIds`/`canonicalPaletteId`), so the tab and `list_modules`
+  cannot drift apart. `list_categories` counts shapes to match. Placement is
+  untouched: every registry id stays storable, legacy `X_blue` included, and
+  `get_module` still answers one (its `family.canonicalId` names the shape to
+  place and paint instead). A shape whose colorless twin is its own file lists
+  twice — same geometry, different art — told apart by `paintable`.
+- `get_character_mechanics` joins the tool list (2026-09-20): geometry is only
+  walkable if it was placed within what a Character can reach, and an LLM
+  cannot check that by eye. It computes from `tuning/` at call time — walk,
+  the jump's apex and gap (integrated at the real tick, with the hold, not
+  `v²/2g`), Dash, capsule, slope bands, every Surface's cost, Spring and belt
+  speeds, Hit/Grab reach, and a conservative rise/gap `budget` for a route
+  everyone must take. Deliberately *not* prose in the skill: feel values are
+  tuned by playing, and a number in a document is a number nobody played — the
+  Dash was built at 15, recorded as 12 in ADR 0092, and reads 9 in the file
+  today. Its tests assert the link to `tuning/`, never a value, because
+  asserting a value would be the copy again.
+- Two client-side companions, neither part of the server: the repo-root
+  `.mcp.json` registers it for every Claude Code session here (checked in,
+  so no per-clone setup), and `plugins/dont-fall-track-builder` is a Claude
+  Code plugin carrying one skill — the authoring guidance an LLM needs that
+  no tool description can hold (placement units, the rest-pose rule, the
+  Race/Survival split, publish only when asked). The plugin deliberately
+  ships no `.mcp.json` of its own: a second registration would double all 28
+  tools for anyone working in the repo. D8 is untouched — the snippet in
+  `plugins/dont-fall-track-builder/mcp/` is the same stdio config any other
+  client takes.

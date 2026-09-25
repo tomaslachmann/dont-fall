@@ -1,0 +1,11 @@
+{
+  "name": "dont-fall-track-builder",
+  "version": "0.1.0",
+  "description": "Build DON'T FALL Tracks through an LLM: the skill that drives the dont-fall-track-builder MCP server (ADR 0114) — staged Module discovery, API-side drafts, the validate/screenshot loop, and publishing a Revision.",
+  "author": {
+    "name": "Tomas Lachmann"
+  },
+  "repository": "https://github.com/tomaslachmann/dont-fall",
+  "keywords": ["dont-fall", "track", "mcp", "level-design", "game"],
+  "skills": ["./skills/dont-fall-track-builder"]
+}

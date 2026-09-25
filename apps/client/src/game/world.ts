@@ -5,6 +5,8 @@ import {
   resolveTrack,
   trackSpawnYaw,
   type Vec3,
+  assetColorFamilyOf,
+  type PropShape,
 } from "@dont-fall/shared";
 import { loadSoundBank } from "../audio/soundBank.js";
 import { stageSoundSlots } from "../audio/stageSounds.js";
@@ -52,6 +54,8 @@ export interface BuiltWorld {
   look: FreeLookCamera;
   /** How many Checkpoints this Track has — the Race HUD's pips (ADR 0088). */
   checkpointCount: number;
+  /** What each Prop is, by its index — the carrier's panel names what it carries (ADR 0125). */
+  propLabels: string[];
 }
 
 export const buildWorld = async (deps: WorldDeps, ref: TrackRef, spawn: Vec3): Promise<BuiltWorld> => {
@@ -84,6 +88,7 @@ export const buildWorld = async (deps: WorldDeps, ref: TrackRef, spawn: Vec3): P
     segmentColors: track.map((segment) => segment.color),
     springs: springTriggers(resolved.launchPads, resolved.launchPadOwners),
     movingSegments: resolved.movingSegments,
+    shooters: resolved.shooters,
     conveyors: resolved.conveyors,
     iceDecks: resolved.iceDecks,
     mudDecks: resolved.mudDecks,
@@ -114,6 +119,7 @@ export const buildWorld = async (deps: WorldDeps, ref: TrackRef, spawn: Vec3): P
     finishZones: resolved.finishZones,
     spinners: resolved.spinners,
     movingSegments: resolved.movingSegments,
+    shooters: resolved.shooters,
     props: resolved.props,
     launchPads: resolved.launchPads,
     volumes: resolved.volumes,
@@ -131,5 +137,22 @@ export const buildWorld = async (deps: WorldDeps, ref: TrackRef, spawn: Vec3): P
   // First-sight compiles and uploads happen now, behind the load, rather than
   // in the Round's first metres (M13 ticket 06).
   stage.warmUp();
-  return { stage, localSim, look, checkpointCount: resolved.checkpoints.length };
+  return {
+    stage,
+    localSim,
+    look,
+    checkpointCount: resolved.checkpoints.length,
+    propLabels: resolved.props.map((prop) => (prop.bomb ? "BOMB" : propLabel(prop.shape))),
+  };
 };
+
+/**
+ * What the carrier's panel calls a Prop (ADR 0125): the last word of its
+ * Asset's shape, without the paint — `kaykit_cone_red` is a CONE.
+ */
+export const propLabel = (shape: PropShape): string => {
+  if (shape.kind !== "asset") return shape.kind === "ball" ? "BALL" : "BOX";
+  const stem = assetColorFamilyOf(shape.moduleId)?.stem ?? shape.moduleId;
+  return (stem.split("_").pop() ?? stem).toUpperCase();
+};
+

@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
+  BOT_LEVELS,
   MAX_MATCH_LENGTH,
   MIN_MATCH_LENGTH,
   ROUND_TYPES,
   allReady,
   roundTypeLabel,
+  type BotLevel,
+  type LobbyBots,
   type LobbyRef,
   type RoundType,
 } from '@dont-fall/shared';
@@ -16,6 +19,7 @@ import Avatar from '../ui/Avatar';
 import { avatarLook } from '../lib/avatar.js';
 import Chip from '../ui/Chip';
 import Stepper from '../ui/Stepper';
+import Toggle from '../ui/Toggle';
 import ReadySwitch from '../ui/ReadySwitch';
 import type { Feel } from '../tokens';
 import type { LobbySnapshot } from '../lib/socket/lobbyConnection.js';
@@ -54,6 +58,8 @@ export interface LobbyProps {
   onSetMatchLength: (matchLength: number) => void;
   /** Host-only: picks (or clears, passing `null`/`null`) a future Round's slot (M7 ticket 05). */
   onPickRoundSlot: (roundIndex: number, trackId: string | null, roundType: RoundType | null) => void;
+  /** Host-only: how many Bots fill the open places when the Round starts, and their level (M17 ticket 10). */
+  onSetBots: (bots: LobbyBots) => void;
   onStart: () => void;
   /** Leaving the Lobby entirely. Defaults to navigating back to the Play Screen. */
   onLeave?: () => void;
@@ -98,6 +104,7 @@ export default function Lobby({
   onSetRoundType,
   onSetMatchLength,
   onPickRoundSlot,
+  onSetBots,
   onStart,
   onLeave,
   feel,
@@ -155,6 +162,17 @@ export default function Lobby({
     ...trackArtStyle(thumbnailFor(tracks, id)),
     background: `${TRACK_ART_LAYER}, ${stripe(pair)}`,
   });
+  // Bots (M17 ticket 10, ADR 0129). The host always keeps a seat, so at most
+  // capacity less one fill. A private Lobby's host picks a number (none is 0,
+  // i.e. off); a public one's ticks whether Bots may fill, and caps them.
+  const isPrivate = code !== undefined;
+  const botCeiling = Math.max(0, lobby.maxPlayers - 1);
+  const botCount = lobby.bots.enabled ? lobby.bots.max : 0;
+  const levelLabel = (level: BotLevel): string => level.toUpperCase();
+  const setBotLevel = (label: string): void => {
+    const level = BOT_LEVELS.find((candidate) => levelLabel(candidate) === label);
+    if (level !== undefined) onSetBots({ ...lobby.bots, level });
+  };
   const trackName = (id: string | null): string =>
     id === null ? 'RANDOM PICK' : (tracks?.find((t) => t.id === id)?.name ?? id);
 
@@ -425,6 +443,72 @@ export default function Lobby({
             {lobby.roundType === 'survival' &&
               ` · last ${lobby.survivorTarget} ${lobby.survivorTarget === 1 ? 'Player' : 'Players'} standing`}
           </p>
+
+          {/*
+            Bots (M17 ticket 10, ADR 0129): the open places fill when the
+            Round starts, never before — so this is a setting, and no card in
+            the roster ever reads as a Bot's.
+          */}
+          <div className={s.setupHead}>
+            <span>
+              <span className={s.setupTitle}>{isPrivate ? 'BOTS' : 'ALLOW BOTS'}</span>
+              <span className={s.setupSub}>HOST ONLY</span>
+            </span>
+            {isPrivate ? (
+              isHost ? (
+                <Stepper
+                  value={botCount}
+                  label="Bots"
+                  min={0}
+                  max={botCeiling}
+                  onChange={(count) => onSetBots({ ...lobby.bots, enabled: count > 0, max: count })}
+                />
+              ) : (
+                <span className={s.setupTitle}>{botCount === 0 ? 'None' : botCount}</span>
+              )
+            ) : isHost ? (
+              <Toggle
+                value={lobby.bots.enabled ? 'ON' : 'OFF'}
+                onChange={(option) => onSetBots({ ...lobby.bots, enabled: option === 'ON' })}
+              />
+            ) : (
+              <span className={s.setupTitle}>{lobby.bots.enabled ? 'ON' : 'OFF'}</span>
+            )}
+          </div>
+
+          {!isPrivate && lobby.bots.enabled && (
+            <div className={s.setupHead}>
+              <span>
+                <span className={s.setupTitle}>MAX BOTS</span>
+                <span className={s.setupSub}>HOST ONLY</span>
+              </span>
+              {isHost ? (
+                <Stepper
+                  value={lobby.bots.max}
+                  label="Bots"
+                  min={0}
+                  max={botCeiling}
+                  onChange={(max) => onSetBots({ ...lobby.bots, max })}
+                />
+              ) : (
+                <span className={s.setupTitle}>{lobby.bots.max}</span>
+              )}
+            </div>
+          )}
+
+          {botCount > 0 && (
+            <div className={s.setupHead}>
+              <span>
+                <span className={s.setupTitle}>BOT LEVEL</span>
+                <span className={s.setupSub}>HOST ONLY</span>
+              </span>
+              {isHost ? (
+                <Toggle options={BOT_LEVELS.map(levelLabel)} value={levelLabel(lobby.bots.level)} onChange={setBotLevel} />
+              ) : (
+                <span className={s.setupTitle}>{levelLabel(lobby.bots.level)}</span>
+              )}
+            </div>
+          )}
 
           {!isHost && <p className={s.hint}>Only the host picks the Track.</p>}
 

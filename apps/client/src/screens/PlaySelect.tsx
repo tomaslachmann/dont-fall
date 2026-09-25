@@ -8,7 +8,7 @@ import Toggle from '../ui/Toggle';
 import Stepper from '../ui/Stepper';
 import Avatar from '../ui/Avatar';
 import type { Feel } from '../tokens';
-import { DEFAULT_MATCH_LENGTH, MAX_MATCH_LENGTH, MAX_PLAYERS, MIN_MATCH_LENGTH } from '@dont-fall/shared';
+import { BOT_LEVELS, DEFAULT_BOT_LEVEL, DEFAULT_MATCH_LENGTH, MAX_MATCH_LENGTH, MAX_PLAYERS, MIN_MATCH_LENGTH } from '@dont-fall/shared';
 import { createLobby, lobbyByCode, lobbyPath, quickMatch, resolveLobbyRef, type BrokeredLobby } from '../lib/api/lobbyBroker.js';
 import { avatarLook } from '../lib/avatar.js';
 import { useAccount } from '../lib/hooks/useAccount';
@@ -84,6 +84,10 @@ export default function PlaySelect({
   const [mode, setMode] = useState<PlayMode>(defaultMode);
   const [privacy, setPrivacy] = useState('INVITE ONLY');
   const [rounds, setRounds] = useState(DEFAULT_MATCH_LENGTH);
+  // M17 ticket 10: how many Bots fill the open places when the Round starts,
+  // and their level. None by default; the host can change both in the Lobby.
+  const [botCount, setBotCount] = useState(0);
+  const [botLevel, setBotLevel] = useState(DEFAULT_BOT_LEVEL.toUpperCase());
   const [code, setCode] = useState<string[]>(() => Array(CODE_LEN).fill(''));
   // One in-flight broker call at a time, and the reason the last one failed
   // — the broker's own words (an unknown code, a Lobby that filled up),
@@ -237,18 +241,35 @@ export default function PlaySelect({
                     <Stepper value={rounds} min={MIN_MATCH_LENGTH} max={MAX_MATCH_LENGTH} onChange={setRounds} />
                   </div>
                   <div className={s.row}>
+                    <span className={s.rowLabel}>BOTS</span>
+                    <Stepper value={botCount} label="Bots" min={0} max={Math.max(0, lobbySize - 1)} onChange={setBotCount} />
+                  </div>
+                  {botCount > 0 && (
+                    <div className={s.row}>
+                      <span className={s.rowLabel}>BOT LEVEL</span>
+                      <Toggle options={BOT_LEVELS.map((level) => level.toUpperCase())} value={botLevel} onChange={setBotLevel} />
+                    </div>
+                  )}
+                  <div className={s.row}>
                     <span className={s.rowLabel}>LOBBY SIZE</span>
                     <Pill tone="plate">UP TO {lobbySize} BEANS</Pill>
                   </div>
                 </div>
-                {/* POST /lobbies {isPrivate, matchLength, privacy} — the broker answers with the join code to share. */}
+                {/* POST /lobbies {isPrivate, matchLength, privacy, bots?} — the broker answers with the join code to share. */}
                 <JellyButton
                   disabled={pending}
                   kicker={pending ? 'STARTING A LOBBY…' : 'YOU HOST'}
                   // ADR 0110: ROUNDS and WHO CAN JOIN travel with the create.
                   onClick={() =>
                     enterLobby('create', () =>
-                      createLobby(true, { matchLength: rounds, privacy: privacy === 'FRIENDS' ? 'friends' : 'invite-only' }),
+                      createLobby(true, {
+                        matchLength: rounds,
+                        privacy: privacy === 'FRIENDS' ? 'friends' : 'invite-only',
+                        // Sent only when there are Bots: a Lobby starts with none (M17 ticket 10).
+                        ...(botCount > 0
+                          ? { bots: { enabled: true, max: botCount, level: BOT_LEVELS.find((level) => level.toUpperCase() === botLevel) ?? DEFAULT_BOT_LEVEL } }
+                          : {}),
+                      }),
                     )
                   }
                 >CREATE LOBBY</JellyButton>

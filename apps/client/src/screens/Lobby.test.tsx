@@ -65,6 +65,7 @@ const baseLobby = (overrides: Partial<LobbySnapshot> = {}): LobbySnapshot => ({
   matchLength: 1,
   round: 0,
   roundPicks: [],
+  bots: { enabled: false, max: 9, level: "normal" },
   maxPlayers: 10,
   ...overrides,
 });
@@ -84,6 +85,7 @@ const renderLobby = (props: Partial<LobbyProps> = {}) =>
         onSetRoundType={noop}
         onSetMatchLength={noop}
         onPickRoundSlot={noop}
+        onSetBots={noop}
         onStart={noop}
         {...props}
       /></WithQuery>
@@ -151,6 +153,7 @@ describe("Lobby", () => {
           onSetRoundType={noop}
           onSetMatchLength={noop}
           onPickRoundSlot={noop}
+          onSetBots={noop}
           onStart={onStart}
         /></WithQuery>
       </MemoryRouter>,
@@ -369,6 +372,44 @@ describe("Lobby", () => {
       renderLobby({ lobby: baseLobby({ myId: "guest-id", startBlockedReason: "This Track has no Finish Zone." }) });
 
       expect(screen.getByText("This Track has no Finish Zone.")).toBeInTheDocument();
+    });
+  });
+
+  describe("Bots (M17 ticket 10, ADR 0129)", () => {
+    it("lets a private Lobby's host pick how many Bots, with none meaning off, and their level once there are some", () => {
+      const onSetBots = vi.fn();
+      const { unmount } = renderLobby({ code: "PLUMJA", onSetBots });
+      expect(screen.queryByRole("button", { name: "HARD" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "More Bots" }));
+      expect(onSetBots).toHaveBeenLastCalledWith({ enabled: true, max: 1, level: "normal" });
+      unmount();
+
+      renderLobby({ code: "PLUMJA", lobby: baseLobby({ bots: { enabled: true, max: 1, level: "normal" } }), onSetBots });
+      fireEvent.click(screen.getByRole("button", { name: "HARD" }));
+      expect(onSetBots).toHaveBeenLastCalledWith({ enabled: true, max: 1, level: "hard" });
+      fireEvent.click(screen.getByRole("button", { name: "Fewer Bots" }));
+      expect(onSetBots).toHaveBeenLastCalledWith({ enabled: false, max: 0, level: "normal" });
+    });
+
+    it("lets a public Lobby's host allow Bots, then cap them", () => {
+      const onSetBots = vi.fn();
+      const { unmount } = renderLobby({ onSetBots });
+      expect(screen.queryByText("MAX BOTS")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "ON" }));
+      expect(onSetBots).toHaveBeenLastCalledWith({ enabled: true, max: 9, level: "normal" });
+      unmount();
+
+      renderLobby({ lobby: baseLobby({ bots: { enabled: true, max: 9, level: "normal" } }), onSetBots });
+      fireEvent.click(screen.getByRole("button", { name: "Fewer Bots" }));
+      expect(onSetBots).toHaveBeenLastCalledWith({ enabled: true, max: 8, level: "normal" });
+      expect(screen.getByRole("button", { name: "More Bots" })).toBeDisabled();
+    });
+
+    it("shows a guest the settings as text, with nothing to change them", () => {
+      renderLobby({ code: "PLUMJA", lobby: baseLobby({ myId: "guest-id", bots: { enabled: true, max: 3, level: "easy" } }) });
+      expect(screen.queryByRole("button", { name: "More Bots" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "EASY" })).toBeNull();
+      expect(screen.getByText("EASY")).toBeInTheDocument();
     });
   });
 

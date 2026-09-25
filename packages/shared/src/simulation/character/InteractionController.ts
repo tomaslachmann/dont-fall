@@ -3,14 +3,18 @@ import type { HeldPhase, ReconcileBase } from "../../state/SimState.js";
 import { TICK_DT, TICK_MS } from "../../tuning/clock.js";
 import {
   GRAB_CARRY_SPEED_MULTIPLIER,
+  GRAB_TURN_SPEED_MULTIPLIER,
   GRAB_ESCAPE_DECAY_PER_S,
   GRAB_ESCAPE_WIGGLES,
   GRAB_WIGGLE_REVERSAL_DOT_MAX,
+  PROP_TOSS_RELEASE_TICKS,
+  PROP_TOSS_TAP_TICKS,
   SPIN_OVERSPIN_TICKS,
   SPIN_WINDUP_TICKS,
 } from "../../tuning/fight.js";
 import { GrabController } from "../GrabController.js";
 import { HitController } from "../HitController.js";
+import { propCarryJump, propCarrySpeed, propCarryTurn } from "../propCarry.js";
 import type { SimInputs } from "../SimInputs.js";
 import { forwardOf, spinAngleAt, spinWindup } from "../spin.js";
 
@@ -74,6 +78,32 @@ export class InteractionController {
   /** Which part of its hold a Held Character is in this tick — only meaningful while {@link holdRole} is `"held"`. */
   heldPhase: HeldPhase | null = null;
   /**
+   * The mass of the Prop this Character carries this tick, or `null` while it
+   * carries a Character or nothing (ADR 0125) — set with {@link holdAs}, and
+   * what every weight-scaled part of carrying reads.
+   */
+  carriedMass: number | null = null;
+  /** Which Prop this Character carries, by index, or `null` (ADR 0125) — set from outside by `GrabHolds`, for the snapshot only. */
+  carryingProp: number | null = null;
+  /**
+   * Whether this tick is one of a Lift's (ADR 0128), set with {@link holdAs}:
+   * the carrier stands still, and neither Spins nor lets go.
+   */
+  private lifting = false;
+  /** The Tick this Character's Lift started, or `null` (ADR 0128) — set from outside by `GrabHolds`, for the snapshot only. */
+  liftStartTick: number | null = null;
+  /**
+   * How many ticks into a Toss's wind-up this Character is, or `null` while
+   * it is not winding one up (ADR 0128). A tap of Hit with a Prop in hand
+   * starts it at 0; on {@link PROP_TOSS_RELEASE_TICKS} the Prop leaves the
+   * hands ({@link takeToss}). Decided here, from this Character's own input,
+   * so its own client predicts the wind-up rather than hearing of it a round
+   * trip later.
+   */
+  private tossTicks: number | null = null;
+  /** Whether this tick's Toss let go — read and cleared by `GrabHolds`. */
+  private pendingToss = false;
+  /**
    * A press of Grab while already holding (ADR 0093) — the Player letting go
    * on purpose. Read and cleared by `GrabHolds`, which owns the hold; same
    * "fresh this tick only" treatment as {@link pendingGrabFired}.
@@ -117,6 +147,16 @@ export class InteractionController {
     return this.holding && this.spinTicks > 0;
   }
 
+  /** Whether this Character stands still for a Lift or a Toss's wind-up this tick (ADR 0128). */
+  get carryLocked(): boolean {
+    return this.holding && (this.lifting || this.tossTicks !== null);
+  }
+
+  /** See `CharacterState.tossMs`. */
+  get tossMs(): number | null {
+    return this.tossTicks === null ? null : this.tossTicks * TICK_MS;
+  }
+
   /**
    * Multiplies `WALK_SPEED` this tick (ADR 0104): a grabber walks at
    * {@link GRAB_CARRY_SPEED_MULTIPLIER} of its pace, and stands where it is
@@ -124,7 +164,26 @@ export class InteractionController {
    */
   get carrySpeedMultiplier(): number {
     if (!this.holding) return 1;
-    return this.spinning ? 0 : GRAB_CARRY_SPEED_MULTIPLIER;
+    if (this.spinning || this.carryLocked) return 0;
+    return this.carriedMass === null ? GRAB_CARRY_SPEED_MULTIPLIER : propCarrySpeed(this.carriedMass);
+  }
+
+  /** How much of its usual turn a carrier keeps (ADR 0104, ADR 0125): less with a Character, less the heavier the Prop. */
+  get carryTurnMultiplier(): number {
+    if (!this.holding) return 1;
+    if (this.carryLocked) return 0;
+    return this.carriedMass === null ? GRAB_TURN_SPEED_MULTIPLIER : propCarryTurn(this.carriedMass);
+  }
+
+  /**
+   * How much of its jump a carrier keeps (ADR 0125): all of it with empty
+   * hands, none with a Character, and with a Prop less the heavier it is —
+   * none above `PROP_JUMP_MASS_MAX`.
+   */
+  get carryJumpMultiplier(): number {
+    if (!this.holding) return 1;
+    if (this.carryLocked) return 0;
+    return this.carriedMass === null ? 0 : propCarryJump(this.carriedMass);
   }
 
   /** See `CharacterState.spinMs`. */
@@ -185,7 +244,8 @@ export class InteractionController {
     // ADR 0093: the same button lets go. A press while engaged is never a
     // new grab (there is nothing to reach for — your hands are full), so the
     // two readings of the press can't collide.
-    if (this.grabPressed && this.grabEngaged) this.pendingGrabRelease = true;
+    // ADR 0128: nor while Lifting or winding up a Toss — the hands are busy.
+    if (this.grabPressed && this.grabEngaged && !this.carryLocked) this.pendingGrabRelease = true;
     this.pendingGrabFired = this.grab.beginTick(fullControl && this.grabPressed && notGrabbing && !dashActive);
     // Like `hitEpoch`: the attempt, not the catch — a grab at nobody is still
     // a reach the player (and everyone watching) should see.
@@ -202,8 +262,23 @@ export class InteractionController {
   private spinTick(hitHeld: boolean, facing: number): void {
     this.pendingHurl = null;
     this.pendingDizzy = false;
+    this.pendingToss = false;
     if (!this.holding) {
       this.spinTicks = 0;
+      this.tossTicks = null;
+      return;
+    }
+    // ADR 0128: a Lift, and a Toss winding up, own the carrier's hands.
+    if (this.lifting) {
+      this.spinTicks = 0;
+      return;
+    }
+    if (this.tossTicks !== null) {
+      this.tossTicks += 1;
+      if (this.tossTicks >= PROP_TOSS_RELEASE_TICKS) {
+        this.pendingToss = true;
+        this.tossTicks = null;
+      }
       return;
     }
     if (hitHeld) {
@@ -216,6 +291,13 @@ export class InteractionController {
       return;
     }
     if (this.spinTicks > 0) {
+      // ADR 0125, 0128: a tap with a Prop in hand is a Toss, not a Spin — it
+      // winds up first, and lets go on its own clock.
+      if (this.carriedMass !== null && this.spinTicks <= PROP_TOSS_TAP_TICKS) {
+        this.tossTicks = 0;
+        this.spinTicks = 0;
+        return;
+      }
       // The facing it was let go at is the last one the Spin turned to — the
       // tick before this one, since nothing turns on the tick of release.
       this.pendingHurl = { windup: spinWindup(this.spinTicks), facing: this.spinFacing };
@@ -263,6 +345,13 @@ export class InteractionController {
     return hurl;
   }
 
+  /** Whether a Toss let go of its Prop this tick (ADR 0128) — consumed by `GrabHolds`. */
+  takeToss(): boolean {
+    const tossed = this.pendingToss;
+    this.pendingToss = false;
+    return tossed;
+  }
+
   /** Whether this tick's Spin ran too long (ADR 0104) — consumed by `GrabHolds`. */
   takeDizzy(): boolean {
     const dizzy = this.pendingDizzy;
@@ -290,12 +379,21 @@ export class InteractionController {
   clearHold(): void {
     this.holdRole = null;
     this.heldPhase = null;
+    this.carriedMass = null;
+    this.lifting = false;
   }
 
-  /** This Character is at `role`'s end of a hold this tick, in `phase` if it is the one held (ADR 0104). */
-  holdAs(role: HoldRole, phase: HeldPhase | null = null): void {
+  /**
+   * This Character is at `role`'s end of a hold this tick, in `phase` if it
+   * is the one held (ADR 0104), carrying a Prop of `carriedMass` if what it
+   * holds is one (ADR 0125), and standing still for a Lift if `lifting` (ADR
+   * 0128).
+   */
+  holdAs(role: HoldRole, phase: HeldPhase | null = null, carriedMass: number | null = null, lifting = false): void {
     this.holdRole = role;
     this.heldPhase = role === "held" ? phase : null;
+    this.carriedMass = role === "grabbing" ? carriedMass : null;
+    this.lifting = role === "grabbing" && lifting;
   }
 
   /** The Struggle is over, whichever way it went — the meter empties for the next hold. */
@@ -326,12 +424,16 @@ export class InteractionController {
     this.clearHold();
     this.pendingGrabRelease = false;
     this.grabbingId = null;
+    this.carryingProp = null;
+    this.liftStartTick = null;
     this.heldByGrabberId = null;
     this.reportedHeldPhase = null;
     this.holdEndsTick = null;
     this.spinTicks = 0;
+    this.tossTicks = null;
     this.pendingHurl = null;
     this.pendingDizzy = false;
+    this.pendingToss = false;
     this.forgetStruggle();
   }
 
@@ -344,6 +446,8 @@ export class InteractionController {
     this.clearHold();
     this.pendingGrabRelease = false;
     this.grabbingId = null;
+    this.carryingProp = null;
+    this.liftStartTick = null;
     this.heldByGrabberId = null;
     this.reportedHeldPhase = null;
     this.holdEndsTick = null;
@@ -354,7 +458,9 @@ export class InteractionController {
     this.escapeProgress = base.escapeProgress;
     this.lastWiggleYaw = base.lastWiggleYaw;
     this.spinTicks = Math.max(0, Math.round(base.spinMs / TICK_MS));
+    this.tossTicks = base.tossMs === null ? null : Math.max(0, Math.round(base.tossMs / TICK_MS));
     this.pendingHurl = null;
     this.pendingDizzy = false;
+    this.pendingToss = false;
   }
 }

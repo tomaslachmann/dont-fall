@@ -1,5 +1,6 @@
 import type {
   ClientMessage,
+  LobbyBots,
   LobbyPlayer,
   MatchPhase,
   RoundType,
@@ -98,6 +99,12 @@ export interface LobbySnapshot {
    * stays unknown to every client until that Round actually starts.
    */
   roundPicks: { trackId: string | null; roundType: RoundType | null }[];
+  /**
+   * The host's Bot settings (M17 ticket 10, ADR 0129) — how many Bots fill
+   * the open places when the Round starts, and at what level. A setting, not
+   * a roster: nothing in `players` says which seats are Bots.
+   */
+  bots: LobbyBots;
 }
 
 /**
@@ -124,6 +131,7 @@ export const toLobbySnapshot = (myId: string, maxPlayers: number, message: Snaps
   matchLength: message.lobby.matchLength,
   round: message.round,
   roundPicks: message.lobby.roundPicks,
+  bots: message.lobby.bots,
   maxPlayers,
 });
 
@@ -149,6 +157,8 @@ export interface LobbyActions {
    * slot. `null` leaves it to the server's draw.
    */
   pickRoundSlot: (roundIndex: number, trackId: string | null, roundType: RoundType | null) => void;
+  /** Host-only: this Lobby's Bot settings (M17 ticket 10). Ignored if not host, not in LOBBY, or invalid. */
+  setBots: (bots: LobbyBots) => void;
   /** Host-only: asks the server to start the Round. Ignored unless the server's own gate passes. */
   start: () => void;
   /** Confirms this Player's own Ready for the next Round. Not host-only. Ignored outside RESULTS. */
@@ -293,6 +303,7 @@ export const createLobbyConnection = async (options: LobbyConnectionOptions = {}
     setMatchLength: (matchLength) => send({ type: "setMatchLength", matchLength }),
     pickRoundSlot: (roundIndex, trackId, roundType) =>
       send({ type: "pickRoundSlot", roundIndex, trackId, roundType }),
+    setBots: (bots) => send({ type: "setBots", enabled: bots.enabled, max: bots.max, level: bots.level }),
     start: () => send({ type: "start" }),
     standingsReady: () => send({ type: "standingsReady" }),
   };

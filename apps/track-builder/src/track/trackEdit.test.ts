@@ -30,6 +30,9 @@ import {
   rotateSegment,
   segmentOverlapsAnyOther,
   setSegmentAttachment,
+  setSegmentBomb,
+  setSegmentPartMotion,
+  setSegmentShooter,
   setSegmentTransform,
   setSegmentScale,
   setSegmentTransforms,
@@ -102,7 +105,7 @@ describe("building on the last platform (user decision, 2026-09-16)", () => {
     pillar: asset("pillar", { x: 0.5, y: 1, z: 0 }, { x: 0.5, y: 1, z: 0.5 }),
     arch: asset("arch", { x: 0, y: 1.5, z: 0 }, { x: 2, y: 1.5, z: 0.25 }),
   };
-  const CATEGORIES: Record<string, AssetCategory> = { deck: "platform", long: "platform", pillar: "obstacle", arch: "gate" };
+  const CATEGORIES: Record<string, AssetCategory> = { deck: "floor", long: "floor", pillar: "structure", arch: "gate" };
 
   /** Where `track[index]`'s footprint box is in the world, turned by its yaw. */
   const worldBox = (track: Track, index: number) => {
@@ -185,8 +188,8 @@ describe("building on the last platform (user decision, 2026-09-16)", () => {
   });
 
   it("still Socket-chains what can be chained", () => {
-    // Both socketed platforms: the Sockets decide where the second goes, not the footprints.
-    const categories: Record<string, AssetCategory> = { start: "platform", bridge: "platform" };
+    // Both socketed Floors: the Sockets decide where the second goes, not the footprints.
+    const categories: Record<string, AssetCategory> = { start: "floor", bridge: "floor" };
     const track = appendModule(appendModule([], "start", MODULES, categories), "bridge", MODULES, categories);
     expect(track[1]!.position).toEqual({ x: 0, y: -0.5, z: -6 });
   });
@@ -913,10 +916,60 @@ describe("a Segment's mud (ADR 0067)", () => {
   });
 });
 
+describe("setSegmentBomb (ADR 0126)", () => {
+  const one = (): Track => appendModule([], "bridge", MODULES);
+
+  it("rounds to tenths and never goes under half a second", () => {
+    const set = setSegmentBomb(one(), 0, { fuseSeconds: 3.14, returnSeconds: 0.1 });
+
+    expect(set[0]!.bomb).toEqual({ fuseSeconds: 3.1, returnSeconds: 0.5 });
+  });
+
+  it("hands the bomb back to its Asset's own clock", () => {
+    const set = setSegmentBomb(one(), 0, { fuseSeconds: 3 });
+
+    expect("bomb" in setSegmentBomb(set, 0, undefined)[0]!).toBe(false);
+  });
+});
+
+describe("setSegmentShooter's ammunition (ADR 0127)", () => {
+  const one = (): Track => appendModule([], "bridge", MODULES);
+
+  it("writes bombs, and leaves balls unsaid since they are the default", () => {
+    expect(setSegmentShooter(one(), 0, { ammo: "bomb", lifeSeconds: 3 })[0]!.shooter).toEqual({ ammo: "bomb", lifeSeconds: 3 });
+    expect(setSegmentShooter(one(), 0, { ammo: "ball", lifeSeconds: 5 })[0]!.shooter).toEqual({ lifeSeconds: 5 });
+  });
+});
+
+describe("setSegmentPartMotion (ADR 0124)", () => {
+  const spin = (speed: number) => ({ spin: { axis: { x: 0, y: 1, z: 0 }, pivot: { x: 0, y: 0, z: 0 }, speed } });
+  const one = (): Track => appendModule([], "bridge", MODULES);
+
+  it("sets one Part's Motion and leaves the others' alone", () => {
+    const low = setSegmentPartMotion(one(), 0, "low", spin(1));
+    const both = setSegmentPartMotion(low, 0, "high", spin(-3));
+
+    expect(both[0]!.partMotions).toEqual({ low: spin(1), high: spin(-3) });
+    expect(setSegmentPartMotion(both, 0, "low", spin(2))[0]!.partMotions).toEqual({ low: spin(2), high: spin(-3) });
+  });
+
+  it("drops the Attachment once no Part has a Motion of its own", () => {
+    const low = setSegmentPartMotion(one(), 0, "low", spin(1));
+
+    expect("partMotions" in setSegmentPartMotion(low, 0, "low", undefined)[0]!).toBe(false);
+  });
+});
+
 describe("every Attachment through a re-chain and a Duplicate (ADR 0099)", () => {
   // Over every Attachment, so a new one does not compile until it is sampled here.
   const SAMPLES: { [K in AttachmentKey]-?: NonNullable<Segment[K]> } = {
     motion: { slide: { offset: { x: 0, y: 2, z: 0 }, period: 3, easing: "easeInOut" } },
+    partMotions: { mid: { spin: { axis: { x: 0, y: 1, z: 0 }, pivot: { x: 0, y: 0, z: 0 }, speed: -2 }, ramp: { multiplier: 2, seconds: 30 } } },
+    trapdoor: { period: 6, phase: 0.25 },
+    fragile: { returnSeconds: 4 },
+    bomb: { fuseSeconds: 3, returnSeconds: 12 },
+    shooter: { periodSeconds: 3, speed: 20, lifeSeconds: 5 },
+    punch: { period: 4, phase: 0.5, rate: 2 },
     conveyor: { preset: "fast", angle: 1.2 },
     ice: true,
     mud: true,

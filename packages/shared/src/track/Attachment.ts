@@ -3,7 +3,13 @@ import { invalidConveyorReason } from "./Conveyor.js";
 import { invalidCheckpointReason, invalidStartReason } from "./Course.js";
 import { ICE_SURFACE_ID, invalidIceReason } from "./IceOverlay.js";
 import { invalidLaunchReason } from "./Launch.js";
+import { invalidBombReason } from "./Bomb.js";
+import { invalidFragileReason } from "./Fragile.js";
 import { invalidMotionReason } from "./Motion.js";
+import { invalidPartMotionsReason } from "./PartMotions.js";
+import { invalidPunchReason } from "./Punch.js";
+import { invalidShooterReason } from "./Shooter.js";
+import { invalidTrapDoorReason } from "./TrapDoor.js";
 import { invalidMudReason, MUD_SURFACE_ID } from "./MudOverlay.js";
 import { invalidSegmentColorReason } from "./SegmentColor.js";
 import type { SurfaceId } from "./Surface.js";
@@ -40,6 +46,12 @@ export const invalidPropReason = (value: unknown): string | undefined =>
  */
 export const ATTACHMENTS: { readonly [K in AttachmentKey]-?: AttachmentDef } = {
   motion: { invalidReason: invalidMotionReason, noun: "a Motion" },
+  partMotions: { invalidReason: invalidPartMotionsReason, noun: "a Part's Motion" },
+  trapdoor: { invalidReason: invalidTrapDoorReason, noun: "a trap door's timing" },
+  fragile: { invalidReason: invalidFragileReason, noun: "a fragile floor's timing" },
+  bomb: { invalidReason: invalidBombReason, noun: "a bomb's timing" },
+  shooter: { invalidReason: invalidShooterReason, noun: "a Shooter's timing" },
+  punch: { invalidReason: invalidPunchReason, noun: "a punching glove's timing" },
   conveyor: { invalidReason: invalidConveyorReason, noun: "a Conveyor" },
   ice: { invalidReason: invalidIceReason, noun: "ice" },
   mud: { invalidReason: invalidMudReason, noun: "mud" },
@@ -52,11 +64,12 @@ export const ATTACHMENTS: { readonly [K in AttachmentKey]-?: AttachmentDef } = {
 };
 
 /**
- * Attachments a Prop may still carry: the visual-only ones. Paint changes no
- * physics, so a shovable cone keeps its hue — everything behavioral stays
- * refused beside a body physics owns.
+ * Attachments a Prop may still carry: the visual-only ones, and a bomb's
+ * timing. Paint changes no physics, so a shovable cone keeps its hue; a bomb
+ * is a Prop by definition (ADR 0126), so its clock is at home on one.
+ * Everything else behavioral stays refused beside a body physics owns.
  */
-const PROP_COMPATIBLE: ReadonlySet<AttachmentKey> = new Set<AttachmentKey>(["color"]);
+const PROP_COMPATIBLE: ReadonlySet<AttachmentKey> = new Set<AttachmentKey>(["color", "bomb"]);
 
 /** Every Attachment's key, in {@link ATTACHMENTS}' order. */
 export const ATTACHMENT_KEYS = Object.keys(ATTACHMENTS) as AttachmentKey[];

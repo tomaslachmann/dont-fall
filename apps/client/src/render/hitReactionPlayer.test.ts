@@ -32,7 +32,7 @@ const silentActions = (): CharacterActions => ({
   struggleHeld: null,
   struggleAir: null,
   wobble: null,
-  wobbleWalk: null,
+  wobbleWalk: null, pickup: null, carryWalk: null, throwItem: null,
 });
 
 const setup = () => {

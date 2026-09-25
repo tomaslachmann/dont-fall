@@ -4,6 +4,8 @@ import {
   conjugateQuat,
   dotVec3,
   lengthVec3,
+  motionPace,
+  motionSeconds,
   movingSegmentPose,
   mulQuat,
   normalizeVec3,
@@ -11,6 +13,7 @@ import {
   scaleVec3,
   subVec3,
   TICK_DT,
+  type MotionClock,
   type MotionPose,
   type MotionSpin,
   type MovingSegmentConfig,
@@ -176,7 +179,7 @@ const applyPose = (pose: MotionPose, point: Vec3): Vec3 => addVec3(rotateVec3ByQ
 export class SegmentSounds {
   private readonly pieces: Piece[];
   private readonly spinners: SpinShape[];
-  private previousSeconds: number | null = null;
+  private previousTick: number | null = null;
 
   constructor(
     private readonly engine: Pick<SoundEngine, "play" | "loop">,
@@ -210,17 +213,24 @@ export class SegmentSounds {
     }));
   }
 
-  /** Once a frame, at the drawn Motion's `tick`, heard from `listener`. */
-  update(tick: number, listener: Vec3): void {
-    const seconds = tick * TICK_DT;
-    const from = this.previousSeconds;
-    this.previousSeconds = seconds;
-    const heard = from !== null && seconds > from && seconds - from <= MAX_HEARD_STEP_SECONDS;
+  /**
+   * Once a frame, at the drawn Motion's `tick`, heard from `listener`. Each
+   * piece is heard on its own Motion's clock, warped by its Ramp from `clock`
+   * (ADR 0123), so a sped-up hammer wooshes as often as it swings, and as
+   * much louder as it is faster.
+   */
+  update(tick: number, listener: Vec3, clock: MotionClock = null): void {
+    const previous = this.previousTick;
+    this.previousTick = tick;
+    const heard = previous !== null && tick > previous && (tick - previous) * TICK_DT <= MAX_HEARD_STEP_SECONDS;
 
     for (const piece of this.pieces) {
       const { config, sounds } = piece;
       const { swing, slide } = config.motion;
-      const pose = movingSegmentPose(config, tick);
+      const seconds = motionSeconds(config.motion, tick, clock);
+      const from = previous === null ? seconds : motionSeconds(config.motion, previous, clock);
+      const pace = motionPace(config.motion, tick, clock);
+      const pose = movingSegmentPose(config, tick, clock);
       const centre = applyPose(pose, piece.centre);
       if (slide && piece.rumble) {
         const speed = piece.slidePeak > 0 ? slideSpeedAt(slide, config.scale, seconds) / piece.slidePeak : 0;
@@ -228,18 +238,18 @@ export class SegmentSounds {
       }
       if (!heard) continue;
       if (swing && swingPeaksCrossed(swing, from, seconds) > 0) {
-        this.engine.play(sounds.swing, { at: centre, gain: loudness(piece.swingTipSpeed, SWING_LOUD_TIP_SPEED) });
+        this.engine.play(sounds.swing, { at: centre, gain: loudness(piece.swingTipSpeed * pace, SWING_LOUD_TIP_SPEED) });
       }
       if (slide && slideStopsCrossed(slide, from, seconds) > 0) this.engine.play(sounds.slideStop, { at: centre });
       if (piece.spin) {
         // The spin's own turn is taken off the pose, leaving whatever carries the spinning piece.
         const turn = axisAngleQuat(piece.spin.axis, spinAngleAt(piece.spin.spin, seconds));
-        this.spinPass(sounds.spinPass, piece.spin, applyPose(pose, piece.spin.pivot), mulQuat(pose.rotation, conjugateQuat(turn)), listener, from, seconds);
+        this.spinPass(sounds.spinPass, piece.spin, applyPose(pose, piece.spin.pivot), mulQuat(pose.rotation, conjugateQuat(turn)), listener, from, seconds, pace);
       }
     }
     if (!heard) return;
     for (const spinner of this.spinners) {
-      this.spinPass(MOTION_SOUNDS.spinPass, spinner, spinner.pivot, { x: 0, y: 0, z: 0, w: 1 }, listener, from, seconds);
+      this.spinPass(MOTION_SOUNDS.spinPass, spinner, spinner.pivot, { x: 0, y: 0, z: 0, w: 1 }, listener, previous * TICK_DT, tick * TICK_DT, 1);
     }
   }
 
@@ -251,8 +261,9 @@ export class SegmentSounds {
     listener: Vec3,
     from: number,
     to: number,
+    pace: number,
   ): void {
-    const tipSpeed = Math.abs(shape.spin.speed) * shape.radius;
+    const tipSpeed = Math.abs(shape.spin.speed) * pace * shape.radius;
     if (tipSpeed < SPIN_PASS_MIN_TIP_SPEED) return;
     const axis = rotateVec3ByQuat(shape.axis, carried);
     const first = rotateVec3ByQuat(shape.firstTip, carried);

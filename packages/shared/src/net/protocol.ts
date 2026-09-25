@@ -2,6 +2,7 @@ import type { Vec3 } from "../math/vec3.js";
 import type { SimInputs } from "../simulation/SimInputs.js";
 import type { LiveRace } from "../match/LiveRace.js";
 import type { LobbyPlayer } from "../match/Lobby.js";
+import type { LobbyBots } from "../match/LobbyBots.js";
 import type { DnfEntry } from "../match/Results.js";
 import type { MatchPhase } from "../match/MatchPhase.js";
 import type { RoundResult } from "../match/Score.js";
@@ -132,6 +133,14 @@ export interface SnapshotMessage {
    */
   countdownMsLeft: number;
   /**
+   * The Motion Clock (ADR 0123): the Tick this Round runs from, which every
+   * Ramp counts from — announced from the Countdown's first Tick, so a client
+   * has it before any Ramp moves, and `null` outside a Round. The client's own
+   * prediction adopts it every snapshot (`syncMotionClock`), the way it adopts
+   * {@link roundRules}.
+   */
+  runningFromTick: number | null;
+  /**
    * Players who dropped while this Round was being raced (M4 ticket 05) — a
    * DNF. Their Characters are gone from {@link SimState} and their
    * `LobbyPlayer` entry is gone too (a disconnect always removes both), so
@@ -216,6 +225,14 @@ export interface SnapshotMessage {
      * this unresolved on every snapshot until it becomes the current Round.
      */
     roundPicks: { trackId: string | null; roundType: RoundType | null }[];
+    /**
+     * The host's Bot settings (M17 ticket 10, ADR 0129) — Lobby-scoped, like
+     * `matchLength`. The places left open fill with Bots when the Round
+     * starts, so this is what a Lobby *will* do, and the roster above is who
+     * is in it. No row there says which seats are Bots, and nothing here does
+     * either: no Screen marks a Bot.
+     */
+    bots: LobbyBots;
   };
   /**
    * Every Round played so far this Match, in order (M7 ticket 04, ADR
@@ -445,6 +462,17 @@ export interface LoadedMessage {
   trackRevision: number;
 }
 
+/**
+ * Client → server: the host's Bot settings (M17 ticket 10, ADR 0129) — how
+ * many Bots fill the Lobby's open places when the Round starts, and at what
+ * level. Host-only and LOBBY-only, the same discipline as `setMatchLength`,
+ * and refused once `start` is sent. Validated by `invalidLobbyBotsReason`;
+ * an invalid request is ignored rather than clamped.
+ */
+export interface SetBotsMessage extends LobbyBots {
+  type: "setBots";
+}
+
 export type ClientMessage =
   | InputMessage
   | PingMessage
@@ -455,6 +483,7 @@ export type ClientMessage =
   | SetRoundTypeMessage
   | SetMatchLengthMessage
   | PickRoundSlotMessage
+  | SetBotsMessage
   | StartMessage
   | StandingsReadyMessage
   | LoadedMessage

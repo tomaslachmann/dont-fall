@@ -14,9 +14,11 @@ import { harness } from "../test/harness.js";
  */
 const STILL = `${TRACK_THUMBNAIL_DATA_URL_PREFIX}/9j/4AAQSkZJRg==`;
 let rendered = 0;
+let lastOpts: { navmesh?: boolean } | undefined;
 const h = harness({
-  render: async () => {
+  render: async (_draftId: string, opts?: { navmesh?: boolean }) => {
     rendered += 1;
+    lastOpts = opts;
     return STILL;
   },
 });
@@ -42,6 +44,23 @@ describe("screenshot_draft", () => {
     expect(image.data).toBe("/9j/4AAQSkZJRg==");
     expect(caption.type).toBe("text");
     expect(caption.text).toMatch(/1 Segments, survival/);
+  });
+
+  it("is off by default, and threads a `navmesh: true` ask to the renderer (M17 ticket 02)", async () => {
+    const draftId = (
+      await h.current.call("create_draft", {
+        roundType: "survival",
+        track: [{ moduleId: "kaykit_platform_6x6x1_red", position: { x: 0, y: 0, z: 0 }, rotation: 0 }],
+      })
+    ).json.id as string;
+
+    await h.current.callRaw("screenshot_draft", { draftId });
+    expect(lastOpts?.navmesh).toBeUndefined();
+
+    const withNav = await h.current.callRaw("screenshot_draft", { draftId, navmesh: true });
+    expect(lastOpts?.navmesh).toBe(true);
+    const caption = (withNav.content as { type: string; text: string }[])[1]!;
+    expect(caption.text).toMatch(/NAVMESH overlay on/);
   });
 
   it("fails a typo'd id before rendering anything", async () => {

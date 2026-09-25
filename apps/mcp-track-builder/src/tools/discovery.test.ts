@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { ASSET_MODULE_DEFS, BASE_RACE_TRACK_ID } from "@dont-fall/shared";
+import { ASSET_MODULE_DEFS, assetPaletteIds, canonicalPaletteId, BASE_RACE_TRACK_ID } from "@dont-fall/shared";
 import { startApi, type ApiService } from "@dont-fall/api";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTrackApi } from "../api.js";
@@ -44,21 +44,52 @@ describe("discovery", () => {
     const categories = await call("list_categories");
     expect(categories.isError).toBe(false);
     expect(categories.json.categories.map((c: { id: string }) => c.id)).toEqual([
-      "platform",
-      "obstacle",
-      "spring",
+      "floor",
+      "structure",
+      "sweeper",
+      "launcher",
       "gate",
-      "fan",
+      "prop",
       "scenery",
     ]);
-    expect(categories.json.categories.reduce((n: number, c: { moduleCount: number }) => n + c.moduleCount, 0)).toBe(
-      ASSET_MODULE_DEFS.length,
-    );
+    // Shapes, not files: the counts match what list_modules lists (ADR 0113 —
+    // color is an Attachment), so they come in under the registry's file count.
+    const shapes = categories.json.categories.reduce((n: number, c: { moduleCount: number }) => n + c.moduleCount, 0);
+    expect(shapes).toBe(assetPaletteIds().length);
+    expect(shapes).toBeLessThan(ASSET_MODULE_DEFS.length);
 
-    const modules = await call("list_modules", { category: "platform", limit: 2 });
+    const modules = await call("list_modules", { category: "floor", limit: 2 });
     expect(modules.json.items).toHaveLength(2);
     expect(modules.json.total).toBeGreaterThan(2);
-    expect(Object.keys(modules.json.items[0]).sort()).toEqual(["family", "id", "size", "sockets", "top"]);
+    expect(Object.keys(modules.json.items[0]).sort()).toEqual([
+      "id",
+      "paintable",
+      "shape",
+      "size",
+      "sockets",
+      "top",
+    ]);
+
+    // A family lists once, under its canonical: the LLM never sees the same
+    // shape four times, and a lone `_blue` (the quarter pack, no family) still
+    // lists as itself.
+    const floors = await call("list_modules", { category: "floor", limit: 200 });
+    const listed = floors.json.items as { id: string; shape: string; paintable: boolean }[];
+    for (const m of listed) expect(m.id).toBe(canonicalPaletteId(m.id));
+    expect(listed.map((m) => m.id)).not.toContain("kaykit_platform_6x6x1_blue");
+    // A shape whose colorless twin is its own file lists twice — same
+    // geometry, different art — and `paintable` is what tells them apart.
+    // A barrier is Structure, not Floor (ADR 0122): it walls the route in.
+    const structure = await call("list_modules", { category: "structure", limit: 200 });
+    const barriers = (structure.json.items as typeof listed).filter((m) => m.shape === "kaykit_barrier_1x1x1");
+    expect(barriers.map((m) => [m.id, m.paintable])).toEqual([
+      ["kaykit_barrier_1x1x1", false],
+      ["kaykit_barrier_1x1x1_red", true],
+    ]);
+    expect(listed.find((m) => m.id === "kaykit_platform_6x6x1_red")).toMatchObject({
+      shape: "kaykit_platform_6x6x1",
+      paintable: true,
+    });
 
     const full = await call("get_module", { id: "kaykit_platform_6x6x1_red" });
     expect(full.json.footprint.bounds).toBeDefined();
@@ -83,18 +114,25 @@ describe("discovery", () => {
   it("references every attachment with its storable shape", async () => {
     const attachments = await call("list_attachments");
     expect(Object.keys(attachments.json).sort()).toEqual([
+      "bomb",
       "bounce",
       "checkpoint",
       "color",
       "conveyor",
+      "fragile",
       "ice",
       "launch",
       "motion",
       "mud",
+      "partMotions",
       "prop",
+      "punch",
+      "shooter",
       "start",
+      "trapdoor",
     ]);
-    expect(attachments.json.motion.value).toMatch(/spin.*swing.*slide/s);
+    expect(attachments.json.motion.value).toMatch(/spin.*swing.*slide.*ramp/s);
+    expect(attachments.json.partMotions.value).toMatch(/sweeper_3arms/);
     expect(attachments.json.color.value).toMatch(/pink/);
   });
 

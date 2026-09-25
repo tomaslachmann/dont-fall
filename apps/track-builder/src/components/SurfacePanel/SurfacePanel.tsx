@@ -48,14 +48,23 @@ export function SurfacePanel({ engine }: { engine: BuilderEngine }) {
   useEngineVersion(engine);
   const primary = engine.primary;
   const segment = primary !== undefined ? engine.track[primary] : undefined;
-  const conveyor = segment?.conveyor;
+  // A belt Asset arrives already running (ADR 0120), so the panel opens on the
+  // belt that is there rather than offering to attach one to a conveyor.
+  const assetBelt = segment ? engine.library[segment.moduleId]?.attachments?.conveyor : undefined;
+  const conveyor = segment?.conveyor ?? assetBelt;
+  const ownBelt = segment?.conveyor === undefined && assetBelt !== undefined;
   const deck = (segment && surfaceAttachmentOf(segment)?.key) ?? "plain";
   // Why this Segment may not be a Prop, if it may not (ADR 0095) — the same
   // rule publish enforces, said here instead of at the point of refusal.
+  // A bomb is a Prop by being one (ADR 0126): nothing to switch.
+  const bomb = segment !== undefined && engine.library[segment.moduleId]?.bomb !== undefined;
+  const isProp = segment?.prop === true || bomb;
   const propLock =
     segment === undefined
       ? undefined
-      : segment.motion !== undefined
+      : bomb
+        ? "A bomb is always a Prop — someone has to be able to pick it up."
+        : segment.motion !== undefined
         ? "A Moving Segment is authored movement, not physics — clear its Motion first."
         : segment.start === true
           ? "The Start has to stay where it is."
@@ -64,7 +73,7 @@ export function SurfacePanel({ engine }: { engine: BuilderEngine }) {
             : undefined;
 
   const summary = [
-    segment?.prop === true ? "PROP" : undefined,
+    isProp ? "PROP" : undefined,
     deck === "plain" ? undefined : deck.toUpperCase(),
     conveyor ? `BELT · ${PRESETS.find((p) => p.value === conveyor.preset)!.label}` : undefined,
   ].filter(Boolean).join(" · ");
@@ -85,13 +94,13 @@ export function SurfacePanel({ engine }: { engine: BuilderEngine }) {
                 <p className={css.hint}>{propLock}</p>
               )}
               <p className={css.hint}>
-                {segment.prop === true
+                {isProp
                   ? "A body physics owns · it falls, it is shoved, and it has no deck of its own."
                   : "Placed pieces are scenery a Character runs into · a Prop is one it moves."}
               </p>
             </div>
 
-            {segment.prop === true ? null : (
+            {isProp ? null : (
             <div className={css.block}>
               <Kicker>DECK</Kicker>
               <SegmentedControl shape="pill" size="sm" tone="ink" value={deck} items={[...DECKS]}
@@ -100,13 +109,13 @@ export function SurfacePanel({ engine }: { engine: BuilderEngine }) {
             </div>
             )}
 
-            {segment.prop === true ? null : (
+            {isProp ? null : (
             <div className={css.block}>
               <div className={css.row}>
                 <div className={css.grow}>
                   <Kicker>BELT{conveyor ? ` · ${PRESETS.find((p) => p.value === conveyor.preset)!.label}` : ""}</Kicker>
                 </div>
-                {conveyor && (
+                {conveyor && !ownBelt && (
                   <button type="button" className={css.detach} title="detach the belt" aria-label="detach belt"
                     onClick={() => engine.setSegmentConveyor(undefined)}><TrashIcon /></button>
                 )}
@@ -124,6 +133,7 @@ export function SurfacePanel({ engine }: { engine: BuilderEngine }) {
                         onCommit={(degrees) => engine.setSegmentConveyor({ preset: conveyor.preset, angle: (degrees * Math.PI) / 180 })} />
                     </div>
                   </div>
+                  {ownBelt && <p className={css.hint}>This piece is a belt · changing it here makes it this Segment's own.</p>}
                 </>
               ) : (
                 <>

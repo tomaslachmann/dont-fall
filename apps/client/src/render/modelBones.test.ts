@@ -1,10 +1,21 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { GETUP_MS, RAGDOLL_MIN_MS } from "@dont-fall/shared";
+import {
+  CAPSULE_BOTTOM_OFFSET,
+  CARRY_GRIP,
+  GETUP_MS,
+  PICKUP_CLIP_SECONDS,
+  PICKUP_CONTACT_SECONDS,
+  PROP_TOSS_RELEASE_LIFT,
+  PROP_TOSS_RELEASE_REACH,
+  RAGDOLL_MIN_MS,
+  SPIN_GRIP,
+  THROW_RELEASE_SECONDS,
+} from "@dont-fall/shared";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { beforeAll, describe, expect, it } from "vitest";
-import { KNOCKDOWN_DIRECTIONS, loadCharacterActions, MODEL_YAW_OFFSET } from "./characterModel.js";
+import { CHARACTER_VISUAL_HEIGHT, KNOCKDOWN_DIRECTIONS, loadCharacterActions, MODEL_YAW_OFFSET } from "./characterModel.js";
 import { FloatLimbs } from "./floatPose.js";
 import { FOOT_CONTACTS } from "./footsteps.js";
 import { KNOCKDOWN_SECTORS } from "./knockdownAnimation.js";
@@ -59,6 +70,97 @@ describe("BLIP.glb — real model, real bone names", () => {
     scene.updateMatrixWorld(true);
     const eye = scene.getObjectByName("eyeL")!.getWorldPosition(new THREE.Vector3());
     expect(eye.z).toBeGreaterThan(0);
+  });
+
+  describe("where a carried Prop is held (ADR 0125, ADR 0128)", () => {
+    // Its own copy, scaled and seated exactly as the Stage draws the model,
+    // so posing it cannot leak into the other tests' shared scene.
+    let own: { scene: THREE.Group; animations: THREE.AnimationClip[] };
+    let mixer: THREE.AnimationMixer;
+    beforeAll(async () => {
+      const raw = fs.readFileSync(MODEL_PATH);
+      const exact = new Uint8Array(raw.byteLength);
+      exact.set(raw);
+      own = await new GLTFLoader().parseAsync(exact.buffer, path.dirname(MODEL_PATH) + "/");
+      const bounds = new THREE.Box3().setFromObject(own.scene);
+      const scale = CHARACTER_VISUAL_HEIGHT / (bounds.max.y - bounds.min.y);
+      own.scene.scale.setScalar(scale);
+      own.scene.position.y = -bounds.min.y * scale;
+      mixer = new THREE.AnimationMixer(own.scene);
+    });
+
+    /** The pose `clip` has at `time`, drawn: the hands' midpoint and spread, and how far forward the body (arms aside) reaches at their height. */
+    const grip = (clip: string, time: number) => {
+      mixer.stopAllAction();
+      const action = mixer.clipAction(own.animations.find((c) => c.name === clip)!);
+      // Held on its last frame rather than wrapped back to its first.
+      action.setLoop(THREE.LoopOnce, 1);
+      action.clampWhenFinished = true;
+      action.reset().play();
+      mixer.setTime(time);
+      own.scene.updateMatrixWorld(true);
+      const left = own.scene.getObjectByName("handL")!.getWorldPosition(new THREE.Vector3());
+      const right = own.scene.getObjectByName("handR")!.getWorldPosition(new THREE.Vector3());
+      const between = left.clone().add(right).multiplyScalar(0.5);
+      let body: THREE.SkinnedMesh | undefined;
+      own.scene.traverse((o) => {
+        if (!body && (o as THREE.SkinnedMesh).isSkinnedMesh) body = o as THREE.SkinnedMesh;
+      });
+      const arms = new Set(body!.skeleton.bones.flatMap((bone, i) => (/arm|hand/.test(bone.name) ? [i] : [])));
+      const { skinIndex, skinWeight, position } = body!.geometry.attributes;
+      const vertex = new THREE.Vector3();
+      let front = -Infinity;
+      for (let i = 0; i < position!.count; i += 1) {
+        let onArms = 0;
+        for (let k = 0; k < 4; k += 1) if (arms.has(skinIndex!.getComponent(i, k))) onArms += skinWeight!.getComponent(i, k);
+        if (onArms > 0.2) continue;
+        body!.getVertexPosition(i, vertex).applyMatrix4(body!.matrixWorld);
+        if (Math.abs(vertex.y - between.y) < 0.05) front = Math.max(front, vertex.z);
+      }
+      // Forward is +Z on the model (MODEL_YAW_OFFSET is 0); the feet sit at the capsule's bottom.
+      expect(Math.abs(between.x)).toBeLessThan(0.05);
+      return { reach: between.z, lift: between.y - CAPSULE_BOTTOM_OFFSET, spread: left.distanceTo(right), bodyFront: front };
+    };
+
+    it("holds the carry's grip where Pickup_Ground ends — the hold every carry clip starts from", () => {
+      const measured = grip("Pickup_Ground", PICKUP_CLIP_SECONDS);
+      expect(measured.reach).toBeCloseTo(CARRY_GRIP.reach, 1);
+      expect(measured.lift).toBeCloseTo(CARRY_GRIP.lift, 1);
+      expect(measured.spread).toBeCloseTo(CARRY_GRIP.spread, 1);
+      expect(measured.bodyFront).toBeCloseTo(CARRY_GRIP.bodyFront, 1);
+      // Carry_Walk and Throw_Item start from the same hands.
+      for (const clip of ["Carry_Walk", "Throw_Item"]) {
+        expect(grip(clip, 0).reach).toBeCloseTo(CARRY_GRIP.reach, 1);
+        expect(grip(clip, 0).lift).toBeCloseTo(CARRY_GRIP.lift, 1);
+      }
+    });
+
+    it("holds a Spin's grip where Grab_HoldOut, which never moves its hands, has them", () => {
+      const measured = grip("Grab_HoldOut", 0);
+      expect(measured.reach).toBeCloseTo(SPIN_GRIP.reach, 1);
+      expect(measured.lift).toBeCloseTo(SPIN_GRIP.lift, 1);
+      expect(measured.spread).toBeCloseTo(SPIN_GRIP.spread, 1);
+      expect(measured.bodyFront).toBeCloseTo(SPIN_GRIP.bodyFront, 1);
+    });
+
+    it("lets a Toss go from where Throw_Item has the hands at its release", () => {
+      const measured = grip("Throw_Item", THROW_RELEASE_SECONDS);
+      expect(measured.reach).toBeCloseTo(PROP_TOSS_RELEASE_REACH, 1);
+      expect(measured.lift).toBeCloseTo(PROP_TOSS_RELEASE_LIFT, 1);
+    });
+
+    it("times the Lift and the Toss by the clips' own events", () => {
+      // The loader keeps no clip extras, so they are read off the file's JSON chunk.
+      const raw = fs.readFileSync(MODEL_PATH);
+      const json = JSON.parse(raw.subarray(20, 20 + raw.readUInt32LE(12)).toString("utf8")) as {
+        animations: { name: string; extras?: { duration_seconds?: number; events?: { name: string; time: number }[] } }[];
+      };
+      const extras = (name: string) => json.animations.find((clip) => clip.name === name)!.extras!;
+      const event = (clip: string, name: string) => extras(clip).events!.find((e) => e.name === name)!.time;
+      expect(extras("Pickup_Ground").duration_seconds).toBe(PICKUP_CLIP_SECONDS);
+      expect(event("Pickup_Ground", "pickup_contact")).toBe(PICKUP_CONTACT_SECONDS);
+      expect(event("Throw_Item", "item_release")).toBe(THROW_RELEASE_SECONDS);
+    });
   });
 
   it("carries every clip the renderer binds — a misspelt name would quietly animate nothing", () => {

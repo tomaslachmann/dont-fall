@@ -114,11 +114,20 @@ const SlideSchema = TimingSchema.extend({
   offset: Vec3Schema.describe("Local-frame vector from the rest pose to the far pose."),
 }).strict();
 
+const RampSchema = z
+  .object({
+    multiplier: finite("number").positive().describe("The pace it ends at, as a multiple of its own; below 1 winds it down."),
+    seconds: finite("number of seconds").positive().describe("Seconds from the Round starting to run until it reaches the multiplier."),
+  })
+  .strict()
+  .describe("Speeds the whole Motion up over the Round, linearly, then holds (ADR 0123). Every kind on it together.");
+
 export const MotionSchema = z
   .object({
     spin: SpinSchema.optional().describe("Endless rotation at constant speed."),
     swing: SwingSchema.optional().describe("Rotation back and forth between −amplitude and +amplitude."),
     slide: SlideSchema.optional().describe("Movement back and forth between rest and offset."),
+    ramp: RampSchema.optional(),
   })
   .strict()
   .refine((motion) => motion.spin !== undefined || motion.swing !== undefined || motion.slide !== undefined, {

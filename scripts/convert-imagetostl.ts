@@ -53,13 +53,21 @@ const files = readdirSync(dir).filter((f) => f.endsWith(".glb"));
  */
 const TRAP_PACK_SCALE = 3.6;
 
-/** Asset category by stem — reviewed in the builder, not guessed at runtime. */
+/**
+ * Asset category by stem (ADR 0122) — reviewed in the builder, not guessed at
+ * runtime. The pack's decks are Floors, spiked ones included: a spike plate is
+ * a deck an author finds among decks, and its `hazard` is what warns them.
+ * Everything the pack calls a trap is a body meant to be given a Motion and
+ * swept through the route — the discs, the hammers, the hanging ball, the long
+ * arrow bars — so all of it is Sweeper. The loose balls and the arrows are
+ * Props; the fences, the flat arch and the targets dress the course.
+ */
 const CATEGORY_RULES: CategoryRules = [
-  [/^platformspike/, "obstacle"],
-  // Before the platform rule: a spring platform is a Spring first (ADR 0069).
-  [/^platformspring/, "spring"],
-  [/^(platform|platfrom|clay)/, "platform"],
-  [/^(arrow|arrowtrap|arrowtrapbig|ball|hammer|hammerbig|trap|trapball|trapcircle.*)$/, "obstacle"],
+  // Before the platform rule: a spring platform is a Launcher first (ADR 0069).
+  [/^platformspring/, "launcher"],
+  [/^(platform|platfrom|clay)/, "floor"],
+  [/^(arrowtrap|arrowtrapbig|hammer|hammerbig|trap|trapball|trapcircle.*)$/, "sweeper"],
+  [/^(arrow|ball)$/, "prop"],
   // Not a Gate despite the name (ADR 0068): a flat D outline 0.5 × 2 × 0.1 with no opening a Character fits through.
   [/^(arch|fence|fencebig|fencesmall|target)$/, "scenery"],
 ];

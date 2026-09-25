@@ -4,6 +4,7 @@ import { COUNTDOWN_TICKS, ROUND_END_TICKS } from "../tuning/match.js";
 import {
   advanceMatchPhase,
   countdownMsLeft,
+  motionClockFor,
   phaseLocksInput,
   phaseNeedsPhysicsStep,
   type MatchPhaseInputs,
@@ -306,5 +307,22 @@ describe("countdownMsLeft", () => {
   it("is zero in every other phase — there is nothing counting down", () => {
     expect(countdownMsLeft(at("LOBBY"), 100)).toBe(0);
     expect(countdownMsLeft(at("RUNNING", 100), 200)).toBe(0);
+  });
+});
+
+describe("motionClockFor (ADR 0123)", () => {
+  it("knows the Tick the Round runs from on the Countdown's first Tick, and keeps it to the Round's end", () => {
+    const countdownMs = 3000;
+    const runsFrom = 100 + msToTicks(countdownMs);
+
+    expect(motionClockFor({ phase: "COUNTDOWN", phaseStartTick: 100 }, 0, countdownMs)).toBe(runsFrom);
+    expect(motionClockFor({ phase: "RUNNING", phaseStartTick: runsFrom }, runsFrom, countdownMs)).toBe(runsFrom);
+    expect(motionClockFor({ phase: "ROUND_END", phaseStartTick: runsFrom + 900 }, runsFrom, countdownMs)).toBe(runsFrom);
+  });
+
+  it("has none outside a Round", () => {
+    for (const phase of ["LOBBY", "LOADING", "RESULTS"] as const) {
+      expect(motionClockFor({ phase, phaseStartTick: 7 }, 7)).toBeNull();
+    }
   });
 });

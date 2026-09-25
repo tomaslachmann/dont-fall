@@ -4,7 +4,7 @@ import {
   NICKNAME_MAX_LENGTH,
   ROUND_TYPES,
   allReady,
-  resolveHostId,
+  invalidLobbyBotsReason,
   type ClientMessage,
   type RoundType,
 } from "@dont-fall/shared";
@@ -94,7 +94,7 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
     // `await` below, for the identical reason the connect-time reload
     // re-checks `sockets.size` after its own fetch: the world can move
     // on while this is in flight.
-    if (rt.match.phase !== "LOBBY" || resolveHostId([...rt.lobbyPlayers.values()]) !== id) return true;
+    if (rt.match.phase !== "LOBBY" || rt.hostId() !== id) return true;
     const requestedTrackId = message.trackId;
     const seq = ++rt.selectTrackSeq;
     void (async () => {
@@ -112,7 +112,7 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
         seq !== rt.selectTrackSeq ||
         rt.match.phase !== "LOBBY" ||
         !rt.sockets.has(id) ||
-        resolveHostId([...rt.lobbyPlayers.values()]) !== id
+        rt.hostId() !== id
       ) {
         // Superseded by a newer pick, or the Lobby moved on (Round
         // started, this sender left, host changed) while the fetch
@@ -135,7 +135,7 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
     // anything else would otherwise put the server on a `RoundType` no
     // resolver knows, and every Round after it would resolve as a Race
     // without anyone being told why.
-    if (rt.match.phase !== "LOBBY" || resolveHostId([...rt.lobbyPlayers.values()]) !== id) return true;
+    if (rt.match.phase !== "LOBBY" || rt.hostId() !== id) return true;
     if (!ROUND_TYPES.includes(message.roundType as RoundType)) return true;
     rt.setRoundType(message.roundType);
     return true;
@@ -153,9 +153,21 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
     // without this a Match length sent in that ~33ms window would still
     // pass the LOBBY check and mutate `matchLength` out from under
     // `buildMatchStructure`'s own array, already sized off the old value.
-    if (rt.match.phase !== "LOBBY" || rt.startRequested || resolveHostId([...rt.lobbyPlayers.values()]) !== id) return true;
+    if (rt.match.phase !== "LOBBY" || rt.startRequested || rt.hostId() !== id) return true;
     if (!Number.isInteger(message.matchLength) || message.matchLength < MIN_MATCH_LENGTH || message.matchLength > MAX_MATCH_LENGTH) return true;
     rt.setMatchLength(message.matchLength);
+    return true;
+  }
+
+  if (message.type === "setBots") {
+    // Host-only and LOBBY-only, and refused once `startRequested`, the same
+    // discipline as `setMatchLength` (M17 ticket 10): the fill happens in the
+    // `start` handler, and a change landing after it would describe Bots that
+    // were never seated. Validated whole, never clamped.
+    if (rt.match.phase !== "LOBBY" || rt.startRequested || rt.hostId() !== id) return true;
+    const bots = { enabled: message.enabled, max: message.max, level: message.level };
+    if (invalidLobbyBotsReason(bots, rt.config.maxPlayers) !== undefined) return true;
+    rt.setLobbyBots(bots);
     return true;
   }
 
@@ -174,7 +186,7 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
     // pick arriving in the post-`start`, pre-tick window would otherwise be
     // silently accepted into `pendingRoundPicks` yet never consulted, since
     // `buildMatchStructure` may already be past that slot.
-    if (rt.match.phase !== "LOBBY" || rt.startRequested || resolveHostId([...rt.lobbyPlayers.values()]) !== id) return true;
+    if (rt.match.phase !== "LOBBY" || rt.startRequested || rt.hostId() !== id) return true;
     if (message.roundIndex < 1 || message.roundIndex >= rt.matchLength) return true;
     rt.pickRoundSlot(message.roundIndex, { trackId: message.trackId, roundType: message.roundType });
     return true;
@@ -195,8 +207,11 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
     // calls racing on the same `usedTrackIds`/`matchStructure`.
     if (rt.match.phase !== "LOBBY" || rt.startRequested) return true;
     const players = [...rt.lobbyPlayers.values()];
-    if (resolveHostId(players) !== id) return true;
-    if (rt.sockets.size < rt.config.playersToStart) return true;
+    if (rt.hostId() !== id) return true;
+    // The Bots this start would seat count toward the bar (M17 ticket 10,
+    // ADR 0129), so a host alone can start a Match against Bots. Read before
+    // they are seated, against the same free places the fill below uses.
+    if (rt.sockets.size + rt.botsToFill() < rt.config.playersToStart) return true;
     if (!allReady(players)) return true;
     // A Race needs a Finish Zone (M5 ticket 07, ADR 0041) — refused here,
     // against the Track actually loaded. Silence is fine for this one
@@ -208,6 +223,13 @@ export const handleLobbyMessage = (rt: MatchRuntime, id: string, message: Client
     // above is what makes it a re-entrancy lock at all, and a `start`
     // arriving between the two would otherwise slip through.
     rt.startRequested = true;
+    // The open places fill with Bots as the Round starts (M17 ticket 10, ADR
+    // 0129): here, still in LOBBY and before the tick that leaves it, so the
+    // Round's betting board opens with them as runners and its world is
+    // loaded with them in it. Nothing can take a place in between: a
+    // Reservation is refused once `startRequested`, and a connection is
+    // counted against every seat already taken, Bots included.
+    rt.fillBots();
     // M7 ticket 05: draw whatever Round slots after the first the host
     // left unpicked, kicked off now rather than awaited here — Round 1 is
     // about to play with whatever's already loaded regardless, and by the

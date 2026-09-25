@@ -1,8 +1,5 @@
-import { useEffect } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
 import type { LobbyRef } from "@dont-fall/shared";
-import { browserStorage } from "../lib/browserStorage.js";
-import { applyLobbyKindToVoiceScope } from "../lib/voiceSettings.js";
 import { GameCanvas } from "../components/GameCanvas.js";
 import { ConnectionError } from "../lib/errors.js";
 import { useLobbyConnection } from "../lib/hooks/useLobbyConnection.js";
@@ -57,12 +54,6 @@ function BrokeredLobby({
   reservation?: string;
 }) {
   const navigate = useNavigate();
-  // Voice chat's ALL never follows a Player into a Lobby of strangers (ADR
-  // 0111). A join code is what a private Lobby has and a public one does not,
-  // so the route already knows which this is — before the voice session
-  // starts, because this runs on the commit that publishes the Lobby's
-  // presence and the session only starts once that has.
-  useEffect(() => applyLobbyKindToVoiceScope(browserStorage(), code === undefined), [serverPort, code]);
   const { connection, lobby, actions, error, closed } = useLobbyConnection(
     serverPort,
     reservation === undefined ? {} : { reservation },
@@ -104,6 +95,7 @@ function BrokeredLobby({
         onSetRoundType={actions.setRoundType}
         onSetMatchLength={actions.setMatchLength}
         onPickRoundSlot={actions.pickRoundSlot}
+        onSetBots={actions.setBots}
         onStart={actions.start}
       />
     );

@@ -52,7 +52,8 @@ const RESERVATION_BODY_MAX_BYTES = 4 * 1024;
  * for friends presence.
  *
  * `playerCount` counts live Reservations too (ADR 0112): a seat kept for a
- * Party member is taken, so the broker's "N SLOTS OPEN" stays honest.
+ * Party member is taken, so the broker's "N SLOTS OPEN" stays honest. So is
+ * a Bot's (ADR 0129).
  *
  * Account ids are identifiers, not credentials, and this port only ever
  * answers localhost. Anonymous seats are omitted rather than reported as null.
@@ -60,7 +61,7 @@ const RESERVATION_BODY_MAX_BYTES = 4 * 1024;
 const answerStatus = (rt: MatchRuntime, res: ServerResponse): void => {
   const inRound = rt.match.phase === "COUNTDOWN" || rt.match.phase === "RUNNING" || rt.match.phase === "ROUND_END";
   answerJson(res, 200, {
-    playerCount: rt.sockets.size + rt.reservations.liveCount(),
+    playerCount: rt.seatsTaken(),
     maxPlayers: rt.config.maxPlayers,
     phase: rt.match.phase,
     round: inRound ? rt.roundResults.length + 1 : null,

@@ -9,11 +9,31 @@ import {
   type PropSnapshot,
   type RenderCharacter,
   type Vec3,
+  type FragileLook,
+  lengthVec3,
+  punchPose,
+  type MotionClock,
+  bombPhase,
+  type BombDef,
+  type BombPhase,
+  type BombState,
 } from "@dont-fall/shared";
-import { findSpinningParts, localBounds, lowestDrawnY, lowestMovingY, spinParts, templateForPlacement } from "@dont-fall/render";
+import {
+  assetPartSubtree,
+  BeltSlats,
+  createBombLook,
+  findSpinningParts,
+  localBounds,
+  lowestDrawnY,
+  lowestMovingY,
+  spinParts,
+  templateForPlacement,
+  type BombLook,
+} from "@dont-fall/render";
 import * as THREE from "three";
 import { buildAirColumns } from "../airColumns.js";
 import { buildAssetVisuals } from "../assetVisuals.js";
+import { ShooterEffects } from "../shooterEffects.js";
 import { BouncePresses, buildBounceSheets, type BounceLanding } from "../bounceSheets.js";
 import { buildConveyorStrips } from "../conveyorBelts.js";
 import { createIceFooting, type IceFootingQuery } from "../iceFooting.js";
@@ -38,6 +58,7 @@ export type TrackVisualsConfig = Required<
     | "segmentColors"
     | "springs"
     | "movingSegments"
+    | "shooters"
     | "conveyors"
     | "iceDecks"
     | "mudDecks"
@@ -52,6 +73,13 @@ export type TrackVisualsConfig = Required<
 };
 
 /** Everything the Track draws, and what the rest of the Stage asks of it. */
+/** What a Bomb is doing as drawn this frame (ADR 0126) — what its sounds follow. */
+export interface DrawnBomb {
+  propIndex: number;
+  phase: BombPhase;
+  fuseSeconds: number;
+}
+
 export interface TrackVisuals {
   /**
    * What the spring-arm camera and the knockdown floor probe hit: every still
@@ -70,11 +98,29 @@ export interface TrackVisuals {
   onIce: IceFootingQuery;
   /** Place every Prop from its replicated pose. */
   placeProps: (props: PropSnapshot[]) => void;
+  /** Move one Prop, keeping its rotation — into the hands that carry it (ADR 0128). After {@link placeProps}. */
+  placeCarriedProp: (index: number, position: THREE.Vector3) => void;
+  /**
+   * Draw every Bomb the way the Snapshot's rows say at drawn Tick `tick`
+   * (ADR 0126) — lying, burning, or going off. Before {@link placeProps},
+   * which shows a bomb only while this has something of it to draw.
+   */
+  drawBombs: (rows: readonly BombState[], tick: number, nowMs: number) => DrawnBomb[];
+  /**
+   * Draw each fragile floor the way its state says (ADR 0118): the authored
+   * look for how battered it is, or nothing at all once it is gone.
+   */
+  showFragile: (looks: readonly FragileLook[]) => void;
+  /**
+   * Flash and kick whichever cannon has just fired (ADR 0119) — read off the
+   * balls, never off the wire. Returns the balls fired this frame, by Prop index.
+   */
+  fireShooters: (props: readonly PropSnapshot[], nowMs: number) => number[];
   /**
    * Pose every Moving Segment and Spinner at tick `t`, and march the belts and
    * press the mud on the same clock — under every Character in `centres`.
    */
-  poseMotion: (t: number, centres: Vec3[]) => void;
+  poseMotion: (t: number, centres: Vec3[], clock: MotionClock) => void;
   /** Squash whichever Spring just fired (ADR 0069); returns the ones that settled back to rest. */
   squashSprings: (characters: Record<string, RenderCharacter>, nowMs: number) => readonly SpringTrigger[];
   /** Dent every bounce sheet under the Characters on it (ADR 0070); returns this frame's landings. */
@@ -120,6 +166,7 @@ export const buildTrackVisuals = (
     segmentColors,
     springs,
     movingSegments,
+    shooters,
     conveyors,
     iceDecks,
     mudDecks,
@@ -167,6 +214,9 @@ export const buildTrackVisuals = (
   // one child per placement, in order, so the two line up by index. Only
   // Springs need looking up, so only Springs are kept.
   const springVisuals = new Map<number, THREE.Object3D>();
+  // Index-aligned with `assetPlacements`, for the effects that have to find
+  // the instance they belong to — a belt's slats (ADR 0120).
+  const assetVisualInstances: (THREE.Object3D | undefined)[] = [];
   if (assetPlacements.length > 0) {
     const assetVisuals = setShadowRole(buildAssetVisuals(assetTemplates, assetPlacements), "both");
     scene.add(assetVisuals);
@@ -177,6 +227,7 @@ export const buildTrackVisuals = (
     const squashable = new Set(springs.map((spring) => spring.segmentIndex));
     assetPlacements.forEach((placement, i) => {
       const instance = assetVisuals.children[i];
+      assetVisualInstances.push(instance);
       if (instance && squashable.has(placement.segmentIndex)) springVisuals.set(placement.segmentIndex, instance);
     });
   }
@@ -199,7 +250,10 @@ export const buildTrackVisuals = (
     const template = assetTemplates[config.moduleId];
     if (template) {
       // Collision boxes/trimeshes arrive already scaled (ADR 0062); the visual is scaled here.
-      const visual = templateForPlacement(assetTemplates, config.moduleId, segmentColors[config.segmentIndex]).clone(true);
+      const whole = templateForPlacement(assetTemplates, config.moduleId, segmentColors[config.segmentIndex]);
+      // A body that is one Part of its Asset draws that Part alone (ADR
+      // 0116); the rest of the file is drawn by whatever holds it still.
+      const visual = config.part === undefined ? whole.clone(true) : assetPartSubtree(whole, (part) => part === config.part);
       visual.scale.setScalar(config.scale);
       group.add(visual);
     } else if (config.trimeshes.length > 0) {
@@ -213,16 +267,68 @@ export const buildTrackVisuals = (
     });
     return group;
   });
-  const poseMovingSegments = (t: number): void => {
+  // The authored looks of every fragile floor (ADR 0118), by Segment: three
+  // groups standing in the same place, of which exactly one is ever drawn.
+  // Found by the `state` extra the Asset itself carries, never by node name.
+  const fragileLookNodes = new Map<number, THREE.Object3D[]>();
+  movingSegments.forEach((config, i) => {
+    if (config.fragile === undefined) return;
+    const looks: THREE.Object3D[] = [];
+    movingGroups[i]!.traverse((node) => {
+      const state = node.userData.state as number | undefined;
+      if (typeof state === "number") looks[state] = node;
+    });
+    fragileLookNodes.set(config.segmentIndex, looks);
+  });
+  const showFragile = (rows: readonly FragileLook[]): void => {
+    for (const { segmentIndex, look } of rows) {
+      const looks = fragileLookNodes.get(segmentIndex);
+      if (!looks) continue;
+      looks.forEach((node, state) => {
+        node.visible = look === state;
+      });
+    }
+  };
+  // Intact until a Round says otherwise, so a Track never opens with three
+  // cracked looks drawn through each other.
+  showFragile(movingSegments.flatMap((config) => (config.fragile ? [{ segmentIndex: config.segmentIndex, look: 0 }] : [])));
+
+  // A conveyor's slats ride their loop at the speed the belt runs (ADR 0120)
+  // — found in the instance that draws each placed belt, game and builder
+  // alike, and never in its collision.
+  const beltSlats = assetPlacements.flatMap((placement, i) => {
+    const path = placement.belt;
+    const instance = assetVisualInstances[i];
+    if (!path || !instance) return [];
+    const belt = conveyors.find((entry) => entry.segmentIndex === placement.segmentIndex);
+    const slats = new BeltSlats(instance, path, belt ? lengthVec3(belt.velocity) : 0);
+    return slats.any ? [slats] : [];
+  });
+
+  // A cannon's own recoil and muzzle flash (ADR 0119), found in the groups
+  // that draw its Parts.
+  const shooterEffects = new ShooterEffects(shooters, (segmentIndex) =>
+    movingSegments.flatMap((config, i) => (config.segmentIndex === segmentIndex ? [movingGroups[i]!] : [])),
+  );
+
+  const poseMovingSegments = (t: number, clock: MotionClock): void => {
     for (let i = 0; i < movingGroups.length; i += 1) {
-      const pose = movingSegmentPose(movingSegments[i]!, t);
+      const config = movingSegments[i]!;
+      const pose = movingSegmentPose(config, t, clock);
       const group = movingGroups[i]!;
       group.position.set(pose.position.x, pose.position.y, pose.position.z);
       group.quaternion.set(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w);
+      // A punching glove grows out of its plate (ADR 0121) — the one body in
+      // the game whose drawn size is part of its pose. Physics never sees it:
+      // the fist is solid only where it is full size.
+      if (config.punch) {
+        const { scale } = punchPose(config.punch.cycle, t, config.punch.piece);
+        group.scale.set(scale.x, scale.y, scale.z);
+      }
       group.updateMatrixWorld(true);
     }
   };
-  poseMovingSegments(0);
+  poseMovingSegments(0, null);
   const deckParent = (index: number | null): THREE.Object3D => (index === null ? scene : movingGroups[index]!);
 
   // Conveyor chevron strips (ADR 0064) — still belts parent to the scene, a
@@ -314,7 +420,13 @@ export const buildTrackVisuals = (
   });
 
   const propMaterial = new THREE.MeshStandardMaterial({ color: 0xf2c14e, roughness: 0.6 });
-  const propMeshes = props.map((config) => {
+  /**
+   * Every Bomb among the Props (ADR 0126), by Prop index: its clips, whether
+   * any of it is drawn this frame, and whether the rows have it spent.
+   */
+  const bombs = new Map<number, { def: BombDef; look: BombLook; drawn: boolean; spent: boolean }>();
+  let bombClockMs: number | null = null;
+  const propMeshes = props.map((config, index) => {
     // An Asset Prop (ADR 0095) is drawn exactly like a Moving Segment: the
     // Asset's own template under a group whose pose is written every frame, so
     // one transform carries everything it draws.
@@ -323,6 +435,7 @@ export const buildTrackVisuals = (
       const visual = templateForPlacement(assetTemplates, config.shape.moduleId, config.shape.color).clone(true);
       visual.scale.setScalar(config.shape.scale);
       group.add(visual);
+      if (config.bomb) bombs.set(index, { def: config.bomb, look: createBombLook(visual), drawn: true, spent: false });
       setShadowRole(group, "both");
       scene.add(group);
       group.traverse((object) => {
@@ -357,6 +470,24 @@ export const buildTrackVisuals = (
     lowestSegmentY,
     floorBelow,
     onIce,
+    showFragile,
+    drawBombs: (rows, tick, nowMs) => {
+      if (bombs.size === 0) return [];
+      const drawn: DrawnBomb[] = [];
+      const deltaSeconds = bombClockMs === null ? 0 : Math.max(0, (nowMs - bombClockMs) / 1000);
+      bombClockMs = nowMs;
+      const byIndex = new Map(rows.map((row) => [row.propIndex, row]));
+      for (const [index, bomb] of bombs) {
+        const phase = bombPhase(bomb.def, byIndex.get(index), tick);
+        bomb.drawn = bomb.look.update(phase, deltaSeconds);
+        bomb.spent = phase.kind === "spent";
+        drawn.push({ propIndex: index, phase, fuseSeconds: bomb.def.fuseSeconds });
+      }
+      return drawn;
+    },
+    fireShooters: (snapshots, nowMs) => {
+      return shooterEffects.any ? shooterEffects.update(snapshots, nowMs) : [];
+    },
     placeProps: (snapshots) => {
       // Recomputed immediately (not left for the next render()) since the
       // camera arm raycasts against these meshes — via `collidables` —
@@ -365,16 +496,32 @@ export const buildTrackVisuals = (
         const mesh = propMeshes[i]!;
         const prop = snapshots[i];
         if (!prop) continue;
+        // A Projectile waiting in its Shooter is drawn by nobody (ADR 0119).
+        // A spent bomb is out of play too, but drawn going off where it
+        // was parked for as long as its explosion lasts (ADR 0126).
+        const bomb = bombs.get(i);
+        // The rows are the newest Snapshot's and the pose the drawn world's:
+        // a bomb the rows have back home can still be parked in the drawn
+        // world, for as long as the Interpolation Delay, and is not drawn there.
+        mesh.visible = bomb ? bomb.drawn && (bomb.spent || prop.live !== false) : prop.live !== false;
+        if (!mesh.visible) continue;
         mesh.position.set(prop.position.x, prop.position.y, prop.position.z);
         mesh.quaternion.set(prop.rotation.x, prop.rotation.y, prop.rotation.z, prop.rotation.w);
         mesh.updateMatrixWorld();
       }
     },
-    poseMotion: (t, centres) => {
-      poseMovingSegments(t);
+    placeCarriedProp: (index, position) => {
+      const mesh = propMeshes[index];
+      if (!mesh?.visible) return;
+      mesh.position.copy(position);
+      mesh.updateMatrixWorld();
+    },
+    poseMotion: (t, centres, clock) => {
+      poseMovingSegments(t, clock);
       // Marched in sim time (not wall clock), so belts pause with the sim —
       // at true belt speed, so what you see is what carries you.
       for (const strip of conveyorStrips) strip.update(t * TICK_DT);
+      for (const slats of beltSlats) slats.update(t * TICK_DT);
       // Feet sink into the mud on the same clock, and the ice sparkles on it.
       for (const sheet of mudSheets) sheet.update(t * TICK_DT, centres);
       for (const sheet of iceSheets) sheet.update(t * TICK_DT);
@@ -412,6 +559,7 @@ export const buildTrackVisuals = (
     spin: (nowMs) => spinParts(spinningParts, nowMs),
     dispose: () => {
       collidables.length = 0;
+      for (const bomb of bombs.values()) bomb.look.dispose();
     },
   };
 };

@@ -1,3 +1,5 @@
+import type { BombState } from "../track/Bomb.js";
+import type { FragileState } from "../track/Fragile.js";
 import type { Vec3 } from "../math/vec3.js";
 import type { CharacterMotionState } from "../simulation/CharacterStateMachine.js";
 import type { PropSnapshot } from "../simulation/Prop.js";
@@ -21,6 +23,8 @@ export type { CharacterMotionState, BoneSnapshot, PropSnapshot };
  * ADR 0104: `"Hurl"` — thrown out of a Spin, or hit by a body that was (swung
  * or flying); `"Grab"` — let go of while Limp, or carried until the grabber's
  * window ran out; `"Dizzy"` — a grabber that Spun for too long.
+ *
+ * ADR 0126: `"Blast"` — caught in a Bomb going off.
  */
 export type RagdollCause =
   | "Bump"
@@ -33,7 +37,8 @@ export type RagdollCause =
   | "Slip"
   | "Hurl"
   | "Grab"
-  | "Dizzy";
+  | "Dizzy"
+  | "Blast";
 
 /**
  * Which part of a hold a Held Character is in (ADR 0104): its Struggle, which
@@ -42,13 +47,14 @@ export type RagdollCause =
 export type HeldPhase = "struggle" | "limp";
 
 /**
- * The knockdowns another Player caused (ADR 0093) — a swing that landed, or
- * running someone down. Only these throw the body
- * ({@link KNOCKDOWN_LAUNCH_SCALE}); scenery drops you where it caught you.
+ * The knockdowns another Player caused (ADR 0093) — a swing that landed,
+ * running someone down, or a bomb they last held going off (ADR 0126). Only
+ * these throw the body ({@link KNOCKDOWN_LAUNCH_SCALE}); scenery drops you
+ * where it caught you.
  * A set rather than a boolean on the cause so the one place that decides
  * "was this a Player" is findable from either side of it.
  */
-export const THROWING_RAGDOLL_CAUSES: ReadonlySet<RagdollCause> = new Set<RagdollCause>(["Hit", "Bump", "Hurl"]);
+export const THROWING_RAGDOLL_CAUSES: ReadonlySet<RagdollCause> = new Set<RagdollCause>(["Hit", "Bump", "Hurl", "Blast"]);
 
 /**
  * The Impacts that shove a Character which stays on its feet (ADR 0093) — a
@@ -63,9 +69,10 @@ export const THROWING_RAGDOLL_CAUSES: ReadonlySet<RagdollCause> = new Set<Ragdol
  * follow-up to spoil, which is exactly why it is the one that shoves.
  *
  * A swung or hurled body (ADR 0104) is one too: it counts once per pass of the
- * circle or per flight, never once per tick of contact.
+ * circle or per flight, never once per tick of contact. So is a Blast (ADR
+ * 0126): a bomb goes off once.
  */
-export const SHOVING_IMPACT_CAUSES: ReadonlySet<RagdollCause> = new Set<RagdollCause>(["Hit", "Hurl"]);
+export const SHOVING_IMPACT_CAUSES: ReadonlySet<RagdollCause> = new Set<RagdollCause>(["Hit", "Hurl", "Blast"]);
 
 export interface CharacterSnapshot {
   /** The point the camera follows: capsule centre while upright, pelvis while ragdolling. */
@@ -116,6 +123,12 @@ export interface CharacterSnapshot {
    */
   grabbingId: string | null;
   /**
+   * Which Prop this Character carries, by its index in `SimState.props`, or
+   * `null` (ADR 0125) — the Prop's half of {@link grabbingId}. Authoritative
+   * like it: a client learns it from here and never decides it.
+   */
+  carryingProp: number | null;
+  /**
    * The id of whoever is currently grabbing this Character, or `null`
    * (M6.1) — the reverse of {@link grabbingId}. Lets a client tell "am I
    * involved in a hold at all, as either role," which is what locks this
@@ -157,6 +170,22 @@ export interface CharacterSnapshot {
    * replay turns on from exactly where the server was.
    */
   spinMs: number;
+  /**
+   * The Tick this Character's Lift of a Prop started, or `null` while it is
+   * not Lifting one (ADR 0128). A Lift is the server's to start — only the
+   * authority picks up — and lasts a fixed number of Ticks, so every client
+   * plays `Pickup_Ground` from where this puts it, and the carrier's own
+   * prediction stands still over exactly the Ticks the server does.
+   * `carryingProp` is set only from the Tick the hands reach the Prop.
+   */
+  liftStartTick: number | null;
+  /**
+   * How long (ms) this Character has been winding up a Toss, or `null`
+   * while it is not (ADR 0128). Predicted, like {@link spinMs}: the tap that
+   * starts it is this Character's own input, so a reconcile restores it and
+   * the replay lets go on the same Tick the server does.
+   */
+  tossMs: number | null;
   /**
    * Rises every time a launch pad fires (M3.7 ticket 02) — the Epoch idiom
    * (CONTEXT.md), same as {@link ragdollEpoch}. Not restored during
@@ -290,6 +319,18 @@ export interface SimState {
    * recomputes it directly instead (`spinnerAngleAt`).
    */
   props: PropSnapshot[];
+  /**
+   * Every fragile floor that is not intact (CONTEXT.md: Fragile, ADR 0118) —
+   * the first per-Segment state a Round changes, and the only one sent. An
+   * untouched Track has none, so a Track without fragile floors costs nothing
+   * at all. Absent on a world that has none.
+   */
+  fragile?: FragileState[];
+  /**
+   * Every Bomb that is not lying (CONTEXT.md: Bomb, ADR 0126) — lit, or spent
+   * and waiting to return. An untouched Track has none, and sends nothing.
+   */
+  bombs?: BombState[];
 }
 
 export interface CharacterSnapshotFields {
@@ -307,12 +348,15 @@ export interface CharacterSnapshotFields {
   hitChargeMs?: number;
   grabCooldownMs?: number;
   grabbingId?: string | null;
+  carryingProp?: number | null;
   heldByGrabberId?: string | null;
   heldPhase?: HeldPhase | null;
   holdEndsTick?: number | null;
   escapeProgress?: number;
   lastWiggleYaw?: number | null;
   spinMs?: number;
+  liftStartTick?: number | null;
+  tossMs?: number | null;
   launchPadEpoch?: number;
   facing?: number;
   lastInputTick?: number;
@@ -356,6 +400,8 @@ export type ReconcileBase = Pick<
   | "escapeProgress"
   | "lastWiggleYaw"
   | "spinMs"
+  // ADR 0128: a Toss's wind-up is the carrier's own tap, predicted.
+  | "tossMs"
   | "facing"
   // M4 ticket 02: Qualification is latched and locks input, so the client
   // must be able to take the server's answer rather than keep its own.
@@ -384,12 +430,15 @@ export const characterSnapshot = (fields: CharacterSnapshotFields): CharacterSna
   hitChargeMs: fields.hitChargeMs ?? 0,
   grabCooldownMs: fields.grabCooldownMs ?? 0,
   grabbingId: fields.grabbingId ?? null,
+  carryingProp: fields.carryingProp ?? null,
   heldByGrabberId: fields.heldByGrabberId ?? null,
   heldPhase: fields.heldPhase ?? null,
   holdEndsTick: fields.holdEndsTick ?? null,
   escapeProgress: fields.escapeProgress ?? 0,
   lastWiggleYaw: fields.lastWiggleYaw ?? null,
   spinMs: fields.spinMs ?? 0,
+  liftStartTick: fields.liftStartTick ?? null,
+  tossMs: fields.tossMs ?? null,
   launchPadEpoch: fields.launchPadEpoch ?? 0,
   facing: fields.facing ?? 0,
   lastInputTick: fields.lastInputTick ?? 0,

@@ -14,7 +14,7 @@ import { createChromeRenderer } from "../screenshot/chrome.js";
 
 /** Renders a draft to its JPEG data URL — Chrome in production, a stub in tests. */
 export interface ScreenshotDeps {
-  render: (draftId: string) => Promise<string>;
+  render: (draftId: string, opts?: { navmesh?: boolean }) => Promise<string>;
 }
 
 export const DEFAULT_THUMBNAIL_PAGE_URL = "http://localhost:5174/thumbnail.html";
@@ -40,17 +40,27 @@ export const registerScreenshotTools = (server: McpServer, api: TrackApi, deps?:
   server.tool(
     "screenshot_draft",
     "Render the draft as the builder's capture sees it (its Environment, Motions posed mid-swing, auto-framed) and look at the JPEG. The visual backstop beside validate_draft — a long Race reads as an overview.",
-    { draftId: z.string().min(1).describe("Draft id from create_draft (or list_drafts to resume).") },
-    async ({ draftId }) => {
+    {
+      draftId: z.string().min(1).describe("Draft id from create_draft (or list_drafts to resume)."),
+      navmesh: z
+        .boolean()
+        .optional()
+        .describe(
+          "Also draw the NAVMESH overlay (M17, ADR 0129): the walkable mesh a Bot plans over, and the route it would " +
+            "run — spawn to each Checkpoint's Respawn to the Finish Zone — with a leg's end marked where it stops " +
+            "short (a gap the mesh doesn't cover yet). Off by default.",
+        ),
+    },
+    async ({ draftId, navmesh }) => {
       if (!deps) {
         return { content: [{ type: "text" as const, text: JSON.stringify({ error: SETUP_HINT }) }], isError: true };
       }
       try {
         // The draft is read first so a typo'd id fails naming the miss before Chrome boots.
         const draft = await api.get<TrackDraft>(`/drafts/${draftId}`);
-        const dataUrl = await deps.render(draftId);
+        const dataUrl = await deps.render(draftId, { navmesh });
         const caption =
-          `draft "${draftId}" (${draft.track.length} Segments, ${draft.roundType}) as the builder's capture sees it — ` +
+          `draft "${draftId}" (${draft.track.length} Segments, ${draft.roundType}) as the builder's capture sees it${navmesh ? ", NAVMESH overlay on" : ""} — ` +
           "check placements, gaps and overlaps against what was meant.";
         return {
           content: [

@@ -1,6 +1,15 @@
 import type { Track, TrackRoundDefaults } from "@dont-fall/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { listTracks, loadTrack, PLAYTEST_TRACK_ID, publishPlaytestTrack, saveTrack } from "./api.js";
+import {
+  listDrafts,
+  listTracks,
+  loadDraft,
+  loadTrack,
+  PLAYTEST_TRACK_ID,
+  publishPlaytestTrack,
+  saveDraft,
+  saveTrack,
+} from "./api.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -131,5 +140,55 @@ describe("listTracks", () => {
   it("throws on a non-ok response", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
     await expect(listTracks("http://x")).rejects.toThrow(/500/);
+  });
+});
+
+describe("drafts (ADR 0115)", () => {
+  it("lists and loads through the draft endpoints", async () => {
+    const fetchMock = vi.fn(async () => Response.json([{ id: "d1", segmentCount: 3 }]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(listDrafts("http://x")).resolves.toEqual([{ id: "d1", segmentCount: 3 }]);
+    expect(fetchMock).toHaveBeenCalledWith("http://x/drafts");
+
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ id: "d 1", track: SAMPLE })));
+    await expect(loadDraft("http://x", "d 1")).resolves.toMatchObject({ track: SAMPLE });
+  });
+
+  it("writes Segments before metadata, so a refused patch still leaves the work saved", async () => {
+    const seen: string[] = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      seen.push(`${init?.method ?? "GET"} ${url}`);
+      return Response.json({ id: "d1", name: "Mine", track: SAMPLE, ...DEFAULTS, environment: "day", roundType: "race" });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await saveDraft("http://x", "d1", SAMPLE, { name: "Mine", defaults: DEFAULTS, environment: "day" });
+
+    expect(seen).toEqual(["PUT http://x/drafts/d1/segments", "PATCH http://x/drafts/d1"]);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string)).toEqual({ track: SAMPLE });
+    expect(JSON.parse(fetchMock.mock.calls[1]![1]!.body as string)).toEqual({
+      name: "Mine",
+      timeLimitMs: 45_000,
+      survivorTarget: 3,
+      environment: "day",
+    });
+  });
+
+  it("untitles a Draft with an explicit null rather than an empty string", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ id: "d1" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await saveDraft("http://x", "d1", SAMPLE, { name: "", defaults: DEFAULTS, environment: "day" });
+
+    expect(JSON.parse(fetchMock.mock.calls[1]![1]!.body as string)).toMatchObject({ name: null });
+  });
+
+  it("names the failing step when the API refuses", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 404 })));
+
+    await expect(loadDraft("http://x", "gone")).rejects.toThrow(/draft load failed: HTTP 404/);
+    await expect(saveDraft("http://x", "gone", SAMPLE, { name: "", defaults: DEFAULTS, environment: "day" }))
+      .rejects.toThrow(/draft save failed: HTTP 404/);
   });
 });

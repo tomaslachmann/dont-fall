@@ -23,3 +23,4 @@ export * from "./economy.js";
 export * from "./authoring.js";
 export * from "./hud.js";
 export * from "./voice.js";
+export * from "./bots.js";

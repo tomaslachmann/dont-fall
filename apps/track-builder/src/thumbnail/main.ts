@@ -9,6 +9,7 @@ import {
 } from "@dont-fall/shared";
 import { loadDeckTexture } from "@dont-fall/render";
 import { builderLibrary, loadAssetVisuals } from "../assets/assets.js";
+import { buildBotNav } from "../bot/buildBotNav.js";
 import { createTrackViewport } from "../scene/viewport.js";
 import { frameTrackAuto, THUMBNAIL_FRAMES, type ThumbnailFrame } from "./frames.js";
 
@@ -23,7 +24,9 @@ import { frameTrackAuto, THUMBNAIL_FRAMES, type ThumbnailFrame } from "./frames.
  * `?draft=<draft id>&api=<base URL>` (ADR 0114, D10) fetches the draft from
  * the API and auto-frames it — the MCP server's visual backstop.
  * `?assets=<base URL>` carries the GLBs and deck textures (the API's
- * `/assets` by default).
+ * `/assets` by default). `?nav=1` (M17 ticket 02) draws the NAVMESH overlay
+ * too — a failed build (an unresolvable Track, or an empty one) is warned to
+ * the console and skipped rather than failing the whole capture.
  */
 interface ThumbnailPage {
   ready: boolean;
@@ -84,12 +87,24 @@ const draw = async (): Promise<void> => {
   const templates = Object.fromEntries(Object.entries(parsed).map(([moduleId, asset]) => [moduleId, asset.template]));
   const deckPlans = Object.fromEntries(Object.entries(parsed).map(([moduleId, asset]) => [moduleId, asset.plan]));
 
+  const library = builderLibrary();
   const viewport = createTrackViewport(document.getElementById("view")!, () => {});
   viewport.setEnvironment(ENVIRONMENT_PRESETS[source.environment]);
-  viewport.setTrack(builderLibrary(), source.track, templates, { bounce }, deckPlans);
+  viewport.setTrack(library, source.track, templates, { bounce }, deckPlans);
   viewport.setCourseVisible(false);
   viewport.setMotionTime(source.frame.tick ?? 0);
   viewport.setView(source.frame);
+
+  if (params.get("nav") === "1") {
+    try {
+      viewport.setBotNav(await buildBotNav(source.track, library));
+    } catch (err) {
+      // The screenshot is still worth having without the overlay — a
+      // Track an agent is mid-editing may not resolve yet.
+      console.warn(`DON'T FALL: navmesh overlay unavailable: ${(err as Error).message}`);
+    }
+  }
+
   viewport.render();
 
   page.capture = () => viewport.capturePreview();

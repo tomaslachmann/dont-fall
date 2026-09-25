@@ -100,12 +100,32 @@ describe("PlaySelect (ADR 0054 — every way in goes through the API's lobbies)"
     fireEvent.click(screen.getByRole("tab", { name: /CREATE PRIVATE LOBBY/ }));
     // ADR 0110: WHO CAN JOIN and ROUNDS travel with the create.
     fireEvent.click(screen.getByRole("button", { name: "FRIENDS" }));
-    fireEvent.click(screen.getByRole("button", { name: /^More/ }));
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
     fireEvent.click(screen.getByRole("button", { name: /CREATE LOBBY/ }));
 
     expect(await screen.findByText("landed:/lobby?port=51234&code=PLUMJA&id=l1")).toBeInTheDocument();
     const bodies = brokerCalls(fetchMock).map(([, init]) => JSON.parse((init as RequestInit).body as string));
     expect(bodies).toEqual([{ isPrivate: true, matchLength: 4, privacy: "friends" }]);
+  });
+
+  it("sends the Bots a private Lobby starts with, and their level (M17 ticket 10)", async () => {
+    const fetchMock = respond(201, { id: "l1", port: 51234, code: "PLUMJA", isPrivate: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPlaySelect();
+    fireEvent.click(screen.getByRole("tab", { name: /CREATE PRIVATE LOBBY/ }));
+    // No level to pick until there are Bots to play at it.
+    expect(screen.queryByRole("button", { name: "HARD" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More Bots" }));
+    fireEvent.click(screen.getByRole("button", { name: "More Bots" }));
+    fireEvent.click(screen.getByRole("button", { name: "HARD" }));
+    fireEvent.click(screen.getByRole("button", { name: /CREATE LOBBY/ }));
+
+    expect(await screen.findByText("landed:/lobby?port=51234&code=PLUMJA&id=l1")).toBeInTheDocument();
+    const bodies = brokerCalls(fetchMock).map(([, init]) => JSON.parse((init as RequestInit).body as string));
+    expect(bodies).toEqual([
+      { isPrivate: true, matchLength: 3, privacy: "invite-only", bots: { enabled: true, max: 2, level: "hard" } },
+    ]);
   });
 
   it("resolves a typed join code through the broker before connecting to anything", async () => {

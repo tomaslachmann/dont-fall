@@ -9,6 +9,8 @@ export type { PuffLook } from "./environment/cloudPuffs.js";
 export { findSpinningParts, spinParts, spinRate } from "./spinningParts.js";
 export { shareTextures } from "./assets/shareTextures.js";
 export type { SharedTextureCache } from "./assets/shareTextures.js";
+export { assetPartSubtree, partOf } from "./assetParts.js";
+export { BeltSlats } from "./beltSlats.js";
 export { templateForPlacement } from "./assetVariants.js";
 export { deckSheetGeometry, deckRectGeometry } from "./deckSheet.js";
 export { loadDeckTexture, tileDeckTexture } from "./deckTexture.js";
@@ -22,3 +24,5 @@ export { buildIceSlab, disposeIceSlab, glintIce, iceDetailTexture } from "./ice/
 export type { IceSlab } from "./ice/iceMesh.js";
 export { iceGlintPose, iceGlintSites } from "./ice/iceShape.js";
 export { ICE_SEAT_LIFT } from "./ice/iceLook.js";
+export { BOMB_EXPLODE_LEAD_SECONDS, createBombLook, isBombTemplate, restBombLook } from "./bomb/bombLook.js";
+export type { BombLook } from "./bomb/bombLook.js";

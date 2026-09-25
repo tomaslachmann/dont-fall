@@ -17,7 +17,7 @@
  * flashes — whichever Screen asked.
  */
 
-import type { LobbyEntryGrant, LobbyPrivacy, LobbyRef } from "@dont-fall/shared";
+import type { LobbyBots, LobbyEntryGrant, LobbyPrivacy, LobbyRef } from "@dont-fall/shared";
 import { flash } from "../flash.js";
 import { apiFetch } from "./base.js";
 
@@ -88,11 +88,12 @@ const postBroker = (path: string, body?: unknown): Promise<BrokeredLobby> =>
 /**
  * Starts a brand-new Lobby. A private one comes back with the join code to
  * share; a public one is found by quick-match instead. A private one is set up
- * here (ADR 0110): the Match length it starts at, and who can find it.
+ * here (ADR 0110): the Match length it starts at, who can find it, and its Bots
+ * (M17 ticket 10).
  */
 export const createLobby = (
   isPrivate: boolean,
-  setup: { matchLength?: number; privacy?: LobbyPrivacy } = {},
+  setup: { matchLength?: number; privacy?: LobbyPrivacy; bots?: LobbyBots } = {},
 ): Promise<BrokeredLobby> =>
   postBroker("/lobbies", { isPrivate, ...setup });
 

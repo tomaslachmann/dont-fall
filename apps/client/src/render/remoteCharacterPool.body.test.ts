@@ -34,9 +34,12 @@ const standing = (): RenderCharacter => ({
   grabEpoch: 0,
   launchPadEpoch: 0,
   grabbingId: null,
+  carryingProp: null,
   heldByGrabberId: null,
   heldPhase: null,
   spinMs: 0,
+  liftMs: null,
+  tossMs: null,
 });
 
 /** First mesh hue per rig root, in scene order — order-free assertions below. */

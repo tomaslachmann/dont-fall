@@ -1,6 +1,15 @@
 import { loadAssetModule, type ValidatedAsset } from "./asset.js";
+import type { AssetPart } from "./AssetPart.js";
+import type { BeltPath } from "./BeltPath.js";
+import type { PunchCycle } from "./Punch.js";
+import type { BombDef } from "./Bomb.js";
+import type { FragileDef } from "./Fragile.js";
+import type { SegmentAttachments } from "./Track.js";
+import { SHOOTER_BOMB_ASSET_ID, type ShooterDef } from "./Shooter.js";
 import type { GateDef } from "./Gate.js";
 import type { LaunchDef } from "./Launch.js";
+import { BOMB_MODULE_DEFS } from "./bombAssetDefs.js";
+import { DF_MODULE_DEFS } from "./dfAssetDefs.js";
 import { FAN_MODULE_DEFS } from "./fanAssetDefs.js";
 import { GATE_ASSET_DEFS } from "./gateAssetDefs.js";
 import { KAYKIT_MODULE_DEFS } from "./kaykitAssetDefs.js";
@@ -69,15 +78,63 @@ export const assetColorFamilyOf = (
 };
 
 /**
+ * The palette id `moduleId` lists under: a color family's canonical file, or
+ * the id itself for lone looks. Legacy placements (`X_blue`) and family
+ * placements (`X_red` + paint) meet on one entry this way — the builder's
+ * favourites, recents and in-track sets all normalize through here.
+ */
+export const canonicalPaletteId = (moduleId: string): string =>
+  assetColorFamilyOf(moduleId)?.canonicalId ?? moduleId;
+
+/**
+ * Every Asset shape once, in registry order: a color family under its
+ * canonical file, a lone look as itself. The level anything that *chooses* a
+ * Module works at — the builder's Assets tab and the MCP server's
+ * `list_modules` both list this, because paint is a Segment Attachment
+ * (ADR 0113) and four files were never four choices. Placement is unchanged:
+ * every id in the registry stays storable, legacy `X_blue` included.
+ */
+export const assetPaletteIds = (): string[] => {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const def of ASSET_MODULE_DEFS) {
+    const id = canonicalPaletteId(def.id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+};
+
+/**
  * Which group of the Track builder's Assets tab lists an Asset Module
  * (CONTEXT.md: Asset category). A listing property only — nothing that
- * simulates reads it, and it grants no behavior: an Obstacle-category mesh
- * is still static geometry until its Module carries a mechanic. Three
- * categories are the exceptions that always carry one, in their defs: a Gate
- * (ADR 0068) its opening, a Spring (ADR 0069) its launch, and a Fan (ADR
- * 0075) its Volumes.
+ * simulates reads it, and it grants no behavior: a Sweeper-category mesh is
+ * still static geometry until its Segment carries a Motion.
+ *
+ * One axis, and one only (ADR 0122): **what the piece is to a runner**.
+ * Floor is what you stand on, Structure holds the route up or walls it in,
+ * a Sweeper moves into you, a Launcher throws you, a Gate is passed through,
+ * a Prop is loose enough to shove, and Scenery dresses the rest. A mechanic
+ * never moves a piece between groups — a spiked deck is a Floor wearing its
+ * `hazard`, a breaking one a Floor wearing its `fragile` — because an author
+ * hunting a deck is hunting a deck. The two exceptions are the groups named
+ * after the mechanic every member carries: a Gate (ADR 0068) its opening,
+ * and a Launcher its throw — a Spring's `launch` (ADR 0069) or a fan's
+ * updraft `volumes` (ADR 0075).
+ *
+ * The order is the reading order the Assets tab and `list_categories` show:
+ * the route first, then what comes at you on it, then the dressing.
  */
-export const ASSET_CATEGORIES = ["platform", "obstacle", "spring", "gate", "fan", "scenery"] as const;
+export const ASSET_CATEGORIES = [
+  "floor",
+  "structure",
+  "sweeper",
+  "launcher",
+  "gate",
+  "prop",
+  "scenery",
+] as const;
 export type AssetCategory = (typeof ASSET_CATEGORIES)[number];
 
 export interface AssetModuleDef {
@@ -106,6 +163,45 @@ export interface AssetModuleDef {
    * a region of space), so it travels as itself.
    */
   volumes?: VolumeConfig[];
+  /**
+   * This Asset breaks under you (CONTEXT.md: Fragile, ADR 0118) — how many
+   * arrivals it takes and how long it stays gone. On the def because the
+   * states are authored art; a placed Segment retunes only the return.
+   */
+  fragile?: FragileDef;
+  /**
+   * This Asset is a Bomb (CONTEXT.md: Bomb, ADR 0126) — its fuse, its warning
+   * and its return. A placed Segment of it is a Prop without saying so, and
+   * retunes only the fuse and the return.
+   */
+  bomb?: BombDef;
+  /**
+   * What a placed Segment of this Asset carries unless its author says
+   * otherwise (ADR 0120) — a belt conveys the moment it is put down. Narrow
+   * on purpose: only an Attachment the Asset *is*, never one describing the
+   * Track around it, which is why the type names the one field rather than
+   * taking `SegmentAttachments` whole.
+   */
+  attachments?: Pick<SegmentAttachments, "conveyor">;
+  /** The loop this Asset's slats ride (ADR 0120) — drawn only, at the speed its Conveyor runs. */
+  belt?: BeltPath;
+  /** This Asset punches (CONTEXT.md: Punching Glove, ADR 0121) — the authored swing its Parts share. */
+  punch?: PunchCycle;
+  /** This Asset fires a ball along its barrel (CONTEXT.md: Shooter, ADR 0119) — where the muzzle is, and what it does by default. */
+  shooter?: ShooterDef;
+  /**
+   * This Asset's own visual tolerance, when {@link ASSET_VISUAL_WARN} is not
+   * the right number for it (see `ValidateAssetOptions.visualTolerance`).
+   * Always carries the reason beside it.
+   */
+  visualTolerance?: number;
+  /**
+   * The Parts this Asset resolves into (ADR 0116) — declared on the few
+   * Assets built from more than one body, matching the `part` extras
+   * `scripts/convert-df.ts` stamped on their nodes. Absent on every Asset
+   * that is one rigid piece, which is all of them but four.
+   */
+  parts?: AssetPart[];
 }
 
 const box = (center: { x: number; y: number; z: number }, halfExtents: { x: number; y: number; z: number }) => ({
@@ -141,7 +237,7 @@ const YAW_BACK = Math.PI; // +Z: an entry
 const PROMOTED_SOCKETED: AssetModuleDef[] = [
   {
     id: "kaykit_floor_wood_2x2",
-    category: "platform",
+    category: "floor",
     // Measured (convert output): 2 x 0.5 x 2 slab, x/z symmetric about the
     // origin, top walking face at y = 0.5. Unlike the deleted M9 block set
     // (origin-centred, top at +half.y), KayKit pieces sit ON y = 0 — socket
@@ -156,6 +252,8 @@ const PROMOTED_SOCKETED: AssetModuleDef[] = [
 
 export const ASSET_MODULE_DEFS: AssetModuleDef[] = [
   ...PROMOTED_SOCKETED,
+  ...BOMB_MODULE_DEFS,
+  ...DF_MODULE_DEFS,
   ...FAN_MODULE_DEFS,
   ...KAYKIT_MODULE_DEFS,
   ...QUARTER_MODULE_DEFS,
@@ -182,6 +280,13 @@ export const attachAssetGeometry = (def: AssetModuleDef, validated: ValidatedAss
   ...(def.gate !== undefined ? { gate: def.gate } : {}),
   ...(def.launch !== undefined ? { launch: def.launch } : {}),
   ...(def.volumes !== undefined ? { volumes: def.volumes } : {}),
+  ...(def.parts !== undefined ? { parts: def.parts } : {}),
+  ...(def.fragile !== undefined ? { fragile: def.fragile } : {}),
+  ...(def.bomb !== undefined ? { bomb: def.bomb } : {}),
+  ...(def.shooter !== undefined ? { shooter: def.shooter } : {}),
+  ...(def.attachments !== undefined ? { attachments: def.attachments } : {}),
+  ...(def.belt !== undefined ? { belt: def.belt } : {}),
+  ...(def.punch !== undefined ? { punch: def.punch } : {}),
 });
 
 /**
@@ -214,6 +319,13 @@ export const ASSET_PLACEMENT_MODULES: Record<string, Module> = Object.fromEntrie
       ...(def.gate === undefined ? {} : { gate: def.gate }),
       ...(def.launch === undefined ? {} : { launch: def.launch }),
       ...(def.volumes === undefined ? {} : { volumes: def.volumes }),
+      ...(def.parts === undefined ? {} : { parts: def.parts }),
+      ...(def.fragile === undefined ? {} : { fragile: def.fragile }),
+      ...(def.bomb === undefined ? {} : { bomb: def.bomb }),
+      ...(def.shooter === undefined ? {} : { shooter: def.shooter }),
+      ...(def.attachments === undefined ? {} : { attachments: def.attachments }),
+      ...(def.belt === undefined ? {} : { belt: def.belt }),
+      ...(def.punch === undefined ? {} : { punch: def.punch }),
     } satisfies Module,
   ]),
 );
@@ -245,6 +357,7 @@ export const loadAssetLibrary = async (
       validated = loadAssetModule(bytes, {
         footprint: def.footprint.bounds,
         ...(def.surface === undefined ? {} : { surface: def.surface }),
+        ...(def.visualTolerance === undefined ? {} : { visualTolerance: def.visualTolerance }),
       });
     } catch (err) {
       throw new Error(`asset "${def.id}": ${(err as Error).message}`);
@@ -260,11 +373,16 @@ const ASSET_DEF_BY_ID = new Map(ASSET_MODULE_DEFS.map((def) => [def.id, def]));
 /**
  * The Asset Module ids `track` places, each once, in the order first placed
  * (memory-footprint ticket 01): the files a loader needs for this Track and
- * nothing else. Procedural and unknown ids are not Assets; `resolveTrack`
- * still names an unknown one when the Track is built.
+ * nothing else — and the bomb a Shooter that fires bombs fires (ADR 0127),
+ * which no Segment places. Procedural and unknown ids are not Assets;
+ * `resolveTrack` still names an unknown one when the Track is built.
  */
 export const assetIdsOf = (track: Track): string[] => [
-  ...new Set(track.map((segment) => segment.moduleId).filter((id) => ASSET_DEF_BY_ID.has(id))),
+  ...new Set(
+    track
+      .flatMap((segment) => (segment.shooter?.ammo === "bomb" ? [segment.moduleId, SHOOTER_BOMB_ASSET_ID] : [segment.moduleId]))
+      .filter((id) => ASSET_DEF_BY_ID.has(id)),
+  ),
 ];
 
 /**

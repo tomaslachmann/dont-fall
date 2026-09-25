@@ -58,3 +58,23 @@
 }
 
 .rev { font: var(--df-weight-kicker) var(--tb-t-2xs) / 1 var(--df-font-ui); color: var(--df-color-ink-45); }
+
+/* Two sources in one panel (ADR 0115): Drafts above Tracks, each scrolling
+   with the other rather than on its own, so a long Track list never buries
+   the Drafts heading. */
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-4);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-2);
+}
+
+.sections .list { overflow: visible; }

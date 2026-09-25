@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SEGMENT_COLORS, type Segment, type TrackDraft } from "@dont-fall/shared";
+import { SEGMENT_COLORS, SHOOTER_AMMO, type Segment, type TrackDraft } from "@dont-fall/shared";
 import { z } from "zod";
 import type { TrackApi } from "../api.js";
 import { jsonTool } from "../tools.js";
@@ -68,12 +68,29 @@ export const registerSugarTools = (server: McpServer, api: TrackApi): void => {
   jsonTool(
     server,
     "set_motion",
-    "Give Segments a Motion (spin/swing/slide, local frame, spin→swing→slide) or take it away with null. A Start, a Checkpoint and a finish sign stay still — validate judges that.",
-    { draftId: DRAFT_ID, indices: INDICES, motion: MotionSchema.nullable().describe("The Motion, or null to detach.") },
-    async ({ draftId, indices, motion }) =>
+    "Give Segments a Motion (spin/swing/slide, local frame, spin→swing→slide, optional ramp to speed up over the Round) or take it away with null. With part, only that moving Part of a parted Asset (one arm of sweeper_3arms; get_module lists them) — the others keep theirs. A Start, a Checkpoint and a finish sign stay still — validate judges that.",
+    {
+      draftId: DRAFT_ID,
+      indices: INDICES,
+      motion: MotionSchema.nullable().describe("The Motion, or null to detach."),
+      part: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("A moving Part's name: set only that Part's own Motion. Absent: the whole Segment's."),
+    },
+    async ({ draftId, indices, motion, part }) =>
       dress(api, draftId, indices, (segment) => {
-        if (motion === null) delete segment.motion;
-        else segment.motion = motion;
+        if (part === undefined) {
+          if (motion === null) delete segment.motion;
+          else segment.motion = motion;
+          return segment;
+        }
+        const parts = { ...segment.partMotions };
+        if (motion === null) delete parts[part];
+        else parts[part] = motion;
+        if (Object.keys(parts).length > 0) segment.partMotions = parts;
+        else delete segment.partMotions;
         return segment;
       }),
   );
@@ -114,6 +131,119 @@ export const registerSugarTools = (server: McpServer, api: TrackApi): void => {
       dress(api, draftId, indices, (segment) => {
         if (height === null) delete segment.launch;
         else segment.launch = { height };
+        return segment;
+      }),
+  );
+
+  jsonTool(
+    server,
+    "set_trapdoor",
+    "Set how often Segments' trap doors run (seconds per cycle, and a head start of 0..1 of a cycle to stagger a row), or detach with null for the Asset's own clock. The shape of the swing is keyframed in the Asset and cannot be set here. Only a trap door has leaves; storable anywhere, and publish refuses a period shorter than the authored swing.",
+    {
+      draftId: DRAFT_ID,
+      indices: INDICES,
+      period: z.number().finite().positive().nullable().describe("Seconds per cycle, or null to detach and run the Asset's own."),
+      phase: z.number().finite().min(0).lt(1).optional().describe("Fraction of a cycle this one is ahead by (0..1)."),
+    },
+    async ({ draftId, indices, period, phase }) =>
+      dress(api, draftId, indices, (segment) => {
+        if (period === null) delete segment.trapdoor;
+        else segment.trapdoor = { period, ...(phase === undefined || phase === 0 ? {} : { phase }) };
+        return segment;
+      }),
+  );
+
+  jsonTool(
+    server,
+    "set_fragile",
+    "Set how long Segments' fragile floors stay gone once broken (seconds; 0 never brings them back), or detach with null for the Asset's own delay. How many arrivals break one is authored in the Asset — one per drawn look — and cannot be set here. Only a fragile Asset breaks; storable anywhere.",
+    {
+      draftId: DRAFT_ID,
+      indices: INDICES,
+      returnSeconds: z.number().finite().min(0).nullable().describe("Seconds before it returns intact, 0 for never, or null to detach."),
+    },
+    async ({ draftId, indices, returnSeconds }) =>
+      dress(api, draftId, indices, (segment) => {
+        if (returnSeconds === null) delete segment.fragile;
+        else segment.fragile = { returnSeconds };
+        return segment;
+      }),
+  );
+
+  jsonTool(
+    server,
+    "set_bomb",
+    "Set Segments' bombs' fuse (seconds from the pick-up that lights it to the blast) and return (seconds a spent bomb is gone before it lies where it was placed again), or detach with null for the Asset's own clock. Only a bomb Asset (bomb_A, bomb_B) is one; it is always a Prop and needs no set_prop. The warning's fast tick and the blast's reach are the game's, not the Segment's.",
+    {
+      draftId: DRAFT_ID,
+      indices: INDICES,
+      fuseSeconds: z.number().finite().positive().nullable().describe("Seconds of fuse, or null to detach the whole timing."),
+      returnSeconds: z.number().finite().positive().optional().describe("Seconds a spent bomb is gone."),
+    },
+    async ({ draftId, indices, fuseSeconds, returnSeconds }) =>
+      dress(api, draftId, indices, (segment) => {
+        if (fuseSeconds === null) delete segment.bomb;
+        else segment.bomb = { fuseSeconds, ...(returnSeconds === undefined ? {} : { returnSeconds }) };
+        return segment;
+      }),
+  );
+
+  jsonTool(
+    server,
+    "set_shooter",
+    "Set what Segments' cannons fire: balls or bombs, seconds between shots, muzzle speed (units/s), and how long a ball lasts (a bomb's fuse) — or detach with null for the Asset's own numbers. Period and life decide how many are in the air at once (ceil(life/period)), which publish caps. Where the muzzle is and how wide it sweeps are the Asset's. A spent ball is never taken away by hitting someone; it keeps rolling. A bomb leaves lit (3 s fuse unless lifeSeconds says otherwise), knocks down what it hits like a ball, can be caught and thrown back, and goes off wherever it is when the fuse runs out.",
+    {
+      draftId: DRAFT_ID,
+      indices: INDICES,
+      periodSeconds: z.number().finite().positive().nullable().describe("Seconds between shots, or null to detach the whole timing."),
+      ammo: z.enum(SHOOTER_AMMO).optional().describe("What it fires: ball (the default) or bomb."),
+      speed: z.number().finite().positive().optional().describe("Muzzle speed in units per second."),
+      lifeSeconds: z.number().finite().positive().optional().describe("Seconds a ball lasts before it is taken away — with bombs, each bomb's fuse."),
+      yawDegrees: z.number().finite().min(0).max(180).optional().describe("How far it sweeps side to side, either side of rest; 0 holds it still."),
+      yawSeconds: z.number().finite().positive().optional().describe("Seconds for one sweep side to side and back."),
+      pitchDegrees: z.number().finite().min(0).max(180).optional().describe("How far it sweeps up and down; 0 holds it still."),
+      pitchSeconds: z.number().finite().positive().optional().describe("Seconds for one sweep up and down and back."),
+    },
+    async ({ draftId, indices, periodSeconds, ammo, speed, lifeSeconds, yawDegrees, yawSeconds, pitchDegrees, pitchSeconds }) =>
+      dress(api, draftId, indices, (segment) => {
+        if (periodSeconds === null) delete segment.shooter;
+        else {
+          segment.shooter = {
+            ...(ammo === "bomb" ? { ammo } : {}),
+            periodSeconds,
+            ...(speed === undefined ? {} : { speed }),
+            ...(lifeSeconds === undefined ? {} : { lifeSeconds }),
+            ...(yawDegrees === undefined ? {} : { yawDegrees }),
+            ...(yawSeconds === undefined ? {} : { yawSeconds }),
+            ...(pitchDegrees === undefined ? {} : { pitchDegrees }),
+            ...(pitchSeconds === undefined ? {} : { pitchSeconds }),
+          };
+        }
+        return segment;
+      }),
+  );
+
+  jsonTool(
+    server,
+    "set_punch",
+    "Set when Segments' punching gloves swing: seconds per cycle, a head start of 0..1 of a cycle, and how much faster than authored the swing plays — or detach with null for the Asset's own clock. The shape of the punch is keyframed in the Asset. The speed multiplier is what decides a knockdown: the authored swing only shoves, about 2.5x and up knocks down, through the rule every Moving Segment goes through.",
+    {
+      draftId: DRAFT_ID,
+      indices: INDICES,
+      period: z.number().finite().positive().nullable().describe("Seconds per cycle, or null to detach and run the Asset's own."),
+      phase: z.number().finite().min(0).lt(1).optional().describe("Fraction of a cycle this one is ahead by (0..1)."),
+      rate: z.number().finite().positive().optional().describe("How much faster than authored the swing plays."),
+    },
+    async ({ draftId, indices, period, phase, rate }) =>
+      dress(api, draftId, indices, (segment) => {
+        if (period === null) delete segment.punch;
+        else {
+          segment.punch = {
+            period,
+            ...(phase === undefined || phase === 0 ? {} : { phase }),
+            ...(rate === undefined ? {} : { rate }),
+          };
+        }
         return segment;
       }),
   );

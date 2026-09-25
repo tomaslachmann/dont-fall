@@ -67,7 +67,7 @@ export function TrackBuilderScreen({ engine }: { engine: BuilderEngine }) {
       {previewing ? (
         <CaptureBar engine={engine} />
       ) : (
-        <Toolbar key={engine.loadedTrack?.id ?? "draft"} engine={engine} onBrowse={toggleBrowse} />
+        <Toolbar key={engine.loadedDraft?.id ?? engine.loadedTrack?.id ?? "unsaved"} engine={engine} onBrowse={toggleBrowse} />
       )}
     </div>
   );

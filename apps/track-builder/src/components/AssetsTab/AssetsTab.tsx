@@ -1,16 +1,30 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ASSET_CATEGORIES, ASSET_MODULE_DEFS, assetColorFamilyOf, type AssetCategory } from "@dont-fall/shared";
+import {
+  ASSET_CATEGORIES,
+  ASSET_MODULE_DEFS,
+  assetColorFamilyOf,
+  assetPaletteIds,
+  canonicalPaletteId,
+  type AssetCategory,
+} from "@dont-fall/shared";
 import css from "./AssetsTab.module.css";
 import { SegmentedControl } from "../SegmentedControl/SegmentedControl";
 import { Chip } from "../Chip/Chip";
 import { SearchIcon } from "../icons/Icons";
 import { IMPACT } from "../../lib/impact";
 import type { BuilderEngine } from "../../engine.js";
-import { assetCategoryById, assetTabModuleIds, canonicalPaletteId } from "../../assets/assets.js";
+import { assetCategoryById } from "../../assets/assets.js";
 import { assetPackOf, filterAssetIds, packLabel } from "../../assets/assetFilter.js";
 import { useEngineVersion } from "../../hooks/useEngine.js";
 
-const IDS = assetTabModuleIds();
+/**
+ * The tab's fixed Module set (M8 ticket 05): exactly the registry's asset
+ * Modules, one tile per shape (shared's `assetPaletteIds` — paint lives in the
+ * inspector, and the MCP server's `list_modules` lists the same level).
+ * User-uploadable GLBs are a content-pipeline milestone, not a tab feature, so
+ * there is deliberately no file input behind this list.
+ */
+const IDS = assetPaletteIds();
 const CATEGORY_BY_ID = assetCategoryById();
 /** Tile captions: a family's stem (`…_6x6x1`, not `…_6x6x1_red`) — the tile is the shape, paint lives in the inspector. */
 const TILE_LABELS: Record<string, string> = Object.fromEntries(
@@ -115,7 +129,7 @@ const AssetTile = memo(function AssetTile({
 export function AssetsTab({ engine, hidden }: { engine: BuilderEngine; hidden?: boolean }) {
   useEngineVersion(engine);
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState<AssetCategory>("platform");
+  const [category, setCategory] = useState<AssetCategory>("floor");
   const [pack, setPack] = useState<string | null>(null);
   const [sort, setSort] = useState<"asc" | "desc">("asc");
   const [saved, setSaved] = useState<SavedKind | null>(null);

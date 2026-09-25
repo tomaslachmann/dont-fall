@@ -6,14 +6,14 @@ import s from './HoldingPanel.module.css';
 export const WINDUP_PIPS = 6;
 
 export interface HoldingPanelProps {
-  /** Who you have. */
+  /** Who you have — or, carrying a Prop (ADR 0125), what ("CONE"). */
   holding: string;
-  /** Their Struggle, or Limp. */
-  phase: HeldPhase;
-  /** How close they are to getting free, 0-100. */
-  escape: number;
-  /** Time left in the current window, already formatted ("1.4s"). */
-  timeLeft: string;
+  /** Their Struggle, or Limp — `null` for a Prop, which neither struggles nor runs out. */
+  phase: HeldPhase | null;
+  /** How close they are to getting free, 0-100. Unused for a Prop. */
+  escape?: number;
+  /** Time left in the current window, already formatted ("1.4s"). A Prop has none. */
+  timeLeft?: string;
   /** How far your Spin has wound up, 0–1; 0 while not Spinning. */
   windup: number;
   /** How far past full speed you have held it, 0–1 — at 1 you are dizzy. */
@@ -38,7 +38,8 @@ export interface HoldingPanelProps {
  * No Stage background: it floats over the live Round (ADR 0060), at the
  * bottom, so it does not hide where you are carrying them.
  */
-export default function HoldingPanel({ holding, phase, escape, timeLeft, windup, overspin, spinKey, letGoKey }: HoldingPanelProps) {
+export default function HoldingPanel({ holding, phase, escape = 0, timeLeft, windup, overspin, spinKey, letGoKey }: HoldingPanelProps) {
+  const prop = phase === null;
   const spinning = windup > 0;
   const full = windup >= 1;
   const lit = Math.round(windup * WINDUP_PIPS);
@@ -64,8 +65,8 @@ export default function HoldingPanel({ holding, phase, escape, timeLeft, windup,
 
       <div className={s.getUp}>
         <div className={s.getUpHead}>
-          <span>YOU HAVE {holding}</span>
-          <span className={s.mash}>{phase === 'limp' ? 'KNOCKED OUT' : 'BREAKING FREE'}</span>
+          <span>{prop ? `YOU HAVE A ${holding}` : `YOU HAVE ${holding}`}</span>
+          {!prop && <span className={s.mash}>{phase === 'limp' ? 'KNOCKED OUT' : 'BREAKING FREE'}</span>}
         </div>
         {phase === 'struggle' && (
           <div className={s.track}>
@@ -75,13 +76,13 @@ export default function HoldingPanel({ holding, phase, escape, timeLeft, windup,
         <div className={s.keys}>
           <span className={s.key}>
             <span className={s.keyCap}>{spinKey}</span>
-            <span className={s.keyLabel}>HOLD SPIN · RELEASE HURL</span>
+            <span className={s.keyLabel}>{prop ? 'TAP TOSS · HOLD SPIN' : 'HOLD SPIN · RELEASE HURL'}</span>
           </span>
           <span className={s.key}>
             <span className={s.keyCap}>{letGoKey}</span>
-            <span className={s.keyLabel}>LET GO</span>
+            <span className={s.keyLabel}>{prop ? 'PUT DOWN' : 'LET GO'}</span>
           </span>
-          <span className={s.timer}>{timeLeft}</span>
+          {timeLeft !== undefined && <span className={s.timer}>{timeLeft}</span>}
         </div>
       </div>
     </Stage>

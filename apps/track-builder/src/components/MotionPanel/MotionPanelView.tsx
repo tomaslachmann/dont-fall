@@ -16,7 +16,7 @@ export function MotionPanelView({ engine }: { engine: BuilderEngine }) {
   useEngineVersion(engine);
   const ref = useRef<HTMLDivElement | null>(null);
   const primary = engine.primary;
-  const motion = primary !== undefined ? engine.track[primary]?.motion : undefined;
+  const segment = primary !== undefined ? engine.track[primary] : undefined;
 
   useEffect(() => {
     if (!ref.current) return;
@@ -25,7 +25,10 @@ export function MotionPanelView({ engine }: { engine: BuilderEngine }) {
     return () => engine.detachMotionPanel();
   }, [engine]);
 
-  const kinds = motionKindsOf(motion);
+  // The whole Segment's Motion and each Part's own (ADR 0124), every kind once.
+  const kinds = [
+    ...new Set([segment?.motion, ...Object.values(segment?.partMotions ?? {})].flatMap((motion) => motionKindsOf(motion))),
+  ];
 
   return (
     <InspectorSection id="motion" title="MOTION" defaultOpen

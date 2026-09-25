@@ -31,7 +31,8 @@ import { FreeLookCamera, PlayerInput } from "../input/input.js";
 import { loadBootBindings, resolveEffectiveBindings, writeStoredBindings } from "../lib/bindingsStore.js";
 import { createTeardown, type Teardown } from "../lib/utils/teardown.js";
 import { fetchAccount } from "../lib/api/auth.js";
-import { NO_HOLD } from "../render/grabAnimation.js";
+import { localHoldOf } from "../render/grabAnimation.js";
+import { carriedPropsOf } from "./carriedProps.js";
 import { createStage } from "../render/scene.js";
 import { createTrackLoading } from "./trackLoading.js";
 import { DEFAULT_GRAPHICS_QUALITY, GRAPHICS_QUALITY_SETTINGS, type GraphicsQuality } from "../lib/graphicsQuality.js";
@@ -124,6 +125,7 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     springs: springTriggers(resolved.launchPads, resolved.launchPadOwners),
     bounceDecks: resolved.bounceDecks,
     movingSegments: resolved.movingSegments,
+    shooters: resolved.shooters,
     conveyors: resolved.conveyors,
     iceDecks: resolved.iceDecks,
     mudDecks: resolved.mudDecks,
@@ -181,11 +183,14 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
     checkpoints: resolved.checkpoints,
     spinners: resolved.spinners,
     movingSegments: resolved.movingSegments,
+    shooters: resolved.shooters,
     props: resolved.props,
     launchPads: resolved.launchPads,
     volumes: resolved.volumes,
     withDefaultCharacter: false,
     authoritative: true,
+    // No Round here, so every Ramp (ADR 0123) counts from the session's start.
+    motionClock: 0,
   });
   teardown.add(() => sim.dispose());
   sim.addCharacter(DEFAULT_CHARACTER_ID, trackSpawn(track, 0, library));
@@ -236,7 +241,14 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
 
     // Solo world: Props render straight from the local sim (no server
     // snapshot to pin them to), nobody remote to draw, nothing to spectate.
-    stage.applyRenderState({ character: visualCharacter, props: render.props });
+    stage.applyRenderState({
+      character: visualCharacter,
+      props: render.props,
+      fragile: sim.fragileLooks(),
+      // The solo world is its own authority, so its bombs light and go off here (ADR 0126).
+      bombs: { rows: snapshot.bombs ?? [], tick: snapshot.tick - 1 + accumulatorMs / TICK_MS },
+      nowMs: now,
+    });
     stage.applySpringSquash({ [DEFAULT_CHARACTER_ID]: visualCharacter }, now);
     stage.applyBounceSheets({ [DEFAULT_CHARACTER_ID]: visualCharacter }, now);
     stage.applyCharacterSounds({ [DEFAULT_CHARACTER_ID]: visualCharacter }, DEFAULT_CHARACTER_ID, now);
@@ -255,13 +267,26 @@ const bootPractice = async (config: PracticeConfig, teardown: Teardown): Promise
       0,
       // G still reaches: every attempt bumps `grabEpoch`, caught or not.
       c.grabEpoch,
-      // Solo: a Grab only ever engages another Character (`GrabHolds` keys
-      // a hold grabber → held), and free-roam has none — so an attempt never
-      // becomes a hold, and there is no hold to draw. A literal rather than
-      // read off `c`, which can only ever report none here (ADR 0071).
-      NO_HOLD,
+      // Solo: there is nobody to catch, but a Prop can be carried (ADR
+      // 0125) — this world is its own authority, so its own snapshot says
+      // so, and the arms hold what the hands carry.
+      localHoldOf(
+        { ...c, liftMs: visualCharacter.liftMs, tossMs: visualCharacter.tossMs },
+        {
+          spinMs: c.spinMs,
+          facing: visualCharacter.facing,
+          tossMs: c.tossMs,
+          walking: c.grounded && (input.moveDirection.x !== 0 || input.moveDirection.z !== 0),
+        },
+        c.carryingProp === null ? null : sim.propMass(c.carryingProp),
+      ),
     );
-    stage.updateMotion(snapshot.tick - 1 + accumulatorMs / TICK_MS);
+    // ADR 0128: what it carries, in its hands as just drawn.
+    stage.holdCarriedProps(
+      carriedPropsOf([{ id: null, carryingProp: c.carryingProp, spinMs: c.spinMs }], render.props, (index) => sim.propGripShape(index)),
+      Math.min(elapsedMs, 100) / 1000,
+    );
+    stage.updateMotion(snapshot.tick - 1 + accumulatorMs / TICK_MS, sim.motionClock);
     stage.updateCamera(visualCharacter.position, look.yaw, look.pitch, Math.min(elapsedMs, 100) / 1000);
 
     // The finish that reports instead of ending (m8.1 ticket 02) — position

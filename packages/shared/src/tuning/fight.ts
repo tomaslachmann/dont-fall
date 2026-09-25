@@ -1,6 +1,6 @@
 import { msToTicks } from "./clock.js";
 import type { CAPSULE_RADIUS, FACING_TURN_RATE, FACING_TURN_SPEED_MAX, WALK_SPEED } from "./character.js";
-import type { IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, WALL_IMPACT_LIFT_RATIO } from "./knockdown.js";
+import type { IMPACT_RAGDOLL_MIN, IMPACT_STAGGER_MIN, KNOCKDOWN_LAUNCH_SCALE, WALL_IMPACT_LIFT_RATIO } from "./knockdown.js";
 import type { DASH_COOLDOWN_MS } from "./movement.js";
 
 /**
@@ -318,3 +318,133 @@ export const ELIMINATION_CREDIT_MS = 5_000;
 
 /** {@link ELIMINATION_CREDIT_MS} in whole ticks. */
 export const ELIMINATION_CREDIT_TICKS = msToTicks(ELIMINATION_CREDIT_MS);
+
+/**
+ * The heaviest Prop a Character can pick up (ADR 0125) — anything heavier is
+ * only shoved, as before. A first guess from what the authored Tracks place: a
+ * cone weighs 1.5, a 1.4 m ball 5.5 and a 1.8 m ball 11.7, so every Prop on
+ * them lifts, and a two-metre ball (≥ 17) does not.
+ */
+export const PROP_CARRY_MASS_MAX = 15;
+
+/** The heaviest Prop a Character can still jump with (ADR 0125): a cone and the smaller balls, not the 1.8 m one. */
+export const PROP_JUMP_MASS_MAX = 8;
+
+/**
+ * The carrier's pace, turn and jump while carrying a Prop (ADR 0125), each a
+ * fraction of its own: the first number with the lightest Prop, the second
+ * with one at the limit ({@link PROP_CARRY_MASS_MAX}, or
+ * {@link PROP_JUMP_MASS_MAX} for the jump), linear between. First guesses.
+ */
+export const PROP_CARRY_SPEED_LIGHT = 0.9;
+export const PROP_CARRY_SPEED_HEAVY = 0.5;
+export const PROP_CARRY_TURN_LIGHT = 0.9;
+export const PROP_CARRY_TURN_HEAVY = 0.4;
+export const PROP_CARRY_JUMP_LIGHT = 0.9;
+export const PROP_CARRY_JUMP_HEAVY = 0.6;
+
+/** A thrown Prop's speed, as a multiple of a toss's or a Hurl's own (ADR 0125): a cone flies further than a ball. */
+export const PROP_THROW_LIGHT = 1.3;
+export const PROP_THROW_HEAVY = 0.6;
+
+/** The longest (ms) Hit can be held with a Prop in hand and still be a tap — a toss, not a Spin (ADR 0125). */
+export const PROP_TOSS_TAP_MS = 200;
+
+/** {@link PROP_TOSS_TAP_MS} in whole ticks. */
+export const PROP_TOSS_TAP_TICKS = msToTicks(PROP_TOSS_TAP_MS);
+
+/** A toss's speed (units/s) straight ahead, before the Prop's weight scales it, and its upward lift (ADR 0125). */
+export const PROP_TOSS_SPEED = 8;
+export const PROP_TOSS_LIFT = 3;
+
+/**
+ * How much faster than authored a Lift plays BLIP's `Pickup_Ground` (ADR
+ * 0128): the clip is 1.8 s, which the user found too long to stand still for.
+ */
+export const PROP_LIFT_SPEEDUP = 1.5;
+
+/**
+ * BLIP's carry clips, as authored (ADR 0128) — measurements, not feel
+ * numbers, read off the GLB's own clip events and held to the real file by
+ * `modelBones.test.ts`: `Pickup_Ground`'s length and the moment its hands
+ * reach the Prop (`pickup_contact`), and the moment `Throw_Item` lets go
+ * (`item_release`). Seconds of clip time.
+ */
+export const PICKUP_CLIP_SECONDS = 1.8;
+export const PICKUP_CONTACT_SECONDS = 0.8;
+export const THROW_RELEASE_SECONDS = 0.4;
+
+/** A Lift in whole ticks, and the tick of it on which the hands reach the Prop (ADR 0128). */
+export const PROP_LIFT_TICKS = msToTicks((PICKUP_CLIP_SECONDS * 1000) / PROP_LIFT_SPEEDUP);
+export const PROP_LIFT_CONTACT_TICKS = msToTicks((PICKUP_CONTACT_SECONDS * 1000) / PROP_LIFT_SPEEDUP);
+
+/** A Toss's wind-up in whole ticks: from the tap to the Prop leaving the hands (ADR 0128). */
+export const PROP_TOSS_RELEASE_TICKS = msToTicks(THROW_RELEASE_SECONDS * 1000);
+
+/**
+ * Where the carrier's hands are while it holds a Prop (ADR 0125, ADR 0128):
+ * ahead of its capsule's centre, above it, and how far apart they are; with
+ * how far forward its body reaches (arms aside) at that height (units). A
+ * measurement, not a feel number — the hand bones of `Pickup_Ground`'s last
+ * frame, the hold every carry clip starts from, drawn at the game's own scale
+ * (`modelBones.test.ts` holds them together). `propGripOffset` places a
+ * Prop from these.
+ */
+export const PROP_GRIP_REACH = 0.45;
+export const PROP_GRIP_LIFT = 0.03;
+export const PROP_GRIP_SPREAD = 0.59;
+export const PROP_GRIP_BODY_FRONT = 0.44;
+
+/** The same four for a Spin (ADR 0128), which still holds at arm's length: `Grab_HoldOut`, whose body leans into the hold. */
+export const PROP_SPIN_GRIP_REACH = 0.88;
+export const PROP_SPIN_GRIP_LIFT = 0.52;
+export const PROP_SPIN_GRIP_SPREAD = 0.35;
+export const PROP_SPIN_GRIP_BODY_FRONT = 0.76;
+
+/** Where the hands are the moment a Toss lets go (ADR 0128): `Throw_Item` at its release, ahead and above as {@link PROP_GRIP_REACH} is. */
+export const PROP_TOSS_RELEASE_REACH = 0.64;
+export const PROP_TOSS_RELEASE_LIFT = 0.14;
+
+// --- Bomb (ADR 0126) --------------------------------------------------------
+
+/** How long (s) a bomb burns from the pick-up that lit it — its Asset's default, retuned per placed Segment. */
+export const BOMB_FUSE_SECONDS = 5;
+
+/** The last seconds of a fuse, drawn with the fast tick — the warning a Player reads. */
+export const BOMB_WARN_SECONDS = 1.5;
+
+/** How long (s) a spent bomb is gone before it lies where it was placed again — its Asset's default, retuned per placed Segment. */
+export const BOMB_RETURN_SECONDS = 8;
+
+/** How far (units) a blast reaches, from the bomb's middle to a Character's — 6 since the user asked it to reach further (ADR 0126, amended). */
+export const BOMB_BLAST_RADIUS = 6;
+
+/**
+ * The Impact a blast deals at its middle and at the edge of its reach (ADR
+ * 0126), falling off linearly between them: the middle well past
+ * {@link IMPACT_RAGDOLL_MIN}, the edge just past {@link IMPACT_STAGGER_MIN}, so
+ * the one holding it goes down hard and the one at the edge only stumbles.
+ */
+export const BOMB_BLAST_IMPACT_CENTRE = 18;
+export const BOMB_BLAST_IMPACT_EDGE = 4.5;
+
+/**
+ * How fast (units/s) a blast throws a Character it knocks down from its very
+ * middle, falling off with the Impact (ADR 0126, amended). A blast's own
+ * throw rather than {@link KNOCKDOWN_LAUNCH_SCALE}, which gave it a charged
+ * Hit's 5 u/s — about a third of this.
+ */
+export const BOMB_BLAST_LAUNCH_SPEED = 15;
+
+/** The speed (units/s) a blast adds to a Prop at its middle, away from it, falling off like the Impact. */
+export const BOMB_BLAST_PROP_SPEED = 9;
+
+/** How long (s) a Shooter's bomb burns from the shot, unless the Shooter's own `lifeSeconds` says otherwise (ADR 0127). */
+export const SHOOTER_BOMB_FUSE_SECONDS = 3;
+
+/**
+ * How long (s) a spent Shooter's bomb stays where it went off before its
+ * Shooter may fire it again (ADR 0127) — as long as the explosion is drawn
+ * (`Bomb_Explode`, 2.1 s), so a reused bomb never leaves mid-explosion.
+ */
+export const BOMB_SPENT_HOLD_SECONDS = 2.1;

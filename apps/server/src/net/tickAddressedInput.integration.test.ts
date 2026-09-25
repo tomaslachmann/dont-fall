@@ -344,6 +344,7 @@ class FaithfulClient {
       escapeProgress: 0,
       lastWiggleYaw: null,
       spinMs: 0,
+      tossMs: null,
       facing: 0,
     });
     this.sim.syncTick(serverTick);

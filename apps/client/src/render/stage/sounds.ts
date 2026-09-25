@@ -9,6 +9,7 @@ import {
   type SpinnerConfig,
   type Vec3,
   type VolumeConfig,
+  type MotionClock,
 } from "@dont-fall/shared";
 import { localBounds } from "@dont-fall/render";
 import type * as THREE from "three";
@@ -54,7 +55,7 @@ export interface StageSounds {
     landings: readonly BounceLanding[],
   ) => void;
   /** Moving pieces, fans, air columns and belts at tick `t`, heard from `listener` (M14 tickets 07, 08). */
-  motion: (t: number, listener: THREE.Vector3) => void;
+  motion: (t: number, listener: THREE.Vector3, clock: MotionClock) => void;
   /** The Environment's ambience, its wind swelling over the cloud floor (M14 ticket 09). */
   ambience: (listenerY: number) => void;
   /** A Spring back at rest settles audibly (M14 ticket 08); its launch was the boing. */
@@ -119,9 +120,9 @@ export const createStageSounds = (sound: SoundEngine | null, world: StageSoundsW
       sound?.play(slot, remote ? { at: centre, gain, rate } : { gain, rate });
     },
     characters: (characters, localId, nowMs, landings) => characterSounds?.update(characters, localId, nowMs, landings),
-    motion: (t, listener) => {
-      segmentSounds?.update(t, listener);
-      machineSounds?.update(t, listener);
+    motion: (t, listener, clock) => {
+      segmentSounds?.update(t, listener, clock);
+      machineSounds?.update(t, listener, clock);
     },
     ambience: (listenerY) => ambience?.update(listenerY),
     springSettled: (spring) => sound?.play("segment.spring_settle", { at: spring.trigger.center, rate: SPRING_SETTLE_RATE }),

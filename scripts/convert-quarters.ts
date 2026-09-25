@@ -97,7 +97,7 @@ for (const master of MASTERS) {
     const glb = writeGlb(json, bin);
     writeFileSync(join(assetsDir, `${id}.glb`), glb);
     const { center: c, half } = measureBounds(glb);
-    defs.push({ id, category: "platform", center: c, half });
+    defs.push({ id, category: "floor", center: c, half });
     arcCentres.push(`  ${id}: { x: ${-size / 2}, z: ${-size / 2} },`);
     console.log(`  ${id}: ${(half.x * 2).toFixed(3)} × ${(half.y * 2).toFixed(3)} × ${(half.z * 2).toFixed(3)}`);
   }

@@ -92,6 +92,9 @@ its rights follow the author's plan with that service. Non-commercial licences a
 | `segment/fan_loop.ogg` | Wind.wav | Cyril Laurier | CC-BY 4.0 | <https://freesound.org/s/17645/> |
 | `segment/belt_loop.ogg` | XRayBelt.aif | mwl500 | CC-BY 3.0 | <https://freesound.org/s/49972/> |
 | `segment/slide_rumble_loop.ogg` | Wind.wav | Cyril Laurier | CC-BY 4.0 | <https://freesound.org/s/17645/> |
+| `segment/bomb_fuse.ogg` | Ticking Timer 05 Sec | LilMati | CC0 | <https://freesound.org/s/487725/> |
+| `segment/bomb_blast.ogg` | explosion_mid_fuse_1 | eardeer | CC-BY 4.0 | <https://freesound.org/s/402011/> |
+| `segment/shooter_fire.ogg` | Cannon5 | Isaac200000 | CC0 | <https://freesound.org/s/184651/> |
 | `environment/wind_day_loop.ogg` | Soft Tonal Wind_01 | janbezouska | CC0 | <https://freesound.org/s/397091/> |
 | `environment/wind_night_loop.ogg` | Soft Tonal Wind_01 | janbezouska | CC0 | <https://freesound.org/s/397091/> |
 | `environment/birds_loop.ogg` | Morning Birds | nick121087 | CC0 | <https://freesound.org/s/342462/> |

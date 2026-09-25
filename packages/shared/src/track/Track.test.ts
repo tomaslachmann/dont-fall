@@ -247,6 +247,7 @@ describe("resolveTrack", () => {
       launchPadOwners: [],
       volumes: [],
       movingSegments: [],
+      shooters: [],
       conveyors: [],
       iceDecks: [],
       mudDecks: [],

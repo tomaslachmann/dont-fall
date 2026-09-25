@@ -1,5 +1,4 @@
 import {
-  GRAB_TURN_SPEED_MULTIPLIER,
   CAPSULE_BOTTOM_OFFSET,
   DASH_SPEED,
   isDownMotionState,
@@ -10,6 +9,7 @@ import {
 } from "@dont-fall/shared";
 import * as THREE from "three";
 import { carriedFlail, restCarriedHang, type CarriedHang } from "../carriedFlail.js";
+import { carrierHands, type CarrierHands } from "../carriedPropHands.js";
 import {
   actionFor,
   CHARACTER_VISUAL_HEIGHT,
@@ -81,6 +81,8 @@ export interface LocalCharacter {
   facing: () => number;
   /** Its capsule centre as last placed, `null` before the first snapshot. */
   centre: () => Vec3 | null;
+  /** Its hands as drawn, to hold a carried Prop in (ADR 0128). */
+  hands: CarrierHands;
   /** Stop its mixer and drop the clips cached against the rig, before the rig is freed. */
   dispose: () => void;
 }
@@ -325,7 +327,16 @@ export const createLocalCharacter = (
       // hold in either role, and the reach of an attempt that caught nobody.
       // A held body kicks, or hangs Limp (ADR 0104). Also asked before the
       // reaction below, so an attempt made during one isn't lost.
-      const grabPose = grabAnimations.pose("local", hold.role, grabEpoch, grounded, nowMs, actions, hold.phase === "limp");
+      const grabPose = grabAnimations.pose(
+        "local",
+        hold.role,
+        grabEpoch,
+        grounded,
+        nowMs,
+        actions,
+        hold.phase === "limp",
+        hold.carry,
+      );
 
       // M6 ticket 03: Punch/HitReact take priority over ordinary locomotion
       // while playing — the caller (this method) never picks a locomotion
@@ -415,7 +426,7 @@ export const createLocalCharacter = (
           currentYaw: bodyYaw + spinMomentum * deltaSeconds,
           moveDirection,
           deltaSeconds,
-          turnScale: hold.role === "grabbing" ? GRAB_TURN_SPEED_MULTIPLIER : 1,
+          turnScale: hold.turnScale,
         });
         spinMomentum = decayedSpinMomentum(spinMomentum, deltaSeconds);
       }
@@ -491,6 +502,8 @@ export const createLocalCharacter = (
     facing: () => facingFromModelYaw(bodyYaw),
 
     centre: () => localCentre,
+
+    hands: carrierHands(characterModel.scene),
 
     dispose: () => {
       // Stop the mixer before the rig it animates is disposed, and drop the

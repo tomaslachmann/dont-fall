@@ -10,8 +10,10 @@ import {
   ASSET_PLACEMENT_MODULES,
   assetColorFamilyOf,
   assetFileName,
+  assetPaletteIds,
   attachAssetGeometry,
   authoredPaintFileId,
+  canonicalPaletteId,
   loadAssetLibrary,
   visualAssetIdsOf,
   type AssetModuleDef,
@@ -20,6 +22,8 @@ import { loadAssetModule, readAssetModel } from "./asset.js";
 import { invalidLaunchReason, launchDefFor } from "./Launch.js";
 import { pointInBox } from "../math/box.js";
 import type { VolumeConfig } from "../simulation/Volume.js";
+import { BOMB_MODULE_DEFS } from "./bombAssetDefs.js";
+import { DF_MODULE_DEFS } from "./dfAssetDefs.js";
 import { KAYKIT_MODULE_DEFS } from "./kaykitAssetDefs.js";
 import { QUARTER_ARC_CENTRES, QUARTER_MODULE_DEFS } from "./quarterAssetDefs.js";
 import { TRAP_MODULE_DEFS } from "./trapAssetDefs.js";
@@ -179,22 +183,32 @@ describe("asset module definitions", () => {
     }
   });
 
-  it("lists every Spring in the Spring category, and nothing else in it", () => {
-    // Both directions: a Spring filed under Platform is lost in 400 platforms,
-    // and a Platform filed under Spring promises a launch it hasn't got.
+  it("lists everything that throws a Character in the Launcher category, and nothing else in it (ADR 0122)", () => {
+    // Both directions: a Spring filed under Floor is lost among 80 decks, and
+    // a Floor filed under Launcher promises a throw it hasn't got. Launcher is
+    // one of the two groups named after a mechanic all of its members carry
+    // (the other is Gate), so the rule is exact both ways — a Spring's launch
+    // (ADR 0069) or a fan's updraft Volumes (ADR 0075).
     for (const def of ASSET_MODULE_DEFS) {
-      expect(def.category === "spring", def.id).toBe(def.launch !== undefined);
+      expect(def.category === "launcher", def.id).toBe(def.launch !== undefined || def.volumes !== undefined);
     }
-    expect(ASSET_MODULE_DEFS.filter((def) => def.category === "spring")).toHaveLength(8);
+    // Eight Springs — KayKit's coil, its four spring pads, three trap-pack decks — and the one fan.
+    expect(ASSET_MODULE_DEFS.filter((def) => def.category === "launcher")).toHaveLength(9);
   });
 
-  it("lists every Fan in the Fan category, and nothing else in it (ADR 0075)", () => {
-    // Both directions, like the Springs above: a Fan filed under Platform
-    // hides its field, and a Platform filed under Fan promises air it hasn't got.
-    for (const def of ASSET_MODULE_DEFS) {
-      expect(def.category === "fan", def.id).toBe(def.volumes !== undefined);
-    }
-    expect(ASSET_MODULE_DEFS.filter((def) => def.category === "fan")).toHaveLength(1);
+  it("keeps a mechanic from moving a piece out of its group (ADR 0122)", () => {
+    // The other direction of the same rule: a spiked deck and a breaking one
+    // are Floors an author finds among Floors, warned by their own fields —
+    // the category answers "what is this to a runner", never "what does it do".
+    const byId = Object.fromEntries(ASSET_MODULE_DEFS.map((def) => [def.id, def]));
+    expect(byId["trap_platformspikered"]!.category).toBe("floor");
+    expect(byId["trap_platformspikered"]!.hazard).toBe("spiked");
+    expect(byId["fragile_block"]!.category).toBe("floor");
+    expect(byId["trapdoor"]!.category).toBe("floor");
+    // …and the pack's traps are all bodies meant to be swept through a route.
+    expect(byId["trap_arrowtrap"]!.category).toBe("sweeper");
+    expect(byId["trap_trapcirclered"]!.category).toBe("sweeper");
+    expect(byId["shooter"]!.category).toBe("sweeper");
   });
 
   it("documents the authored numbers of the one hand-promoted def", () => {
@@ -343,6 +357,8 @@ describe("asset physics (ticket 02 Done-when)", () => {
     // in assetModules.ts carries hand-written ones. Read off the def files,
     // never hardcoded — a re-conversion must not silently desync this list.
     const socketless = new Set([
+      ...BOMB_MODULE_DEFS.map((def) => def.id),
+      ...DF_MODULE_DEFS.map((def) => def.id),
       ...KAYKIT_MODULE_DEFS.map((def) => def.id),
       ...TRAP_MODULE_DEFS.map((def) => def.id),
       ...FAN_MODULE_DEFS.map((def) => def.id),
@@ -516,6 +532,37 @@ describe("assetColorFamilyOf — one palette tile per shape, not per file", () =
 
   it("leaves the quarter pack's lone blues alone", () => {
     expect(assetColorFamilyOf("kaykit_platform_quarter_circle_6x6x1_blue")).toBeNull();
+  });
+});
+
+describe("assetPaletteIds", () => {
+  it("lists every shape once — families under their canonical, lone looks as-is", () => {
+    const ids = assetPaletteIds();
+    // One tile per shape: no two tiles share a stem, and every canonical exists.
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) {
+      expect(id).toBe(canonicalPaletteId(id));
+    }
+    // Nothing lost: every def id canonicalizes onto a listed tile.
+    for (const def of ASSET_MODULE_DEFS) {
+      expect(ids).toContain(canonicalPaletteId(def.id));
+    }
+    // And the dedup does something: fewer tiles than files.
+    expect(ids.length).toBeLessThan(ASSET_MODULE_DEFS.length);
+  });
+});
+
+describe("canonicalPaletteId", () => {
+  it("folds a family's four files onto the _red canonical", () => {
+    expect(canonicalPaletteId("kaykit_platform_6x6x1_blue")).toBe("kaykit_platform_6x6x1_red");
+    expect(canonicalPaletteId("kaykit_platform_6x6x1_red")).toBe("kaykit_platform_6x6x1_red");
+  });
+
+  it("leaves lone looks — bare ids and half-families — alone", () => {
+    expect(canonicalPaletteId("kaykit_ball")).toBe("kaykit_ball");
+    expect(canonicalPaletteId("kaykit_platform_quarter_circle_6x6x1_blue")).toBe(
+      "kaykit_platform_quarter_circle_6x6x1_blue",
+    );
   });
 });
 

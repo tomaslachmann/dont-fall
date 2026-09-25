@@ -102,3 +102,26 @@ describe("httpBettingNotifier", () => {
     expect(silence).toHaveBeenCalled();
   });
 });
+
+describe("a Bot on the board (M17 ticket 10, ADR 0129)", () => {
+  it("is a runner one can back, and can take the Round — it is never a bettor, having no Account to bet with", () => {
+    // A Bot's seat is a roster row with no Account; the board lists it like anyone's.
+    const players = new Map([
+      ["player", { nickname: "Floppo", accountId: "acc-1" }],
+      ["bot", { nickname: "pixelpeach", accountId: null }],
+    ]);
+    const opened = openBettingArgs({ matchId: "m1", finishedRounds: 0, players, sidelined: new Set(), nowMs: 0 });
+    expect(opened.runners).toEqual([
+      { playerId: "player", nickname: "Floppo" },
+      { playerId: "bot", nickname: "pixelpeach" },
+    ]);
+    expect(
+      roundWinners({
+        rows: [
+          { id: "bot", placement: 1, qualified: true },
+          { id: "player", placement: 2, qualified: false },
+        ],
+      }),
+    ).toEqual(["bot"]);
+  });
+});

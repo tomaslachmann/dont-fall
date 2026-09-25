@@ -161,6 +161,28 @@ export const describeSlide = (slide: MotionSlide, points: readonly Vec3[], scale
 };
 
 /**
+ * "Speeds up to ×2 over the first 60 s of the Round, then holds. Fastest
+ * point then 14.4 m/s → Ragdoll." (ADR 0123) — a Ramp scales every speed
+ * of the Motion by its pace, so the fastest it ever gets is its own fastest
+ * times the multiplier, sampled over one cycle of it without the Ramp.
+ */
+export const describeRamp = (motion: SegmentMotion, points: readonly Vec3[], scale = 1): { text: string; outcome: ImpactOutcome } => {
+  const { ramp, ...unramped } = motion;
+  if (!ramp) return { text: "", outcome: "none" };
+  const periods = [unramped.swing?.period, unramped.slide?.period].filter((p): p is number => p !== undefined);
+  const duration = periods.length > 0 ? Math.max(...periods) : 1;
+  const own = Math.max(0, ...Array.from({ length: 60 }, (_, i) => topSpeedAt(unramped, (i / 60) * duration, points, scale)));
+  const top = own * ramp.multiplier;
+  const way = ramp.multiplier >= 1 ? "Speeds up" : "Slows down";
+  return {
+    text:
+      `${way} to ×${ramp.multiplier} over the first ${seconds(ramp.seconds)} of the Round, then holds.` +
+      ` Fastest point then ${speedWords(top)}.`,
+    outcome: speedOutcome(top),
+  };
+};
+
+/**
  * The track the piece's fastest corner draws through the air (the viewport's
  * path line, after Dreams' animation path): one full cycle — the longest
  * back-and-forth period, or one turn of a lone Spin (capped at 30 s) —

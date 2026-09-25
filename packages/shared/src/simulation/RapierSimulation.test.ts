@@ -1681,6 +1681,7 @@ describe("RapierSimulation — dash", () => {
       escapeProgress: midBurst.escapeProgress,
       lastWiggleYaw: midBurst.lastWiggleYaw,
       spinMs: midBurst.spinMs,
+      tossMs: midBurst.tossMs,
       facing: midBurst.facing,
     });
 
@@ -1742,6 +1743,7 @@ describe("RapierSimulation — dash", () => {
       escapeProgress: ackedSnapshot.escapeProgress,
       lastWiggleYaw: ackedSnapshot.lastWiggleYaw,
       spinMs: ackedSnapshot.spinMs,
+      tossMs: ackedSnapshot.tossMs,
       facing: ackedSnapshot.facing,
     });
     client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unackedInputs);
@@ -1828,6 +1830,7 @@ describe("RapierSimulation — dash", () => {
           escapeProgress: acked.escapeProgress,
           lastWiggleYaw: acked.lastWiggleYaw,
           spinMs: acked.spinMs,
+          tossMs: acked.tossMs,
           facing: acked.facing,
         });
         client.replayLocalCharacter(DEFAULT_CHARACTER_ID, inputHistory.slice(ackedIdx + 1));
@@ -2683,6 +2686,7 @@ describe("RapierSimulation — client/server dash-wall knockdown desync (2026-09
         escapeProgress: 0,
         lastWiggleYaw: null,
         spinMs: 0,
+        tossMs: null,
         facing: 0,
       });
       sim.reconcileCharacter(DEFAULT_CHARACTER_ID, gettingUp({ x: 5, y: RESTING_SPAWN.y, z: 5 }));
@@ -2766,6 +2770,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
     escapeProgress: 0,
     lastWiggleYaw: null,
     spinMs: 0,
+    tossMs: null,
     facing: 0,
   });
 
@@ -2791,6 +2796,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       escapeProgress: 0,
       lastWiggleYaw: null,
       spinMs: 0,
+      tossMs: null,
       facing: 0,
     });
 
@@ -2828,6 +2834,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       escapeProgress: 0,
       lastWiggleYaw: null,
       spinMs: 0,
+      tossMs: null,
       facing: 0,
     });
 
@@ -2923,6 +2930,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
         escapeProgress: 0,
         lastWiggleYaw: null,
         spinMs: 0,
+        tossMs: null,
         facing: 0,
       });
       tick(sim, 0.1); // a few local ticks between snapshots
@@ -2992,6 +3000,7 @@ describe("RapierSimulation — reconcileCharacter + replay (ticket 05)", () => {
       escapeProgress: 0,
       lastWiggleYaw: null,
       spinMs: 0,
+      tossMs: null,
       facing: 0,
     });
     sim.tick({ [DEFAULT_CHARACTER_ID]: IDLE_INPUTS });
@@ -3379,6 +3388,7 @@ describe("RapierSimulation — Hit (M6 ticket 03)", () => {
       escapeProgress: base.escapeProgress,
       lastWiggleYaw: base.lastWiggleYaw,
       spinMs: base.spinMs,
+      tossMs: base.tossMs,
       facing: base.facing,
     });
 
@@ -3430,6 +3440,7 @@ describe("RapierSimulation — Hit (M6 ticket 03)", () => {
         escapeProgress: ackedSnapshot.escapeProgress,
         lastWiggleYaw: ackedSnapshot.lastWiggleYaw,
         spinMs: ackedSnapshot.spinMs,
+        tossMs: ackedSnapshot.tossMs,
         facing: ackedSnapshot.facing,
       });
       client.replayLocalCharacter(STRIKER, unackedInputs);
@@ -3481,6 +3492,7 @@ describe("RapierSimulation — Hit (M6 ticket 03)", () => {
         escapeProgress: ackedSnapshot.escapeProgress,
         lastWiggleYaw: ackedSnapshot.lastWiggleYaw,
         spinMs: ackedSnapshot.spinMs,
+        tossMs: ackedSnapshot.tossMs,
         facing: ackedSnapshot.facing,
       });
       const release = input({ facing: NORTH_FACING, hitHeld: false });
@@ -4110,6 +4122,7 @@ describe("RapierSimulation — launch pads (M3.7 ticket 02, ADR 0069): vertical 
       escapeProgress: firedSnap.escapeProgress,
       lastWiggleYaw: firedSnap.lastWiggleYaw,
       spinMs: firedSnap.spinMs,
+      tossMs: firedSnap.tossMs,
       facing: firedSnap.facing,
     });
     sim.replayLocalCharacter(DEFAULT_CHARACTER_ID, buffered);
@@ -4685,6 +4698,7 @@ describe("RapierSimulation — Character facing (M6 ticket 01, ADR 0045)", () =>
       escapeProgress: ackedSnapshot.escapeProgress,
       lastWiggleYaw: ackedSnapshot.lastWiggleYaw,
       spinMs: ackedSnapshot.spinMs,
+      tossMs: ackedSnapshot.tossMs,
       facing: ackedSnapshot.facing,
     });
     client.replayLocalCharacter(DEFAULT_CHARACTER_ID, unackedInputs);

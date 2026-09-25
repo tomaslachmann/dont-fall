@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
+  invalidPartMotionsTargetReason,
   invalidTrackCourseReason,
   roundStartBlockedReason,
   trackHasFinishZone,
@@ -40,6 +41,8 @@ export const validateTrackForRound = (track: Track, roundType: RoundType): Draft
   if (badEdit) errors.push(badEdit);
   const badCourse = invalidTrackCourseReason(track, TRACK_REGISTRY);
   if (badCourse) errors.push(badCourse);
+  const badPartMotions = invalidPartMotionsTargetReason(track, TRACK_REGISTRY);
+  if (badPartMotions) errors.push(badPartMotions);
   const blocked = roundStartBlockedReason(roundType, trackHasFinishZone(track, TRACK_REGISTRY));
   if (blocked) errors.push(blocked);
 

@@ -1,12 +1,17 @@
+import { randomUUID } from "node:crypto";
 import {
   ASSET_PLACEMENT_MODULES,
   DEFAULT_MATCH_LENGTH,
   DEFAULT_ROUND_TYPE,
   MODULE_LIBRARY,
   assetIdsOf,
+  botIdentities,
+  botsToFill,
+  defaultLobbyBots,
   missingAssetIds,
   RapierSimulation,
   raceTargets,
+  resolveHostId,
   resolveRoundRules,
   resolveTrack,
   roundStartBlockedReason,
@@ -15,10 +20,12 @@ import {
   type AssetLibraryLoader,
   type CheckpointArrivals,
   type DnfEntry,
+  type LobbyBots,
   type LobbyPlayer,
   type MatchState,
   type Module,
   type RaceTargets,
+  type ResolvedTrack,
   type RoundResult,
   type RoundRules,
   type RoundType,
@@ -26,6 +33,8 @@ import {
 } from "@dont-fall/shared";
 import type { WebSocket } from "ws";
 import { InputRouter } from "../net/inputRouter.js";
+import { BotDriver } from "./botDriver.js";
+import type { BotTrackBuilder } from "./botTracks.js";
 import { httpAccountResolver, type AccountResolver } from "./accountResolution.js";
 import { httpBettingNotifier, type BettingNotifier } from "./betting.js";
 import { httpMatchResultsNotifier, type MatchResultsNotifier } from "./matchResults.js";
@@ -35,6 +44,7 @@ import { drawRound, type RoundSlotPick } from "./roundDraw.js";
 import { AccountRoster } from "../server/accountRoster.js";
 import type { ServerRuntimeConfig } from "../server/config.js";
 import { Reservations } from "../server/reservations.js";
+import { seatForJoin, seatOf } from "../server/seats.js";
 import type { FetchedTrack } from "../track/trackSource.js";
 
 /** One Round's fully-resolved plan (M7 ticket 05) — what {@link MatchRuntime.matchStructure} holds per slot. */
@@ -117,6 +127,14 @@ export class MatchRuntime {
   readonly spectators = new Set<string>();
 
   readonly inputs = new InputRouter();
+
+  /**
+   * The seats a Bot drives (ADR 0129), and their inputs. A Bot's seat is an
+   * ordinary `lobbyPlayers` row with no Account and no socket: it is seated,
+   * scored and counted like anyone's, and this is the only place that knows
+   * it is a Bot. Added by {@link addBot}, taken out by {@link removeBot}.
+   */
+  readonly bots: BotDriver;
 
   /**
    * Seats kept for Accounts the broker sent here that have not connected yet
@@ -222,6 +240,14 @@ export class MatchRuntime {
    * {@link resetToFreshLobby}. Host-settable via `setMatchLength` (ticket 05).
    */
   matchLength = DEFAULT_MATCH_LENGTH;
+  /**
+   * The host's Bot settings (M17 ticket 10, ADR 0129) — Lobby-scoped like
+   * {@link matchLength}: they survive {@link resetToFreshLobby}, and the next
+   * start fills afresh from them. The Bots themselves are Match-scoped
+   * ({@link fillBots}). Host-settable via `setBots`, and a private Lobby
+   * starts from what `POST /lobbies` was asked for.
+   */
+  lobbyBots: LobbyBots;
   /**
    * Every Round's result so far this Match (M7 ticket 04, ADR 0049) —
    * Match-scoped: cleared on a fresh Match ({@link resetToFreshLobby}),
@@ -454,7 +480,9 @@ export class MatchRuntime {
     trackPlays: TrackPlayRecorder = httpTrackPlayRecorder(config.trackServiceUrl),
     accounts: AccountResolver = httpAccountResolver(config.trackServiceUrl),
     personalBests: PersonalBestRecorder = httpPersonalBestRecorder(config.trackServiceUrl),
+    botTracks?: BotTrackBuilder,
   ) {
+    this.bots = new BotDriver(botTracks);
     this.library = library;
     this.fetched = fetched;
     this.betting = betting;
@@ -463,6 +491,7 @@ export class MatchRuntime {
     this.accounts = accounts;
     this.personalBests = personalBests;
     this.matchLength = config.matchLengthOverride ?? DEFAULT_MATCH_LENGTH;
+    this.lobbyBots = config.bots ?? defaultLobbyBots(config.maxPlayers);
     this.reservations = new Reservations(config.reservationTtlMs);
     this.accountRoster = new AccountRoster(config.onAccountRoster);
     // The Match starts with no players; ticket 01's single-player default
@@ -472,6 +501,123 @@ export class MatchRuntime {
     this.roundRules = built.roundRules;
     this.trackHasFinishZone = built.trackHasFinishZone;
     this.raceTargets = built.raceTargets;
+    this.bots.worldChanged(built.resolved);
+  }
+
+  /**
+   * Every seat taken here (ADR 0112, 0129): connections, live Reservations
+   * and Bots. What a connection, a Reservation and a Bot are all held to
+   * against `maxPlayers`, and what `/status` reports, so none of the three
+   * can take a place another one was counted in.
+   */
+  seatsTaken(): number {
+    return this.sockets.size + this.reservations.liveCount() + this.bots.size;
+  }
+
+  /**
+   * Seats a Bot (ADR 0129) and returns its id, or `null` when there is no
+   * room or the Match has left the Lobby. The hook Lobby filling (M17 ticket
+   * 10) calls; nothing a client says reaches it.
+   *
+   * A held Reservation wins over a Bot (ADR 0129): it is counted in
+   * {@link seatsTaken}. A Bot is Ready by definition, and takes the next place
+   * in line like a connection, so it never jumps ahead of anyone already here.
+   * LOBBY only, as a Round is never joined halfway (M4 ticket 05).
+   *
+   * Plays at `this.lobbyBots.level` (M17 ticket 08): the host's setting,
+   * fixed for the Match once `start` fills the Lobby (`fillBots`).
+   */
+  addBot(identity: Partial<Pick<LobbyPlayer, "nickname" | "color" | "skin" | "hat">> = {}): string | null {
+    if (this.match.phase !== "LOBBY") return null;
+    if (this.seatsTaken() >= this.config.maxPlayers) return null;
+    const id = randomUUID();
+    const joinOrder = this.joinCount;
+    this.joinCount += 1;
+    this.lobbyPlayers.set(id, {
+      id,
+      nickname: "Player",
+      ready: true,
+      joinOrder,
+      accountId: null,
+      color: null,
+      skin: null,
+      hat: null,
+      ...identity,
+    });
+    this.bots.add(id, this.config.matchId, this.lobbyBots.level);
+    seatForJoin(this).take(this, id, trackSpawn(this.fetched.track, joinOrder, this.library));
+    this.snapshotDirty = true;
+    return id;
+  }
+
+  /**
+   * The Lobby's host (ADR 0040): the first joiner still here, **among the
+   * humans** (M17 ticket 10). A Bot is never host (ADR 0129) — it has no
+   * hands to press Start with — whatever its join order, and whoever leaves.
+   * Every host-only gate and the Snapshot's `hostId` read this, never
+   * `resolveHostId` over the whole roster.
+   */
+  hostId(): string | undefined {
+    return resolveHostId([...this.lobbyPlayers.values()].filter((player) => !this.bots.has(player.id)));
+  }
+
+  /**
+   * How many Bots a start would seat now (ADR 0129): the host's settings
+   * against the places left open. {@link seatsTaken} counts live Reservations,
+   * so a Party member walking in holds a place a Bot never takes.
+   */
+  botsToFill(): number {
+    return botsToFill(this.lobbyBots, this.config.maxPlayers - this.seatsTaken());
+  }
+
+  /**
+   * Fills the Lobby's open places with Bots, as the Round starts (M17 ticket
+   * 10) — called by the `start` handler, in LOBBY, the moment it is accepted.
+   * Each Bot takes the next join order, so it is behind every human already
+   * here, and wears an identity drawn from this Match and this Tick, never
+   * `Math.random()`, so the draw is the server's own and repeatable. It keeps
+   * that identity for the whole Match: the fill happens once per Match, and
+   * every Bot leaves at {@link resetToFreshLobby}.
+   */
+  fillBots(): string[] {
+    const humans = [...this.lobbyPlayers.values()].map((player) => player.nickname);
+    const identities = botIdentities(`${this.config.matchId}:${this.serverTick}`, this.botsToFill(), humans);
+    return identities.flatMap((identity) => {
+      const id = this.addBot(identity);
+      return id === null ? [] : [id];
+    });
+  }
+
+  /** The host's Bot settings (M17 ticket 10), already validated by `lobby.ts`. */
+  setLobbyBots(bots: LobbyBots): void {
+    this.lobbyBots = { enabled: bots.enabled, max: bots.max, level: bots.level };
+  }
+
+  /**
+   * Takes a Bot's seat out, the way a closing socket takes a Player's: a
+   * DNF, and its body eliminated rather than removed, while the Round is
+   * being raced (M4 ticket 05, ADR 0042).
+   */
+  removeBot(id: string): void {
+    if (!this.bots.has(id)) return;
+    seatOf(this, id).release(this, id, this.match.phase === "RUNNING");
+    this.bots.remove(id);
+    this.lobbyPlayers.delete(id);
+    this.snapshotDirty = true;
+  }
+
+  /**
+   * Who has this Round's world built (ADR 0089), as the Snapshot lists it:
+   * the clients that said so, and every Bot, which has nothing to load. The
+   * LOADING gate itself reads only connections ({@link allLoaded}).
+   */
+  loadedIds(): string[] {
+    return [...this.loaded, ...this.bots.ids()];
+  }
+
+  /** Who has confirmed these Standings (ADR 0051), as the Snapshot lists it: a Bot is Ready by definition. */
+  standingsReadyIds(): string[] {
+    return [...this.standingsReady, ...this.bots.ids()];
   }
 
   /**
@@ -573,7 +719,7 @@ export class MatchRuntime {
   reserveSeats(accountIds: readonly string[]): SeatReservation {
     if (this.match.phase !== "LOBBY") return { refused: "this Lobby's Match has already started" };
     if (this.startRequested) return { refused: "this Lobby is starting" };
-    const taken = this.sockets.size + this.reservations.liveCount();
+    const taken = this.seatsTaken();
     const needed = this.reservations.seatsNeededFor(accountIds);
     if (taken + needed > this.config.maxPlayers) {
       const free = Math.max(0, this.config.maxPlayers - taken);
@@ -624,7 +770,15 @@ export class MatchRuntime {
    * no reconnection built yet (ADR 0024), are never coming back this Match.
    */
   canContinueMatch(): boolean {
-    return !this.matchAbandoned && this.roundsRemaining() && this.sockets.size >= this.config.playersToStart;
+    // A Match against Bots runs with its host alone (M17 ticket 10): the Bots
+    // count toward the bar, as they did toward the start's. At least one
+    // connection all the same — Bots never play on by themselves (ADR 0129).
+    return (
+      !this.matchAbandoned &&
+      this.roundsRemaining() &&
+      this.sockets.size > 0 &&
+      this.sockets.size + this.bots.size >= this.config.playersToStart
+    );
   }
 
   /**
@@ -652,10 +806,11 @@ export class MatchRuntime {
    * Whether every connected client has this Round's world built (ADR 0089) —
    * what ends the LOADING phase. An empty server is deliberately `false`:
    * nobody having loaded is not everybody having loaded, the same reading
-   * `allQualified` takes.
+   * `allQualified` takes. The Bots' navmesh, built off this loop (M17 ticket
+   * 05), is this server's own share of the load: the Round waits for it too.
    */
   allLoaded(): boolean {
-    if (this.sockets.size === 0) return false;
+    if (this.sockets.size === 0 || !this.bots.ready()) return false;
     for (const id of this.sockets.keys()) if (!this.loaded.has(id)) return false;
     return true;
   }
@@ -788,6 +943,7 @@ export class MatchRuntime {
     roundRules: RoundRules;
     trackHasFinishZone: boolean;
     raceTargets: RaceTargets;
+    resolved: ResolvedTrack;
   } {
     const missing = missingAssetIds(track, this.library);
     if (missing.length > 0) {
@@ -823,6 +979,7 @@ export class MatchRuntime {
       roundRules,
       trackHasFinishZone: resolved.finishZones.length > 0,
       raceTargets: raceTargets(resolved.checkpoints, resolved.finishZones),
+      resolved,
     };
   }
 
@@ -875,6 +1032,9 @@ export class MatchRuntime {
     this.roundRules = built.roundRules;
     this.trackHasFinishZone = built.trackHasFinishZone;
     this.raceTargets = built.raceTargets;
+    // Every Bot plans on the new Track, and its navmesh is built now, while
+    // the Round loads (ADR 0129).
+    this.bots.worldChanged(built.resolved);
     this.checkpointArrivals = {};
     // A new world is a new thing to load (ADR 0089): every client must build
     // this Track before anyone's Round starts on it.
@@ -915,6 +1075,14 @@ export class MatchRuntime {
     // everyone waiting (M7 ticket 08 — a mid-Match spectator plays from the
     // next Match), and the rebuild is what does the seating.
     this.spectators.clear();
+    // Bots leave with the Match they were filled for (M17 ticket 10, ADR
+    // 0129); the next start fills afresh from the host's settings. Taken out
+    // before the rebuild, so it neither seats them nor builds a navmesh for
+    // them, and without `removeBot`'s DNF: whatever Round they were in is over.
+    for (const botId of [...this.bots.ids()]) {
+      this.bots.remove(botId);
+      this.lobbyPlayers.delete(botId);
+    }
     this.rebuildSimulation(track);
     this.match = { phase: "LOBBY", phaseStartTick: this.serverTick };
     this.startRequested = false;

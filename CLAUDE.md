@@ -357,6 +357,54 @@ tests; the ADR's "As built" says what building it settled (`isPlayerDrivenMotion
 user:** everything live — the numbers, A/D wiggling, the Limp pose (the `KO_B` clip held), both panels
 over a real Round, and the stand-in sounds.
 
+**A Prop can be carried and thrown, done on tests** — **ADR 0125**, the user's ask on 2026-09-23,
+settled in two question rounds. With no Character in reach, Grab picks up a Prop up to
+`PROP_CARRY_MASS_MAX`. It is carried kinematic, with its colliders off, and the carrier walks,
+turns and jumps (up to `PROP_JUMP_MASS_MAX`) less the heavier it is, never Dashing. A tap of Hit
+**Tosses** it (new in `CONTEXT.md`); held, Hit Spins and Hurls it; Grab puts it down; a knockdown
+or being grabbed drops it. A thrown or swung Prop hits by the Shooter ball's rule times
+`mass / PROJECTILE_MASS`, credited to the thrower; a merely rolling Prop still hurts nobody. Only
+the authority picks up; a client learns a carry from `carryingProp` / `carriedBy` and draws the
+Prop in its drawn hands (`carriedPropPose`). Tickets in `.scratch/carry-props/issues/`.
+**Waiting on the user:** every number, and the pick-up priority beside a Character, live.
+
+**A Bomb, done on tests.** **ADR 0126** comes from the user's drop on 2026-09-23
+(`BLIP_Bombs_v1`, animated) and was settled in three question rounds. A Bomb is a Prop
+with a fuse. Picking it up lights it (5 s, the last 1.5 s a fast tick), and it stays lit
+through any number of hands (hot potato). When the fuse runs out it goes off wherever it
+is, even in the carrier's hands: the hold ends first, then everyone in reach takes a
+`Blast` Impact that falls off from knockdown at the middle to a Stagger at the edge, and
+Props are pushed away. The last one to hold it is credited, never for knocking themselves
+down. Then it is gone, and 8 s later it lies where it was placed again. A bomb that falls
+off the Track goes out on the same clock. The fuse and the return are per-Segment
+(`bomb` Attachment, the builder's BOMB panel, MCP `set_bomb`), and the blast's reach and
+strength are in `tuning/fight.ts`. `pnpm convert:bomb` makes `bomb_A`/`bomb_B` black and
+keeps the clips. The nine static `kaykit_bomb*` Assets are gone. The client plays the
+clips from the Snapshot's rows (`packages/render/src/bomb/`), the first Asset clips ever
+played, for looks only. The fuse, the blast and the Shooter's shot have the user's
+Freesound picks. Tickets in `.scratch/bombs/issues/`. **Waiting on the user:** every
+number, the look and the sounds, live.
+The same day, after the user's first look: a Blast throws about three times further
+(its own `BOMB_BLAST_LAUNCH_SPEED`, not the scale Hit, Bump and Hurl share) and reaches
+6 m (ADR 0126, amended). **ADR 0127** lets a Shooter fire Bombs (SHOOTER · AMMO, MCP
+`set_shooter` `ammo`). A shot bomb leaves lit (3 s), knocks down on a direct hit as a ball
+does, can be caught and thrown back, goes off wherever it is, and waits for its Shooter
+rather than going home.
+
+**A Prop is Lifted and Tossed as the rig does it, done on tests** — **ADR 0128**, from the user's
+`BLIP_Carry_v1` drop on 2026-09-24 (our `blip_with_coliders.glb` plus `Pickup_Ground`, `Carry_Walk`,
+`Throw_Item`), settled in three question rounds. `pnpm graft:blip` copies the new clips into `BLIP.glb`,
+which the game loads. Nothing else in that file changes. Grab at a lying Prop is a **Lift**
+(new in `CONTEXT.md`): `Pickup_Ground` 1.5× as fast, the carrier standing still. The Prop is picked
+up when the hands reach it. A flying one is caught instead, with no Lift, so ADR 0127's thrown-back bomb
+still works. A Toss winds up for 0.4 s, predicted on the carrier's own client, and then lets go. A Spin,
+a Hurl and a put-down are unchanged. The server knows only times and a measured grip. Every client draws
+a carried Prop between its carrier's drawn hand bones (`CarriedPropPlacer`), so no hand curve is kept in
+step anywhere. `modelBones.test.ts` holds the grips and the clip events to the real file.
+**Waiting on the user:** everything live. Whether 1.2 s and 0.4 s of standing still play right; the pop
+at the touch; and big Props. With the new pose's hands on the belly, `propGripOffset` puts every Prop
+out in front at hand height, never raised between the hands (see the ADR's "As built").
+
 **M13 planned, the next goal** — Smooth on a weaker PC (`docs/milestones/M13.md`, research in
 `docs/research/gameplay-performance-culling-and-asset-loading.md`, **ADR 0079**). Settled with the
 user on 2026-09-17:
@@ -594,6 +642,66 @@ reader crashed on it.
 browser; latency on a lossy link; the placed voice's falloff; the open-mic gate's threshold; a
 Bluetooth headset with the microphone open; and how every cue looks.
 
+**M16 planned** — Traps that act (`docs/milestones/M16.md`). Four authored GLBs arrived on
+2026-09-21 and each asks for something the engine has never had. Settled with the user in three
+question rounds the same day: **ADR 0116** — an Asset def may declare **Parts** (`still` / `moving` /
+`gated`) and one placed Segment resolves into one body per Part, so the author places one thing and
+the stored Track, the builder and the MCP tools learn nothing; **0117** — a trap door is a hole on a
+clock, its floor existing only while shut, a Character over an opening leaf falling rather than
+riding it; **0118** — a fragile floor has three states, every new arrival costs one, the third takes
+the floor away and the author's delay brings it back (the first per-Segment state a Round changes
+and the Snapshot carries); **0119** — a Shooter fires a ball along its barrel on its own period,
+both sides deriving the shot from `(Segment, Tick)` with no message, hitting through the ordinary
+Impact rule. None of the four loads as exported (the shared reader refuses a meshed node with no
+`role`), so ticket 01 is a converter; the authored clips are read for their numbers and never
+played. Tickets 01–05 are **done on tests** (2026-09-21); 06, playing all four in two real
+browsers, is the user's. What building them settled, beyond the ADRs: the four GLBs' own
+animation *curves* are lifted into the defs and replayed by the Tick, so the trap door falls
+exactly as keyframed (the user's point — the clips are authored, they just cannot be
+*played*, since the server has no three.js); a `moving` Part with no Motion is still, which
+let the shooter keep its Parts until it could aim; a Ride had to be stopped explicitly on a
+falling leaf, which was flinging Characters two metres along the arc; a fragile floor is a
+body of its own because what is baked into the world cannot be switched off, and it keeps
+what a client predicted since the last snapshot; and a Shooter's two aiming axes are its own
+data rather than two Motions (the user's call — a Motion is one movement, and the axes must
+be independent), with a Projectile a recycled Prop so the protocol never changed. Two more of the user's GLBs arrived mid-milestone and are designed but not built:
+the conveyor belt (**ADR 0120** — a def may name a default for an Attachment its
+Segments carry, so a placed belt already pushes) and the punching glove (**ADR 0121** —
+a Part that slides on a clock or on a trigger, re-timed so the ordinary Impact rule knocks
+down, its skin baked out at conversion). Both are now built: the belt conveys as placed, its 36 slats riding a loop described by four
+numbers (the rollers' place and radius) that reproduce the export's own `belt_loop_length`
+exactly, over a deck box the converter adds because the model's top run *is* the slats; the
+glove punches on a clock, its skin dropped in one line (Blender already writes those
+vertices in model space) and every piece of its authored motion kept, because the bone
+scales turn out to be plain node scales about their own pivots. The glove's **triggered**
+mode is deliberately not built: a punch that starts when somebody comes into reach has to
+remember the Tick it started on, so its pose stops being a pure function of the Tick — it
+wants the per-Segment replicated state ADR 0118 built, and is a piece of work of its own.
+A seventh GLB, `DF_sweeper_3_arms` (2026-09-23), brought two more: **ADR 0123**, a
+Motion may carry a **Ramp** (N times as fast, T seconds after the Round starts running,
+off by default), counted from the **Motion Clock** the server replicates from the
+Countdown on (`runningFromTick`), so a Ramp stays a pure function of the Tick; and
+**ADR 0124**, `partMotions`, a Motion per moving Part, so each of the three arms has its
+own speed, direction and Ramp. Tickets 09–11, done on tests. 08 is the live check. Numbers
+that are first guesses and want playing: the trap door's 4 s period, the fragile floor's 6 s
+return, and the Shooter's 24 u/s — that last one measured, because 18 only ever Staggered.
+
+**An Asset category answers one question, done on tests** — **ADR 0122**, the user's report on
+2026-09-21 ("trapdoor by měl být spíš platform jak obstacle a teď celkově to řazení nedává moc
+smysl"). The six groups were cut on three axes at once: `platform` mixed 80 decks with 46 pillars
+and barriers, `obstacle` was a leftovers bin of 55 (sweeping bars *and* `trapdoor` *and* loose
+bombs), and `spring`/`fan` existed because one mechanic wanted to be findable. Now seven, on one
+axis — what the piece is to a runner: **floor** 80 · **structure** 46 · **sweeper** 39 ·
+**launcher** 6 · **gate** 7 · **prop** 14 · **scenery** 38, in that reading order in both the
+builder's Assets tab and the MCP `list_categories`. A mechanic never moves a piece between groups,
+so a spiked or breaking deck is a Floor wearing its own field (the tab already draws the hazard
+dot); the two exceptions are the groups every member's def carries — Gate its opening, Launcher its
+throw. An inserted Structure now stands on the last Floor instead of continuing the run (the user's
+call). The converters' `CATEGORY_RULES` stay the only place a stem is categorized; the generated
+defs were regenerated and the diff is `category:` lines only. Nothing stored or simulated changes —
+a category has never been persisted on a Segment. **Waiting on the user:** whether `pipe_*` is
+Structure or Floor, and whether the trap pack's big rotating rigs read as Floors you ride.
+
 **Also open: M9** — Design screens reconciliation (`.scratch/m9-design-screens-reconciliation/issues/`).
 A new design-screens drop (`apps/client/src/test_components/`) turned out to assume six systems
 this game never had — recorded in `docs/research/test-components-design-screens-gap-analysis.md`.
@@ -681,6 +789,8 @@ These are settled decisions with ADRs. Do not violate them without adding a supe
 | **M13** | Smooth on a weaker PC — measured before/after, Track-only Asset loading, far plane at the fog, player-picked graphics quality (ADR 0079), shader warm-up; physics activation only if the numbers ask. |
 | **M14** | The game has sound — Character, moving Assets, Environment, music and UI; spatial, budgeted, presentation only (ADR 0087). Done on tests. |
 | **M15** | What the Screens show is real — no mock value on any Screen, plus the systems the design assumes: Leaderboards, emotes, pause, parties, voice chat, a real queue, drafts (ADR 0110). |
+| **M16** | Traps that act — a sweeper, a trap door, a fragile floor and a shooter: an Asset may be several bodies (ADR 0116), and Projectile stops being deferred (ADR 0117/0118/0119). |
+| **M17** | Bots — an input source on the authority, Race first with the fight in it, navmesh (`recast-navigation-js`) + behavior tree (`mistreevous`), filling Lobbies, training and Track tests (ADR 0129). |
 | later | Accounts (mandatory Discord login) → XP/currency → Betting (dynamic pari-mutuel) → Friends (full presence) → Track discovery (browsing + filters) — scope decided in ADR 0052, one milestone each, build order TBD per milestone. Also: collapsing terrain, Power-ups, reconnection, level themes, the Skyfall final. |
 
 ## Working agreements

@@ -8,7 +8,7 @@ import type { AssetModuleDef } from "./assetModules.js";
 export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   {
     id: "kaykit_platform_quarter_circle_2x2x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } },
       clearance: 0.5,
@@ -17,7 +17,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_circle_3x3x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1.5, y: 0.5, z: 1.5 } },
       clearance: 0.5,
@@ -26,7 +26,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_circle_4x4x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2, y: 0.5, z: 2 } },
       clearance: 0.5,
@@ -35,7 +35,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_circle_5x5x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 2.5, y: 0.5, z: 2.5 } },
       clearance: 0.5,
@@ -44,7 +44,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_circle_6x6x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3, y: 0.5, z: 3 } },
       clearance: 0.5,
@@ -53,7 +53,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_circle_7x7x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 3.5, y: 0.5, z: 3.5 } },
       clearance: 0.5,
@@ -62,7 +62,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_circle_8x8x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 4, y: 0.5, z: 4 } },
       clearance: 0.5,
@@ -71,7 +71,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_circle_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -80,7 +80,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_curve_1x1x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 0.5, y: 0.5, z: 0.5 } },
       clearance: 0.5,
@@ -89,7 +89,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_curve_3x3x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1.5, y: 0.5, z: 1.5 } },
       clearance: 0.5,
@@ -98,7 +98,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_curve_4x4x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: -0.001, y: 0.5, z: -0.001 }, halfExtents: { x: 1.999, y: 0.5, z: 1.999 } },
       clearance: 0.5,
@@ -107,7 +107,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_curve_5x5x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: -0.001, y: 0.5, z: -0.001 }, halfExtents: { x: 2.499, y: 0.5, z: 2.499 } },
       clearance: 0.5,
@@ -116,7 +116,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_curve_6x6x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: -0.001, y: 0.5, z: -0.001 }, halfExtents: { x: 2.999, y: 0.5, z: 2.999 } },
       clearance: 0.5,
@@ -125,7 +125,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_curve_7x7x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: -0.001, y: 0.5, z: -0.001 }, halfExtents: { x: 3.499, y: 0.5, z: 3.499 } },
       clearance: 0.5,
@@ -134,7 +134,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_curve_8x8x1_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: -0.001, y: 0.5, z: -0.001 }, halfExtents: { x: 3.999, y: 0.5, z: 3.999 } },
       clearance: 0.5,
@@ -143,7 +143,7 @@ export const QUARTER_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "kaykit_platform_quarter_curve_blue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.5, z: 0 }, halfExtents: { x: 1, y: 0.5, z: 1 } },
       clearance: 0.5,

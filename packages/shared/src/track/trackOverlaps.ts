@@ -4,6 +4,7 @@ import { addVec3, rotateVec3ByQuat, scaleVec3, type Vec3 } from "../math/vec3.js
 import { movingSegmentPose } from "../simulation/MovingSegment.js";
 import type { SolidShape } from "./asset.js";
 import type { Module } from "./Module.js";
+import { segmentBodies, type SegmentBodyPlan } from "./resolveTrack.js";
 import { scaleSolidShape, segmentOrientation, segmentScale, type Track } from "./Track.js";
 
 /**
@@ -145,19 +146,28 @@ export const findOverlaps = (
   track: Track,
   { tolerance = 0.1, samples = 60, step = 6 }: OverlapOptions = {},
 ): SegmentOverlap[] => {
-  const pieces = track.map((segment) => {
+  // One entry per *body* (ADR 0116), not per Segment: an Asset that moves a
+  // Part of itself is measured as its still half standing where it was put
+  // and its moving half swept through its own Motion. Measuring the pair as
+  // one piece would both swing a sweeper's base through the scenery and miss
+  // what its arms reach on the way round.
+  const pieces = track.flatMap((segment, index) => {
     const module = library[segment.moduleId];
     const scale = segmentScale(segment);
-    const parts: Part[] = (module?.asset?.solid ?? []).map((part) => {
-      const shape = scaleSolidShape(part.shape, scale);
-      return { shape: shapeOf(shape), local: localBounds(shape), position: scaleVec3(part.position, scale), rotation: part.rotation };
-    });
     const orientation = segmentOrientation(segment);
-    const poseAt = (tick: number): Placed =>
-      segment.motion
-        ? movingSegmentPose({ position: segment.position, orientation, motion: segment.motion, scale }, tick)
-        : { position: segment.position, rotation: orientation };
-    return { parts, moving: segment.motion !== undefined, poseAt };
+    const plans: SegmentBodyPlan[] = module ? segmentBodies(segment, module) : [{ body: "still" }];
+    return plans.map((plan) => {
+      const parts: Part[] = (module?.asset?.solid ?? [])
+        .filter((part) => plan.part === undefined || part.part === plan.part)
+        .map((part) => {
+          const shape = scaleSolidShape(part.shape, scale);
+          return { shape: shapeOf(shape), local: localBounds(shape), position: scaleVec3(part.position, scale), rotation: part.rotation };
+        });
+      const { motion } = plan;
+      const poseAt = (tick: number): Placed =>
+        motion ? movingSegmentPose({ position: segment.position, orientation, motion, scale }, tick) : { position: segment.position, rotation: orientation };
+      return { segmentIndex: index, parts, moving: motion !== undefined, poseAt };
+    });
   });
 
   // Each piece posed once per instant it can be at, with a box round every
@@ -176,11 +186,14 @@ export const findOverlaps = (
     return { ...piece, poses, bounds, reach };
   });
 
-  const found: SegmentOverlap[] = [];
+  const found = new Map<string, SegmentOverlap>();
   for (let a = 0; a < posed.length; a += 1) {
     for (let b = a + 1; b < posed.length; b += 1) {
       const pa = posed[a]!;
       const pb = posed[b]!;
+      // Two bodies of one Segment are the Asset's own business: a rotor sits
+      // in its base by construction.
+      if (pa.segmentIndex === pb.segmentIndex) continue;
       if (pa.parts.length === 0 || pb.parts.length === 0 || !boundsMeet(pa.reach, pb.reach)) continue;
       const count = pa.moving || pb.moving ? instants.length : 1;
       let deepest = { depth: 0, tick: 0 };
@@ -196,8 +209,15 @@ export const findOverlaps = (
           });
         });
       }
-      if (deepest.depth > tolerance) found.push({ a, b, ...deepest });
+      if (deepest.depth <= tolerance) continue;
+      // One report per pair of Segments, at its deepest, however many of
+      // their bodies met.
+      const key = `${pa.segmentIndex}:${pb.segmentIndex}`;
+      const worst = found.get(key);
+      if (worst === undefined || deepest.depth > worst.depth) {
+        found.set(key, { a: pa.segmentIndex, b: pb.segmentIndex, ...deepest });
+      }
     }
   }
-  return found.sort((x, y) => y.depth - x.depth);
+  return [...found.values()].sort((x, y) => y.depth - x.depth);
 };

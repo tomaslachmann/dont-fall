@@ -18,6 +18,10 @@ import {
   type SpinnerConfig,
   type Vec3,
   type VolumeConfig,
+  type FragileLook,
+  type BombState,
+  type ShooterConfig,
+  type MotionClock,
 } from "@dont-fall/shared";
 import { createEnvironment, fogFarPlane } from "@dont-fall/render";
 import * as THREE from "three";
@@ -48,8 +52,10 @@ import { createNameplates, type NameplateEntry } from "./nameplates.js";
 import { createCameraRig } from "./stage/cameraRig.js";
 import { createLocalCharacter } from "./stage/localCharacter.js";
 import { createStageSounds } from "./stage/sounds.js";
+import { BombSounds } from "../audio/bombSounds.js";
 import { buildTrackVisuals } from "./stage/trackVisuals.js";
 import { warmUpStage } from "./warmUp.js";
+import { CarriedPropPlacer } from "./carriedPropHands.js";
 
 export interface StageConfig {
   /**
@@ -106,6 +112,8 @@ export interface StageConfig {
    * pure function the simulation poses their body with.
    */
   movingSegments?: MovingSegmentConfig[];
+  /** Every Shooter the Track places (ADR 0119) — for its own recoil and muzzle flash. */
+  shooters?: ShooterConfig[];
   /**
    * Attached belts to draw (ADR 0064) — one marching chevron strip per belt
    * (`conveyorBelts.ts`), parented under the Moving Segment's own group when
@@ -149,9 +157,32 @@ export interface StageConfig {
  * ticket 01; the Stage itself stays single-Character until ticket 04 adds
  * rendering for other players).
  */
+/** A Prop in someone's hands this frame (ADR 0128), as `Stage.holdCarriedProps` draws it. */
+export interface CarriedProp {
+  propIndex: number;
+  /** Its carrier, or `null` for the local Character. */
+  carrierId: string | null;
+  /** The Prop's own horizontal half-size — how far from the hands its middle sits (`propGripOffset`). */
+  radius: number;
+  /** From its body's origin to its middle, in the world, as it is turned this frame. */
+  centreOffset: Vec3;
+  /** Whether its carrier Spins it, held at arm's length. */
+  spinning: boolean;
+}
+
 export interface StageRenderState {
   character: RenderCharacter;
   props: PropSnapshot[];
+  /** Which look each fragile floor wears this frame (ADR 0118) — `null` where it is gone. */
+  fragile?: readonly FragileLook[];
+  /**
+   * Every Bomb that is not lying, by the newest Snapshot, and the Tick the
+   * Props are drawn at (ADR 0126) — the rows say what, the Tick says how far
+   * into it.
+   */
+  bombs?: { rows: readonly BombState[]; tick: number };
+  /** The wall clock, for effects that are neither simulated nor interpolated — a muzzle flash (ADR 0119). */
+  nowMs: number;
 }
 
 /** What the renderer drew in the last `render()` and holds on the GPU (M13 ticket 01). */
@@ -292,8 +323,9 @@ export interface Stage {
    * Pose every Spinner and Moving Segment (ADR 0061) at continuous simulation tick `t`
    * (fractional for smooth render-rate rotation). A Spinner's rotation is a
    * pure function of the tick, so it is never carried in `RenderState`.
+   * `clock` is the Motion Clock a Ramp counts from (ADR 0123).
    */
-  updateMotion: (t: number) => void;
+  updateMotion: (t: number, clock: MotionClock) => void;
   /**
    * Advance the Character model's animation and turn it to face
    * `moveDirection` (world-space, zero when idle). Purely cosmetic and
@@ -323,6 +355,13 @@ export interface Stage {
     grabEpoch: number,
     hold: LocalHold,
   ) => void;
+  /**
+   * Put every carried Prop in its carrier's hands as they are drawn this
+   * frame (ADR 0128), over wherever `applyRenderState` placed it. After
+   * every rig has been animated — the local one and the remote ones — or the
+   * hands are last frame's.
+   */
+  holdCarriedProps: (carried: readonly CarriedProp[], deltaSeconds: number) => void;
   /**
    * The local Character's `facing` — where its body is turned right now, as
    * {@link updateCharacterAnimation} last left it (ADR 0085). What the client
@@ -365,6 +404,7 @@ export const createStage = ({
   segmentColors = [],
   springs = [],
   movingSegments = [],
+  shooters = [],
   conveyors = [],
   iceDecks = [],
   mudDecks = [],
@@ -432,6 +472,7 @@ export const createStage = ({
     segmentColors,
     springs,
     movingSegments,
+    shooters,
     conveyors,
     iceDecks,
     mudDecks,
@@ -508,6 +549,8 @@ export const createStage = ({
           nameplatesOn = settings.nameplates;
         }, browserStorage());
 
+  // ADR 0126: each Bomb's timer follows it, and its blast is heard where it went off.
+  const bombSounds = new BombSounds(sound);
   const stageSounds = createStageSounds(sound, {
     environment: environmentPreset,
     killPlaneY,
@@ -539,6 +582,9 @@ export const createStage = ({
   });
 
   const cameraRig = createCameraRig(camera, track.collidables);
+  /** Where carried Props are drawn from their carriers' hands (ADR 0128). */
+  const carriedPropPlacer = new CarriedPropPlacer();
+  const carriedPropAt = new THREE.Vector3();
   // Reused rather than allocated per frame: `listenerPose` is read once every
   // drawn frame, and its own doc says the vectors are to be read, not kept.
   const listenerForward = new THREE.Vector3();
@@ -584,7 +630,17 @@ export const createStage = ({
     },
     applyRenderState: (state) => {
       local.place(state.character);
+      const bombs = state.bombs ? track.drawBombs(state.bombs.rows, state.bombs.tick, state.nowMs) : [];
       track.placeProps(state.props);
+      for (const bomb of bombs) {
+        const at = state.props[bomb.propIndex]?.position;
+        if (at) bombSounds.update(bomb.propIndex, bomb.phase, at, bomb.fuseSeconds);
+      }
+      for (const ball of track.fireShooters(state.props, state.nowMs)) {
+        const at = state.props[ball]?.position;
+        if (at) sound?.play("segment.shooter_fire", { at });
+      }
+      if (state.fragile) track.showFragile(state.fragile);
     },
     applyRemoteCharacters: (characters, deltaSeconds, localId, localPosition) => {
       remoteCentres = Object.values(characters).map((rc) => rc.position);
@@ -638,14 +694,26 @@ export const createStage = ({
       camera.updateMatrixWorld();
       nameplates.update(camera, window.innerWidth, window.innerHeight, remoteNamed, nameplatesOn);
     },
-    updateMotion: (t) => {
+    updateMotion: (t, clock) => {
       // The mud ripples under every Character the applies stashed this frame, local one included.
       const localCentre = local.centre();
-      track.poseMotion(t, localCentre ? [localCentre, ...remoteCentres] : remoteCentres);
+      track.poseMotion(t, localCentre ? [localCentre, ...remoteCentres] : remoteCentres, clock);
       // Heard where the listener stood last frame: the camera is placed after this.
-      stageSounds.motion(t, camera.position);
+      stageSounds.motion(t, camera.position, clock);
     },
     updateCharacterAnimation: local.animate,
+    holdCarriedProps: (carried, deltaSeconds) => {
+      const carriers = new Set<string>();
+      for (const { propIndex, carrierId, radius, spinning, centreOffset } of carried) {
+        const key = carrierId ?? "\0local";
+        const hands = carrierId === null ? local.hands : remotePool.hands(carrierId);
+        if (!hands) continue;
+        carriers.add(key);
+        const at = carriedPropPlacer.place(key, hands, radius, spinning, deltaSeconds, carriedPropAt);
+        if (at) track.placeCarriedProp(propIndex, at.sub(centreOffset));
+      }
+      carriedPropPlacer.keepOnly(carriers);
+    },
     characterFacing: local.facing,
     sound,
     dispose: () => {
@@ -655,6 +723,7 @@ export const createStage = ({
       // The context is three.js's and shared with the next Stage: only this
       // Stage's own graph goes.
       stageSounds.dispose();
+      bombSounds.dispose();
       sound?.dispose();
       if (audioListener) camera.remove(audioListener);
       local.dispose();

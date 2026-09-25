@@ -1,4 +1,5 @@
 import { msToTicks } from "./clock.js";
+import type { BotLevel } from "../match/LobbyBots.js";
 
 /**
  * A Match's structure: Round clock, Survival, phases, length, Score, its end —
@@ -209,3 +210,14 @@ export const ACCOUNT_BEAT_MS = 30_000;
  * that never arrives does not hold a Lobby's start for long.
  */
 export const SEAT_RESERVATION_TTL_MS = 15_000;
+
+// --- Bots filling a Lobby (M17 ticket 10, ADR 0129) -------------------------
+
+/** The level a fresh Lobby's Bots play at until its host picks another. */
+export const DEFAULT_BOT_LEVEL: BotLevel = "normal";
+
+/**
+ * The chance a Bot wears a Skin rather than a Colour (ADR 0129: "a random
+ * Colour or Skin"). An even split: neither look should read as the Bots' one.
+ */
+export const BOT_SKIN_CHANCE = 0.5;

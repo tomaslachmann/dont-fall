@@ -23,8 +23,13 @@ import {
   type AttachmentKey,
   type Quat,
   type Segment,
+  type SegmentMotion,
   type Track,
   type Vec3,
+  type BombTiming,
+  type PunchTiming,
+  type ShooterTiming,
+  type TrapDoorTiming,
 } from "@dont-fall/shared";
 
 /**
@@ -158,16 +163,18 @@ const settleOne = (fn: string, track: Track, modules: Record<string, Module>, in
  * only for a Module that cannot be chained (ADR 0034 free placement — every
  * converted asset): that one keeps this position.
  *
- * With the Asset categories to tell a platform from the rest (user decision,
- * 2026-09-16), it builds on the last platform at or before the insert point:
- * a new platform continues the run flush off that platform's far (−Z) face, in
- * whatever direction the platform is turned, its top level with the
- * platform's; anything else (obstacle, gate, Spring, scenery) stands on the
- * middle of that platform's top, turned the same way. Both read footprints,
- * the same boxes overlap and Socket-snap use, and the platform's yaw only:
- * a pitched or rolled platform places as if it were level.
+ * With the Asset categories to tell a Floor from the rest (user decision,
+ * 2026-09-16, re-cut onto one axis by ADR 0122), it builds on the last Floor
+ * at or before the insert point: a new Floor continues the run flush off that
+ * Floor's far (−Z) face, in whatever direction the Floor is turned, its top
+ * level with the Floor's; anything else (Structure, Sweeper, Launcher, Gate,
+ * Prop, Scenery) stands on the middle of that Floor's top, turned the same
+ * way — a pillar included, which is the user's call (2026-09-21): free
+ * placement moves it under the deck in one drag. Both read footprints, the
+ * same boxes overlap and Socket-snap use, and the Floor's yaw only: a pitched
+ * or rolled Floor places as if it were level.
  *
- * With no platform to build on (or no categories), it falls back to clear of
+ * With no Floor to build on (or no categories), it falls back to clear of
  * the Segment it follows, along +X, by both footprints plus the predecessor's
  * clearance — somewhere visible rather than on top of what is already there.
  */
@@ -181,7 +188,7 @@ const placementFor = (
   const inserted = modules[moduleId];
   const category = categories[moduleId];
   let platformIndex = index - 1;
-  while (platformIndex >= 0 && categories[track[platformIndex]!.moduleId] !== "platform") platformIndex -= 1;
+  while (platformIndex >= 0 && categories[track[platformIndex]!.moduleId] !== "floor") platformIndex -= 1;
   const platform = platformIndex >= 0 ? track[platformIndex] : undefined;
   const platformModule = platform ? modules[platform.moduleId] : undefined;
 
@@ -192,7 +199,7 @@ const placementFor = (
     const top = (below.center.y + below.halfExtents.y) * scale;
     // In the platform's own turned frame, then turned into the world by its yaw.
     const local: Vec3 =
-      category === "platform"
+      category === "floor"
         ? {
             x: below.center.x * scale - own.center.x,
             y: top - (own.center.y + own.halfExtents.y),
@@ -227,7 +234,7 @@ const placementFor = (
 /**
  * Inserts `moduleId` at `index` (pushing anything already there later) and
  * re-chains from it onward. `categories` (each Asset Module's category) lets
- * an unchainable piece build on the last platform — see {@link placementFor}.
+ * an unchainable piece build on the last Floor — see {@link placementFor}.
  */
 export const insertSegment = (
   track: Track,
@@ -403,12 +410,90 @@ export const setSegmentAttachment = <K extends Exclude<AttachmentKey, "start" | 
 };
 
 /**
+ * Set (`motion`) or clear (`undefined`) the Motion of one Part of a parted
+ * Asset (ADR 0124), leaving its other Parts' alone — and the whole
+ * `partMotions` Attachment gone once no Part has one of its own.
+ */
+export const setSegmentPartMotion = (track: Track, index: number, part: string, motion: SegmentMotion | undefined): Track => {
+  assertIndexInRange("setSegmentPartMotion", track, index);
+  const next = { ...track[index]!.partMotions };
+  if (motion === undefined) delete next[part];
+  else next[part] = motion;
+  return setSegmentAttachment(track, index, "partMotions", Object.keys(next).length > 0 ? next : undefined);
+};
+
+/**
  * Set (`height`) or clear (`undefined`) one Spring Segment's own throw
  * height (ADR 0069), pulled into the storable range. Clearing it does not
  * stop the Spring launching; it falls back to the Asset's own default.
  */
 export const setSegmentLaunch = (track: Track, index: number, height: number | undefined): Track =>
   setSegmentAttachment(track, index, "launch", height === undefined ? undefined : { height: clampLaunchHeight(height) });
+
+/** What a placed Shooter fires (ADR 0119), or `undefined` to hand it back to its Asset's own numbers. */
+export const setSegmentShooter = (track: Track, index: number, timing: ShooterTiming | undefined): Track =>
+  setSegmentAttachment(
+    track,
+    index,
+    "shooter",
+    timing === undefined
+      ? undefined
+      : {
+          // Balls are what a Shooter fires unless told otherwise, so only bombs are written (ADR 0127).
+          ...(timing.ammo === "bomb" ? { ammo: "bomb" as const } : {}),
+          ...(timing.periodSeconds === undefined ? {} : { periodSeconds: Math.max(0.1, Math.round(timing.periodSeconds * 10) / 10) }),
+          ...(timing.speed === undefined ? {} : { speed: Math.max(0.1, Math.round(timing.speed * 10) / 10) }),
+          ...(timing.lifeSeconds === undefined ? {} : { lifeSeconds: Math.max(0.1, Math.round(timing.lifeSeconds * 10) / 10) }),
+          ...(timing.yawDegrees === undefined ? {} : { yawDegrees: Math.min(180, Math.max(0, Math.round(timing.yawDegrees))) }),
+          ...(timing.yawSeconds === undefined ? {} : { yawSeconds: Math.max(0.1, Math.round(timing.yawSeconds * 10) / 10) }),
+          ...(timing.pitchDegrees === undefined ? {} : { pitchDegrees: Math.min(180, Math.max(0, Math.round(timing.pitchDegrees))) }),
+          ...(timing.pitchSeconds === undefined ? {} : { pitchSeconds: Math.max(0.1, Math.round(timing.pitchSeconds * 10) / 10) }),
+        },
+  );
+
+/** How long a placed fragile floor stays gone (ADR 0118), or `undefined` to hand it back to its Asset's own delay. */
+export const setSegmentFragile = (track: Track, index: number, returnSeconds: number | undefined): Track =>
+  setSegmentAttachment(
+    track,
+    index,
+    "fragile",
+    returnSeconds === undefined ? undefined : { returnSeconds: Math.max(0, Math.round(returnSeconds * 10) / 10) },
+  );
+
+/**
+ * A placed bomb's fuse and return (ADR 0126), or `undefined` to hand it back
+ * to its Asset's own clock. Tenths of a second, and never under
+ * {@link BOMB_SECONDS_MIN}: a bomb that goes off as it is picked up is a trap
+ * nobody could have seen.
+ */
+export const setSegmentBomb = (track: Track, index: number, timing: BombTiming | undefined): Track =>
+  setSegmentAttachment(
+    track,
+    index,
+    "bomb",
+    timing === undefined
+      ? undefined
+      : {
+          ...(timing.fuseSeconds === undefined ? {} : { fuseSeconds: Math.max(BOMB_SECONDS_MIN, Math.round(timing.fuseSeconds * 10) / 10) }),
+          ...(timing.returnSeconds === undefined ? {} : { returnSeconds: Math.max(BOMB_SECONDS_MIN, Math.round(timing.returnSeconds * 10) / 10) }),
+        },
+  );
+
+/**
+ * How often a placed trap door runs (ADR 0117), or `undefined` to hand it
+ * back to its Asset's own clock. The period is floored at the authored swing
+ * — a shorter one would cut a leaf off mid-fall, which publish refuses
+ * anyway; the panel simply never offers it.
+ */
+export const setSegmentTrapDoor = (track: Track, index: number, timing: TrapDoorTiming | undefined, swingSeconds: number): Track => {
+  if (timing === undefined) return setSegmentAttachment(track, index, "trapdoor", undefined);
+  const period = timing.period === undefined ? undefined : Math.max(swingSeconds, Math.round(timing.period * 10) / 10);
+  const phase = timing.phase === undefined || timing.phase === 0 ? undefined : timing.phase;
+  return setSegmentAttachment(track, index, "trapdoor", {
+    ...(period === undefined ? {} : { period }),
+    ...(phase === undefined ? {} : { phase }),
+  });
+};
 
 // Two-tier snap steps (ADR 0034). `MOVE_STEP_FINE`/`ROTATE_STEP`/
 // `ROTATE_STEP_FINE` are shared by the keyboard nudge (ticket 02) and the
@@ -427,6 +512,40 @@ export const SCALE_STEP_FINE = 0.05;
 /** A Spring's height steps in whole metres, or tenths on Shift (ADR 0069) — the stepper's two tiers, like every other number here. */
 export const LAUNCH_HEIGHT_STEP = 1;
 export const LAUNCH_HEIGHT_STEP_FINE = 0.1;
+
+/** How often a placed punching glove swings (ADR 0121), or `undefined` to hand it back to its Asset's own clock. */
+export const setSegmentPunch = (track: Track, index: number, timing: PunchTiming | undefined): Track =>
+  setSegmentAttachment(
+    track,
+    index,
+    "punch",
+    timing === undefined
+      ? undefined
+      : {
+          ...(timing.period === undefined ? {} : { period: Math.max(0.1, Math.round(timing.period * 10) / 10) }),
+          ...(timing.phase === undefined || timing.phase === 0 ? {} : { phase: timing.phase }),
+          ...(timing.rate === undefined ? {} : { rate: Math.max(0.1, Math.round(timing.rate * 10) / 10) }),
+        },
+  );
+
+/** A Shooter's numbers step by one, or a tenth on Shift (ADR 0119) — seconds for two of them, units per second for the third. */
+export const SHOOTER_STEP = 1;
+export const SHOOTER_STEP_FINE = 0.1;
+
+/** A bomb's fuse and return step in whole seconds, or tenths on Shift, and go no lower than half a second (ADR 0126). */
+export const BOMB_STEP = 1;
+export const BOMB_STEP_FINE = 0.1;
+export const BOMB_SECONDS_MIN = 0.5;
+
+/** A fragile floor's return delay steps in whole seconds, or tenths on Shift (ADR 0118). */
+export const FRAGILE_RETURN_STEP = 1;
+export const FRAGILE_RETURN_STEP_FINE = 0.1;
+
+/** A trap door's period steps in whole seconds, or tenths on Shift (ADR 0117) — the same two tiers. */
+export const TRAPDOOR_PERIOD_STEP = 1;
+export const TRAPDOOR_PERIOD_STEP_FINE = 0.1;
+/** Its phase steps by a quarter of a cycle, the four the panel offers. */
+export const TRAPDOOR_PHASE_STEP = 0.25;
 
 /** `scale` snapped to `step` and held inside the stored bounds — every scale input's last word. */
 export const snapScale = (scale: number, step: number): number =>

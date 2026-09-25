@@ -67,6 +67,8 @@ export const KNOCKDOWN_WEIGHT: Readonly<Record<RagdollCause, "heavy" | "medium">
   Hurl: "heavy",
   Grab: "medium",
   Dizzy: "medium",
+  // ADR 0126: a bomb going off throws you like nothing else in the game.
+  Blast: "heavy",
 };
 
 /**

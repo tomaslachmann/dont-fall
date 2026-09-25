@@ -26,6 +26,7 @@ const lobby = (phase: LobbySnapshot["phase"] = "LOBBY"): LobbySnapshot =>
     matchLength: 1,
     round: 0,
     roundPicks: [],
+    bots: { enabled: false, max: 3, level: "normal" },
     maxPlayers: 4,
   }) as LobbySnapshot;
 
@@ -58,6 +59,7 @@ const fakeConnection = (): LobbyConnection & {
     setRoundType: vi.fn(),
     setMatchLength: vi.fn(),
     pickRoundSlot: vi.fn(),
+    setBots: vi.fn(),
     start: vi.fn(),
     standingsReady: vi.fn(),
     lobbyListeners,

@@ -66,37 +66,6 @@ export const writeVoiceSettings = (
   target?.dispatchEvent(new CustomEvent<VoiceSettings>(VOICE_SETTINGS_EVENT, { detail: settings }));
 };
 
-/**
- * The scope to be on after joining a Lobby of this kind (ADR 0111): **ALL
- * resets to PARTY on joining a public one**.
- *
- * An ALL picked to talk to friends in a private Lobby is not a decision to
- * talk to the next eleven strangers, and nothing else in the game would ever
- * tell the Player it had carried over. PARTY is where it lands rather than
- * OFF, so the Party they came with can still hear them.
- *
- * Private is left exactly as it is, in both directions: this never turns
- * anything *on*.
- */
-export const scopeOnJoiningLobby = (scope: VoiceScope, lobbyIsPublic: boolean): VoiceScope =>
-  lobbyIsPublic && scope === "ALL" ? "PARTY" : scope;
-
-/**
- * Applies {@link scopeOnJoiningLobby} to the stored settings. Writes only
- * when it actually changed, so joining a public Lobby on PARTY or OFF does
- * not wake the live session for nothing.
- */
-export const applyLobbyKindToVoiceScope = (
-  storage: SettingsStorage | null,
-  lobbyIsPublic: boolean,
-  target: EventTarget | null = typeof window === "undefined" ? null : window,
-): void => {
-  const settings = readVoiceSettings(storage);
-  const scope = scopeOnJoiningLobby(settings.scope, lobbyIsPublic);
-  if (scope === settings.scope) return;
-  writeVoiceSettings(storage, { ...settings, scope }, target);
-};
-
 /** Calls `listener` whenever the settings change, in this page or another tab. Returns the unsubscribe. */
 export const subscribeVoiceSettings = (
   listener: (settings: VoiceSettings) => void,

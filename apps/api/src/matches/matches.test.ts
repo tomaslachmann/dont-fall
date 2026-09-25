@@ -50,6 +50,32 @@ describe("match results service", () => {
     }
   });
 
+  it("keeps a Bot's win on the results while no Account is credited with it (M17 ticket 10)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "api-matches-test-"));
+    try {
+      const db = openDb(join(dir, "test.sqlite"));
+      // A Bot is a seat with no Account (ADR 0129): absent from `accountIds`, and nowhere else.
+      const withBot = {
+        ...RESULT,
+        matchId: "m-bot",
+        results: [{ rows: [{ id: "bot", placement: 1, qualified: true }, { id: "p1", placement: 2, qualified: true }] }],
+        roundTrackIds: ["t1"],
+        nicknames: { bot: "pixelpeach", p1: "Floppo" },
+        colors: { bot: 4, p1: 2 },
+        totalFalls: { bot: 0, p1: 1 },
+      };
+      saveMatchResult(db, withBot);
+
+      const read = getMatchResult(db, "m-bot");
+      expect(read.results[0]!.rows[0]).toEqual({ id: "bot", placement: 1, qualified: true });
+      expect(read.nicknames.bot).toBe("pixelpeach");
+      expect(read.accountIds).toEqual({ p1: "acc-1" });
+      expect(read.victoryPoses).toEqual({});
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects malformed saves", () => {
     const dir = mkdtempSync(join(tmpdir(), "api-matches-test-"));
     try {

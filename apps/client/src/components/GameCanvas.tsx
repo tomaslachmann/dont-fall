@@ -612,6 +612,16 @@ export function GameCanvas({ trackId, serverPort, connection, lobbyAtHandover, p
               progress={Math.round(roundHud.hold.escape * 100)}
               wiggleKeys={roundHud.hold.wiggleKeys}
             />
+          ) : roundHud.hold.role === "carrying" ? (
+            <HoldingPanel
+              holding={roundHud.hold.holding}
+              phase={null}
+              {...(roundHud.hold.fuseMs === undefined ? {} : { timeLeft: `${(roundHud.hold.fuseMs / 1000).toFixed(1)}s` })}
+              windup={roundHud.hold.windup}
+              overspin={roundHud.hold.overspin}
+              spinKey={roundHud.hold.spinKey}
+              letGoKey={roundHud.hold.letGoKey}
+            />
           ) : (
             <HoldingPanel
               holding={roundHud.hold.holding.toUpperCase()}

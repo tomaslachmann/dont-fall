@@ -6,6 +6,7 @@ import {
   ROUND_END_MS,
   SEAT_RESERVATION_TTL_MS,
   STANDINGS_READY_TIMEOUT_MS,
+  type LobbyBots,
 } from "@dont-fall/shared";
 import type { TrackFetchRetryOptions } from "../track/trackSource.js";
 
@@ -98,6 +99,14 @@ export interface StartServerConfig extends TestOverrides {
    */
   reservationSecret?: string;
   /**
+   * The Lobby's Bot settings to start from (M17 ticket 10, ADR 0129) — what
+   * PlaySelect's private Lobby setup picked, sent with `POST /lobbies` like
+   * its ROUNDS. Where the host starts, not a lock: `setBots` changes it.
+   * Unset, a Lobby starts with no Bots (`defaultLobbyBots`). Validated by the
+   * API before it gets here.
+   */
+  bots?: LobbyBots;
+  /**
    * Called with the Accounts seated here whenever that set changes (ADR
    * 0111) — the API's voice relay follows it, since a voice room is a
    * Lobby's own roster and nothing a client says. Unset, nobody is told and
@@ -130,6 +139,8 @@ export interface ServerRuntimeConfig {
   matchLengthOverride?: number | undefined;
   /** What `POST /reservations` must be sent with (ADR 0112); absent, reservations are off. */
   reservationSecret?: string | undefined;
+  /** The Lobby's Bot settings to start from (M17 ticket 10); absent, none. */
+  bots?: LobbyBots | undefined;
 }
 
 /**
@@ -164,4 +175,5 @@ export const buildRuntimeConfig = (config: StartServerConfig, env: NodeJS.Proces
   ...(config.survivorTargetOverride !== undefined ? { survivorTargetOverride: config.survivorTargetOverride } : {}),
   ...(config.matchLengthOverride !== undefined ? { matchLengthOverride: config.matchLengthOverride } : {}),
   ...(config.reservationSecret !== undefined ? { reservationSecret: config.reservationSecret } : {}),
+  ...(config.bots !== undefined ? { bots: config.bots } : {}),
 });

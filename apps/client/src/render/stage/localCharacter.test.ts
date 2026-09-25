@@ -41,9 +41,12 @@ const place = (local: LocalCharacter, motionState: CharacterMotionState, velocit
     grabEpoch: 0,
     launchPadEpoch: 0,
     grabbingId: null,
+    carryingProp: null,
     heldByGrabberId: null,
     heldPhase: null,
     spinMs: 0,
+    liftMs: null,
+    tossMs: null,
   };
   local.place(character);
 };
@@ -80,7 +83,7 @@ describe("the local Character's facing through a carry (ADR 0109)", () => {
 
         // Carried while the carry moves, so the hang tilts the rig. Sampled
         // before each frame's `animate`, the way the frame loop samples input.
-        const held: LocalHold = { role: "held", phase: "limp", pinnedFacing: heldFacing };
+        const held: LocalHold = { ...NO_HOLD, role: "held", phase: "limp", pinnedFacing: heldFacing };
         for (let frame = 0; frame < 20; frame += 1) {
           if (frame > 0) expect(local.facing()).toBeCloseTo(heldFacing, 9);
           place(local, "Held", { x: 3, y: 0, z: 1 });

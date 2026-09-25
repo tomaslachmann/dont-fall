@@ -17,6 +17,7 @@ import {
   type MovingSegmentConfig,
   type Vec3,
   type VolumeConfig,
+  type MotionClock,
 } from "@dont-fall/shared";
 import type { LoopHandle, SoundEngine } from "./engine.js";
 import type { SoundSlot } from "./slots.js";
@@ -61,9 +62,14 @@ export const nearestPointInColumn = (point: Vec3, column: AirColumnFrame): Vec3 
  * Where a belt's deck is at `tick`: its rest frame, carried by its Moving
  * Segment when it rides one.
  */
-export const beltDeckAt = (deck: DeckFrame, carrier: MovingSegmentConfig | undefined, tick: number): DeckFrame => {
+export const beltDeckAt = (
+  deck: DeckFrame,
+  carrier: MovingSegmentConfig | undefined,
+  tick: number,
+  clock: MotionClock = null,
+): DeckFrame => {
   if (!carrier) return deck;
-  const pose = movingSegmentPose(carrier, tick);
+  const pose = movingSegmentPose(carrier, tick, clock);
   const toCarrier = conjugateQuat(carrier.orientation);
   const local = rotateVec3ByQuat(subVec3(deck.center, carrier.position), toCarrier);
   return {
@@ -146,9 +152,11 @@ export class MachineSounds {
   }
 
   /** Once a frame, at the drawn Motion's `tick`, heard from `listener`. */
-  update(tick: number, listener: Vec3): void {
+  update(tick: number, listener: Vec3, clock: MotionClock = null): void {
     for (const { frame, rush } of this.columns) rush.set({ at: nearestPointInColumn(listener, frame) });
-    for (const belt of this.belts) belt.loop.set({ at: nearestPointOnDeck(listener, beltDeckAt(belt.deck, belt.carrier, tick)) });
+    for (const belt of this.belts) {
+      belt.loop.set({ at: nearestPointOnDeck(listener, beltDeckAt(belt.deck, belt.carrier, tick, clock)) });
+    }
   }
 
   dispose(): void {

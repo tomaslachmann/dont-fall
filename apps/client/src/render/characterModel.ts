@@ -25,6 +25,10 @@ import { publicUrl } from "../lib/publicUrl.js";
  * The older texture-less GLB cannot wear any of it — there is nothing to
  * map the art onto.
  *
+ * The three carry clips (ADR 0128) came later, in the collider rig
+ * `blip_with_coliders.glb`, and are grafted in by `pnpm graft:blip`: the two
+ * files share one skeleton, node for node.
+ *
  * It replaced MushroomKing (Quaternius, CC0), which was a stand-in with five
  * usable clips and no pelvis in its rig.
  */
@@ -149,6 +153,15 @@ export interface CharacterActions {
   grabHold: THREE.AnimationAction | null;
   /** Letting go from arm's length — how a reach that caught nobody comes back in. */
   grabDropOut: THREE.AnimationAction | null;
+  /**
+   * Carrying a Prop (ADR 0128), from `BLIP_Carry_v1`: bending down for it and
+   * standing up with it (`Pickup_Ground`, whose last frame is the hold),
+   * walking with it (`Carry_Walk`), and the Toss (`Throw_Item`). All three
+   * are posed by the hold's own clock (`pinClipPose`), like the Grab.
+   */
+  pickup: THREE.AnimationAction | null;
+  carryWalk: THREE.AnimationAction | null;
+  throwItem: THREE.AnimationAction | null;
   /** Being held: the struggle, on the ground and in the air. */
   struggleHeld: THREE.AnimationAction | null;
   struggleAir: THREE.AnimationAction | null;
@@ -218,6 +231,9 @@ export const loadCharacterActions = (mixer: THREE.AnimationMixer, animations: TH
     grabReach: held("Grab_Reach"),
     grabHold: clipAction("Grab_HoldOut"),
     grabDropOut: held("Grab_DropOut"),
+    pickup: held("Pickup_Ground"),
+    carryWalk: clipAction("Carry_Walk"),
+    throwItem: held("Throw_Item"),
     struggleHeld: clipAction("Struggle_Held"),
     struggleAir: clipAction("Struggle_Air"),
     wobble: clipAction("Wobble"),

@@ -75,9 +75,8 @@ WebCodecs sets the browser floor above.
 - The rule is one pure function in `packages/shared`, and the worker applies it to every frame.
 - **The scope is one setting per device, PARTY by default** (the mock's own initial; the user's
   choice).
-- **ALL resets to PARTY on joining a public Lobby** (the user's choice). An ALL picked for friends in a
-  private Lobby never carries into a Lobby of strangers. The client knows which kind it joined from its
-  own route.
+- ~~**ALL resets to PARTY on joining a public Lobby**~~ — **withdrawn 2026-09-24** (see the amendment
+  at the end). ALL stays whatever the Player last picked.
 - **PARTY waits for ticket 16** (the user's choice). Everything else here is built first. Until
   Parties exist, the scope Toggle offers **OFF / ALL** and defaults to OFF, which is exactly what PARTY
   without a Party would do: nobody is heard until both sides pick ALL. A PARTY that links to nobody
@@ -154,7 +153,7 @@ read one store.
 
 ### Safety with strangers (the user's choice)
 
-ALL needs both sides; ALL resets on joining a public Lobby; no address leaves our server; mutes are
+ALL needs both sides; no address leaves our server; mutes are
 remembered; the speaking cue is always on; only a seat bound to an Account has voice. **Not built, as
 the user's accepted risk:** reporting, recording, a block beyond a mute, a host-wide mute, and any age
 check (Accounts carry no age).
@@ -220,3 +219,12 @@ Two smaller ones: the capture worklet is registered from a `Blob` URL rather tha
 because the app is served from three bases (ADR 0107/0108) and a `Blob` URL is the page's own origin
 by construction; and `speakingAccounts` is a *pull* on `GameConfig` beside `onVoiceScene`'s push,
 because a nameplate is placed per frame and so can never come through React (ADR 0060).
+
+## Amendment (2026-09-24): ALL no longer resets on a public Lobby
+
+The user's call, after finding ALL could never be kept: every way into a public Lobby (Quick Match,
+PLAY AGAIN, a friend's JOIN, following the Party host) wrote PARTY back into the per-device store, so
+Settings showed PARTY again every time. And since ALL links two strangers only when **both** chose it,
+a rule that put every arrival on PARTY meant nobody in a public Lobby heard a stranger unless both
+re-picked ALL by hand after joining. The scope is now simply the Player's own setting, changed only by
+the Player. What stays for strangers: ALL still needs both sides, and mutes are remembered.

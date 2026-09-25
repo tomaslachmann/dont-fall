@@ -10,6 +10,7 @@ export function Transport({ engine }: { engine: BuilderEngine }) {
   const playing = engine.playing;
   const impactOn = engine.tintVisible;
   const previewOn = engine.environmentPreview;
+  const navOn = engine.botNavVisible;
   const progress = ((seconds % 60) / 60) * 100;
 
   return (
@@ -48,6 +49,16 @@ export function Transport({ engine }: { engine: BuilderEngine }) {
           onClick={() => engine.setEnvironmentPreview(!previewOn)}>
           <span className={css.previewGlyph} aria-hidden>☀</span>
           <span>ENVIRONMENT {previewOn ? "ON" : "OFF"}</span>
+        </button>
+        {/* M17 ticket 02: where a Bot can walk, and the route it would run — built
+            in the browser from the same code the server runs, off by default since
+            nothing is built for it while it's off. */}
+        <button type="button" className={[css.preview, navOn ? css.previewOn : ""].join(" ")}
+          aria-pressed={navOn}
+          title="the draft's navmesh (ADR 0129) — the walkable mesh a Bot plans over, and the route spawn → Checkpoints → Finish it would run"
+          onClick={() => engine.setBotNavVisible(!navOn)}>
+          <span className={css.previewGlyph} aria-hidden>▦</span>
+          <span>NAVMESH {navOn ? "ON" : "OFF"}</span>
         </button>
       </div>
       <span className={css.caption}>ONE CLOCK · EVERY MOTION ON THIS TRACK PLAYS AGAINST IT</span>

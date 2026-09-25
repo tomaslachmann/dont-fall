@@ -6,8 +6,9 @@ import {
   LAUNCH_HEIGHT_MIN,
 } from "@dont-fall/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { assetTabModuleIds } from "./assets/assets.js";
-import { createBuilderEngine, type BuilderEngine } from "./engine.js";
+import { assetPaletteIds } from "@dont-fall/shared";
+import { BOT_NAV_DEBOUNCE_MS, createBuilderEngine, type BuilderEngine } from "./engine.js";
+import { PLAYTEST_TRACK_ID } from "./api/api.js";
 import { MOVE_STEP_FINE } from "./track/trackEdit.js";
 import { triangleGlb } from "./test/glb.js";
 import type { TrackViewport } from "./scene/viewport.js";
@@ -42,6 +43,7 @@ const makeViewportStub = (): ViewportStub => ({
   setMotionTime: vi.fn(),
   showMotionGuide: vi.fn(),
   showLaunchArc: vi.fn(),
+  setBotNav: vi.fn(),
   setImpactTintVisible: vi.fn(),
   setEnvironment: vi.fn(),
   frameTrack: vi.fn(),
@@ -243,7 +245,7 @@ describe("viewport picking", () => {
 });
 
 describe("placing onto the last platform (user decision, 2026-09-16)", () => {
-  const socketlessPlatform = ASSET_MODULE_DEFS.find((def) => def.category === "platform" && def.sockets.length === 0)!;
+  const socketlessPlatform = ASSET_MODULE_DEFS.find((def) => def.category === "floor" && def.sockets.length === 0)!;
   const footprintOf = (moduleId: string) => engine.library[moduleId]!.footprint.bounds;
 
   it("continues a run flush and stands a gate on the middle of the last platform", () => {
@@ -460,6 +462,83 @@ describe("the Environment (ADR 0074)", () => {
   });
 });
 
+describe("the NAVMESH overlay (M17 ticket 02, ADR 0129)", () => {
+  // A dedicated engine, its build injected (the real one needs Recast's WASM
+  // and a resolvable Track — the debounce and the toggle are what's under
+  // test here, not the build itself, which `bot/botRoute.test.ts` covers).
+  let botEngine: BuilderEngine;
+  let build: ReturnType<typeof vi.fn>;
+  let overlay: { navMesh: object; legs: never[] };
+  const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+  beforeEach(() => {
+    overlay = { navMesh: {}, legs: [] };
+    build = vi.fn(async () => overlay);
+    botEngine = createBuilderEngine({ createViewport: () => viewport, buildBotNav: build });
+    botEngine.attachViewport(document.createElement("div"));
+    vi.mocked(viewport.setBotNav).mockClear();
+  });
+
+  it("builds nothing while off — even across a Track edit", async () => {
+    botEngine.placeModule(DECK);
+    await wait(BOT_NAV_DEBOUNCE_MS + 50);
+
+    expect(build).not.toHaveBeenCalled();
+    expect(viewport.setBotNav).not.toHaveBeenCalled();
+  });
+
+  it("builds once, after the debounce, when turned on", async () => {
+    botEngine.setBotNavVisible(true);
+    expect(botEngine.botNavVisible).toBe(true);
+    expect(build).not.toHaveBeenCalled(); // not yet — the quiet spell hasn't passed
+
+    await wait(BOT_NAV_DEBOUNCE_MS + 50);
+
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(viewport.setBotNav).toHaveBeenLastCalledWith(overlay);
+  });
+
+  it("collapses several edits inside one quiet spell into a single rebuild", async () => {
+    botEngine.setBotNavVisible(true);
+    await wait(BOT_NAV_DEBOUNCE_MS + 50);
+    build.mockClear();
+    vi.mocked(viewport.setBotNav).mockClear();
+
+    botEngine.placeModule(DECK);
+    await wait(BOT_NAV_DEBOUNCE_MS / 2);
+    botEngine.placeModule(OTHER_DECK);
+    await wait(BOT_NAV_DEBOUNCE_MS + 50);
+
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(viewport.setBotNav).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the overlay the instant it's turned off, and never rebuilds for a build already scheduled", async () => {
+    botEngine.setBotNavVisible(true);
+    botEngine.setBotNavVisible(false);
+
+    expect(viewport.setBotNav).toHaveBeenLastCalledWith(null);
+    await wait(BOT_NAV_DEBOUNCE_MS + 50);
+    expect(build).not.toHaveBeenCalled();
+  });
+
+  it("drops a build that resolves after the toggle already turned back off", async () => {
+    botEngine.setBotNavVisible(true);
+    await wait(BOT_NAV_DEBOUNCE_MS + 50);
+    expect(viewport.setBotNav).toHaveBeenLastCalledWith(overlay);
+
+    // A rebuild is now in flight (the edit fired it); turning off must win
+    // over it landing late.
+    build.mockImplementation(() => wait(50).then(() => overlay));
+    botEngine.placeModule(DECK);
+    await wait(BOT_NAV_DEBOUNCE_MS + 10); // past the debounce — the build has started
+    botEngine.setBotNavVisible(false);
+    await wait(60); // past the build's own delay
+
+    expect(viewport.setBotNav).toHaveBeenLastCalledWith(null);
+  });
+});
+
 describe("Thumbnail capture (ADR 0085)", () => {
   const defaults = { timeLimitMs: 120000, survivorTarget: 8 };
   const THUMB = "data:image/jpeg;base64,aGVsbG8=";
@@ -644,6 +723,118 @@ describe("persistence", () => {
     expect(engine.status.kind).toBe("error");
   });
 
+  it("opens a stored Draft, writes it back on save, and leaves it without losing the Segments (ADR 0115)", async () => {
+    const draft = {
+      id: "d1",
+      name: "LLM work",
+      roundType: "survival",
+      track: [{ moduleId: "fan", position: { x: 0, y: 0, z: 0 }, rotation: 0 }],
+      timeLimitMs: 90_000,
+      survivorTarget: 2,
+      environment: "night",
+    };
+    const calls: { url: string; method: string; body: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, method: init?.method ?? "GET", body: init?.body ? JSON.parse(init.body as string) : undefined });
+        if (url.endsWith("/drafts/d1/segments")) return Response.json(draft);
+        // The GET is the load; the PATCH is the save, and answers what it stored.
+        if (url.endsWith("/drafts/d1")) {
+          return Response.json(init?.method === "PATCH" ? { ...draft, name: "Renamed" } : draft);
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+
+    engine.setApiUrl("http://api.test");
+    await engine.loadDraftById("d1");
+    expect(engine.track.map((s) => s.moduleId)).toEqual(["fan"]);
+    // The Draft's own metadata comes with it — including the Round type the
+    // builder itself has no notion of, which a save must not drop.
+    expect(engine.loadedDraft).toMatchObject({ id: "d1", name: "LLM work", roundType: "survival", survivorTarget: 2 });
+    expect(engine.loadedTrack).toBeNull();
+    expect(engine.environment).toBe("night");
+    expect(engine.status.kind).toBe("ok");
+
+    engine.placeModule(DECK);
+    await engine.saveDraft("Renamed", defaults);
+
+    // Segments first, then metadata: a failed patch still leaves the work saved.
+    const writes = calls.filter((c) => c.method !== "GET");
+    expect(writes.map((c) => [c.method, c.url])).toEqual([
+      ["PUT", "http://api.test/drafts/d1/segments"],
+      ["PATCH", "http://api.test/drafts/d1"],
+    ]);
+    expect((writes[0]!.body as { track: { moduleId: string }[] }).track.map((s) => s.moduleId)).toEqual(["fan", DECK]);
+    expect(writes[1]!.body).toMatchObject({ name: "Renamed", timeLimitMs: 120000, survivorTarget: 8, environment: "night" });
+    expect(engine.status).toMatchObject({ kind: "ok" });
+
+    engine.closeDraft();
+    expect(engine.loadedDraft).toBeNull();
+    expect(engine.track.map((s) => s.moduleId)).toEqual(["fan", DECK]);
+  });
+
+  it("refuses to save a Draft when none is open, rather than publishing a Revision by surprise", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ id: "abc" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await engine.saveDraft("Mine", defaults);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(engine.status.kind).toBe("error");
+  });
+
+  it("lists Drafts beside Tracks in one Browse round trip", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/tracks")) return Response.json([{ id: "abc", name: "Mine" }]);
+        if (url.endsWith("/drafts")) return Response.json([{ id: "d1", name: "LLM work", roundType: "race", segmentCount: 12, updatedAt: 1 }]);
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+
+    await engine.fetchTrackList();
+
+    expect(engine.browseState).toBe("ready");
+    expect(engine.browseTracks).toHaveLength(1);
+    expect(engine.browseDrafts).toMatchObject([{ id: "d1", segmentCount: 12 }]);
+  });
+
+  it("playtests an open Draft — the Segments on screen are what gets published, Draft or not", async () => {
+    const draft = {
+      id: "d1", name: "LLM work", roundType: "race",
+      track: [{ moduleId: "fan", position: { x: 0, y: 0, z: 0 }, rotation: 0 }],
+      timeLimitMs: 90_000, survivorTarget: 2, environment: "day",
+    };
+    const posted: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/drafts/d1")) return Response.json(draft);
+        if (url.endsWith("/tracks")) {
+          posted.push(JSON.parse(init!.body as string));
+          return Response.json({ id: PLAYTEST_TRACK_ID });
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+    const realOpen = window.open;
+    window.open = (() => null) as unknown as typeof window.open;
+    try {
+      await engine.loadDraftById("d1");
+      await engine.playtest(defaults);
+    } finally {
+      window.open = realOpen;
+    }
+
+    expect(posted).toMatchObject([{ id: PLAYTEST_TRACK_ID, track: [{ moduleId: "fan" }] }]);
+    expect(engine.status.kind).toBe("ok");
+    // Playtest publishes a throwaway Revision; the Draft stays the thing being edited.
+    expect(engine.loadedDraft).toMatchObject({ id: "d1" });
+  });
+
   it("loading a Track with a Module the builder doesn't know names it, and still loads (ADR 0078)", async () => {
     vi.stubGlobal("fetch", async (url: string) => {
       if (url.endsWith("/tracks/abc"))
@@ -705,7 +896,7 @@ describe("asset visuals", () => {
     for (let i = 0; i < 100 && !engine.assetsLoaded; i += 1) await flush(5);
 
     expect(engine.assetsLoaded).toBe(true);
-    expect(engine.templateFor(assetTabModuleIds()[0]!)).toBeDefined();
+    expect(engine.templateFor(assetPaletteIds()[0]!)).toBeDefined();
     expect(engine.assetError("kaykit_ball")).toMatch(/kaykit_ball/);
     expect(engine.status.kind).toBe("error");
 
@@ -746,7 +937,7 @@ describe("asset visuals", () => {
           return Response.json({
             id: "abc",
             name: null,
-            track: [{ moduleId: assetTabModuleIds()[0]!, position: { x: 0, y: 0, z: 0 }, rotation: 0 }],
+            track: [{ moduleId: assetPaletteIds()[0]!, position: { x: 0, y: 0, z: 0 }, rotation: 0 }],
             timeLimitMs: 60000,
             survivorTarget: 4,
           });
@@ -924,7 +1115,7 @@ describe("deck Surface", () => {
 describe("preview renderer budget", () => {
   it("shares one thumbnail renderer across every tile preview", () => {
     const detaches: (() => void)[] = [];
-    for (const moduleId of assetTabModuleIds()) {
+    for (const moduleId of assetPaletteIds()) {
       const entry = document.createElement("div");
       const canvas = document.createElement("canvas");
       entry.appendChild(canvas);
@@ -934,7 +1125,7 @@ describe("preview renderer budget", () => {
     // Placing from the tab reaches the viewport with templates attached.
     engine.attachViewport(document.createElement("div"));
     engine.placeModule(DECK);
-    engine.placeModule(assetTabModuleIds()[0]!);
+    engine.placeModule(assetPaletteIds()[0]!);
     engine.frame(1000);
     engine.frame(1016);
     expect(liveRenderers).toBeLessThanOrEqual(1);

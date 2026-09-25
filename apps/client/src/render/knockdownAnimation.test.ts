@@ -40,7 +40,7 @@ const rig = (): CharacterActions => {
     getUp: byDirection((d) => clip(`GetUp_${d}`, GETUP_SECONDS)),
     death: byDirection(() => null),
     grabReach: null, grabHold: null, grabDropOut: null,
-    struggleHeld: null, struggleAir: null, wobble: null, wobbleWalk: null,
+    struggleHeld: null, struggleAir: null, wobble: null, wobbleWalk: null, pickup: null, carryWalk: null, throwItem: null,
   };
 };
 

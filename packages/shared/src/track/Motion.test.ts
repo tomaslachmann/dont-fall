@@ -7,8 +7,10 @@ import {
   easeMotion,
   invalidMotionReason,
   MOTION_EASINGS,
+  motionPace,
   motionPointVelocity,
   motionPose,
+  motionSeconds,
   type SegmentMotion,
 } from "./Motion.js";
 
@@ -111,6 +113,65 @@ describe("motionPointVelocity", () => {
   });
 });
 
+describe("a Ramp (ADR 0123)", () => {
+  const spin = { axis: Y, pivot: ORIGIN, speed: 1 };
+  const ramped: SegmentMotion = { spin, ramp: { multiplier: 3, seconds: 10 } };
+  const from = ticks(5);
+  const angle = (motion: SegmentMotion, tick: number, clock: number | null): number => {
+    const turned = applyMotionPose(motionPose(motion, tick, clock), { x: 1, y: 0, z: 0 });
+    return Math.atan2(-turned.z, turned.x);
+  };
+
+  it("does nothing without a Motion Clock, or before the Round runs", () => {
+    for (const tick of [0, from - 1, from, ticks(40)]) {
+      expect(motionPose(ramped, tick)).toEqual(motionPose({ spin }, tick));
+      expect(motionSeconds(ramped, tick, null)).toBe(tick / TICK_RATE_HZ);
+    }
+    expect(motionPose(ramped, from - 1, from)).toEqual(motionPose({ spin }, from - 1));
+  });
+
+  it("climbs from its own pace to the multiplier over its seconds, then holds", () => {
+    expect(motionPace(ramped, from, from)).toBe(1);
+    expect(motionPace(ramped, from + ticks(5), from)).toBeCloseTo(2, 9);
+    expect(motionPace(ramped, from + ticks(10), from)).toBeCloseTo(3, 9);
+    expect(motionPace(ramped, from + ticks(60), from)).toBeCloseTo(3, 9);
+  });
+
+  it("warps the clock continuously, so nothing jumps where the ramp starts or tops out", () => {
+    for (const edge of [from, from + ticks(10)]) {
+      const before = motionSeconds(ramped, edge - 1e-6, from);
+      const after = motionSeconds(ramped, edge + 1e-6, from);
+      expect(after - before).toBeLessThan(1e-5);
+    }
+    // Its slope is the pace, on both sides of both edges.
+    const slope = (tick: number): number => (motionSeconds(ramped, tick + 1e-3, from) - motionSeconds(ramped, tick, from)) / (1e-3 / TICK_RATE_HZ);
+    expect(slope(from + ticks(5))).toBeCloseTo(motionPace(ramped, from + ticks(5), from), 3);
+    expect(slope(from + ticks(20))).toBeCloseTo(3, 6);
+  });
+
+  it("turns a Spin N times as fast once it tops out", () => {
+    const late = from + ticks(20);
+    const step = angle(ramped, late + 1, from) - angle(ramped, late, from);
+    expect(step).toBeCloseTo((3 * spin.speed) / TICK_RATE_HZ, 6);
+    // …and the velocity riding and Impact read agrees.
+    const velocity = motionPointVelocity(ramped, late, { x: 2, y: 0, z: 0 }, from);
+    // The chord a point 2 m out covers in one Tick, per second.
+    const turn = (3 * spin.speed) / TICK_RATE_HZ;
+    expect(Math.hypot(velocity.x, velocity.z)).toBeCloseTo(2 * 2 * Math.sin(turn / 2) * TICK_RATE_HZ, 6);
+  });
+
+  it("shrinks a Swing's and a Slide's period by the same multiplier", () => {
+    const slide: SegmentMotion = { slide: { offset: { x: 4, y: 0, z: 0 }, period: 6, easing: "linear" }, ramp: { multiplier: 2, seconds: 1 } };
+    // Past the ramp, one full cycle takes half the period: the pose repeats every 3 s.
+    const late = ticks(50);
+    expectVec(applyMotionPose(motionPose(slide, late, 0), ORIGIN), applyMotionPose(motionPose(slide, late + ticks(3), 0), ORIGIN));
+    expect(applyMotionPose(motionPose(slide, late + ticks(1.5 / 2), 0), ORIGIN).x).not.toBeCloseTo(
+      applyMotionPose(motionPose(slide, late, 0), ORIGIN).x,
+      3,
+    );
+  });
+});
+
 describe("invalidMotionReason", () => {
   const spin = { axis: Y, pivot: ORIGIN, speed: 1 };
   const timing = { period: 2, easing: "linear" };
@@ -120,6 +181,7 @@ describe("invalidMotionReason", () => {
     expect(invalidMotionReason({ swing: { ...spin, amplitude: 1, ...timing } })).toBeUndefined();
     expect(invalidMotionReason({ slide: { offset: Y, ...timing, pause: 0.5, phase: 0.25 } })).toBeUndefined();
     expect(invalidMotionReason({ spin, slide: { offset: Y, ...timing } })).toBeUndefined();
+    expect(invalidMotionReason({ spin, ramp: { multiplier: 0.5, seconds: 30 } })).toBeUndefined();
   });
 
   it.each([
@@ -132,6 +194,10 @@ describe("invalidMotionReason", () => {
     [{ slide: { offset: Y, ...timing, easing: "bounce" } }, /easing/],
     [{ slide: { offset: Y, ...timing, pause: 1 } }, /longer than its two pauses/],
     [{ swing: { ...spin, ...timing } }, /amplitude/],
+    [{ spin, ramp: { multiplier: 0, seconds: 10 } }, /ramp.multiplier/],
+    [{ spin, ramp: { multiplier: 2, seconds: -1 } }, /ramp.seconds/],
+    [{ spin, ramp: { multiplier: 2, seconds: 10, curve: "ease" } }, /ramp has unknown/],
+    [{ ramp: { multiplier: 2, seconds: 10 } }, /spin, swing or slide/],
   ])("refuses %j", (value, reason) => {
     expect(invalidMotionReason(value)).toMatch(reason);
   });

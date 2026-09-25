@@ -22,6 +22,7 @@ const character = (overrides: Partial<HudCharacter> = {}): HudCharacter => ({
   eliminatedTick: null,
   dashCooldownMs: 0,
   grabbingId: null,
+  carryingProp: null,
   heldByGrabberId: null,
   heldPhase: null,
   holdEndsTick: null,
@@ -38,6 +39,8 @@ const input = (overrides: Partial<RoundHudInput> = {}): RoundHudInput => ({
   liveRace: null,
   checkpoints: 7,
   nicknameOf: (id) => id.toUpperCase(),
+  propLabelOf: (index) => ["CONE", "BALL"][index] ?? "PROP",
+  bombs: [],
   leftIds: [],
   tick: 1000,
   predicted: { escapeProgress: 0, spinMs: 0 },
@@ -231,3 +234,31 @@ describe("buildRoundHud — a hold (ADR 0104)", () => {
     expect(hud.hold).toMatchObject({ spinKey: "—", letGoKey: "G" });
   });
 });
+
+describe("buildRoundHud — carrying a Prop (ADR 0125)", () => {
+  it("names what is carried and how to throw it, with no Struggle and no window", () => {
+    const hud = buildRoundHud(input({ characters: { me: character({ carryingProp: 1 }) }, predicted: { escapeProgress: 0, spinMs: 0 } }));
+
+    expect(hud?.hold).toEqual({
+      role: "carrying",
+      holding: "BALL",
+      windup: 0,
+      overspin: 0,
+      spinKey: expect.any(String),
+      letGoKey: expect.any(String),
+    });
+  });
+
+  it("counts a lit Bomb's fuse down to tenths (ADR 0126)", () => {
+    const hud = buildRoundHud(
+      input({
+        characters: { me: character({ carryingProp: 1 }) },
+        bombs: [{ propIndex: 1, detonateTick: 1000 + 50 }],
+        tick: 1000,
+      }),
+    );
+
+    expect(hud?.hold).toMatchObject({ role: "carrying", fuseMs: 1600 });
+  });
+});
+

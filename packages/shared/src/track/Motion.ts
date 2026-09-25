@@ -46,6 +46,19 @@ export interface MotionSlide extends MotionTiming {
 }
 
 /**
+ * How a Motion speeds up over a Round (CONTEXT.md: Ramp, ADR 0123): its pace
+ * climbs linearly from 1 to `multiplier` over `seconds` from the Motion Clock,
+ * then holds. It warps the whole Motion's clock, so every kind on it speeds up
+ * together — a Spin turns faster, a Swing's or a Slide's period shrinks.
+ */
+export interface MotionRamp {
+  /** The pace it ends at, as a multiple of its own. Below 1 winds it down. */
+  multiplier: number;
+  /** Seconds from the Round starting to run until it reaches `multiplier`. */
+  seconds: number;
+}
+
+/**
  * A Segment's Motion (CONTEXT.md, ADR 0061): at most one of each kind,
  * always applied spin → swing → slide in the Segment's local frame, so a saw
  * that spins about its axle while sliding along a rail needs no ordering.
@@ -54,7 +67,45 @@ export interface SegmentMotion {
   spin?: MotionSpin;
   swing?: MotionSwing;
   slide?: MotionSlide;
+  ramp?: MotionRamp;
 }
+
+/**
+ * The Tick a Round runs from (CONTEXT.md: Motion Clock, ADR 0123), which every
+ * Ramp counts from — or `null` outside a Round, where a Ramp does nothing.
+ */
+export type MotionClock = number | null;
+
+/**
+ * The seconds `motion` has run for at `tick` — the Round's own, warped by its
+ * Ramp (ADR 0123): `τ = ∫ m`, with the pace `m` climbing linearly from 1 to
+ * the multiplier over the ramp and holding after. Continuous everywhere, so
+ * nothing jumps when the ramp starts or tops out; without a Ramp or a clock it
+ * is exactly `tick · TICK_DT`.
+ */
+export const motionSeconds = (motion: SegmentMotion, tick: number, clock: MotionClock = null): number => {
+  const seconds = tick * TICK_DT;
+  const ramp = motion.ramp;
+  if (ramp === undefined || clock === null) return seconds;
+  const from = clock * TICK_DT;
+  const u = seconds - from;
+  if (u <= 0) return seconds;
+  const { multiplier: n, seconds: span } = ramp;
+  if (u < span) return from + u + ((n - 1) * u * u) / (2 * span);
+  return from + (span * (n + 1)) / 2 + n * (u - span);
+};
+
+/**
+ * How many times its own pace `motion` runs at `tick` (ADR 0123): the slope
+ * of {@link motionSeconds}, 1 without a Ramp or before the Round runs.
+ */
+export const motionPace = (motion: SegmentMotion, tick: number, clock: MotionClock = null): number => {
+  const ramp = motion.ramp;
+  if (ramp === undefined || clock === null) return 1;
+  const u = (tick - clock) * TICK_DT;
+  if (u <= 0) return 1;
+  return 1 + (ramp.multiplier - 1) * Math.min(1, u / ramp.seconds);
+};
 
 /** A rigid local transform: a rest-local point `p` moves to `rotation·p + position`. */
 export interface MotionPose {
@@ -118,10 +169,11 @@ const rotationAbout = (axis: Vec3, pivot: Vec3, angle: number): MotionPose => {
  * The Motion's local pose at `tick` — the one function the simulation, a
  * predicting client, the renderer and the Track builder all call (ADR 0061),
  * so a Motion is never replicated. `tick` may be fractional (render
- * interpolation, the builder's scrubber).
+ * interpolation, the builder's scrubber). `clock` is the Motion Clock a Ramp
+ * counts from (ADR 0123); without one the Motion runs at its own pace.
  */
-export const motionPose = (motion: SegmentMotion, tick: number): MotionPose => {
-  const seconds = tick * TICK_DT;
+export const motionPose = (motion: SegmentMotion, tick: number, clock: MotionClock = null): MotionPose => {
+  const seconds = motionSeconds(motion, tick, clock);
   let pose = IDENTITY_MOTION_POSE;
   if (motion.spin) {
     const { axis, pivot, speed, startAngle } = motion.spin;
@@ -139,6 +191,17 @@ export const motionPose = (motion: SegmentMotion, tick: number): MotionPose => {
   return pose;
 };
 
+/**
+ * Several Motions composed, outermost first (ADR 0116) — how a nested Part is
+ * posed: a cannon's barrel pitches inside a carriage that is itself turning,
+ * and a point of it goes through the inner Motion before the outer one.
+ */
+export const motionChainPose = (motions: readonly SegmentMotion[], tick: number, clock: MotionClock = null): MotionPose => {
+  let pose = IDENTITY_MOTION_POSE;
+  for (const motion of motions) pose = composePose(pose, motionPose(motion, tick, clock));
+  return pose;
+};
+
 export const applyMotionPose = (pose: MotionPose, point: Vec3): Vec3 =>
   addVec3(rotateVec3ByQuat(point, pose.rotation), pose.position);
 
@@ -147,9 +210,12 @@ export const applyMotionPose = (pose: MotionPose, point: Vec3): Vec3 =>
  * from `tick` to `tick + 1` — exactly how far the kinematic body carries it
  * in that step, which is what riding and Impact must agree with.
  */
-export const motionPointVelocity = (motion: SegmentMotion, tick: number, point: Vec3): Vec3 =>
+export const motionPointVelocity = (motion: SegmentMotion, tick: number, point: Vec3, clock: MotionClock = null): Vec3 =>
   scaleVec3(
-    subVec3(applyMotionPose(motionPose(motion, tick + 1), point), applyMotionPose(motionPose(motion, tick), point)),
+    subVec3(
+      applyMotionPose(motionPose(motion, tick + 1, clock), point),
+      applyMotionPose(motionPose(motion, tick, clock), point),
+    ),
     1 / TICK_DT,
   );
 
@@ -188,7 +254,7 @@ const axisReason = (kind: string, fields: Record<string, unknown>): string | und
  */
 export const invalidMotionReason = (value: unknown): string | undefined => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return "motion must be an object";
-  const { spin, swing, slide, ...rest } = value as Record<string, unknown>;
+  const { spin, swing, slide, ramp, ...rest } = value as Record<string, unknown>;
   const unknownKinds = Object.keys(rest);
   if (unknownKinds.length > 0) return `motion has unknown kind(s): ${unknownKinds.join(", ")}`;
   if (spin === undefined && swing === undefined && slide === undefined) return "motion must have a spin, swing or slide";
@@ -213,6 +279,13 @@ export const invalidMotionReason = (value: unknown): string | undefined => {
     if (!vec(fields.offset)) return "motion.slide.offset must be a vector with finite x/y/z";
     const reason = timingReason("slide", fields);
     if (reason) return reason;
+  }
+  if (ramp !== undefined) {
+    if (typeof ramp !== "object" || ramp === null || Array.isArray(ramp)) return "motion.ramp must be an object";
+    const { multiplier, seconds, ...extra } = ramp as Record<string, unknown>;
+    if (Object.keys(extra).length > 0) return `motion.ramp has unknown field(s): ${Object.keys(extra).join(", ")}`;
+    if (!finite(multiplier) || multiplier <= 0) return "motion.ramp.multiplier must be a positive number";
+    if (!finite(seconds) || seconds <= 0) return "motion.ramp.seconds must be a positive number of seconds";
   }
   return undefined;
 };

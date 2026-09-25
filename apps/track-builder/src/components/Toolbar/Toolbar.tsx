@@ -41,11 +41,14 @@ export function Toolbar({ engine, onBrowse }: Props) {
   // Draft text fields — local, reset by the parent's key on every load/save,
   // so typing never re-renders the shell and a load always shows the
   // Revision's own values.
-  const meta = engine.loadedTrack;
+  // A Draft carries the same publish metadata a Revision does, so the fields
+  // seed from whichever is open (ADR 0115).
+  const draft = engine.loadedDraft;
+  const meta = draft ?? engine.loadedTrack;
   const [name, setName] = useState(meta?.name ?? "");
   const [limit, setLimit] = useState(String(Math.round((meta?.timeLimitMs ?? DEFAULT_TIME_LIMIT_MS) / 1000)));
   const [survivors, setSurvivors] = useState(String(meta?.survivorTarget ?? DEFAULT_SURVIVOR_TARGET));
-  const [trackId, setTrackId] = useState(meta?.id ?? "");
+  const [trackId, setTrackId] = useState(engine.loadedTrack?.id ?? "");
   const [apiOpen, setApiOpen] = useState(false);
   const [apiUrl, setApiUrl] = useState(engine.apiUrl);
 
@@ -93,8 +96,21 @@ export function Toolbar({ engine, onBrowse }: Props) {
       <span className={css.rule} />
 
       <div className={css.group}>
-        <button type="button" className={css.save}
-          onClick={() => engine.startPreviewCapture(name, defaults())}>SAVE</button>
+        {draft ? (
+          <>
+            {/* No Thumbnail capture: a Draft has none — it is framed at
+                publish (ADR 0085), so saving one is a plain write-back. */}
+            <button type="button" className={css.save}
+              title={`write back to Draft "${draft.id}" (${draft.roundType})`}
+              onClick={() => void engine.saveDraft(name, defaults())}>SAVE DRAFT</button>
+            <button type="button" className={css.btn}
+              title="stop editing the Draft — the Segments stay, SAVE publishes a Revision again"
+              onClick={() => engine.closeDraft()}>CLOSE DRAFT</button>
+          </>
+        ) : (
+          <button type="button" className={css.save}
+            onClick={() => engine.startPreviewCapture(name, defaults())}>SAVE</button>
+        )}
         <Field value={trackId} variant="text" width={74} placeholder={BASE_RACE_TRACK_ID} onChange={setTrackId} />
         <button type="button" className={css.btn}
           onClick={() => void engine.loadTrackById(trackId.trim() || BASE_RACE_TRACK_ID)}>LOAD</button>

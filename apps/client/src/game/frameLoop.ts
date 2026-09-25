@@ -21,7 +21,8 @@ import {
 } from "@dont-fall/shared";
 import { matchBanner } from "../hud/matchBanner.js";
 import { localHoldOf } from "../render/grabAnimation.js";
-import { carriedPose } from "./carriedPose.js";
+import { carriedPose, carriedPropPose } from "./carriedPose.js";
+import { carriedPropsOf } from "./carriedProps.js";
 import type { PredictionLoop } from "../net/predictionLoop.js";
 import { graceTicksForRtt } from "../net/propPrediction.js";
 import type { SnapshotInterpolator } from "../net/snapshotInterpolation.js";
@@ -293,6 +294,15 @@ const composeDraw = (
   const props: PropSnapshot[] = serverRender
     ? session.net.propPrediction.renderPoses(render.props, serverRender.props)
     : [];
+  // ADR 0125: a Prop the local Character carries is drawn in its hands as they
+  // are drawn, exactly as a carried Character is above.
+  const carriedProp = serverOwn?.carryingProp;
+  if (carriedProp !== null && carriedProp !== undefined && props[carriedProp] && serverOwn) {
+    props[carriedProp] = carriedPropPose(props[carriedProp]!, serverOwn, {
+      position: visual.position,
+      facing: render.characters[session.myId]!.facing,
+    });
+  }
 
   return { ...local, own, drawnFromServer, serverOwn, visual, remote, props };
 };
@@ -304,7 +314,19 @@ const drawWorld = (session: GameSession, frame: DrawnFrame, input: SimInputs, el
   const animationDelta = Math.min(elapsedMs, MAX_ANIMATION_DELTA_MS) / 1000;
   const cast = { ...frame.remote, [myId]: frame.visual };
 
-  stage.applyRenderState({ character: frame.visual, props: frame.props });
+  // ADR 0118: read straight off the prediction, which mirrors the server's
+  // floors and carries whatever this client has broken since the last
+  // snapshot — so a tile you just put your foot through goes now, not a
+  // round trip later.
+  stage.applyRenderState({
+    character: frame.visual,
+    props: frame.props,
+    fragile: session.world.localSim.fragileLooks(),
+    // ADR 0126: what the newest Snapshot says each Bomb is doing, drawn at the
+    // Tick the Props themselves are drawn at.
+    bombs: { rows: session.net.latestSnapshot?.bombs ?? [], tick: session.net.serverInterp.renderTick(now) },
+    nowMs: now,
+  });
   // Body looks ahead of the rigs (M9 ticket 15, ADR 0091) — a rig built this
   // frame already wears its skin (or its color), and the local model follows
   // the own row's bind. Hats the same way (ADR 0083).
@@ -362,16 +384,24 @@ const drawWorld = (session: GameSession, frame: DrawnFrame, input: SimInputs, el
   // the prediction's interpolated one (`frame.render`), not the raw last
   // tick's: pinned yaw bypasses `nextModelYaw`'s easing, so the raw value
   // would step the spinning body 18° every tick instead of turning smoothly.
-  const hold = localHoldOf(frame.serverOwn, {
-    spinMs: frame.own.spinMs,
-    facing: frame.render.characters[myId]!.facing,
-  });
+  const carried = frame.serverOwn?.carryingProp ?? null;
+  const moveDirection = phaseLocksInput(session.match.phase) ? IDLE_INPUTS.moveDirection : input.moveDirection;
+  const hold = localHoldOf(
+    frame.serverOwn,
+    {
+      spinMs: frame.own.spinMs,
+      facing: frame.render.characters[myId]!.facing,
+      tossMs: frame.own.tossMs,
+      walking: frame.own.grounded && (moveDirection.x !== 0 || moveDirection.z !== 0),
+    },
+    carried === null ? null : session.world.localSim.propMass(carried),
+  );
   stage.updateCharacterAnimation(
     animationDelta,
     // Cosmetic only, not a second lock: the sim already refused to move the
     // Character while locked (M5 ticket 01), so this just picks the idle stance
     // over animating legs toward a `moveDirection` it never walked toward.
-    phaseLocksInput(session.match.phase) ? IDLE_INPUTS.moveDirection : input.moveDirection,
+    moveDirection,
     frame.own.grounded,
     frame.own.dashing,
     frame.own.dashSpeed,
@@ -383,11 +413,24 @@ const drawWorld = (session: GameSession, frame: DrawnFrame, input: SimInputs, el
     frame.own.grabEpoch,
     hold,
   );
+  // ADR 0128: every carried Prop in the hands as the rigs were just drawn —
+  // remote carriers' and this one's, whose Spin is its own prediction.
+  stage.holdCarriedProps(
+    carriedPropsOf(
+      [
+        ...Object.entries(frame.remote).map(([id, rc]) => ({ id, carryingProp: rc.carryingProp, spinMs: rc.spinMs })),
+        { id: null, carryingProp: carried, spinMs: frame.own.spinMs },
+      ],
+      frame.props,
+      (index) => session.world.localSim.propGripShape(index),
+    ),
+    animationDelta,
+  );
   // Motion phase is a pure function of the tick and the client can compute it
   // exactly — so render it at the *prediction* tick, matching what the local
   // Character's own collision runs against, not the delayed render tick (ADR
   // 0025), at the same sub-tick alpha the Character itself is drawn at.
-  stage.updateMotion(frame.snapshot.tick - 1 + frame.localAlpha);
+  stage.updateMotion(frame.snapshot.tick - 1 + frame.localAlpha, session.world.localSim.motionClock);
 };
 
 /** Where the camera looks this frame, and who the shell is told it is watching. */

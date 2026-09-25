@@ -6,6 +6,7 @@ import { LEADERBOARD_SIZE } from "@dont-fall/shared";
 import { openDb, type ApiDb } from "../db/db.js";
 import { createAccountWithPassword } from "../auth/accounts.dao.js";
 import { insertMatchParticipants } from "../matches/matches.dao.js";
+import { saveMatchResult } from "../matches/matches.service.js";
 import { offerPersonalBest } from "../personalBests/personalBests.dao.js";
 import { getLeaderboard } from "./leaderboards.service.js";
 
@@ -83,6 +84,27 @@ describe("leaderboards (ADR 0110)", () => {
     const board = getLeaderboard(db, "wins", me);
     expect(board.rows).toHaveLength(LEADERBOARD_SIZE);
     expect(board.you).toMatchObject({ displayName: "Me", rank: LEADERBOARD_SIZE + 6, value: 1 });
+  });
+
+  it("never ranks a Bot, however it placed or long it survived (M17 ticket 10)", () => {
+    const amy = account("Amy");
+    // The Bot won and outlasted her (ADR 0129): a full participant, with no Account to rank.
+    saveMatchResult(db, {
+      matchId: "m-bot",
+      results: [{ rows: [{ id: "bot", placement: 1, qualified: true }, { id: "amy", placement: 2, qualified: true }] }],
+      roundTrackIds: ["t1"],
+      nicknames: { bot: "pixelpeach", amy: "Amy" },
+      accountIds: { amy },
+      colors: {},
+      totalFalls: { bot: 0, amy: 0 },
+      survivalMs: { bot: 99_000, amy: 12_000 },
+      grabsBroken: {},
+      endedAtMs: 1,
+    });
+
+    expect(getLeaderboard(db, "wins", amy).rows).toEqual([]);
+    const survival = getLeaderboard(db, "survival", amy);
+    expect(survival.rows.map((row) => [row.displayName, row.rank, row.value])).toEqual([["Amy", 1, 12_000]]);
   });
 
   it("refuses a board that does not exist, and a Race board without a Track", () => {

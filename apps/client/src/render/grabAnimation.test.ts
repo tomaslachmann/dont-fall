@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
+import { GRAB_TURN_SPEED_MULTIPLIER, PICKUP_CLIP_SECONDS, PROP_LIFT_SPEEDUP, PROP_CARRY_MASS_MAX, propCarryTurn } from "@dont-fall/shared";
 import {
   GrabAnimations,
   grabAttemptPoseAt,
@@ -8,7 +9,10 @@ import {
   grabRoleOf,
   limpPoseAt,
   localHoldOf,
+  propCarryPoseAt,
+  type PropCarryFrame,
   NO_HOLD,
+  NO_PROP_CARRY,
   strugglePoseAt,
 } from "./grabAnimation.js";
 import type { CharacterActions, ClipPose } from "./characterModel.js";
@@ -34,7 +38,7 @@ const rig = () => {
     getUp: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
     death: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
     grabReach, grabHold, grabDropOut, struggleHeld, struggleAir,
-    wobble: null, wobbleWalk: null,
+    wobble: null, wobbleWalk: null, pickup: null, carryWalk: null, throwItem: null,
   } satisfies CharacterActions;
   return { actions, grabReach, grabHold, grabDropOut, struggleHeld, struggleAir, koBack };
 };
@@ -198,33 +202,60 @@ describe("GrabAnimations", () => {
 });
 
 describe("the hold drawn from the local Character's own end (ADR 0104)", () => {
-  const server = (fields: Partial<{ grabbingId: string | null; heldByGrabberId: string | null; heldPhase: "struggle" | "limp" | null; facing: number }>) => ({
+  const server = (
+    fields: Partial<{
+      grabbingId: string | null;
+      carryingProp: number | null;
+      heldByGrabberId: string | null;
+      heldPhase: "struggle" | "limp" | null;
+      facing: number;
+      liftMs: number | null;
+      tossMs: number | null;
+    }>,
+  ) => ({
     grabbingId: null,
+    carryingProp: null,
     heldByGrabberId: null,
     heldPhase: null,
     facing: 0.3,
+    liftMs: null,
+    tossMs: null,
     ...fields,
   });
+  const predicted = (spinMs: number, facing: number, tossMs: number | null = null) => ({ spinMs, facing, tossMs, walking: false });
 
   it("pins a Held body to the facing the server gives it, and says which part of the hold it is in", () => {
-    expect(localHoldOf(server({ heldByGrabberId: "g", heldPhase: "limp", facing: 2 }), { spinMs: 0, facing: -1 })).toEqual({
+    expect(localHoldOf(server({ heldByGrabberId: "g", heldPhase: "limp", facing: 2 }), predicted(0, -1))).toEqual({
       role: "held",
       phase: "limp",
       pinnedFacing: 2,
+      turnScale: 1,
+      carry: NO_PROP_CARRY,
     });
   });
 
   it("pins a Spinning grabber to the predicted facing, and leaves one only carrying to turn itself", () => {
-    expect(localHoldOf(server({ grabbingId: "h" }), { spinMs: 200, facing: 1.4 }).pinnedFacing).toBe(1.4);
-    expect(localHoldOf(server({ grabbingId: "h" }), { spinMs: 0, facing: 1.4 })).toEqual({
+    expect(localHoldOf(server({ grabbingId: "h" }), predicted(200, 1.4)).pinnedFacing).toBe(1.4);
+    expect(localHoldOf(server({ grabbingId: "h" }), predicted(0, 1.4))).toEqual({
       role: "grabbing",
       phase: null,
       pinnedFacing: null,
+      turnScale: GRAB_TURN_SPEED_MULTIPLIER,
+      carry: NO_PROP_CARRY,
     });
   });
 
+  it("carries a Prop as a hold, turning slower the heavier it is (ADR 0125)", () => {
+    const light = localHoldOf(server({ carryingProp: 2 }), predicted(0, 0), 1.5);
+    const heavy = localHoldOf(server({ carryingProp: 2 }), predicted(0, 0), PROP_CARRY_MASS_MAX);
+
+    expect(light.role).toBe("grabbing");
+    expect(light.turnScale).toBe(propCarryTurn(1.5));
+    expect(heavy.turnScale).toBeLessThan(light.turnScale);
+  });
+
   it("is no hold at all before the server world has drawn anything", () => {
-    expect(localHoldOf(undefined, { spinMs: 0, facing: 0 })).toBe(NO_HOLD);
+    expect(localHoldOf(undefined, predicted(0, 0))).toBe(NO_HOLD);
   });
 
   it("collapses a Limp body backwards and hangs it on the knockdown's last frame", () => {
@@ -239,5 +270,66 @@ describe("the hold drawn from the local Character's own end (ADR 0104)", () => {
     expect(at(grabs.pose("x", "held", 0, false, 0, actions))).toEqual([struggleAir, 0]);
     expect(at(grabs.pose("x", "held", 0, false, 2000, actions, true))).toEqual([koBack, 0]);
     expect(at(grabs.pose("x", "held", 0, false, 2500, actions, true))).toEqual([koBack, 0.5]);
+  });
+});
+
+describe("carrying a Prop (ADR 0128)", () => {
+  const carryRig = () => {
+    const base = rig();
+    const mixer = new THREE.AnimationMixer(new THREE.Object3D());
+    const pickup = mixer.clipAction(clip("Pickup_Ground", PICKUP_CLIP_SECONDS));
+    const carryWalk = mixer.clipAction(clip("Carry_Walk", 1.2));
+    const throwItem = mixer.clipAction(clip("Throw_Item", 1.2));
+    return { ...base, actions: { ...base.actions, pickup, carryWalk, throwItem }, pickup, carryWalk, throwItem };
+  };
+  const frame = (fields: Partial<PropCarryFrame> = {}): PropCarryFrame => ({ ...NO_PROP_CARRY, prop: true, ...fields });
+
+  it("counts a Lift as a hold before the hands have even reached the Prop", () => {
+    expect(grabRoleOf(null, null, null, true)).toBe("grabbing");
+  });
+
+  it("plays the Lift sped up from its replicated start, and holds on its last frame once up", () => {
+    const { actions, pickup } = carryRig();
+    const into = 400;
+    expect(at(propCarryPoseAt(frame({ liftMs: into }), 0, 0, actions))).toEqual([pickup, Math.round(into * PROP_LIFT_SPEEDUP) / 1000]);
+    expect(at(propCarryPoseAt(frame({ liftMs: 60_000 }), 0, 0, actions))).toEqual([pickup, PICKUP_CLIP_SECONDS]);
+    // Standing still, or in the air: the hold is that last frame.
+    expect(at(propCarryPoseAt(frame(), 0, 3, actions))).toEqual([pickup, PICKUP_CLIP_SECONDS]);
+  });
+
+  it("walks with it, winds a Toss up, and Spins it at arm's length", () => {
+    const { actions, carryWalk, throwItem, grabHold } = carryRig();
+    expect(at(propCarryPoseAt(frame({ walking: true }), 1.5, 9, actions))).toEqual([carryWalk, 0.3]);
+    expect(at(propCarryPoseAt(frame({ tossMs: 250, walking: true }), 0, 0, actions))).toEqual([throwItem, 0.25]);
+    expect(at(propCarryPoseAt(frame({ spinning: true, walking: true }), 0, 2.25, actions))).toEqual([grabHold, 0.25]);
+  });
+
+  it("plays the rest of a Toss on after the Prop has gone, until it ends or its carrier walks off", () => {
+    const { actions, throwItem } = carryRig();
+    const grabs = new GrabAnimations();
+    grabs.pose("a", "grabbing", 1, true, 0, actions, false, frame({ tossMs: 300 }));
+    // Let go: carrying nothing any more, the clip carries on from 0.3 s.
+    expect(at(grabs.pose("a", "free", 1, true, 100, actions))).toEqual([throwItem, 0.4]);
+    expect(at(grabs.pose("a", "free", 1, true, 600, actions))).toEqual([throwItem, 0.9]);
+    expect(grabs.pose("a", "free", 1, true, 1000, actions)).toBeNull();
+
+    grabs.pose("b", "grabbing", 1, true, 0, actions, false, frame({ tossMs: 300 }));
+    expect(grabs.pose("b", "free", 1, true, 100, actions, false, { ...NO_PROP_CARRY, walking: true })).toBeNull();
+  });
+
+  it("stands the local body still while it Lifts or winds up, and the Toss the moment it is predicted", () => {
+    const server = {
+      grabbingId: null,
+      carryingProp: 0,
+      heldByGrabberId: null,
+      heldPhase: null,
+      facing: 0,
+      liftMs: null,
+      tossMs: null,
+    };
+    const still = { spinMs: 0, facing: 0, tossMs: null, walking: false };
+    expect(localHoldOf({ ...server, carryingProp: null, liftMs: 100 }, still, 2).turnScale).toBe(0);
+    expect(localHoldOf(server, { ...still, tossMs: 0 }, 2).turnScale).toBe(0);
+    expect(localHoldOf(server, still, 2).turnScale).toBeGreaterThan(0);
   });
 });

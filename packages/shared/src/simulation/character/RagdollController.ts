@@ -3,6 +3,7 @@ import { CAPSULE_BOTTOM_OFFSET } from "../../tuning/character.js";
 import { GETUP_CAPSULE_LIFT, GETUP_DRIVE_TICKS, KNOCKDOWN_LAUNCH_SCALE, RAGDOLL_BELT_CATCH_SLACK, RAGDOLL_BELT_SPIN_DAMP, RAGDOLL_IMPACT_VELOCITY_SCALE, RAGDOLL_SETTLE_SPEED, RESPAWN_WOBBLE_TICKS } from "../../tuning/knockdown.js";
 import { THROWING_RAGDOLL_CAUSES, type RagdollCause, type ReconcileBase } from "../../state/SimState.js";
 import { isDownMotionState, type CharacterMotionState, type CharacterStateMachine } from "../CharacterStateMachine.js";
+import { BOMB_BLAST_IMPACT_CENTRE, BOMB_BLAST_LAUNCH_SPEED } from "../../tuning/fight.js";
 import { AuthoredRagdoll, modelYawOfFacing } from "../ragdoll/AuthoredRagdoll.js";
 import { getUpFloorY, matchGetUp, type GetUpMatch } from "../ragdoll/getUp.js";
 import type { BoneSnapshot } from "../ragdollSkeleton.js";
@@ -33,6 +34,14 @@ export interface DownPose {
  * it never happened), the Respawn that puts a fallen Character back on its
  * feet, and what the snapshot reports for the body while it is down.
  */
+/**
+ * How much of its Impact a knockdown of `cause` is thrown by. A Blast has
+ * its own throw (ADR 0126, amended): its middle leaves at
+ * {@link BOMB_BLAST_LAUNCH_SPEED}, and the rest in proportion.
+ */
+const launchScaleOf = (cause: RagdollCause): number =>
+  cause === "Blast" ? BOMB_BLAST_LAUNCH_SPEED / BOMB_BLAST_IMPACT_CENTRE : KNOCKDOWN_LAUNCH_SCALE;
+
 export class RagdollController {
   readonly ragdoll: AuthoredRagdoll;
   /**
@@ -328,7 +337,7 @@ export class RagdollController {
     // nobody — see `THROWING_RAGDOLL_CAUSES`.
     const thrown =
       magnitude > 0 && THROWING_RAGDOLL_CAUSES.has(this.pendingCause)
-        ? scaleVec3(impulse, KNOCKDOWN_LAUNCH_SCALE)
+        ? scaleVec3(impulse, launchScaleOf(this.pendingCause))
         : vec3();
     const kept = addVec3(addVec3(scaleVec3(this.movement.velocity, scale), carried), thrown); // captured before resetMotion zeroes it
     // The kept velocity must not still point THROUGH whatever the body

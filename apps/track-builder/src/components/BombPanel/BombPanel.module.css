@@ -1,0 +1,23 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tb-s-3);
+  min-width: 0;
+  padding: 0 var(--tb-s-6) var(--tb-s-5);
+}
+
+.row { display: flex; align-items: center; justify-content: space-between; gap: var(--tb-s-3); }
+
+.reset {
+  flex: none;
+  padding: var(--tb-s-2) var(--tb-s-3);
+  border-radius: var(--tb-r-md);
+  color: var(--df-color-ink-45);
+}
+.reset:hover { background: var(--df-color-surface-2); color: var(--df-color-ink); }
+
+.hint {
+  margin: 0;
+  color: var(--df-color-ink-45);
+  font: var(--df-weight-kicker) var(--tb-t-2xs) / 1.4 var(--df-font-ui);
+}

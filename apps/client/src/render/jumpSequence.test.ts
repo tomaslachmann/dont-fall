@@ -45,7 +45,7 @@ const rig = () => {
       getUp: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
       death: { F: null, FL: null, FR: null, B: null, BL: null, BR: null },
       grabReach: null, grabHold: null, grabDropOut: null,
-      struggleHeld: null, struggleAir: null, wobble: null, wobbleWalk: null,
+      struggleHeld: null, struggleAir: null, wobble: null, wobbleWalk: null, pickup: null, carryWalk: null, throwItem: null,
     } satisfies CharacterActions,
   };
 };

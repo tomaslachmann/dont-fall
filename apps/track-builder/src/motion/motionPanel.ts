@@ -1,6 +1,7 @@
 import {
   type ImpactOutcome,
   type MotionEasing,
+  type MotionRamp,
   type MotionSlide,
   type MotionSpin,
   type MotionSwing,
@@ -11,6 +12,7 @@ import {
 } from "@dont-fall/shared";
 import {
   AXES,
+  defaultRamp,
   defaultSlide,
   defaultSpin,
   defaultSwing,
@@ -34,6 +36,7 @@ import {
 } from "./motionForm.js";
 import {
   cycleFraction,
+  describeRamp,
   describeSlide,
   describeSpin,
   describeSwing,
@@ -45,7 +48,7 @@ import {
   topSpeedAt,
   type CycleSample,
 } from "./motionPreview.js";
-import { slideSummary, spinSummary, swingSummary } from "./motionSummary.js";
+import { rampSummary, slideSummary, spinSummary, swingSummary } from "./motionSummary.js";
 import { IMPACT } from "../lib/impact.js";
 import type { ImpactKind } from "../types/builder.js";
 import cardCss from "../components/MotionCard/MotionCard.module.css";
@@ -62,7 +65,9 @@ export interface MotionPanel {
    * Show the selected Segment's Motion for editing, or hide the panel
    * (`module` undefined). `parts` are the Module's mesh bounds (`templateParts`),
    * which let shapes like Arm find a post. A group hides the cards with a
-   * note — motion is single-select only.
+   * note — motion is single-select only. `motionParts` are the Asset's Parts
+   * a Motion may address one by one (ADR 0124) and `part` the one `motion`
+   * is; with more than one, the panel offers a pick between them.
    */
   show: (
     module: Module | undefined,
@@ -70,12 +75,14 @@ export interface MotionPanel {
     parts?: readonly Box[],
     scale?: number,
     selectedCount?: number,
+    motionParts?: readonly string[],
+    part?: string,
   ) => void;
   /** Move the timing strips' playheads to transport time `seconds` — called every frame. */
   setClock: (seconds: number) => void;
 }
 
-type Kind = "spin" | "swing" | "slide";
+type Kind = "spin" | "swing" | "slide" | "ramp";
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] => {
   const node = document.createElement(tag);
@@ -123,6 +130,8 @@ export const createMotionPanel = (
   onPickPivot: (apply: (pivot: Vec3) => void) => void,
   /** Set the transport clock to `seconds` (dragging a timing strip's playhead). */
   onScrub: (seconds: number) => void,
+  /** Edit the Motion of this Part of the selected Asset instead (ADR 0124). */
+  onPart: (part: string) => void = () => {},
 ): MotionPanel => {
   let module: Module | undefined;
   let parts: readonly Box[] = [];
@@ -146,6 +155,22 @@ export const createMotionPanel = (
   );
   groupNote.hidden = true;
   container.appendChild(groupNote);
+
+  // Which Part the cards edit, on an Asset whose Parts move on their own —
+  // the three arms of a sweeper (ADR 0124). Hidden on everything else.
+  const partRow = el("div", cardCss.presets);
+  partRow.hidden = true;
+  container.appendChild(partRow);
+  const showParts = (names: readonly string[], active: string | undefined): void => {
+    partRow.replaceChildren();
+    partRow.hidden = names.length < 2;
+    if (partRow.hidden) return;
+    partRow.appendChild(el("span", cardCss.easingLabel, "PART"));
+    const chips = new Map(
+      names.map((name) => [name, chip(partRow, name.toUpperCase(), `edit the ${name} Part's own Motion`, () => onPart(name))] as const),
+    );
+    lightChips(chips, active);
+  };
 
   /** A Field: label over a recessed trough holding a real input. */
   const textField = (
@@ -562,6 +587,16 @@ export const createMotionPanel = (
   const slidePhase = textField(slideTiming, "PHASE", 0.05);
   const slideEase = easingBlock(slideBody);
 
+  // Ramp (ADR 0123): not a kind of its own but the pace every kind above runs at.
+  const rampBody = addSection("ramp", "Ramp");
+  const rampSays = says(rampBody);
+  const rampFields = el("div", cardCss.fields);
+  rampFields.style.gridTemplateColumns = "repeat(2, 1fr)";
+  rampBody.appendChild(rampFields);
+  const rampMultiplier = textField(rampFields, "× PACE", 0.25);
+  const rampSeconds = textField(rampFields, "OVER S", 5);
+  rampBody.appendChild(el("p", cardCss.blurb, "Counts from when the Round starts running; the preview counts from 0."));
+
   const presetFor = (pivot: Vec3): string =>
     (module && PIVOT_PRESETS.find((preset) => sameVec(pivotPreset(module!, preset), pivot))) ?? "custom";
 
@@ -607,6 +642,14 @@ export const createMotionPanel = (
       if (phase !== 0) slide.phase = phase;
       motion.slide = slide;
     }
+    if (sections.ramp.enabled()) {
+      const base = current.ramp ?? defaultRamp();
+      const ramp: MotionRamp = {
+        multiplier: Math.max(0.05, readNumber(rampMultiplier.value, base.multiplier)),
+        seconds: Math.max(0.1, readNumber(rampSeconds.value, base.seconds)),
+      };
+      motion.ramp = ramp;
+    }
     return motion.spin || motion.swing || motion.slide ? motion : undefined;
   };
 
@@ -615,7 +658,15 @@ export const createMotionPanel = (
     const spin = motion.spin ?? (module ? defaultSpin(module) : undefined);
     const swing = motion.swing ?? (module ? defaultSwing(module) : undefined);
     const slide = motion.slide ?? (module ? defaultSlide(module) : undefined);
-    (["spin", "swing", "slide"] as const).forEach((kind) => sections[kind].setEnabled(motion[kind] !== undefined));
+    (["spin", "swing", "slide", "ramp"] as const).forEach((kind) => sections[kind].setEnabled(motion[kind] !== undefined));
+    const ramp = motion.ramp ?? defaultRamp();
+    rampMultiplier.value = String(ramp.multiplier);
+    rampSeconds.value = String(ramp.seconds);
+    if (module && motion.ramp) {
+      const described = describeRamp(motion, footprintCorners(module), scale);
+      colourNote(rampSays, described.text, described.outcome);
+      sections.ramp.summary.textContent = rampSummary(motion.ramp);
+    }
     const cellKey = (pivot: Vec3): string | undefined => {
       const cell = module && gridCellOf(module, pivot);
       return cell ? `${cell.col},${cell.row}` : undefined;
@@ -707,7 +758,7 @@ export const createMotionPanel = (
         strip.knob.style.left = left;
       }
     },
-    show(nextModule, motion, nextParts = [], nextScale = 1, selectedCount = 1) {
+    show(nextModule, motion, nextParts = [], nextScale = 1, selectedCount = 1, motionParts = [], part) {
       module = nextModule;
       parts = nextParts;
       scale = nextScale;
@@ -715,7 +766,8 @@ export const createMotionPanel = (
       order.textContent = group ? "SINGLE SELECT ONLY" : "SPIN → SWING → SLIDE";
       groupNote.hidden = !group || module === undefined;
       container.hidden = module === undefined;
-      for (const kind of ["spin", "swing", "slide"] as const) sections[kind].card.hidden = group;
+      for (const kind of ["spin", "swing", "slide", "ramp"] as const) sections[kind].card.hidden = group;
+      showParts(group || module === undefined ? [] : motionParts, part);
       if (module && !group) write(motion ?? {});
     },
   };

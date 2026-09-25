@@ -7,8 +7,10 @@ import {
   segmentScale,
   SURFACE_GROUND_NORMAL_MIN_Y,
   type Segment,
+  type SegmentMotion,
 } from "@dont-fall/shared";
 import * as THREE from "three";
+import { PREVIEW_MOTION_CLOCK } from "./render.js";
 
 const vertexShader = /* glsl */ `
   uniform vec3 uLinear;
@@ -53,8 +55,12 @@ const fragmentShader = /* glsl */ `
  */
 export interface ImpactTint {
   readonly material: THREE.ShaderMaterial;
-  /** Refresh the velocity uniforms for `segment` at simulation tick `tick`. */
-  update: (segment: Segment, tick: number) => void;
+  /**
+   * Refresh the velocity uniforms for `segment` at simulation tick `tick`,
+   * posed by `motion` when the Segment's movement is its Asset's rather than
+   * its own (ADR 0116).
+   */
+  update: (segment: Segment, tick: number, motion?: SegmentMotion) => void;
   dispose: () => void;
 }
 
@@ -98,11 +104,13 @@ export const addImpactTint = (root: THREE.Object3D, spiked: boolean): ImpactTint
   }
   return {
     material,
-    update(segment, tick) {
-      const motion = segment.motion;
+    update(segment, tick, override) {
+      // A Segment whose Asset moves a Part of itself has no Motion of its own
+      // to read (ADR 0116) — the caller passes the one that poses it.
+      const motion = override ?? segment.motion;
       if (!motion) return;
       const config = { position: segment.position, orientation: segmentOrientation(segment), scale: segmentScale(segment), motion };
-      const twist = motionTwist((t) => movingSegmentPose(config, t), tick);
+      const twist = motionTwist((t) => movingSegmentPose(config, t, PREVIEW_MOTION_CLOCK), tick);
       (material.uniforms.uLinear!.value as THREE.Vector3).set(twist.linear.x, twist.linear.y, twist.linear.z);
       (material.uniforms.uAngular!.value as THREE.Vector3).set(twist.angular.x, twist.angular.y, twist.angular.z);
       (material.uniforms.uOrigin!.value as THREE.Vector3).set(twist.origin.x, twist.origin.y, twist.origin.z);

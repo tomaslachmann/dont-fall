@@ -6,6 +6,7 @@ import {
   survivalCritical,
   threatBehind,
   TICK_MS,
+  type BombState,
   type HeldPhase,
   type KeyBindings,
   type LiveRace,
@@ -45,6 +46,19 @@ export type HoldHud =
       /** How far past full speed you have held it, 0–1: at 1 you are dizzy. */
       overspin: number;
       /** Hit's key (hold to Spin, let go to Hurl) and Grab's (let go), as bound. */
+      spinKey: string;
+      letGoKey: string;
+    }
+  | {
+      /** Carrying a Prop (ADR 0125): nothing to fight back, no window — only the throw. */
+      role: "carrying";
+      /** What you carry, as the panel names it ("CONE"). */
+      holding: string;
+      /** A lit Bomb's fuse (ADR 0126), floored to tenths of a second — absent for anything else. */
+      fuseMs?: number;
+      windup: number;
+      overspin: number;
+      /** Hit's key (tap to toss, hold to Spin) and Grab's (put down), as bound. */
       spinKey: string;
       letGoKey: string;
     };
@@ -125,6 +139,8 @@ export interface HudCharacter extends Racer {
   dashCooldownMs: number;
   /** Both ends of a hold, and where it has got to (ADR 0104). */
   grabbingId: string | null;
+  /** The Prop this Character carries, by index (ADR 0125). */
+  carryingProp: number | null;
   heldByGrabberId: string | null;
   heldPhase: HeldPhase | null;
   holdEndsTick: number | null;
@@ -147,6 +163,10 @@ export interface RoundHudInput {
   /** How many Checkpoints the loaded Track has. */
   checkpoints: number;
   nicknameOf: (id: string) => string;
+  /** What the Prop at an index is called (ADR 0125). */
+  propLabelOf: (index: number) => string;
+  /** Every Bomb that is not lying (ADR 0126) — the snapshot's `bombs`. */
+  bombs: readonly BombState[];
   /** Who dropped out of this Round by leaving the Match (the snapshot's `dnf`). */
   leftIds: readonly string[];
   /** The snapshot's Tick — what a hold's `holdEndsTick` counts down to. */
@@ -169,6 +189,20 @@ const keyOf = (controls: readonly string[]): string => (controls.length > 0 ? co
  */
 export const buildHoldHud = (input: RoundHudInput, me: HudCharacter): HoldHud | null => {
   const { characters, predicted, bindings } = input;
+  if (me.carryingProp !== null) {
+    const detonateTick = input.bombs.find((row) => row.propIndex === me.carryingProp)?.detonateTick;
+    return {
+      role: "carrying",
+      holding: input.propLabelOf(me.carryingProp),
+      ...(detonateTick === undefined
+        ? {}
+        : { fuseMs: Math.floor((Math.max(0, detonateTick - input.tick) * TICK_MS) / 100) * 100 }),
+      windup: twentieths(predicted.spinMs / SPIN_WINDUP_MS),
+      overspin: twentieths((predicted.spinMs - SPIN_WINDUP_MS) / SPIN_OVERSPIN_MS),
+      spinKey: keyOf(bindings.hit),
+      letGoKey: keyOf(bindings.grab),
+    };
+  }
   const heldRow = me.heldByGrabberId !== null ? me : me.grabbingId !== null ? characters[me.grabbingId] : undefined;
   if (!heldRow || heldRow.heldPhase === null) return null;
   if (me.heldByGrabberId !== null) {

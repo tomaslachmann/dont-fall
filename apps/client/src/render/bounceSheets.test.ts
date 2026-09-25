@@ -40,9 +40,12 @@ const character = (over: Partial<Vec3> & { grounded?: boolean; vy?: number } = {
     grabEpoch: 0,
     launchPadEpoch: 0,
     grabbingId: null,
+    carryingProp: null,
     heldByGrabberId: null,
     heldPhase: null,
     spinMs: 0,
+    liftMs: null,
+    tossMs: null,
   }) satisfies RenderCharacter;
 
 /** The sheet's own vertex heights, nearest-first to a world x/z. */

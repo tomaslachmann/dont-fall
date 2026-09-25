@@ -1,4 +1,4 @@
-import type { MotionSlide, MotionSpin, MotionSwing, SegmentMotion } from "@dont-fall/shared";
+import type { MotionRamp, MotionSlide, MotionSpin, MotionSwing, SegmentMotion } from "@dont-fall/shared";
 import { nearestAxis, toDegrees } from "./motionForm.js";
 
 /**
@@ -15,12 +15,15 @@ export const slideSummary = (slide: MotionSlide): string => {
   return `${travel} m · ${slide.period} s`;
 };
 
+export const rampSummary = (ramp: MotionRamp): string => `×${ramp.multiplier} · ${ramp.seconds} s`;
+
 /**
  * Which kinds this Motion runs, in composition order — the folded MOTION
  * section's header, where there's room for the kinds but not their numbers.
  */
-export const motionKindsOf = (motion: SegmentMotion | undefined): ("spin" | "swing" | "slide")[] => [
+export const motionKindsOf = (motion: SegmentMotion | undefined): ("spin" | "swing" | "slide" | "ramp")[] => [
   ...(motion?.spin ? (["spin"] as const) : []),
   ...(motion?.swing ? (["swing"] as const) : []),
   ...(motion?.slide ? (["slide"] as const) : []),
+  ...(motion?.ramp ? (["ramp"] as const) : []),
 ];

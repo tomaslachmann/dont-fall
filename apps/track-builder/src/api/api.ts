@@ -1,6 +1,14 @@
-import type { EnvironmentId, StoredTrack, Track, TrackListing, TrackRoundDefaults } from "@dont-fall/shared";
+import type {
+  EnvironmentId,
+  StoredTrack,
+  Track,
+  TrackDraft,
+  TrackDraftListing,
+  TrackListing,
+  TrackRoundDefaults,
+} from "@dont-fall/shared";
 
-export type { StoredTrack, TrackListing, TrackRoundDefaults };
+export type { StoredTrack, TrackDraft, TrackDraftListing, TrackListing, TrackRoundDefaults };
 
 /**
  * Saves a Track to the API (ticket 02's `POST /tracks`). `defaults` —
@@ -79,4 +87,55 @@ export const listTracks = async (baseUrl: string): Promise<TrackListing[]> => {
   const res = await fetch(`${baseUrl}/tracks`);
   if (!res.ok) throw new Error(`list failed: HTTP ${res.status}`);
   return (await res.json()) as TrackListing[];
+};
+
+/**
+ * Every stored Draft, without Segments (`GET /drafts`) — the Browse panel's
+ * second source. A Draft is the same thing the builder has always edited
+ * (CONTEXT.md), only kept in the API instead of this tab, which is what lets
+ * the MCP server (ADR 0114) and a person hand one back and forth.
+ */
+export const listDrafts = async (baseUrl: string): Promise<TrackDraftListing[]> => {
+  const res = await fetch(`${baseUrl}/drafts`);
+  if (!res.ok) throw new Error(`draft list failed: HTTP ${res.status}`);
+  return (await res.json()) as TrackDraftListing[];
+};
+
+/** One stored Draft with its Segments (`GET /drafts/:id`). */
+export const loadDraft = async (baseUrl: string, id: string): Promise<TrackDraft> => {
+  const res = await fetch(`${baseUrl}/drafts/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`draft load failed: HTTP ${res.status}`);
+  return (await res.json()) as TrackDraft;
+};
+
+/**
+ * Writes an open Draft back where it came from: its Segments
+ * (`PUT /drafts/:id/segments`) and then its publish metadata
+ * (`PATCH /drafts/:id`). Two calls because the API keeps them apart — the
+ * Segments PUT is what makes an MCP batch atomic — and Segments go first, so
+ * a failed metadata patch still leaves the work saved.
+ *
+ * No thumbnail: a Draft has no column for one (it is framed at publish, ADR
+ * 0085), which is why saving a Draft skips the capture flow a Revision needs.
+ */
+export const saveDraft = async (
+  baseUrl: string,
+  id: string,
+  track: Track,
+  meta: { name: string; defaults: TrackRoundDefaults; environment: EnvironmentId },
+): Promise<TrackDraft> => {
+  const url = `${baseUrl}/drafts/${encodeURIComponent(id)}`;
+  const segments = await fetch(`${url}/segments`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ track }),
+  });
+  if (!segments.ok) throw new Error(`draft save failed: HTTP ${segments.status}`);
+  const patched = await fetch(url, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: meta.name || null, ...meta.defaults, environment: meta.environment }),
+  });
+  if (!patched.ok) throw new Error(`draft save failed: HTTP ${patched.status}`);
+  return (await patched.json()) as TrackDraft;
 };

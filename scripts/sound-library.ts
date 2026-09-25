@@ -185,6 +185,30 @@ export const SOUND_LIBRARY: readonly Job[] = [
     lufs: -24,
     filter: "asetrate=44100*0.6,aresample=48000,lowpass=f=450",
   },
+  // A Bomb's fuse (ADR 0126): five seconds of timer, played through once per
+  // lighting at whatever rate makes it last the fuse — the user's pick.
+  {
+    kind: "oneshot",
+    out: "segment/bomb_fuse.ogg",
+    src: "freesound/487725__lilmati__ticking-timer-05-sec.wav",
+    origin: freesound(487725, "Ticking Timer 05 Sec", "LilMati"),
+  },
+  // Its blast (ADR 0126), the user's pick: cut where the bang starts (0.3 s of
+  // fuse swell before it), so it lands on the Tick the Characters go down.
+  {
+    kind: "oneshot",
+    out: "segment/bomb_blast.ogg",
+    src: "freesound/402011__eardeer__explosion_mid_fuse_1.wav",
+    origin: freesound(402011, "explosion_mid_fuse_1", "eardeer", "CC-BY 4.0"),
+    start: 0.3,
+  },
+  // A Shooter's shot (ADR 0119), the user's pick: heard where the ball leaves the barrel.
+  {
+    kind: "oneshot",
+    out: "segment/shooter_fire.ogg",
+    src: "freesound/184651__isaac200000__cannon5.wav",
+    origin: freesound(184651, "Cannon5", "Isaac200000"),
+  },
 
   // --- environment -----------------------------------------------------------------
   { kind: "loop", out: "environment/wind_day_loop.ogg", ...WIND, start: 5, seconds: 30, crossfade: 4, lufs: -24, stereo: true },

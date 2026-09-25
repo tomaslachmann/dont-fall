@@ -6,6 +6,12 @@ import { findSocket, type Module, type Socket } from "./Module.js";
 import type { DeckFrame, SegmentConveyor } from "./Conveyor.js";
 import type { SegmentLaunch } from "./Launch.js";
 import { hasMotion, type SegmentMotion } from "./Motion.js";
+import type { PartMotions } from "./PartMotions.js";
+import type { BombTiming } from "./Bomb.js";
+import type { FragileTiming } from "./Fragile.js";
+import type { PunchTiming } from "./Punch.js";
+import type { ShooterTiming } from "./Shooter.js";
+import type { TrapDoorTiming } from "./TrapDoor.js";
 import { isCheckpointGate, respawnProbeOrigins, startSegmentIndex, type SegmentCheckpoint } from "./Course.js";
 import { placeGate, type PlacedGate } from "./Gate.js";
 import type { SolidShape } from "./asset.js";
@@ -67,6 +73,44 @@ export interface SegmentAttachments {
    * Applied in the Segment's local frame, before its placement.
    */
   motion?: SegmentMotion;
+  /**
+   * A Motion per moving Part of a parted Asset, keyed by the Part's name
+   * (ADR 0124) — three arms of one sweeper, each on its own. Wins over
+   * `motion` for its Part, which wins over the Asset's own default.
+   */
+  partMotions?: PartMotions;
+  /**
+   * How often this Segment's trap door runs, if it is one (CONTEXT.md: Trap
+   * Door, ADR 0117) — its period and its phase, never the shape of the swing,
+   * which is keyframed in the Asset. Additive and optional like `motion`: a
+   * placed trap door without one runs its Asset's own clock.
+   */
+  trapdoor?: TrapDoorTiming;
+  /**
+   * How long this Segment's fragile floor stays gone, if it is one
+   * (CONTEXT.md: Fragile, ADR 0118) — `0` never returns. Additive and
+   * optional like `trapdoor`: a placed fragile floor without one returns
+   * after its Asset's own delay.
+   */
+  fragile?: FragileTiming;
+  /**
+   * How long this Segment's bomb burns and how long it is gone after going
+   * off, if it is one (CONTEXT.md: Bomb, ADR 0126). Additive and optional
+   * like `fragile`: a placed bomb without one runs its Asset's own clock.
+   */
+  bomb?: BombTiming;
+  /**
+   * How often this Segment's Shooter fires, how fast and how long its balls
+   * live, if it is one (CONTEXT.md: Shooter, ADR 0119). Additive and optional
+   * like `fragile`; where the muzzle is belongs to the Asset.
+   */
+  shooter?: ShooterTiming;
+  /**
+   * When this Segment's punching glove swings, if it is one (CONTEXT.md:
+   * Punching Glove, ADR 0121) — its period, its phase, and how much faster
+   * than authored it goes. How it swings is keyframed in the Asset.
+   */
+  punch?: PunchTiming;
   /**
    * The belt attached to this Segment, if any (CONTEXT.md: Conveyor, ADR
    * 0064) — the whole asset carries whoever stands on it. Additive and

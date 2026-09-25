@@ -5,11 +5,28 @@ import { addVec3, dotVec3, lengthVec3, normalizeVec3, rotateVec3ByQuat, scaleVec
 import { phaseLocksInput, phaseNeedsPhysicsStep, type MatchPhase } from "../match/MatchPhase.js";
 import { DEFAULT_ROUND_RULES, type RoundRules } from "../match/RoundRules.js";
 import { characterSnapshot, type CharacterSnapshot, type HeldPhase, type EliminationCredit, type EliminationHow, type RagdollCause, type ReconcileBase, type SimState } from "../state/SimState.js";
-import { CAPSULE_BOTTOM_OFFSET, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, GROUND_SNAP_DISTANCE, GRAVITY_Y, SEAT_CLEAR_MAX_LIFT, SEAT_CLEAR_STEP, SURFACE_GROUND_NORMAL_MIN_Y } from "../tuning/character.js";
+import { CAPSULE_BOTTOM_OFFSET, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, GROUND_SNAP_DISTANCE, GRAVITY_Y, RESPAWN_CLEAR_GAP, RESPAWN_FLOOR_PROBE, RESPAWN_SPREAD_RINGS, RESPAWN_SPREAD_STEP, SEAT_CLEAR_MAX_LIFT, SEAT_CLEAR_STEP, SURFACE_GROUND_NORMAL_MIN_Y } from "../tuning/character.js";
 import { TICK_DT } from "../tuning/clock.js";
-import { BUMP_IMPULSE_SCALE, BUMP_LIFT_RATIO, HIT_FACING_COS_MIN, HIT_LIFT_RATIO, HIT_RANGE, ELIMINATION_CREDIT_TICKS } from "../tuning/fight.js";
+import {
+  BOMB_BLAST_IMPACT_CENTRE,
+  BOMB_BLAST_IMPACT_EDGE,
+  BOMB_BLAST_PROP_SPEED,
+  BOMB_BLAST_RADIUS,
+  BUMP_IMPULSE_SCALE,
+  BUMP_LIFT_RATIO,
+  HIT_FACING_COS_MIN,
+  HIT_LIFT_RATIO,
+  HIT_RANGE,
+  ELIMINATION_CREDIT_TICKS,
+} from "../tuning/fight.js";
 import { RAGDOLL_BELT_REACH } from "../tuning/knockdown.js";
-import { DEFAULT_KILL_PLANE_Y, MOVING_SEGMENT_LIFT_RATIO, SPIKED_IMPACT_MAGNITUDE, SPIKED_LIFT_RATIO } from "../tuning/world.js";
+import {
+  DEFAULT_KILL_PLANE_Y,
+  MOVING_SEGMENT_LIFT_RATIO,
+  PROJECTILE_MASS,
+  SPIKED_IMPACT_MAGNITUDE,
+  SPIKED_LIFT_RATIO,
+} from "../tuning/world.js";
 import { DEFAULT_SURFACE, surfaceConfig, type SurfaceId } from "../track/Surface.js";
 import { passesThroughGate } from "../track/Gate.js";
 import type { StaticTrimesh } from "../track/resolveTrack.js";
@@ -19,12 +36,18 @@ import type { Ride } from "./character/MovementController.js";
 import { GrabHolds } from "./GrabHolds.js";
 import { hitImpactMagnitude } from "./HitController.js";
 import { isDownMotionState, isPlayerDrivenMotionState, type CharacterMotionState } from "./CharacterStateMachine.js";
+import type { MotionClock } from "../track/Motion.js";
 import type { Checkpoint } from "./Checkpoint.js";
 import type { FinishZone } from "./FinishZone.js";
 import { GROUP_CHARACTER, GROUP_RAGDOLL, STATIC_GROUPS } from "./collisionGroups.js";
 import type { LaunchPadConfig } from "./LaunchPad.js";
 import { MirrorCharacter } from "./MirrorCharacter.js";
 import { slipRoll } from "./slipRoll.js";
+import type { FragileLook, FragileState } from "../track/Fragile.js";
+import { FragileFloors } from "./FragileFloors.js";
+import { Bombs, type Blast } from "./Bombs.js";
+import type { ShooterConfig } from "../track/resolveTrack.js";
+import { Shooters } from "./Shooters.js";
 import {
   MovingSegment,
   movingSegmentImpactMagnitude,
@@ -32,6 +55,7 @@ import {
   type MovingSegmentConfig,
 } from "./MovingSegment.js";
 import { Prop, type PropConfig, type PropSnapshot } from "./Prop.js";
+import { liftHolds } from "./propCarry.js";
 import { IDLE_INPUTS, type SimInputs } from "./SimInputs.js";
 import { Spinner, type SpinnerConfig } from "./Spinner.js";
 import { byVolumePriority, volumeAt, type VolumeConfig } from "./Volume.js";
@@ -150,6 +174,15 @@ export interface SimulationConfig {
   spinners?: SpinnerConfig[];
   /** Segments with a Motion (ADR 0061), each one kinematic body posed from the Tick. */
   movingSegments?: MovingSegmentConfig[];
+  /**
+   * The Motion Clock every Ramp counts from (ADR 0123) — the Tick the Round
+   * runs from, or `null` (the default) outside one. A Match adopts the
+   * server's through {@link RapierSimulation.syncMotionClock}; free-roam
+   * practice, which has no Round, starts it at 0.
+   */
+  motionClock?: MotionClock;
+  /** Every Shooter the Track places (ADR 0119) — its aim, and which Props are its balls. */
+  shooters?: ShooterConfig[];
   /** Dynamic props (boxes/balls) the Character can bump and knock around (ticket 06). */
   props?: PropConfig[];
   /**
@@ -294,6 +327,8 @@ export class RapierSimulation {
    * (ADR 0068). A Respawn's teleport is never a pass.
    */
   private readonly tickStart = new Map<string, { position: Vec3; respawning: boolean }>();
+  /** Where each Respawn queued this tick will land, so two Falls in one tick never pick the same spot. */
+  private readonly respawnTargets = new Map<string, Vec3>();
   private readonly statics: OrientedBox[];
   private readonly checkpoints: Checkpoint[];
   private readonly finishZones: FinishZone[];
@@ -314,6 +349,14 @@ export class RapierSimulation {
   private readonly props: Prop[];
   private readonly spinnerByHandle = new Map<number, Spinner>();
   private readonly movingSegments: MovingSegment[];
+  /** See `SimulationConfig.motionClock`; mutable so a Match can adopt the server's via `syncMotionClock`. */
+  private clock: MotionClock;
+  /** Every floor that breaks under you, and what has happened to it (ADR 0118). */
+  private readonly fragileFloors: FragileFloors;
+  /** Every Bomb among the Props (ADR 0126) — its fuse, its blast and its return. */
+  private readonly bombs: Bombs;
+  /** Every Shooter and the balls it recycles (ADR 0119). */
+  private readonly shooters: Shooters;
   private readonly movingSegmentByHandle = new Map<number, MovingSegment>();
   /** Every collider of a Spiked Asset, still or moving (ADR 0061). */
   private readonly spikedHandles = new Set<number>();
@@ -323,6 +366,9 @@ export class RapierSimulation {
   private readonly characterIdByHandle = new Map<number, string>();
   /** Every Grab hold in progress, and everything a hold does to the pair in it (ADR 0101) — see {@link GrabHolds}. */
   private readonly holds = new GrabHolds({
+    // ADR 0125: only the authority picks a Prop up. A client's own prediction
+    // learns about a carry from the snapshot (`syncOwnHold`) and never decides one.
+    liftableProps: () => (this.authoritative ? this.props : []),
     character: (id) => this.characters.get(id),
     ids: () => this.characters.keys(),
     eliminated: (id) => this.progress.get(id)?.eliminated ?? true,
@@ -332,6 +378,7 @@ export class RapierSimulation {
     tick: () => this.tickCount,
     roll: (id) => slipRoll(id, this.tickCount),
     credit: (targetId, byId, how) => this.credit(targetId, byId, how),
+    propLifted: (index, byId) => this.bombs.lifted(index, byId, this.tickCount),
     struggleWon: (id) => {
       const progress = this.progress.get(id);
       if (progress) progress.strugglesWon += 1;
@@ -342,7 +389,10 @@ export class RapierSimulation {
    * is in, if any — see {@link syncOwnHold}. Empty on the server, which has
    * {@link holds} instead.
    */
-  private readonly ownHolds = new Map<string, { role: HoldRole; phase: HeldPhase | null }>();
+  private readonly ownHolds = new Map<
+    string,
+    { role: HoldRole; phase: HeldPhase | null; carriedMass: number | null; liftStartTick: number | null }
+  >();
   /**
    * Static collider handle → Surface id (ticket 01, ADR 0036) — the one
    * piece of plumbing the whole Surface path needed: without this, reading
@@ -456,7 +506,9 @@ export class RapierSimulation {
       if (mesh.conveyor !== undefined) this.staticConveyorByHandle.set(collider.handle, mesh.conveyor);
     }
 
-    this.movingSegments = (config.movingSegments ?? []).map((c) => new MovingSegment(this.world, c, this.tickCount));
+    this.clock = config.motionClock ?? null;
+    this.movingSegments = (config.movingSegments ?? []).map((c) => new MovingSegment(this.world, c, this.tickCount, this.clock));
+    this.fragileFloors = new FragileFloors(this.movingSegments);
     for (const segment of this.movingSegments) {
       for (const { collider, surface, hazard, conveyor } of segment.colliders) {
         this.movingSegmentByHandle.set(collider.handle, segment);
@@ -478,6 +530,12 @@ export class RapierSimulation {
         this.propByHandle.set(collider.handle, prop);
         this.propIndexByHandle.set(collider.handle, i);
       }
+    });
+    this.bombs = new Bombs(this.props);
+    // A Shooter's bomb is lit by leaving the barrel (ADR 0127) — the
+    // authority's to decide, like every other lighting.
+    this.shooters = new Shooters(config.shooters ?? [], this.props, (index, tick) => {
+      if (this.authoritative) this.bombs.fired(index, tick);
     });
 
     if (config.withDefaultCharacter ?? true) {
@@ -598,8 +656,11 @@ export class RapierSimulation {
     const handle = character.groundColliderHandle;
     const segment = handle !== undefined ? this.movingSegmentByHandle.get(handle) : this.movingSegmentBelow(character.position);
     if (!segment) return undefined;
-    const now = movingSegmentPose(segment.config, this.tickCount);
-    const next = movingSegmentPose(segment.config, this.tickCount + 1);
+    // A trap door leaf about to fall carries nobody (ADR 0117): the floor
+    // stops existing, so what stood on it drops where it stood.
+    if (!segment.solidAt(this.tickCount + 1)) return undefined;
+    const now = movingSegmentPose(segment.config, this.tickCount, this.clock);
+    const next = movingSegmentPose(segment.config, this.tickCount + 1, this.clock);
     const at = character.position;
     const local = rotateVec3ByQuat(subVec3(at, now.position), conjugateQuat(now.rotation));
     const carriedTo = addVec3(rotateVec3ByQuat(local, next.rotation), next.position);
@@ -685,10 +746,134 @@ export class RapierSimulation {
     if (strongest) character.applyImpact(strongest.impulse, "Obstacle");
   }
 
+  /**
+   * A Projectile that reached `character` this step (ADR 0119). Deliberately
+   * the same rule a Moving Segment goes through — closing speed into
+   * `movingSegmentImpactMagnitude`, through the same Stagger/Ragdoll
+   * thresholds — so a fresh shot knocks down and a ball that has rolled to a
+   * halt is a nuisance, with nothing new to tune. A ball is never taken away
+   * by hitting someone: it carries on, and being in the way is half the point.
+   */
+  private resolveProjectileContacts(character: CharacterController): void {
+    if (!this.shooters.any || isDownMotionState(character.motionState)) return;
+    const capsule = this.world.getCollider(character.colliderHandle);
+    if (!capsule || !capsule.isEnabled()) return;
+    let strongest: { impulse: Vec3; magnitude: number } | undefined;
+    this.world.intersectionsWithShape(
+      capsule.translation(),
+      capsule.rotation(),
+      capsule.shape,
+      (collider) => {
+        const prop = this.propByHandle.get(collider.handle);
+        if (!prop?.inFlight) return true;
+        // A Shooter's bomb thrown back by a Player hits by the thrown Prop's
+        // rule below (ADR 0127), not this one as well.
+        const index = this.propIndexByHandle.get(collider.handle);
+        if (index !== undefined && this.holds.isPropFlying(index)) return true;
+        const approach = this.shooters.approachOf(prop);
+        if (!approach) return true;
+        const contact = collider.contactCollider(capsule, 0);
+        if (!contact) return true;
+        const normal = vec3(contact.normal1.x, contact.normal1.y, contact.normal1.z);
+        const closing = dotVec3(subVec3(approach, character.currentVelocity), normal);
+        const magnitude = movingSegmentImpactMagnitude(closing);
+        if (magnitude > 0 && (!strongest || magnitude > strongest.magnitude)) {
+          const away = normalizeVec3(vec3(normal.x, normal.y + MOVING_SEGMENT_LIFT_RATIO, normal.z));
+          strongest = { impulse: scaleVec3(away, magnitude), magnitude };
+        }
+        return true;
+      },
+      undefined,
+      undefined,
+      capsule,
+      undefined,
+      (collider) => this.propByHandle.has(collider.handle),
+    );
+    if (strongest) character.applyImpact(strongest.impulse, "Obstacle");
+  }
+
+  /**
+   * A thrown Prop that reached `character` this step (ADR 0125): the
+   * Shooter ball's rule above, times the Prop's weight against the ball's —
+   * momentum, so a heavy ball knocks down slowly and a cone only nudges.
+   * Each Character counts once per flight, and the knockdown is the
+   * thrower's. A Prop that is merely rolling hurts nobody, as before.
+   */
+  private resolveThrownPropContacts(id: string, character: CharacterController): void {
+    if (this.props.length === 0 || isDownMotionState(character.motionState)) return;
+    const capsule = this.world.getCollider(character.colliderHandle);
+    if (!capsule || !capsule.isEnabled()) return;
+    let strongest: { index: number; impulse: Vec3; magnitude: number } | undefined;
+    this.world.intersectionsWithShape(
+      capsule.translation(),
+      capsule.rotation(),
+      capsule.shape,
+      (collider) => {
+        const index = this.propIndexByHandle.get(collider.handle);
+        if (index === undefined || !this.holds.isPropFlying(index)) return true;
+        const prop = this.props[index]!;
+        const contact = collider.contactCollider(capsule, 0);
+        if (!contact) return true;
+        const normal = vec3(contact.normal1.x, contact.normal1.y, contact.normal1.z);
+        const closing = dotVec3(subVec3(prop.velocity, character.currentVelocity), normal);
+        const magnitude = movingSegmentImpactMagnitude(closing) * (prop.mass / PROJECTILE_MASS);
+        if (magnitude > 0 && (!strongest || magnitude > strongest.magnitude)) {
+          const away = normalizeVec3(vec3(normal.x, normal.y + MOVING_SEGMENT_LIFT_RATIO, normal.z));
+          strongest = { index, impulse: scaleVec3(away, magnitude), magnitude };
+        }
+        return true;
+      },
+      undefined,
+      undefined,
+      capsule,
+      undefined,
+      (collider) => this.propIndexByHandle.has(collider.handle),
+    );
+    if (!strongest) return;
+    const byId = this.holds.takePropFlightHit(strongest.index, id);
+    if (byId === undefined) return;
+    character.applyImpact(strongest.impulse, "Hurl");
+    this.credit(id, byId, "hit");
+  }
+
+  /**
+   * A Bomb going off (ADR 0126): one Impact of cause `Blast` for every
+   * Character within {@link BOMB_BLAST_RADIUS}, aimed away from the middle
+   * with the Bump's lift and falling off linearly to the edge, credited to the
+   * last one to hold it — who, if it went off in their own hands, goes down
+   * with everyone else and is credited with nothing (`credit` skips oneself).
+   * Every Prop in reach but a carried one is pushed away the same way.
+   */
+  private resolveBlast(blast: Blast): void {
+    const falloff = (distance: number): number => 1 - distance / BOMB_BLAST_RADIUS;
+    const awayFrom = (point: Vec3): Vec3 => {
+      const flat = vec3(point.x - blast.at.x, 0, point.z - blast.at.z);
+      // Straight above or below the middle there is no "away" across the
+      // ground: up is the only direction left.
+      return lengthVec3(flat) < 1e-6 ? vec3(0, 1, 0) : normalizeVec3(flat);
+    };
+    for (const [id, character] of this.characters) {
+      if (this.progress.get(id)!.eliminated || isDownMotionState(character.motionState)) continue;
+      const distance = lengthVec3(subVec3(character.position, blast.at));
+      if (distance > BOMB_BLAST_RADIUS) continue;
+      const magnitude = BOMB_BLAST_IMPACT_EDGE + (BOMB_BLAST_IMPACT_CENTRE - BOMB_BLAST_IMPACT_EDGE) * falloff(distance);
+      const away = awayFrom(character.position);
+      character.applyImpact(scaleVec3(normalizeVec3(vec3(away.x, away.y + MOVING_SEGMENT_LIFT_RATIO, away.z)), magnitude), "Blast");
+      if (blast.byId !== null) this.credit(id, blast.byId, "hit");
+    }
+    this.props.forEach((prop, index) => {
+      if (index === blast.propIndex || prop.carriedBy !== null || !prop.inFlight) return;
+      const distance = lengthVec3(subVec3(prop.centre, blast.at));
+      if (distance > BOMB_BLAST_RADIUS) return;
+      const away = awayFrom(prop.centre);
+      prop.push(scaleVec3(normalizeVec3(vec3(away.x, away.y + MOVING_SEGMENT_LIFT_RATIO, away.z)), BOMB_BLAST_PROP_SPEED * falloff(distance)));
+    });
+  }
+
   /** Velocity of the world point `point` on `segment` over the step just taken (Tick − 1 → Tick). */
   private movingSegmentVelocityAt(segment: MovingSegment, point: Vec3): Vec3 {
-    const now = movingSegmentPose(segment.config, this.tickCount);
-    const before = movingSegmentPose(segment.config, this.tickCount - 1);
+    const now = movingSegmentPose(segment.config, this.tickCount, this.clock);
+    const before = movingSegmentPose(segment.config, this.tickCount - 1, this.clock);
     const local = rotateVec3ByQuat(subVec3(point, now.position), conjugateQuat(now.rotation));
     const then = addVec3(rotateVec3ByQuat(local, before.rotation), before.position);
     return scaleVec3(subVec3(point, then), 1 / TICK_DT);
@@ -859,6 +1044,7 @@ export class RapierSimulation {
     this.progress.delete(id);
     this.tickStart.delete(id);
     this.holds.drop(id);
+    this.fragileFloors.forget(id);
   }
 
   /**
@@ -1000,7 +1186,42 @@ export class RapierSimulation {
     if (this.movingSegments.length === 0) return;
     // A Moving Segment is posed from the Tick (ADR 0061): after a jump in it,
     // put every one where the new Tick says before anything sweeps against it.
-    for (const segment of this.movingSegments) segment.place(serverTick);
+    for (const segment of this.movingSegments) segment.place(serverTick, this.clock);
+    this.world.propagateModifiedBodyPositionsToColliders();
+  }
+
+  /** The mass of the Prop at `index`, or `null` — what a carrier's own client slows its drawn turn by (ADR 0125). */
+  propMass(index: number): number | null {
+    return this.props[index]?.mass ?? null;
+  }
+
+  /**
+   * How the Prop at `index` sits in a pair of hands (ADR 0128): its middle,
+   * relative to its body's own origin, and its horizontal half-size — or
+   * `null` for an index with no Prop. What a renderer places a carried Prop by.
+   */
+  propGripShape(index: number): { localCentre: Vec3; radius: number } | null {
+    const prop = this.props[index];
+    return prop ? { localCentre: prop.localCentre, radius: prop.horizontalRadius } : null;
+  }
+
+  /** The Motion Clock every Ramp counts from (ADR 0123) — what a renderer poses a Moving Segment with. */
+  get motionClock(): MotionClock {
+    return this.clock;
+  }
+
+  /**
+   * Adopt the Match's Motion Clock (ADR 0123): the Tick the Round runs from,
+   * which the server knows from the Countdown's first Tick and a client reads
+   * off every snapshot (`runningFromTick`), the way it adopts `roundRules`. A
+   * no-op once it matches. A change re-places every Moving Segment at the
+   * current Tick, since a Ramp already under way moves them.
+   */
+  syncMotionClock(clock: MotionClock): void {
+    if (clock === this.clock) return;
+    this.clock = clock;
+    if (this.movingSegments.length === 0) return;
+    for (const segment of this.movingSegments) segment.place(this.tickCount, this.clock);
     this.world.propagateModifiedBodyPositionsToColliders();
   }
 
@@ -1013,10 +1234,21 @@ export class RapierSimulation {
    * Character's would never Struggle. Applied before every tick, replays
    * included, until a snapshot says otherwise.
    */
-  syncOwnHold(id: string, row: Pick<CharacterSnapshot, "grabbingId" | "heldByGrabberId" | "heldPhase">): void {
-    if (row.grabbingId !== null) this.ownHolds.set(id, { role: "grabbing", phase: null });
-    else if (row.heldByGrabberId !== null) this.ownHolds.set(id, { role: "held", phase: row.heldPhase });
-    else this.ownHolds.delete(id);
+  syncOwnHold(
+    id: string,
+    row: Pick<CharacterSnapshot, "grabbingId" | "carryingProp" | "heldByGrabberId" | "heldPhase" | "liftStartTick">,
+  ): void {
+    if (row.grabbingId !== null) this.ownHolds.set(id, { role: "grabbing", phase: null, carriedMass: null, liftStartTick: null });
+    // ADR 0125: carrying a Prop is the grabber's end of a hold too, slowed by
+    // the Prop's weight — which this client knows, from the Track. ADR 0128:
+    // so is Lifting one, before the hands have reached it; the Lift's own
+    // Ticks, which the replay stands still over, come from its start.
+    else if (row.carryingProp !== null || row.liftStartTick !== null) {
+      const prop = row.carryingProp === null ? undefined : this.props[row.carryingProp];
+      this.ownHolds.set(id, { role: "grabbing", phase: null, carriedMass: prop?.mass ?? 0, liftStartTick: row.liftStartTick });
+    } else if (row.heldByGrabberId !== null) {
+      this.ownHolds.set(id, { role: "held", phase: row.heldPhase, carriedMass: null, liftStartTick: null });
+    } else this.ownHolds.delete(id);
   }
 
   /**
@@ -1114,6 +1346,7 @@ export class RapierSimulation {
     // Mirrored other-players (client only) are re-placed from their latest
     // snapshot pose every tick — they never move under their own physics.
     for (const mirror of this.mirrors.values()) mirror.step();
+    this.respawnTargets.clear();
     for (const [id, character] of this.characters) {
       this.tickStart.set(id, { position: { ...character.position }, respawning: character.hasPendingRespawn });
     }
@@ -1150,7 +1383,10 @@ export class RapierSimulation {
       character.setRagdollBelt(this.beltUnderRagdoll(character));
     }
     this.holds.assertBeforeStep();
-    for (const [id, hold] of this.ownHolds) this.characters.get(id)?.holdAs(hold.role, hold.phase);
+    for (const [id, hold] of this.ownHolds) {
+      const lifting = hold.liftStartTick !== null && liftHolds(hold.liftStartTick, this.tickCount + 1);
+      this.characters.get(id)?.holdAs(hold.role, hold.phase, hold.carriedMass, lifting);
+    }
     const clock = this.profileClock;
     const holdStarted = clock ? clock() : 0;
     for (const segment of this.movingSegments) segment.holdForSweeps();
@@ -1164,7 +1400,7 @@ export class RapierSimulation {
     }
     if (clock) this.lastPhaseMs.characterSweepsMs = clock() - sweepsStarted;
     const moveStarted = clock ? clock() : 0;
-    for (const segment of this.movingSegments) segment.tick(this.tickCount + 1);
+    for (const segment of this.movingSegments) segment.tick(this.tickCount + 1, this.clock);
     if (clock) this.lastPhaseMs.movingSegmentsMs = holdMs + clock() - moveStarted;
     // Resolved here — after every Character's `beginTick` has run this tick,
     // but before `world.step()` — the same pre-step timing Bump's own
@@ -1188,6 +1424,7 @@ export class RapierSimulation {
     // own collision/contact solve. A phase that doesn't need it never reaches
     // this line at all (the whole-tick freeze at the top of this method), so
     // by here it always runs.
+    if (this.shooters.any) this.shooters.rememberApproach();
     this.world.step();
     this.tickCount += 1;
 
@@ -1199,6 +1436,8 @@ export class RapierSimulation {
       if (progress.eliminated) continue;
       character.endTick();
       this.resolveMovingSegmentContacts(character);
+      this.resolveProjectileContacts(character);
+      this.resolveThrownPropContacts(id, character);
       this.updateCheckpoint(id);
       this.updateFinishZone(id);
       this.updateLaunchPad(id);
@@ -1215,6 +1454,13 @@ export class RapierSimulation {
       // *next* tick's walk speed and (ticket 06) grip — the same one-tick
       // lag `grounded` itself already has relative to jump/landing.
       const groundHandle = character.groundColliderHandle;
+      // ADR 0118: arriving on a fragile floor costs it a state. Read here,
+      // off this tick's own ground contact, for the same reason the Surface
+      // below is — it is the freshest the contact ever gets.
+      if (this.fragileFloors.any) {
+        const owner = groundHandle !== undefined ? this.movingSegmentByHandle.get(groundHandle)?.config.segmentIndex : undefined;
+        this.fragileFloors.onGround(id, owner !== undefined && this.fragileFloors.has(owner) ? owner : undefined, this.tickCount);
+      }
       const surfaceId = groundHandle !== undefined ? this.staticSurfaceByHandle.get(groundHandle) : undefined;
       // M3.7 ticket 04, ADR 0036: this tick's now-updated position decides the
       // Volume that pushes *next* tick, the same one-tick lag as the Surface.
@@ -1242,10 +1488,26 @@ export class RapierSimulation {
       // actively holding someone (including a hold that just started this
       // very tick, since `resolveGrabInitiation` already ran pre-step).
       character.setGrabbingId(null);
+      character.setCarryingProp(null);
+      character.setLiftStartTick(null);
       // M6.1: the reverse of grabbingId — same default-reset treatment.
       character.reportHeld(null);
     }
     if (clock) this.lastPhaseMs.characterUpdatesMs = clock() - updatesStarted;
+    // Bring back whatever is due and settle every fragile floor's colliders
+    // (ADR 0118), so the next tick's sweeps meet the world this one left.
+    if (this.fragileFloors.any) this.fragileFloors.step(this.tickCount);
+    // Fire whatever this Tick fires and take away whatever is spent (ADR 0119).
+    if (this.shooters.any) this.shooters.tick(this.tickCount);
+    // Set off whatever burned down, put out whatever fell, bring back whatever
+    // is due (ADR 0126). The authority's alone: a client learns all of it from
+    // the snapshot. A bomb in someone's hands is let go of before its blast,
+    // so the hold below never sees it again.
+    if (this.authoritative && this.bombs.any) {
+      for (const blast of this.bombs.step(this.tickCount, this.killPlaneY, (index) => this.holds.letGoOfProp(index))) {
+        this.resolveBlast(blast);
+      }
+    }
     this.holds.updateGrabs(inputs, matchLocked);
     // A hold can change a motion state after the loop above has stamped them
     // (ADR 0104: a Hurl, a Limp body put down, a Struggle won), and the phase
@@ -1279,7 +1541,10 @@ export class RapierSimulation {
     // `authoritative`) — `contactedProps` is already only ever populated on a
     // non-authoritative sim, so it's empty (a no-op) on the server.
     for (let i = 0; i < this.props.length; i += 1) {
-      if (this.predictedProps.has(i) || this.contactedProps.has(i)) continue;
+      // ADR 0125: a carried Prop is never predicted — it has no colliders to
+      // be pushed by, and left dynamic it would only fall through the floor.
+      const carried = this.props[i]!.carriedBy !== null;
+      if (!carried && (this.predictedProps.has(i) || this.contactedProps.has(i))) continue;
       const pose = this.followPoses[i];
       if (pose) this.props[i]!.follow(pose);
     }
@@ -1331,6 +1596,13 @@ export class RapierSimulation {
       rotation: { ...p.rotation },
       atRest: p.atRest,
     }));
+    // ADR 0125: a carried Prop is nothing to collide with, here as on the server.
+    poses.forEach((p, i) => this.props[i]?.followCarrier(p.carriedBy ?? null));
+    // ADR 0126: nor is a spent bomb, parked where it went off.
+    poses.forEach((p, i) => {
+      const prop = this.props[i];
+      if (prop?.config.bomb !== undefined && p.live !== undefined) prop.followLive(p.live);
+    });
   }
 
   /**
@@ -1474,7 +1746,64 @@ export class RapierSimulation {
       progress.eliminatedBy =
         touch !== null && this.tickCount - touch.tick <= ELIMINATION_CREDIT_TICKS ? { byId: touch.byId, how: touch.how } : null;
     }
-    character.fall(eliminates ? null : progress.respawnPoint, progress.fallCount);
+    const respawnAt = eliminates ? null : this.clearRespawn(id, progress.respawnPoint);
+    if (respawnAt !== null) this.respawnTargets.set(id, respawnAt);
+    character.fall(respawnAt, progress.fallCount);
+  }
+
+  /**
+   * Where a Respawn for `id` lands (see `RESPAWN_SPREAD_STEP`'s own doc): the
+   * Checkpoint's `point` when no other Character stands there or is about to
+   * land there, otherwise the first spot on rings round it that is as clear,
+   * has nothing solid in the capsule's way and a floor under it. Every
+   * direction is tried in a fixed order and nothing random is drawn, so the
+   * same world picks the same spot. A client predicting its own Respawn
+   * reads the other Characters where it draws them, so it may pick another
+   * spot than the server did; a Respawn is a discrete jump, and the snapshot
+   * corrects it like any other (ADR 0013).
+   */
+  private clearRespawn(id: string, point: Vec3): Vec3 {
+    const others: Vec3[] = [];
+    for (const [otherId, other] of this.characters) {
+      if (otherId === id || this.progress.get(otherId)?.eliminated) continue;
+      others.push(this.respawnTargets.get(otherId) ?? other.position);
+    }
+    for (const mirror of this.mirrors.values()) others.push(mirror.position);
+    const apart = 2 * CAPSULE_RADIUS + RESPAWN_CLEAR_GAP;
+    const tall = 2 * CAPSULE_BOTTOM_OFFSET;
+    const free = (spot: Vec3): boolean =>
+      others.every((o) => Math.abs(o.y - spot.y) >= tall || Math.hypot(o.x - spot.x, o.z - spot.z) >= apart);
+    if (free(point)) return point;
+    const shape = new RAPIER.Capsule(CAPSULE_HALF_HEIGHT - 0.02, CAPSULE_RADIUS - 0.02);
+    const notCharacter = (collider: RAPIER.Collider): boolean =>
+      !collider.isSensor() && ((collider.collisionGroups() >>> 16) & (GROUP_CHARACTER | GROUP_RAGDOLL)) === 0;
+    for (let ring = 1; ring <= RESPAWN_SPREAD_RINGS; ring += 1) {
+      const radius = ring * RESPAWN_SPREAD_STEP;
+      const count = 6 * ring;
+      for (let k = 0; k < count; k += 1) {
+        const angle = (2 * Math.PI * k) / count;
+        const spot = { x: point.x + radius * Math.sin(angle), y: point.y, z: point.z - radius * Math.cos(angle) };
+        if (!free(spot)) continue;
+        let blocked = false;
+        this.world.intersectionsWithShape(spot, IDENTITY_QUAT, shape, (collider) => {
+          if (notCharacter(collider)) blocked = true;
+          return !blocked;
+        });
+        if (blocked) continue;
+        const floor = this.world.castRay(
+          new RAPIER.Ray({ x: spot.x, y: spot.y, z: spot.z }, { x: 0, y: -1, z: 0 }),
+          RESPAWN_FLOOR_PROBE,
+          true,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          notCharacter,
+        );
+        if (floor !== null) return spot;
+      }
+    }
+    return point;
   }
 
   /**
@@ -1503,11 +1832,31 @@ export class RapierSimulation {
         eliminatedBy: progress.eliminatedBy,
       });
     }
+    const fragile = this.fragileFloors.snapshot();
+    const bombs = this.bombs.snapshot();
     return {
       tick: this.tickCount,
       characters,
       props: this.props.map((p) => p.snapshot()),
+      ...(fragile.length > 0 ? { fragile } : {}),
+      ...(bombs.length > 0 ? { bombs } : {}),
     };
+  }
+
+  /** Which look each fragile floor wears right now (ADR 0118) — what the renderer draws, read without building a snapshot. */
+  fragileLooks(): FragileLook[] {
+    return this.fragileFloors.looks();
+  }
+
+  /**
+   * Take the server's fragile floors (ADR 0118), keeping anything this world
+   * has changed since that snapshot's Tick — which is what lets a client
+   * predict its own arrivals without a broken tile flickering back for a
+   * round trip. Called on every snapshot, not only a correcting one: another
+   * Player's arrivals only ever arrive this way.
+   */
+  syncFragileToSnapshot(rows: readonly FragileState[] | undefined, serverTick: number): void {
+    this.fragileFloors.applySnapshot(rows, serverTick);
   }
 
   /** What the last tick cost (M13 ticket 02), or `null` when this simulation was built without a `profileClock`. */

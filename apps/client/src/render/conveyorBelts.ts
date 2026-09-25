@@ -80,9 +80,12 @@ const chevronGeometry = (): THREE.ShapeGeometry => {
 const yawToFlow = (x: number, z: number): number => Math.atan2(-x, -z);
 
 export const buildConveyorStrips = (
-  belts: readonly ConveyorBelt[],
+  allBelts: readonly ConveyorBelt[],
   moving: readonly MovingSegmentConfig[],
 ): ConveyorStrip[] => {
+  // An Asset that *is* a belt draws its own flow — its slats ride a loop
+  // (ADR 0120), and a chevron strip over them would be a second answer.
+  const belts = allBelts.filter((belt) => belt.own !== true);
   if (belts.length === 0) return [];
   // One geometry/material pair per stage, shared by every strip in it — the
   // same sharing `checkpointMaterial` already relies on (dispose reaches

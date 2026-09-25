@@ -21,6 +21,12 @@ _Avoid_: profile, login, user
 A human with an Account who joins a Match. Persists across Matches.
 _Avoid_: user, gamer
 
+**Bot**:
+A Character's driver that is not a human: the authority produces its inputs each Tick. It takes
+part in a Match like a Player and looks like one on every Screen, but has no Account, so it
+keeps nothing after the Match.
+_Avoid_: AI, NPC, CPU, computer player
+
 **Friend**:
 A mutual connection between two Accounts, formed by request/accept. Carries presence (Online / In
 Match / Idle) between Friends. Distinct from a Party: a Friend is a standing connection, a Party is
@@ -185,9 +191,10 @@ actually runs is always one immutable Revision of a Track — see Draft, Revisio
 _Avoid_: map, course, level
 
 **Draft**:
-A Track being composed in the Track builder — mutable, not yet published.
-Publishing a Draft creates a new Revision; the Draft itself is never what a
-Round runs on.
+A Track being composed — mutable, not yet published. It lives either in the
+Track builder's own tab or stored in the API, where the builder and the MCP
+server open the same one. Publishing a Draft creates a new Revision; the
+Draft itself is never what a Round runs on.
 _Avoid_: track (when you specifically mean the mutable, in-progress one)
 
 **Revision**:
@@ -227,12 +234,17 @@ builder's handle sits and what the Segment turns about.
 _Avoid_: anchor (see Socket), origin offset
 
 **Asset category**:
-Which group the Track builder lists an Asset Module under: Platform (what a route
-is built out of, including what holds it up), Obstacle, Spring, Gate or Scenery.
-A listing property: it gives a Module no behavior of its own. Two of the groups
-are named after a mechanic their members all carry in their own defs — a Gate its
-opening, a Spring its launch — and nothing outside those groups carries it.
-_Avoid_: type, kind, tag
+Which group the Track builder and the MCP server list an Asset Module under, on
+one axis — what the piece is to a runner: **Floor** (what you stand on),
+**Structure** (what holds the route up or walls it in, and is not stood on),
+**Sweeper** (what moves into you), **Launcher** (what throws you), **Gate**
+(what you pass through), **Prop** (a loose shape to shove) and **Scenery** (the
+dressing). A listing property: it gives a Module no behavior of its own, and a
+mechanic never moves a piece between groups — a spiked or breaking deck is a
+Floor wearing its own field. Two groups are the exception, named after a
+mechanic every member carries in its def: a Gate its opening, a Launcher its
+throw (a Spring's launch, a fan's updraft Volumes).
+_Avoid_: type, kind, tag, platform / obstacle / spring / fan (the groups before ADR 0122)
 
 **Visual mesh**:
 The authored `role: visual` node of an Asset. Rendered, never simulated — it
@@ -297,8 +309,8 @@ whose throw depends on how hard you landed.
 _Avoid_: jump pad, booster, catapult, trampoline
 
 **Spring**:
-An Asset that is a Launch pad — a coil or a spring pad you bounce off, listed in
-its own Asset category. Its author sets how high it throws, in metres, and aims it
+An Asset that is a Launch pad — a coil or a spring pad you bounce off, listed
+under the Launcher Asset category. Its author sets how high it throws, in metres, and aims it
 by tilting the Segment. It fires when a Character is standing on it, never while
 one is still falling toward it; it squashes as it fires, and the squash is drawn,
 never simulated.
@@ -310,9 +322,10 @@ sequence of Segments.
 _Avoid_: section, tile, chunk, piece
 
 **Attachment**:
-Something authored on one Segment on top of where it stands: its Motion, a
-Conveyor, ice, mud or bounce, a Spring's height, being a Prop, the Start, a
-Checkpoint. Where the Segment stands — its position, orientation and size — is
+Something authored on one Segment on top of where it stands: its Motion (or one per
+moving Part), a
+Conveyor, ice, mud or bounce, a Spring's height, being a Prop, being Fragile, a
+Shooter's numbers, the Start, a Checkpoint. Where the Segment stands — its position, orientation and size — is
 not an Attachment.
 _Avoid_: modifier, annotation, flag, option
 
@@ -324,10 +337,54 @@ Player sees the same pose without it being sent. A Segment with one is a
 Moving Segment.
 _Avoid_: animation, tween, mover
 
+**Ramp**:
+How a Motion speeds up over a Round: from its own pace to N times it, over T
+seconds from when the Round starts running, then held.
+_Avoid_: acceleration, easing (the curve of one Swing or Slide), speed-up
+
+**Motion Clock**:
+The Tick a Round runs from, which every Ramp counts from. Outside a Round there
+is none, and a Ramp does nothing.
+_Avoid_: round timer, start time
+
 **Ride**:
 What a Character standing on a Moving Segment does: it is carried along, turned
 with it, and keeps its speed when it leaves.
 _Avoid_: attach, parent, stick
+
+**Part**:
+One named piece of an Asset with a body of its own: still (it never moves),
+moving (it moves on the Tick, like a sweeper's rotor) or gated (it is only
+solid at rest, like a trap door's leaves). An Asset with Parts is still one
+Segment to its author and to a stored Track — the split happens when the world
+is built.
+_Avoid_: sub-mesh, bone, child, group
+
+**Punching Glove**:
+An Asset whose glove shoots out of a wall box and pulls back on a clock. There
+is no glove at all until it punches. (Firing when a Character comes within
+reach is designed and not yet built — ADR 0121.)
+_Avoid_: puncher, hammer, boxer
+
+**Trap Door**:
+An Asset whose two leaves fall open and shut on a clock. Its floor exists only
+while they are closed: a Character over an opening door falls rather than
+riding it down.
+_Avoid_: hatch, pit
+
+**Fragile**:
+An Attachment that gives a Segment three states. Every new arrival of a
+Character on it — a landing and a walk-on alike, standing still never — costs
+one; on the third it stops being a floor, and it returns after the delay its
+author set.
+_Avoid_: breakable, crumbling, falling tile
+
+**Shooter**:
+An Asset that fires a Projectile along its barrel every so often, aiming on
+two axes that sweep independently — the carriage side to side, the barrel up
+and down. Its author sets how often, how fast, how long a ball lasts, and each
+axis' own range and clock.
+_Avoid_: cannon, turret, gun
 
 **Spiked**:
 An Asset whose every contact knocks a Character down, whatever the speed —
@@ -337,25 +394,71 @@ _Avoid_: deadly, lethal (a knockdown is never a Fall)
 **Obstacle**:
 A Module (or part of one) that actively threatens the Character — a Spinner,
 Pendulum, Falling Tiles. Contrast with connective Modules like Straight and Gap.
+The general word, not an Asset category: an Obstacle is filed under whatever it
+is to a runner, usually Sweeper.
 _Avoid_: hazard, trap
+
+**Sweeper**:
+The Asset category of the bodies meant to be swept through a route on a Motion —
+a bar, a disc, a hammer, a hanging ball, and the Assets that act by themselves
+(a shooter, a punching glove). The piece is static geometry until its Segment
+carries a Motion or its def a mechanic; the category says what it is for.
+_Avoid_: obstacle (the general word), trap
+
+**Floor**:
+The Asset category of everything a Character stands on: decks, slopes, stairs,
+curves, a belt, a trap door, a breaking block, a spiked plate. The route itself.
+A newly inserted Floor continues the run off the last one; everything else
+stands on the middle of its top.
+_Avoid_: platform, ground, deck (a deck is one Floor's top face)
+
+**Structure**:
+The Asset category of what holds a route up or walls it in and is not stood on —
+pillars, struts, bracing, barriers, pipes.
+_Avoid_: support, scaffolding, prop (see Prop)
+
+**Launcher**:
+The Asset category of everything that throws a Character: the Springs and the
+fan. Every member carries its throw in its own def.
+_Avoid_: booster, pad
 
 **Scenery**:
 A Module that neither carries the route nor threatens the Character — a sign,
 a flag, a railing, a fence. It may still block a Character that runs into it.
-Contrast with Obstacle and with Platform-category pieces.
+Contrast with Sweeper and with Floor-category pieces. Also the Asset category
+that lists them.
 _Avoid_: decoration, prop (see Prop)
 
 **Prop**:
 A dynamic physics body that reacts to being bumped (a box, a ball) but never
-threatens the Character on its own. Contrast with Obstacle.
+threatens the Character on its own. Contrast with Obstacle. Also the Asset
+category of the loose shapes — balls, cones, Bombs — that a Segment turns into
+one (ADR 0095); placed without that, such a shape just stands there. A Bomb
+is always one. One light
+enough can be picked up with Grab, carried, put down, Tossed or Hurled; a thrown
+one hits by its weight and speed, one that is only rolling hits nobody.
 _Avoid_: crate (see Item Box), object, decoration
 
 **Projectile**:
-A dynamic physics body spawned at runtime by an Obstacle (e.g. a cannon), with
-an initial velocity, that threatens the Character on contact and despawns
-after its lifetime. Contrast with Prop (permanent, never threatens) and
-Obstacle (stationary, pre-placed). Full spawn/replication design deferred
-(post-M3).
+A dynamic physics body spawned at runtime by a Shooter, with an initial
+velocity, that threatens the Character on contact and despawns after its
+lifetime — a ball, or a Bomb fired lit, whose lifetime is its fuse. Both sides derive its birth from the Tick, so no message announces
+it; its flight replicates as a Prop's does. Contrast with Prop (permanent,
+never threatens) and Obstacle (stationary, pre-placed).
+
+**Bomb**:
+A Prop with a fuse. Lying, it is a Prop like any other. Picking it up lights
+it, and it stays lit however many hands it passes through. When the fuse runs
+out it goes off wherever it is: every Character near it is knocked down or
+Staggered and thrown away from it, Props near it are pushed, and the last one
+to hold it is credited. Then it is gone for a while, and comes back where it
+was placed.
+_Avoid_: grenade, mine, explosive
+
+**Blast**:
+A Bomb going off, and the knockdown it causes: one push away from its
+middle, strongest there and weakest at the edge of its reach.
+_Avoid_: explosion (the drawn effect, not the event)
 _Avoid_: bullet, shot
 
 **Checkpoint**:
@@ -471,7 +574,10 @@ the grabber walks and turns slower and can do nothing else but Spin or let go
 (Grab again). A hold ends on a Hurl, a let-go, the Struggle won, the Limp window
 running out, or the grabber going down; cooldown after, and Grab immunity for
 whoever was held. Connecting cancels an in-progress Dash for both Characters,
-the same cancellation Hit causes.
+the same cancellation Hit causes. With no Character in reach, Grab picks up a
+Prop light enough instead: carried until put down, Tossed, Hurled or dropped,
+the carrier slower, turning slower and jumping lower the heavier it is, never
+Dashing.
 _Avoid_: grapple, catch
 
 **Held**:
@@ -501,8 +607,21 @@ _Avoid_: wind-up (that is only its first half), twirl
 **Hurl**:
 Letting go of Hit to end a Spin: the held Character leaves along the circle —
 pulled toward where the grabber is steering — as a knockdown, further the faster
-the Spin was. A hurled body knocks down whoever it lands on.
-_Avoid_: throw (what a knockdown does to the body), toss
+the Spin was. A hurled body knocks down whoever it lands on. A carried Prop is
+Hurled the same way.
+_Avoid_: throw (what a knockdown does to the body)
+
+**Lift**:
+Bending down for a Prop that Grab reached for and standing up with it. The
+carrier stands still throughout. The Prop is picked up only when the hands
+reach it, partway through. One flying past is caught instead, with no Lift.
+_Avoid_: pick-up animation, grab (a Grab at a Character)
+
+**Toss**:
+A tap of Hit while carrying a Prop: a short wind-up, standing still, and then
+it leaves straight ahead, faster the lighter it is. Held longer, Hit is a Spin
+instead.
+_Avoid_: hurl (the Spin's release), drop (what a knockdown does to a carried Prop)
 
 **Grab immunity**:
 A short spell after a hold ends, lasting until shortly after the released

@@ -40,7 +40,7 @@ const setup = () => {
     struggleHeld: null,
     struggleAir: null,
     wobble: null,
-    wobbleWalk: null,
+    wobbleWalk: null, pickup: null, carryWalk: null, throwItem: null,
   };
   return { mixer, actions };
 };

@@ -1,6 +1,7 @@
 import { addVec3, dotVec3, lengthVec3, normalizeVec3, scaleVec3, subVec3, vec3, type Vec3 } from "../math/vec3.js";
 import type { HeldPhase, EliminationHow } from "../state/SimState.js";
-import { CAPSULE_HALF_HEIGHT } from "../tuning/character.js";
+import { CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS } from "../tuning/character.js";
+import { MOVING_SEGMENT_LIFT_RATIO, PROJECTILE_MASS } from "../tuning/world.js";
 import {
   DIZZY_FLING_FRACTION,
   GRAB_CARRY_TICKS,
@@ -16,6 +17,13 @@ import {
   HURL_MIN_SPEED,
   HURLED_BODY_FLIGHT_TICKS,
   HURLED_BODY_MIN_SPEED,
+  PROP_LIFT_CONTACT_TICKS,
+  PROP_LIFT_TICKS,
+  PROP_TOSS_LIFT,
+  PROP_TOSS_RELEASE_LIFT,
+  PROP_TOSS_RELEASE_REACH,
+  PROP_TOSS_SPEED,
+  PROP_TOSS_TAP_TICKS,
   SPIN_ESCAPE_FLING_FRACTION,
   SWUNG_BODY_IMPACT_SCALE,
   SWUNG_BODY_LIFT_RATIO,
@@ -24,8 +32,11 @@ import {
 } from "../tuning/fight.js";
 import type { CharacterController } from "./CharacterController.js";
 import { isDownMotionState, isPlayerDrivenMotionState } from "./CharacterStateMachine.js";
+import { movingSegmentImpactMagnitude } from "./MovingSegment.js";
+import type { Prop } from "./Prop.js";
+import { canLiftProp, CARRY_GRIP, liftHolds, propGripOffset, propThrowScale, SPIN_GRIP } from "./propCarry.js";
 import type { SimInputs } from "./SimInputs.js";
-import { carrySpeedAt, spinTangentOf } from "./spin.js";
+import { carrySpeedAt, forwardOf, spinTangentOf } from "./spin.js";
 
 /** One Grab hold in progress (ADR 0104) — see {@link GrabHolds}. */
 interface ActiveGrab {
@@ -44,8 +55,33 @@ interface Flight {
   byId: string;
 }
 
+/**
+ * A Prop being carried (ADR 0125) — by its index among the simulation's
+ * Props — or being Lifted toward it (ADR 0128).
+ */
+interface PropHold {
+  index: number;
+  /** The Tick the Lift started, while it lasts; `null` once the Prop is up. */
+  liftStartTick: number | null;
+  /** Whether the hands have reached it: before the Lift's touch it still lies where it was, reserved. */
+  attached: boolean;
+}
+
+/** A thrown Prop still flying (ADR 0125), and who it has already hit on the way. */
+interface PropFlight {
+  ticksLeft: number;
+  hit: Set<string>;
+  byId: string;
+}
+
 /** What a hold needs from the simulation around it. */
 export interface HoldWorld {
+  /**
+   * Every Prop in the world, in the simulation's order (ADR 0125) — empty
+   * where Props cannot be picked up: a client's own prediction, which learns
+   * about a carry from the snapshot and never decides one.
+   */
+  liftableProps(): readonly Prop[];
   /** A Character still in the Match, by id. */
   character(id: string): CharacterController | undefined;
   /** Every Character in the Match, by id, in the simulation's own fixed order. */
@@ -69,6 +105,8 @@ export interface HoldWorld {
   roll(id: string): number;
   /** Records that `byId` just grabbed, Hurled or hit `targetId` — what a knockout is credited to (ADR 0110). */
   credit(targetId: string, byId: string, how: EliminationHow): void;
+  /** `byId` just picked up the Prop at `index` — what lights a Bomb (ADR 0126). */
+  propLifted(index: number, byId: string): void;
   /** Records that `id` just won a Struggle — the career's GRABS BROKEN (ADR 0110). */
   struggleWon(id: string): void;
 }
@@ -107,14 +145,37 @@ export class GrabHolds {
   private readonly flights = new Map<string, Flight>();
   /** The Tick a swung body last hit each Character, keyed `grabber>target` — once per pass, never once per tick of contact. */
   private readonly swingHits = new Map<string, number>();
+  /** Every Prop being carried (ADR 0125), keyed by its carrier's id — one hold per grabber, of either kind. */
+  private readonly propHolds = new Map<string, PropHold>();
+  /** Thrown Props still flying (ADR 0125), by the Prop's index. */
+  private readonly propFlights = new Map<number, PropFlight>();
 
   constructor(private readonly world: HoldWorld) {}
 
-  /** Whether `id` is currently part of any Grab hold, as either the grabber or the one held (M6 ticket 04). */
+  /** Whether `id` is currently part of any Grab hold, as either the grabber or the one held (M6 ticket 04), or carrying a Prop (ADR 0125). */
   isGrabEngaged(id: string): boolean {
+    return this.propHolds.has(id) || this.inCharacterHold(id);
+  }
+
+  /**
+   * Whether `id` is at either end of a hold on a Character. A Prop's carrier
+   * is not: it can still be grabbed, Hit or knocked into, and drops what it
+   * carries when it is (ADR 0125).
+   */
+  private inCharacterHold(id: string): boolean {
     if (this.holds.has(id)) return true;
     for (const grab of this.holds.values()) if (grab.heldId === id) return true;
     return false;
+  }
+
+  /** Which Prop `id` is carrying, by index, or `undefined` (ADR 0125). */
+  carriedPropOf(id: string): number | undefined {
+    return this.propHolds.get(id)?.index;
+  }
+
+  /** Whether the Prop at `index` was thrown and is still flying (ADR 0125). */
+  isPropFlying(index: number): boolean {
+    return this.propFlights.has(index);
   }
 
   /** Whether `id` was let go of too recently to be grabbed again (ADR 0104). */
@@ -150,11 +211,19 @@ export class GrabHolds {
       // 0104 carries it Limp. Excluded: anyone already in a hold (one hold at
       // a time, in one role), anyone just let go of (Grab immunity), and
       // anyone about to be put back at a Checkpoint.
-      (id) => this.isGrabEngaged(id) || this.isImmune(id) || this.world.character(id)!.hasPendingRespawn,
+      // ADR 0125: a Prop's carrier is still a Character to grab — it drops
+      // what it carries.
+      (id) => this.inCharacterHold(id) || this.isImmune(id) || this.world.character(id)!.hasPendingRespawn,
     );
-    if (heldId === undefined) return;
+    // ADR 0125: a Character first — a cone lying beside someone must not
+    // steal the catch — and only then the nearest Prop that can be lifted.
+    if (heldId === undefined) {
+      this.pickUpProp(grabberId, grabber);
+      return;
+    }
 
     const held = this.world.character(heldId)!;
+    this.dropProp(heldId);
     const down = isDownMotionState(held.motionState);
     this.holds.set(grabberId, {
       heldId,
@@ -173,6 +242,12 @@ export class GrabHolds {
    * `clearHold()`ed first — "not engaged until proven otherwise".
    */
   assertBeforeStep(): void {
+    for (const [carrierId, hold] of this.propHolds) {
+      const prop = this.world.liftableProps()[hold.index];
+      // ADR 0128: the Tick about to be stepped is `tick() + 1`.
+      const lifting = hold.liftStartTick !== null && liftHolds(hold.liftStartTick, this.world.tick() + 1);
+      if (prop) this.world.character(carrierId)?.holdAs("grabbing", null, prop.mass, lifting);
+    }
     for (const [grabberId, grab] of this.holds) {
       this.world.character(grabberId)?.holdAs("grabbing");
       this.world.character(grab.heldId)?.holdAs("held", grab.phase);
@@ -270,8 +345,239 @@ export class GrabHolds {
       if (grabber.spinTicks > 0) this.swing(grabberId, grab.heldId, grabber, point);
     }
 
+    this.updateProps(inputs, matchLocked);
     this.updateFlights();
     this.updateImmunity();
+  }
+
+  /**
+   * Grab reaching for a Prop (ADR 0125): the nearest one in the same cone a
+   * Character would have been caught in, light enough to lift, in play, and
+   * neither carried, being Lifted, nor flying from a throw. It starts a Lift
+   * (ADR 0128): the Prop stays where it lies, reserved, until the hands reach
+   * it (`updateProps`) — unless it is itself flying, and is simply caught.
+   *
+   * Runs before the step, so the Lift's first Tick is the one being stepped.
+   */
+  private pickUpProp(grabberId: string, grabber: CharacterController): void {
+    const props = this.world.liftableProps();
+    let best: number | undefined;
+    let bestDistance = Infinity;
+    props.forEach((prop, index) => {
+      const distance = this.reachToProp(prop, index, grabber);
+      if (distance === undefined || distance >= bestDistance) return;
+      best = index;
+      bestDistance = distance;
+    });
+    if (best === undefined) return;
+    const prop = props[best]!;
+    const velocity = prop.velocity;
+    // ADR 0128: one flying at you — a Shooter's bomb to throw back (ADR 0127),
+    // one knocked flying — is caught, straight into the hold; only one lying there
+    // is bent down for.
+    if (velocity && lengthVec3(velocity) >= HURLED_BODY_MIN_SPEED) {
+      prop.carry(grabberId, grabber.facing);
+      this.propHolds.set(grabberId, { index: best, liftStartTick: null, attached: true });
+      this.world.propLifted(best, grabberId);
+      return;
+    }
+    this.propHolds.set(grabberId, { index: best, liftStartTick: this.world.tick() + 1, attached: false });
+  }
+
+  /**
+   * How far `grabber`'s reach is from the Prop at `index`, or `undefined` if
+   * it cannot be picked up from here: not a thing to hold, too heavy, taken,
+   * flying, out of the cone or out of reach.
+   */
+  private reachToProp(prop: Prop, index: number, grabber: CharacterController): number | undefined {
+    // A spent bomb is parked where it went off (ADR 0126): nothing to pick up.
+    // A Shooter's ball is not a thing to hold; its bomb is, to throw back (ADR 0127).
+    if ((prop.config.projectile === true && prop.config.bomb === undefined) || !prop.inFlight || prop.carriedBy !== null) return undefined;
+    if (this.propFlights.has(index) || !canLiftProp(prop.mass)) return undefined;
+    for (const hold of this.propHolds.values()) if (hold.index === index && !hold.attached) return undefined;
+    const toProp = subVec3(prop.centre, grabber.position);
+    toProp.y = 0;
+    // Reached to its near side, not its middle: a big ball is caught by
+    // the arms that touch it.
+    const distance = Math.max(0, lengthVec3(toProp) - prop.horizontalRadius);
+    if (distance > GRAB_RANGE) return undefined;
+    if (lengthVec3(toProp) > 0 && dotVec3(forwardOf(grabber.facing), normalizeVec3(toProp)) < GRAB_FACING_COS_MIN) return undefined;
+    return distance;
+  }
+
+  /**
+   * Whoever carries the Prop at `index` lets go of it where it is, and it
+   * stops flying if it was (ADR 0126): a bomb going off in someone's hands
+   * ends the hold before the blast knocks them down.
+   */
+  letGoOfProp(index: number): void {
+    this.propFlights.delete(index);
+    for (const [carrierId, hold] of this.propHolds) {
+      if (hold.index !== index) continue;
+      const prop = this.world.liftableProps()[index];
+      if (prop) this.endPropHold(carrierId, hold, prop, vec3());
+      else this.propHolds.delete(carrierId);
+    }
+  }
+
+  /**
+   * Everything a carried Prop does this tick (ADR 0125), after the step:
+   * dropped, put down, thrown — or carried on. And a Lift's (ADR 0128): the
+   * hands reach the Prop on its touch, and the Lift is over after its last
+   * Tick.
+   */
+  private updateProps(inputs: Record<string, SimInputs>, matchLocked: boolean): void {
+    const props = this.world.liftableProps();
+    for (const [carrierId, hold] of this.propHolds) {
+      const prop = props[hold.index];
+      const carrier = this.world.character(carrierId);
+      if (!prop) {
+        this.propHolds.delete(carrierId);
+        continue;
+      }
+      if (!carrier || this.world.eliminated(carrierId)) {
+        this.endPropHold(carrierId, hold, prop, vec3());
+        continue;
+      }
+      // Knocked down, grabbed, falling off the world: it drops from the hands
+      // — or, not yet reached, is never picked up.
+      if (!isPlayerDrivenMotionState(carrier.motionState) || carrier.hasPendingRespawn) {
+        this.endPropHold(carrierId, hold, prop, carryVelocity(carrier));
+        continue;
+      }
+      if (hold.liftStartTick !== null) {
+        const into = this.world.tick() - hold.liftStartTick;
+        if (!hold.attached && into >= PROP_LIFT_CONTACT_TICKS) {
+          // ADR 0128: the hands reach down to it now. Rolled out of reach
+          // since the reach began, it is not picked up after all.
+          hold.attached = true;
+          if (this.reachToProp(prop, hold.index, carrier) === undefined) {
+            this.endPropHold(carrierId, hold, prop, vec3());
+            continue;
+          }
+          prop.carry(carrierId, carrier.facing);
+          this.world.propLifted(hold.index, carrierId);
+        }
+        if (into >= PROP_LIFT_TICKS) hold.liftStartTick = null;
+      }
+      carrier.setLiftStartTick(hold.liftStartTick);
+      if (!hold.attached) continue;
+
+      const scale = propThrowScale(prop.mass);
+      // ADR 0128: a Toss lets go at the end of its wind-up, from where the
+      // hands are then, straight along where the carrier faces.
+      if (carrier.takeToss()) {
+        prop.placeCarried(this.propPoint(carrier, prop, CARRY_GRIP, PROP_TOSS_RELEASE_REACH, PROP_TOSS_RELEASE_LIFT), carrier.facing);
+        const velocity = addVec3(scaleVec3(forwardOf(carrier.facing), PROP_TOSS_SPEED * scale), vec3(0, PROP_TOSS_LIFT, 0));
+        this.throwProp(carrierId, hold, prop, velocity);
+        continue;
+      }
+      const hurl = carrier.takeHurl();
+      if (hurl) {
+        const aim = this.world.effectiveInput(carrierId, inputs, matchLocked).moveDirection;
+        const velocity = addVec3(
+          scaleVec3(hurlDirection(spinTangentOf(hurl.facing), aim), (HURL_MIN_SPEED + (HURL_MAX_SPEED - HURL_MIN_SPEED) * hurl.windup) * scale),
+          vec3(0, HURL_LIFT_SPEED, 0),
+        );
+        this.throwProp(carrierId, hold, prop, velocity);
+        continue;
+      }
+      if (carrier.takeDizzy()) {
+        const angle = this.world.roll(carrierId) * Math.PI * 2;
+        const away = vec3(Math.sin(angle), 0, -Math.cos(angle));
+        this.throwProp(carrierId, hold, prop, scaleVec3(away, HURL_MAX_SPEED * DIZZY_FLING_FRACTION * scale));
+        carrier.knockDown("Dizzy");
+        continue;
+      }
+      if (carrier.takeGrabRelease()) {
+        this.endPropHold(carrierId, hold, prop, carryVelocity(carrier));
+        continue;
+      }
+      // ADR 0128: a Spin holds at arm's length, once Hit has been held past a tap.
+      const spun = carrier.spinTicks > PROP_TOSS_TAP_TICKS;
+      const grip = spun ? SPIN_GRIP : CARRY_GRIP;
+      const point = this.propPoint(carrier, prop, grip, grip.reach, grip.lift);
+      prop.placeCarried(point, carrier.facing);
+      carrier.setCarryingProp(hold.index);
+      if (carrier.spinTicks > 0) this.swingProp(carrierId, carrier, prop, point);
+    }
+  }
+
+  /**
+   * Where a Prop held in `grip`'s way sits when the hands are `reach` ahead and
+   * `lift` up (ADR 0128): as far from them as {@link propGripOffset} puts it
+   * from the grip's own hands.
+   */
+  private propPoint(carrier: CharacterController, prop: Prop, grip: typeof CARRY_GRIP, reach: number, lift: number): Vec3 {
+    const at = propGripOffset(prop.horizontalRadius, grip);
+    return carrier.carryPoint(reach + at.forward - grip.reach, lift + at.up - grip.lift);
+  }
+
+  /** Put down or dropped (ADR 0125): a dynamic body again, keeping the carry's own velocity — or, still lying there mid-Lift, left where it is (ADR 0128). */
+  private endPropHold(carrierId: string, hold: PropHold, prop: Prop, velocity: Vec3): void {
+    if (hold.attached) prop.release(velocity);
+    this.propHolds.delete(carrierId);
+    this.world.character(carrierId)?.registerGrabReleased();
+  }
+
+  /** `id` lets go of whatever Prop it carries, where it is — it has just been grabbed itself (ADR 0125). */
+  private dropProp(id: string): void {
+    const hold = this.propHolds.get(id);
+    const prop = hold && this.world.liftableProps()[hold.index];
+    if (hold && prop) this.endPropHold(id, hold, prop, vec3());
+    else this.propHolds.delete(id);
+  }
+
+  /** Tossed, Hurled or flung by a dizzy carrier (ADR 0125): let go at `velocity`, and flying. */
+  private throwProp(carrierId: string, hold: PropHold, prop: Prop, velocity: Vec3): void {
+    this.endPropHold(carrierId, hold, prop, velocity);
+    this.propFlights.set(hold.index, { ticksLeft: HURLED_BODY_FLIGHT_TICKS, hit: new Set([carrierId]), byId: carrierId });
+  }
+
+  /**
+   * A Spun Prop passing through the Characters around its carrier (ADR 0125):
+   * the Shooter ball's rule at the carry point's speed, times the Prop's
+   * weight — once per pass, like a swung body.
+   */
+  private swingProp(carrierId: string, carrier: CharacterController, prop: Prop, point: Vec3): void {
+    const speed = carrySpeedAt(carrier.spinTicks, lengthVec3(subVec3(point, carrier.position)));
+    const tangent = spinTangentOf(carrier.facing);
+    for (const id of this.world.ids()) {
+      if (id === carrierId || !this.canBeHitByBody(id)) continue;
+      const other = this.world.character(id)!;
+      if (!reaches(point, prop.horizontalRadius, other.position)) continue;
+      const key = `${carrierId}>${id}`;
+      const last = this.swingHits.get(key);
+      if (last !== undefined && this.world.tick() - last < SWUNG_BODY_REHIT_TICKS) continue;
+      this.swingHits.set(key, this.world.tick());
+      other.applyImpact(propImpact(tangent, speed, prop.mass), "Hurl");
+      this.world.credit(id, carrierId, "hit");
+    }
+  }
+
+  /**
+   * Whether a thrown Prop's flight may still hit `characterId`, and if so
+   * counts it (ADR 0125) — the simulation asks, from the contact it found,
+   * so a Prop hits whom it actually touches. Returns who threw it, to credit.
+   */
+  takePropFlightHit(index: number, characterId: string): string | undefined {
+    const flight = this.propFlights.get(index);
+    if (!flight || flight.hit.has(characterId) || !this.canBeHitByBody(characterId)) return undefined;
+    flight.hit.add(characterId);
+    return flight.byId;
+  }
+
+  /** Thrown Props, one tick (ADR 0125): a flight ends once it has slowed to a roll, or ran out of time. */
+  private updatePropFlights(): void {
+    const props = this.world.liftableProps();
+    for (const [index, flight] of this.propFlights) {
+      const prop = props[index];
+      flight.ticksLeft -= 1;
+      const velocity = prop?.velocity;
+      if (!prop || !velocity || flight.ticksLeft <= 0 || Math.hypot(velocity.x, velocity.z) < HURLED_BODY_MIN_SPEED) {
+        this.propFlights.delete(index);
+      }
+    }
   }
 
   /** `id` has left the Match: whatever hold it was in, in either role, ends now. */
@@ -282,6 +588,12 @@ export class GrabHolds {
     // leave a stale entry referencing a Character that no longer exists even
     // for one extra tick.
     this.holds.delete(id);
+    // ADR 0125: a carrier leaving the Match lets go of what it carried.
+    const carried = this.propHolds.get(id);
+    const prop = carried && this.world.liftableProps()[carried.index];
+    if (prop && carried.attached) prop.release(vec3());
+    this.propHolds.delete(id);
+    for (const flight of this.propFlights.values()) flight.hit.delete(id);
     for (const [grabberId, grab] of this.holds) {
       if (grab.heldId !== id) continue;
       // Code review: the grabber is still connected here (only the HELD
@@ -375,6 +687,7 @@ export class GrabHolds {
 
   /** Hurled bodies still in the air hitting whoever they reach (ADR 0104) — each Character once per flight. */
   private updateFlights(): void {
+    this.updatePropFlights();
     for (const [bodyId, flight] of this.flights) {
       const body = this.world.character(bodyId);
       flight.ticksLeft -= 1;
@@ -409,7 +722,7 @@ export class GrabHolds {
       character !== undefined &&
       !this.world.eliminated(id) &&
       isPlayerDrivenMotionState(character.motionState) &&
-      !this.isGrabEngaged(id)
+      !this.inCharacterHold(id)
     );
   }
 
@@ -474,4 +787,22 @@ const within = (body: Vec3, at: Vec3): boolean => {
 const bodyImpact = (direction: Vec3, speed: number): Vec3 => {
   const away = normalizeVec3(vec3(direction.x, 0, direction.z));
   return scaleVec3(normalizeVec3(vec3(away.x, SWUNG_BODY_LIFT_RATIO, away.z)), speed * SWUNG_BODY_IMPACT_SCALE);
+};
+
+/** Whether a swung Prop at `centre`, reaching `radius` across the ground, touches a Character standing at `at`. */
+const reaches = (centre: Vec3, radius: number, at: Vec3): boolean => {
+  const apart = subVec3(at, centre);
+  return Math.hypot(apart.x, apart.z) <= radius + CAPSULE_RADIUS && Math.abs(apart.y) <= 2 * CAPSULE_HALF_HEIGHT;
+};
+
+/**
+ * The Impact a Prop of `mass` moving along `direction` at `speed` deals (ADR
+ * 0125): the Shooter ball's rule — the Moving Segment mapping of a closing
+ * speed — times its weight against the ball's, so a Prop as heavy as a
+ * Shooter's ball hits exactly like one.
+ */
+export const propImpact = (direction: Vec3, speed: number, mass: number): Vec3 => {
+  const away = normalizeVec3(vec3(direction.x, 0, direction.z));
+  const magnitude = movingSegmentImpactMagnitude(speed) * (mass / PROJECTILE_MASS);
+  return scaleVec3(normalizeVec3(vec3(away.x, MOVING_SEGMENT_LIFT_RATIO, away.z)), magnitude);
 };

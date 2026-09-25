@@ -12,21 +12,30 @@ import {
   addVec3,
   hasMotion,
   moduleHasMudSurface,
+  motionChainPose,
   motionPose,
+  punchPose,
   rotateVec3ByQuat,
   scaleVec3,
+  segmentBodies,
   segmentOrientation,
   segmentScale,
   stripLayout,
   TICK_DT,
+  trapDoorPose,
   type Box,
   type DeckFrame,
   type DeckPlan,
   type Module,
+  type MotionPose,
   type Segment,
+  type Vec3,
+  type SegmentBodyPlan,
 } from "@dont-fall/shared";
 import * as THREE from "three";
 import {
+  assetPartSubtree,
+  BeltSlats,
   ICE_SEAT_LIFT,
   MUD_SEAT_LIFT,
   buildIceSlab,
@@ -330,20 +339,92 @@ export const buildSegmentGroup = (
   const module = modules[segment.moduleId];
   if (!module) return undefined;
   const template = assetTemplates[segment.moduleId];
-  // A painted Segment clones what its paint wears — its authored file, or the
-  // flat tint built once per (file, paint) — never the placed file itself.
-  const content = template ? templateForPlacement(assetTemplates, segment.moduleId, segment.color).clone(true) : new THREE.Group();
-  if (template) content.userData[SHARES_TEMPLATE_RESOURCES] = true;
   // Placement on the outer group, Motion on the inner node (ADR 0061): a
   // Motion is a pose in the Segment's own local frame, so the gizmo keeps
   // editing the rest placement while the piece moves inside it.
   const motionNode = new THREE.Group();
-  motionNode.add(content);
   const group = new THREE.Group();
   group.add(motionNode);
   group.userData[MOTION_NODE] = motionNode;
+  const plans = segmentBodies(segment, module);
+  const parts = plans.flatMap((plan) => (plan.body === "moving" && plan.part !== undefined ? [plan] : []));
+  if (template) {
+    // A painted Segment clones what its paint wears — its authored file, or
+    // the flat tint built once per (file, paint) — never the placed file
+    // itself. An Asset built from more than one body is cloned once per body:
+    // its still half stands in the group, and each Part that moves gets a node
+    // of its own, because a trap door's two leaves fall opposite ways and one
+    // node could only ever pose them together.
+    const worn = templateForPlacement(assetTemplates, segment.moduleId, segment.color);
+    if (parts.length === 0) {
+      motionNode.add(shareTemplate(showIntact(worn.clone(true), module)));
+    } else {
+      const moving = new Set(parts.map((plan) => plan.part!));
+      group.add(shareTemplate(assetPartSubtree(worn, (part) => part === undefined || !moving.has(part))));
+      for (const plan of parts) {
+        const node = shareTemplate(assetPartSubtree(worn, (part) => part === plan.part));
+        // Kept on the node so `applyMotionAt` poses it without the Module in
+        // hand; a Motion edit, which does not rebuild the group, refreshes it
+        // (`refreshPartPlans`).
+        node.userData[PART_POSE] = plan;
+        motionNode.add(node);
+      }
+    }
+  } else {
+    motionNode.add(new THREE.Group());
+  }
   applySegmentTransform(group, segment);
   return group;
+};
+
+/**
+ * Re-read what poses each moving Part of `group` after an edit that did not
+ * rebuild it — a Motion retuned for the whole Segment or for one Part
+ * (ADR 0124). Which Parts move never changes with a Motion, only how.
+ */
+export const refreshPartPlans = (group: THREE.Object3D, segment: Segment, module: Module): void => {
+  const node = group.userData[MOTION_NODE] as THREE.Object3D | undefined;
+  if (!node) return;
+  const plans = segmentBodies(segment, module);
+  for (const child of node.children) {
+    const plan = child.userData[PART_POSE] as SegmentBodyPlan | undefined;
+    const next = plan && plans.find((candidate) => candidate.part === plan.part && candidate.body === "moving");
+    if (next) child.userData[PART_POSE] = next;
+  }
+};
+
+/**
+ * A conveyor's slats, riding their loop at the speed this Segment's belt runs
+ * (ADR 0120). The Asset brings its own Conveyor, so a belt dropped in the
+ * viewport is already running; the preview's own clock drives it, the same
+ * one the chevrons and the Motion preview use.
+ */
+export const beltSlatsOf = (object: THREE.Object3D, segment: Segment, module: Module): BeltSlats | undefined => {
+  if (module.belt === undefined) return undefined;
+  const conveyor = segment.conveyor ?? module.attachments?.conveyor;
+  const slats = new BeltSlats(object, module.belt, conveyor ? CONVEYOR_SPEEDS[conveyor.preset] : 0);
+  return slats.any ? slats : undefined;
+};
+
+/**
+ * A fragile floor draws three authored looks in the same place (ADR 0118) —
+ * intact, damaged, critical — of which a Round shows one. The builder always
+ * shows the intact one: that is the piece as placed, and it is what a
+ * Thumbnail should have in it.
+ */
+const showIntact = (object: THREE.Object3D, module: Module): THREE.Object3D => {
+  if (module.fragile === undefined) return object;
+  object.traverse((node) => {
+    const state = node.userData.state as number | undefined;
+    if (typeof state === "number") node.visible = state === 0;
+  });
+  return object;
+};
+
+/** Mark a clone as sharing its template's geometry and materials — `disposeGroup` then leaves them alone. */
+const shareTemplate = (object: THREE.Object3D): THREE.Object3D => {
+  object.userData[SHARES_TEMPLATE_RESOURCES] = true;
+  return object;
 };
 
 /** A mesh's bounds in `frame`'s own coordinates, as a shared `Box`. */
@@ -371,21 +452,57 @@ export const templateParts = (template: THREE.Object3D): Box[] => {
   return meshes.map((mesh) => meshBoundsIn(mesh, template));
 };
 
+/**
+ * The Motion Clock the builder's preview runs every Ramp from (ADR 0123):
+ * there is no Round here, so a Ramp counts from the transport's own 0 — an
+ * author scrubbing to 60 s sees the pace a Round has a minute in.
+ */
+export const PREVIEW_MOTION_CLOCK = 0;
+
 /** `userData` key of a Segment group's inner node, the one its Motion poses — see `buildSegmentGroup`. */
 export const MOTION_NODE = "motionNode";
+
+/** `userData` key on a Part's own node holding the body plan that poses it (ADR 0116/0117). */
+export const PART_POSE = "partPose";
 
 /** Pose a Segment group's Motion at simulation tick `tick` (fractional), or back at rest when it has none. */
 export const applyMotionAt = (group: THREE.Object3D, segment: Segment, tick: number): void => {
   const node = group.userData[MOTION_NODE] as THREE.Object3D | undefined;
   if (!node) return;
-  if (!segment.motion) {
-    node.position.set(0, 0, 0);
-    node.quaternion.identity();
+  const place = (object: THREE.Object3D, pose: (MotionPose & { scale?: Vec3 }) | undefined): void => {
+    if (!pose) {
+      object.position.set(0, 0, 0);
+      object.quaternion.identity();
+      object.scale.setScalar(1);
+      return;
+    }
+    object.position.set(pose.position.x, pose.position.y, pose.position.z);
+    object.quaternion.set(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w);
+    // A punching glove's pieces grow (ADR 0121); everything else is rigid.
+    if (pose.scale) object.scale.set(pose.scale.x, pose.scale.y, pose.scale.z);
+  };
+  // An Asset that moves Parts of itself poses each of them (ADR 0116/0117),
+  // and the node they hang from stays where the Segment was put.
+  const parts = node.children.filter((child) => child.userData[PART_POSE] !== undefined);
+  if (parts.length > 0) {
+    place(node, undefined);
+    for (const part of parts) place(part, partPose(part.userData[PART_POSE] as SegmentBodyPlan, tick));
     return;
   }
-  const pose = motionPose(segment.motion, tick);
-  node.position.set(pose.position.x, pose.position.y, pose.position.z);
-  node.quaternion.set(pose.rotation.x, pose.rotation.y, pose.rotation.z, pose.rotation.w);
+  place(node, segment.motion ? motionPose(segment.motion, tick, PREVIEW_MOTION_CLOCK) : undefined);
+};
+
+/**
+ * Where one Part is at `tick`: the Motion its plan resolved — the Part's own
+ * (ADR 0124), else the Segment's, else its Asset's — or the Part's own clock,
+ * under whatever it hangs from, so a cannon's barrel previews turning with
+ * its carriage as well as pitching (ADR 0116).
+ */
+const partPose = (plan: SegmentBodyPlan, tick: number): (MotionPose & { scale?: Vec3 }) | undefined => {
+  if (plan.punch) return punchPose(plan.punch.cycle, tick, plan.punch.piece);
+  if (plan.trapDoor) return trapDoorPose(plan.trapDoor, tick);
+  if (!plan.motion) return undefined;
+  return motionChainPose([...(plan.under ?? []), plan.motion], tick, PREVIEW_MOTION_CLOCK);
 };
 
 /**

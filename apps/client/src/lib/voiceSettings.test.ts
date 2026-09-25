@@ -2,11 +2,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_TALK_MODE, DEFAULT_VOICE_SCOPE } from "@dont-fall/shared";
 import {
-  applyLobbyKindToVoiceScope,
   DEFAULT_VOICE_SETTINGS,
   readVoiceSettings,
   subscribeVoiceSettings,
-  scopeOnJoiningLobby,
   VOICE_SETTINGS_STORAGE_KEY,
   writeVoiceSettings,
 } from "./voiceSettings.js";
@@ -62,47 +60,6 @@ describe("voice settings (ADR 0111)", () => {
 
     expect(() => writeVoiceSettings(throwing, { scope: "ALL", talkMode: "OPEN MIC" }, target)).not.toThrow();
     expect(listener).toHaveBeenCalledWith({ scope: "ALL", talkMode: "OPEN MIC" });
-  });
-
-  describe("joining a Lobby (ADR 0111)", () => {
-    it("drops ALL to PARTY on a public Lobby — an ALL picked for friends never carries to strangers", () => {
-      const storage = memoryStorage();
-      writeVoiceSettings(storage, { scope: "ALL", talkMode: "OPEN MIC" }, null);
-
-      applyLobbyKindToVoiceScope(storage, true, null);
-
-      // The talk mode is untouched: only who hears you was decided for friends.
-      expect(readVoiceSettings(storage)).toEqual({ scope: "PARTY", talkMode: "OPEN MIC" });
-    });
-
-    it("leaves a private Lobby's ALL exactly as it is", () => {
-      const storage = memoryStorage();
-      writeVoiceSettings(storage, { scope: "ALL", talkMode: "PUSH TO TALK" }, null);
-
-      applyLobbyKindToVoiceScope(storage, false, null);
-
-      expect(readVoiceSettings(storage).scope).toBe("ALL");
-    });
-
-    it("never turns anything on — OFF and PARTY are left alone in either kind", () => {
-      for (const scope of ["OFF", "PARTY"] as const) {
-        for (const isPublic of [true, false]) {
-          expect(scopeOnJoiningLobby(scope, isPublic)).toBe(scope);
-        }
-      }
-    });
-
-    it("does not wake the session when nothing changed", () => {
-      const storage = memoryStorage();
-      writeVoiceSettings(storage, { scope: "PARTY", talkMode: "PUSH TO TALK" }, null);
-      const listener = vi.fn();
-      const target = new EventTarget();
-      subscribeVoiceSettings(listener, storage, target);
-
-      applyLobbyKindToVoiceScope(storage, true, target);
-
-      expect(listener).not.toHaveBeenCalled();
-    });
   });
 
   it("tells this page and other tabs, and unsubscribes cleanly", () => {

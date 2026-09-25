@@ -4,6 +4,11 @@ import { MotionPanelView } from "../MotionPanel/MotionPanelView";
 import { SurfacePanel } from "../SurfacePanel/SurfacePanel";
 import { ColorPanel } from "../ColorPanel/ColorPanel";
 import { LaunchPanel } from "../LaunchPanel/LaunchPanel";
+import { TrapDoorPanel } from "../TrapDoorPanel/TrapDoorPanel";
+import { BombPanel } from "../BombPanel/BombPanel";
+import { FragilePanel } from "../FragilePanel/FragilePanel";
+import { ShooterPanel } from "../ShooterPanel/ShooterPanel";
+import { PunchPanel } from "../PunchPanel/PunchPanel";
 import { CoursePanel } from "../CoursePanel/CoursePanel";
 import type { BuilderEngine } from "../../engine.js";
 import { useEngineVersion } from "../../hooks/useEngine.js";
@@ -45,6 +50,11 @@ export function Inspector({ engine }: { engine: BuilderEngine }) {
         <CoursePanel engine={engine} />
         <MotionPanelView engine={engine} />
         <LaunchPanel engine={engine} />
+        <TrapDoorPanel engine={engine} />
+        <FragilePanel engine={engine} />
+        <BombPanel engine={engine} />
+        <ShooterPanel engine={engine} />
+        <PunchPanel engine={engine} />
         <SurfacePanel engine={engine} />
         <ColorPanel engine={engine} />
       </div>

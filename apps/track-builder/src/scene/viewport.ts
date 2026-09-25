@@ -2,12 +2,13 @@ import { createEnvironment, findSpinningParts, glintIce, simmerMud, spinParts, t
 import {
   cloudFloorY,
   DEFAULT_KILL_PLANE_Y,
-  hasMotion,
   motionPose,
   orientBox,
   scaleBox,
+  segmentMotionOf,
   segmentScale,
   quatToEuler,
+  TICK_DT,
   TICK_RATE_HZ,
   TRACK_THUMBNAIL_HEIGHT,
   TRACK_THUMBNAIL_WIDTH,
@@ -15,15 +16,19 @@ import {
   type EnvironmentPreset,
   type Module,
   type MotionPose,
+  type SegmentMotion,
   type Track,
   type Vec3,
 } from "@dont-fall/shared";
 import { footprintCorners, motionPath, OUTCOME_COLOURS } from "../motion/motionPreview.js";
 import * as THREE from "three";
+import { getNavMeshPositionsAndIndices } from "recast-navigation";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { addImpactTint, type ImpactTint } from "./impactTint.js";
+import type { BotNavOverlay } from "../bot/buildBotNav.js";
 import { createCourseOverlay } from "./courseOverlay.js";
+import { COURSE } from "../lib/course.js";
 import { lowestSegmentY } from "./environmentPreview.js";
 import { launchArcOf } from "./launchArc.js";
 import type { SchedulablePreview } from "./previewScheduler.js";
@@ -38,7 +43,9 @@ import {
   icePlacementOf,
   mudPlacementOf,
   applyMotionAt,
+  beltSlatsOf,
   applySegmentTransform,
+  refreshPartPlans,
   boundingRadius,
   buildSegmentGroup,
   disposeGroup,
@@ -155,6 +162,20 @@ export const createModulePreview = (canvas: HTMLCanvasElement, module: Module, t
 const SELECTION_COLOR = 0x7b3fe4;
 
 /**
+ * The NAVMESH overlay's own palette (M17 ticket 02) — the walkable mesh in a
+ * cyan no other guide here uses, the route in white, and each leg's end
+ * reusing the Course markers' own go/problem colours: green where a Bot's
+ * path actually reaches its target, the same pink `COURSE.problem` already
+ * means "nowhere to respawn" where it stops short.
+ */
+const BOT_NAV_MESH_COLOR = 0x22d3ee;
+const BOT_NAV_PATH_COLOR = 0xffffff;
+/** A proven link's arc (ticket 05): the mesh's cyan's opposite, so a jump reads as not-floor at a glance. */
+const BOT_NAV_LINK_COLOR = 0xfacc15;
+/** How far above a path's own corners its line and end marker float — clear of the floor's z-fighting, like the Course markers' `top + 0.03`. */
+const BOT_NAV_LIFT = 0.05;
+
+/**
  * The Thumbnail capture's JPEG quality (ADR 0085) — high enough that a
  * 1280×720 scene stays crisp as a Discover card and a full-page loader,
  * low enough to sit far under the API's size cap.
@@ -211,6 +232,16 @@ export interface TrackViewport {
    * edit, like the Motion guide.
    */
   showLaunchArc: (index: number | undefined) => void;
+  /**
+   * Draws the NAVMESH overlay (M17 ticket 02, ADR 0129): a translucent film
+   * over the walkable mesh `recast-navigation` built, plus one line per leg
+   * of the route a Bot would run — spawn → each Checkpoint's Respawn → the
+   * Finish Zone — its end coloured by whether the leg actually reaches its
+   * target. `null` clears it. `overlay` is built by the caller, from the
+   * same `packages/shared` code the server runs — nothing here decides where
+   * a Bot can walk, only how it's drawn.
+   */
+  setBotNav: (overlay: BotNavOverlay | null) => void;
   /** Show or hide the Impact tint on moving and Spiked Segments (M11 ticket 07). */
   setImpactTintVisible: (visible: boolean) => void;
   /**
@@ -416,7 +447,7 @@ export const createTrackViewport = (
   // One per moving or Spiked Segment, rebuilt with the Track; index-keyed so a
   // transform-only edit (which swaps `track` but keeps the groups) still
   // reads the Segment's current Motion.
-  let tints: { index: number; tint: ImpactTint }[] = [];
+  let tints: { index: number; tint: ImpactTint; motion?: SegmentMotion }[] = [];
   /** Conveyor march drivers (ADR 0064) — rebuilt with the Track, ticked with the motion clock. */
   let belts: ((tick: number) => void)[] = [];
 
@@ -441,6 +472,17 @@ export const createTrackViewport = (
     disposeGroup(motionGuide.object);
     for (const material of motionGuide.ownMaterials) material.dispose();
     motionGuide = undefined;
+  };
+  // The NAVMESH overlay (M17 ticket 02) — world-space from the start, like
+  // the launch arc, and rebuilt whole on every `setBotNav` (the engine
+  // debounces the navmesh regeneration behind it; this side just redraws).
+  let botNavObject: { object: THREE.Group; ownMaterials: THREE.Material[] } | undefined;
+  const clearBotNav = (): void => {
+    if (!botNavObject) return;
+    scene.remove(botNavObject.object);
+    disposeGroup(botNavObject.object);
+    for (const material of botNavObject.ownMaterials) material.dispose();
+    botNavObject = undefined;
   };
 
   /**
@@ -692,10 +734,15 @@ export const createTrackViewport = (
         if (!group) return;
         group.userData.segmentIndex = index;
         const module = nextModules[segment.moduleId];
-        if (hasMotion(segment.motion) || module?.hazard === "spiked") {
-          const tint = addImpactTint(group, module?.hazard === "spiked");
-          tint.update(segment, motionTick);
-          tints.push({ index, tint });
+        // What actually moves (ADR 0116): the Segment's own Motion, or the one
+        // its Asset's Part runs. An Asset that moves only a Part of itself is
+        // tinted on that Part alone — its base hits nobody.
+        const motion = module ? segmentMotionOf(segment, module) : undefined;
+        if (motion !== undefined || module?.hazard === "spiked") {
+          const tinted = segment.motion === undefined && motion !== undefined ? (group.userData[MOTION_NODE] as THREE.Object3D) : group;
+          const tint = addImpactTint(tinted, module?.hazard === "spiked");
+          tint.update(segment, motionTick, motion);
+          tints.push({ index, tint, ...(motion === undefined ? {} : { motion }) });
         }
         if (module) {
           // A belt's strip parents under the Motion node (ADR 0064) so it
@@ -706,6 +753,13 @@ export const createTrackViewport = (
           if (belt) {
             belt(motionTick);
             belts.push(belt);
+          }
+          // A conveyor Asset runs its own slats instead (ADR 0120), on the
+          // same preview clock the chevrons march on.
+          const slats = beltSlatsOf(group, segment, module);
+          if (slats) {
+            slats.update(motionTick * TICK_DT);
+            belts.push((tick) => slats.update(tick * TICK_DT));
           }
           // An icy deck's slab (ADR 0066, drawn per ADR 0107) — same
           // Motion-node parenting as the belt, so it follows a carrier too.
@@ -851,6 +905,79 @@ export const createTrackViewport = (
       scene.add(object);
       launchArcObject = { object, ownMaterials: [material, apexMaterial] };
     },
+    setBotNav(overlay) {
+      clearBotNav();
+      if (!overlay) return;
+      const object = new THREE.Group();
+      const ownMaterials: THREE.Material[] = [];
+
+      // The walkable mesh itself — Recast's own triangulation, straight from
+      // the library (ticket 01), so this draws exactly what a Bot can stand
+      // on rather than a builder-only guess at it.
+      const [positions, indices] = getNavMeshPositionsAndIndices(overlay.navMesh);
+      if (indices.length > 0) {
+        const meshGeometry = new THREE.BufferGeometry();
+        meshGeometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        meshGeometry.setIndex(indices);
+        const meshMaterial = new THREE.MeshBasicMaterial({
+          color: BOT_NAV_MESH_COLOR,
+          transparent: true,
+          opacity: 0.32,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+          // The mesh sits coplanar with the Track's own decks — offset its
+          // depth, not its position (a ramp's mesh isn't flat), so it never
+          // flickers against the floor it's drawn over.
+          polygonOffset: true,
+          polygonOffsetFactor: -4,
+          polygonOffsetUnits: -4,
+        });
+        ownMaterials.push(meshMaterial);
+        const mesh = new THREE.Mesh(meshGeometry, meshMaterial);
+        mesh.renderOrder = 900;
+        object.add(mesh);
+      }
+
+      // One line per leg of the route a Bot would run, its end a dot: go-green
+      // where the path reaches its target, the Course markers' own "problem"
+      // pink where it stops short (a gap no proven link crosses).
+      const lineMaterial = new THREE.LineBasicMaterial({ color: BOT_NAV_PATH_COLOR, depthTest: false, transparent: true, opacity: 0.9 });
+      const reachedMaterial = new THREE.MeshBasicMaterial({ color: COURSE.start.hex, depthTest: false, transparent: true, opacity: 0.95 });
+      const shortMaterial = new THREE.MeshBasicMaterial({ color: COURSE.problem.hex, depthTest: false, transparent: true, opacity: 0.95 });
+      ownMaterials.push(lineMaterial, reachedMaterial, shortMaterial);
+      for (const leg of overlay.legs) {
+        const lifted = leg.points.map((p) => new THREE.Vector3(p.x, p.y + BOT_NAV_LIFT, p.z));
+        if (lifted.length >= 2) {
+          const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(lifted), lineMaterial);
+          line.renderOrder = 999;
+          object.add(line);
+        }
+        // Marked even with no path at all (`points` is just `from`) — a
+        // query that joins nothing is the shortest possible "stops short".
+        const marker = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), leg.complete ? reachedMaterial : shortMaterial);
+        marker.position.copy(lifted[lifted.length - 1]!);
+        marker.renderOrder = 999;
+        object.add(marker);
+      }
+
+      // Each proven link (ticket 05) as an arc from where its run-up starts to
+      // where its proof landed, raised over the higher end so a drop and a
+      // climb both read as a jump. Only the ends are real: the arc is a sketch.
+      const linkMaterial = new THREE.LineBasicMaterial({ color: BOT_NAV_LINK_COLOR, depthTest: false, transparent: true, opacity: 0.9 });
+      ownMaterials.push(linkMaterial);
+      for (const link of overlay.links) {
+        const from = new THREE.Vector3(link.from.x, link.from.y + BOT_NAV_LIFT, link.from.z);
+        const to = new THREE.Vector3(link.to.x, link.to.y + BOT_NAV_LIFT, link.to.z);
+        const control = from.clone().add(to).multiplyScalar(0.5);
+        control.y = Math.max(from.y, to.y) + Math.max(1, 0.25 * Math.hypot(to.x - from.x, to.z - from.z));
+        const arc = new THREE.Line(new THREE.BufferGeometry().setFromPoints(new THREE.QuadraticBezierCurve3(from, control, to).getPoints(16)), linkMaterial);
+        arc.renderOrder = 999;
+        object.add(arc);
+      }
+
+      scene.add(object);
+      botNavObject = { object, ownMaterials };
+    },
     setEnvironment(preset) {
       environmentPreset = preset;
       showEnvironment();
@@ -865,9 +992,9 @@ export const createTrackViewport = (
       motionTick = tick;
       for (const belt of belts) belt(tick);
       if (impactTintVisible) {
-        for (const { index, tint } of tints) {
+        for (const { index, tint, motion } of tints) {
           const segment = track[index];
-          if (segment) tint.update(segment, tick);
+          if (segment) tint.update(segment, tick, motion);
         }
       }
       for (const group of trackGroup.children) {
@@ -897,7 +1024,19 @@ export const createTrackViewport = (
       for (const group of trackGroup.children) {
         const index = group.userData.segmentIndex as number | undefined;
         const segment = index !== undefined ? nextTrack[index] : undefined;
-        if (segment) applySegmentTransform(group, segment);
+        if (!segment) continue;
+        applySegmentTransform(group, segment);
+        // A Motion edit arrives here too: what poses each Part, and the Motion
+        // its Impact tint reads, follow it without a rebuild.
+        const module = modules[segment.moduleId];
+        if (!module) continue;
+        refreshPartPlans(group, segment, module);
+        const tint = tints.find((entry) => entry.index === index);
+        if (tint) {
+          const motion = segmentMotionOf(segment, module);
+          if (motion === undefined) delete tint.motion;
+          else tint.motion = motion;
+        }
       }
       // Respawn floors are found under where the gates now stand.
       course.rebuild(nextTrack, modules, groupByIndex);
@@ -1043,6 +1182,7 @@ export const createTrackViewport = (
       transformControls.dispose();
       orbitControls.dispose();
       clearSelectionBoxes();
+      clearBotNav();
       overlapGhost.geometry.dispose();
       overlapGhostMaterial.dispose();
       renderer.dispose();

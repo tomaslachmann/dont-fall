@@ -10,7 +10,7 @@ import type { AssetModuleDef } from "./assetModules.js";
 export const FAN_MODULE_DEFS: AssetModuleDef[] = [
   {
     id: "fan",
-    category: "fan",
+    category: "launcher",
     footprint: {
       bounds: { center: { x: 0, y: 0.5899, z: 0 }, halfExtents: { x: 0.9494, y: 0.5899, z: 0.9497 } },
       clearance: 0.5,

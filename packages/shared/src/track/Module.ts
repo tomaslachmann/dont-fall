@@ -5,6 +5,13 @@ import type { LaunchPadConfig } from "../simulation/LaunchPad.js";
 import type { PropConfig } from "../simulation/Prop.js";
 import type { SpinnerConfig } from "../simulation/Spinner.js";
 import type { VolumeConfig } from "../simulation/Volume.js";
+import type { AssetPart } from "./AssetPart.js";
+import type { BeltPath } from "./BeltPath.js";
+import type { PunchCycle } from "./Punch.js";
+import type { BombDef } from "./Bomb.js";
+import type { FragileDef } from "./Fragile.js";
+import type { ShooterDef } from "./Shooter.js";
+import type { SegmentAttachments } from "./Track.js";
 import type { ValidatedAssetMesh, ValidatedSolidPart } from "./asset.js";
 import type { GateDef } from "./Gate.js";
 import type { LaunchDef } from "./Launch.js";
@@ -135,6 +142,32 @@ export interface Module {
    * on as a Checkpoint.
    */
   gate?: GateDef;
+  /**
+   * The Parts this Asset resolves into (CONTEXT.md: Part, ADR 0116) — on
+   * Assets built from more than one body, from their def. Absent everywhere
+   * else, and an absent one means what it always meant: one rigid piece.
+   */
+  parts?: AssetPart[];
+  /**
+   * This Module is a floor that breaks under you (CONTEXT.md: Fragile, ADR
+   * 0118), from its Asset's def. A placed Segment's `fragile` Attachment
+   * retunes how long it stays gone; it can never make a Module one.
+   */
+  fragile?: FragileDef;
+  /**
+   * This Module is a Bomb (CONTEXT.md: Bomb, ADR 0126), from its Asset's def:
+   * a placed Segment of it is a Prop, and its `bomb` Attachment retunes the
+   * fuse and the return.
+   */
+  bomb?: BombDef;
+  /** This Asset fires a ball along its barrel (CONTEXT.md: Shooter, ADR 0119) — where the muzzle is, and what it does by default. */
+  shooter?: ShooterDef;
+  /** What a placed Segment of this Asset arrives carrying (ADR 0120) — its own value always wins. */
+  attachments?: Pick<SegmentAttachments, "conveyor">;
+  /** The loop this Asset's slats ride (ADR 0120) — drawn only, at the speed its Conveyor runs. */
+  belt?: BeltPath;
+  /** This Asset punches (CONTEXT.md: Punching Glove, ADR 0121) — the authored swing its Parts share. */
+  punch?: PunchCycle;
 }
 
 /**

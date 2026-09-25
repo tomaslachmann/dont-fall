@@ -30,6 +30,13 @@ export interface AssetMeshData {
   indices: number[];
   /** Raw `surface` extra, unresolved — `validateAssetModule` owns the `node ?? Module ?? "default"` chain (ADR 0036). */
   surface?: string;
+  /**
+   * The Part this geometry belongs to (ADR 0116), from the node's `part`
+   * extra — stamped by the converter, absent on every Asset that is one
+   * rigid piece. What it *means* is the def's (`AssetModuleDef.parts`); the
+   * reader only carries the name through.
+   */
+  part?: string;
 }
 
 /**
@@ -51,6 +58,8 @@ export interface SolidPart {
   rotation: Quat;
   /** Raw `surface` extra, unresolved — like {@link AssetMeshData.surface}. */
   surface?: string;
+  /** The Part this shape collides for (ADR 0116) — like {@link AssetMeshData.part}. */
+  part?: string;
 }
 
 export interface AssetModel {
@@ -79,7 +88,7 @@ type GltfNode = {
   rotation?: [number, number, number, number];
   scale?: [number, number, number];
   matrix?: number[];
-  extras?: { role?: unknown; surface?: unknown; shape?: unknown };
+  extras?: { role?: unknown; surface?: unknown; shape?: unknown; part?: unknown };
 };
 
 type GltfMesh = {
@@ -162,8 +171,8 @@ const IDENTITY_MAT4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
  * words — or neither — fails too. A mesh is in or out of the world; it is
  * never included on a coin flip.
  */
-const nodeRole = (extrasRole: unknown, name: string): "collision" | "visual" | null => {
-  if (extrasRole === "collision" || extrasRole === "visual") return extrasRole;
+const nodeRole = (extrasRole: unknown, name: string): "collision" | "visual" | "effect" | null => {
+  if (extrasRole === "collision" || extrasRole === "visual" || extrasRole === "effect") return extrasRole;
   if (extrasRole !== undefined) return null;
   const words = new Set(
     name
@@ -176,6 +185,18 @@ const nodeRole = (extrasRole: unknown, name: string): "collision" | "visual" | n
   const isVisual = words.has("visual");
   if (isCollision === isVisual) return null; // both, or neither — ambiguous either way
   return isCollision ? "collision" : "visual";
+};
+
+/**
+ * A node's `part` extra (ADR 0116), as the object spread to carry it — `{}`
+ * when the node names no Part. A non-string is an authoring error and fails
+ * the load, exactly as a non-string `surface` does: a Part nobody can name
+ * is a Part nothing will move.
+ */
+const partExtra = (raw: unknown, name: string): { part?: string } => {
+  if (raw === undefined) return {};
+  if (typeof raw !== "string" || raw.length === 0) fail(`node "${name}" part extra must be a non-empty string`);
+  return { part: raw };
 };
 
 const applyMat4 = (m: number[], p: Vec3): Vec3 => ({
@@ -336,9 +357,17 @@ export const readAssetModel = (bytes: Uint8Array): AssetModel => {
         position: { x: world[12]!, y: world[13]!, z: world[14]! },
         rotation: rotationOf(world),
         ...(surfaceRaw !== undefined ? { surface: surfaceRaw } : {}),
+        ...partExtra(node.extras.part, name),
       });
     } else if (node.mesh !== undefined) {
       const role = nodeRole(node.extras?.role, name);
+      // ADR 0126: an `effect` mesh is drawn and nothing else — a bomb's
+      // flames and smoke, shown only while its explosion plays. Nothing
+      // collides as it and nothing measures it, so the reader passes it by.
+      if (role === "effect") {
+        for (const child of node.children ?? []) visit(child, world);
+        return;
+      }
       const target = role === "collision" ? model.collision : role === "visual" ? model.visual : null;
       if (!target) {
         fail(`node "${name}" has a mesh but no recognized role — set extras.role to "collision"/"visual", or suffix the node name "_Collision"/"_Visual"`);
@@ -371,7 +400,12 @@ export const readAssetModel = (bytes: Uint8Array): AssetModel => {
           indices[t + 2] = second;
         }
       }
-      target.push({ positions, indices, ...(surfaceRaw !== undefined ? { surface: surfaceRaw } : {}) });
+      target.push({
+        positions,
+        indices,
+        ...(surfaceRaw !== undefined ? { surface: surfaceRaw } : {}),
+        ...partExtra(node.extras?.part, name),
+      });
     }
     for (const child of node.children ?? []) visit(child, world);
   };
@@ -443,12 +477,22 @@ export interface ValidateAssetOptions {
   footprint: Box;
   /** This Module's own Surface id — the middle of the `node ?? Module ?? "default"` chain (ADR 0036). */
   surface?: SurfaceId;
+  /**
+   * How far this Asset's visuals may stand outside its collision before it
+   * warns, when {@link ASSET_VISUAL_WARN} is not the right number for it —
+   * an Asset whose art deliberately lies outside what you can touch, like
+   * the fragile block's fallen chips (ADR 0118). Per-Asset and explained in
+   * its def; nothing else raises it.
+   */
+  visualTolerance?: number;
 }
 
 export interface ValidatedAssetMesh {
   positions: Vec3[];
   indices: number[];
   surface: SurfaceId;
+  /** The Part this mesh belongs to (ADR 0116), carried from {@link AssetMeshData.part}. */
+  part?: string;
 }
 
 export interface ValidatedSolidPart extends Omit<SolidPart, "surface"> {
@@ -497,14 +541,17 @@ const AXES = ["x", "y", "z"] as const;
  * reach the identical verdict — a bad file fails the load everywhere,
  * never simulates differently per side.
  */
-export const validateAssetModule = (model: AssetModel, { footprint, surface: moduleSurface }: ValidateAssetOptions): ValidatedAsset => {
+export const validateAssetModule = (
+  model: AssetModel,
+  { footprint, surface: moduleSurface, visualTolerance = ASSET_VISUAL_WARN }: ValidateAssetOptions,
+): ValidatedAsset => {
   if (model.collision.length === 0) fail("no collision mesh (no node with extras.role \"collision\")");
   if (model.visual.length === 0) fail("no visual mesh (no node with extras.role \"visual\")");
 
   const collision: ValidatedAssetMesh[] = model.collision.map((mesh, i) => {
     const surface = mesh.surface ?? moduleSurface ?? "default";
     if (!(surface in SURFACES)) fail(`collision mesh ${i} names unknown surface "${surface}"`);
-    return { positions: mesh.positions, indices: mesh.indices, surface };
+    return { positions: mesh.positions, indices: mesh.indices, surface, ...(mesh.part === undefined ? {} : { part: mesh.part }) };
   });
 
   const collisionBounds = unionBounds(collision);
@@ -525,19 +572,36 @@ export const validateAssetModule = (model: AssetModel, { footprint, surface: mod
     }
   }
 
-  const visualBounds = unionBounds(model.visual.map((mesh) => ({ positions: mesh.positions })));
+  // A node parked at scale 0 — an authored muzzle flash waiting to be fired
+  // (ADR 0119) — bakes to a single point and draws nothing. It cannot escape
+  // anything, so it is not measured; it would otherwise warn for ever about
+  // an effect that is invisible until the Tick it plays.
+  const drawn = model.visual.filter((mesh) => {
+    const first = mesh.positions[0];
+    if (first === undefined) return false;
+    return mesh.positions.some((p) => p.x !== first.x || p.y !== first.y || p.z !== first.z);
+  });
   const warnings: string[] = [];
-  for (const axis of AXES) {
-    const escape = Math.max(collisionBounds.min[axis] - visualBounds.min[axis], visualBounds.max[axis] - collisionBounds.max[axis]);
-    if (escape > ASSET_VISUAL_WARN) {
-      warnings.push(`visual escapes collision on ${axis} by ${escape.toFixed(3)} (past tolerance ${ASSET_VISUAL_WARN})`);
+  if (drawn.length > 0) {
+    const visualBounds = unionBounds(drawn.map((mesh) => ({ positions: mesh.positions })));
+    for (const axis of AXES) {
+      const escape = Math.max(collisionBounds.min[axis] - visualBounds.min[axis], visualBounds.max[axis] - collisionBounds.max[axis]);
+      if (escape > visualTolerance) {
+        warnings.push(`visual escapes collision on ${axis} by ${escape.toFixed(3)} (past tolerance ${visualTolerance})`);
+      }
     }
   }
 
   const solid: ValidatedSolidPart[] = model.solid.map((part, i) => {
     const surface = part.surface ?? moduleSurface ?? "default";
     if (!(surface in SURFACES)) fail(`solid part ${i} names unknown surface "${surface}"`);
-    return { shape: part.shape, position: part.position, rotation: part.rotation, surface };
+    return {
+      shape: part.shape,
+      position: part.position,
+      rotation: part.rotation,
+      surface,
+      ...(part.part === undefined ? {} : { part: part.part }),
+    };
   });
 
   return { collision, solid, visual: model.visual, warnings };

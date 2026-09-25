@@ -13,11 +13,19 @@
  * Client-shaped run: a predicting world (one Character, the other eleven as
  * mirrors), with a 6-tick reconcile replay twice a second.
  *
+ * Bots run (M17 ticket 03): a full Lobby of one idle Player and eleven Bots on
+ * the moving base race, each Bot thinking every tick off the state the tick
+ * before built, as the Match loop runs them (ADR 0129). Its `bots` column is
+ * every Bot's `think` together, per tick; the navmesh build is printed below.
+ * `--level` (M17 ticket 08, default `normal`) plays every Bot in the row at
+ * one level — a bench run isn't a Lobby's own per-Bot spread.
+ *
  * Nothing here is part of `pnpm test`; the numbers belong in
  * `docs/research/gameplay-performance-culling-and-asset-loading.md`.
  *
- * Usage:  pnpm bench:sim                       (1/4/12 Characters, 1800 ticks)
- *         pnpm bench:sim --players 12 --ticks 3000
+ * Usage:  pnpm bench:sim                       (1/4/12 Characters, 11 Bots, 1800 ticks)
+ *         pnpm bench:sim --players 12 --ticks 3000 --bots 11
+ *         pnpm bench:sim --bots 11 --level hard
  *         pnpm bench:sim --json
  */
 import { execSync } from "node:child_process";
@@ -29,18 +37,26 @@ import { fileURLToPath } from "node:url";
 import {
   BASE_RACE_TRACK,
   DurationHistogram,
+  TreeBot,
   RapierSimulation,
   TICK_RATE_HZ,
   addVec3,
+  botProfile,
+  buildBotTrack,
+  disposeBotTrack,
   emptySimulationTimings,
+  initNavigation,
   initPhysics,
   isDownMotionState,
   loadAssetLibrary,
   movementDirection,
+  resolveRoundRules,
   resolveTrack,
   scaleVec3,
   trackSpawn,
   trackSpawnYaw,
+  withPerceptionDelay,
+  type BotLevel,
   type DurationSummary,
   type Module,
   type SimInputs,
@@ -58,6 +74,9 @@ const argValue = (name: string): string | undefined => {
 };
 const TICKS = Number(argValue("ticks") ?? 1800);
 const PLAYER_COUNTS = (argValue("players") ?? "1,4,12").split(",").map(Number);
+const BOT_COUNT = Number(argValue("bots") ?? 11);
+/** M17 ticket 08: which level the Bots row plays at. */
+const BOT_LEVEL = (argValue("level") ?? "normal") as BotLevel;
 const AS_JSON = process.argv.includes("--json");
 /** Ticks run before measuring: the WASM and the JIT settle, Characters leave the ground contact of their spawn. */
 const WARMUP_TICKS = 90;
@@ -80,6 +99,10 @@ interface RunResult {
   snapshot?: DurationSummary;
   /** One 6-tick reconcile replay (the client run). */
   replay?: DurationSummary;
+  /** Every Bot's `think`, together, per tick (the Bots run). */
+  bots?: DurationSummary;
+  /** Building the Round's navmesh, once (the Bots run). */
+  navBuildMs?: number;
   falls: number;
   /** Share of measured Character-ticks spent down (`Ragdoll`/`GettingUp`) — the heavier path. */
   downShare: number;
@@ -160,6 +183,75 @@ const runServer = (
   return result;
 };
 
+const runBots = (library: Record<string, Module>, track: Track, count: number, level: BotLevel): RunResult => {
+  const resolved = resolveTrack(library, track);
+  const sim = new RapierSimulation({ ...resolved, withDefaultCharacter: false, profileClock: () => performance.now() });
+  const navStarted = performance.now();
+  const botTrack = buildBotTrack(resolved);
+  const navBuildMs = performance.now() - navStarted;
+  const rules = resolveRoundRules({ timeLimitMs: 300_000, fallBehavior: "respawn", survivorTarget: 1 });
+  // The Lobby's one human, standing on the Start: a full Lobby's twelfth body.
+  sim.addCharacter("player", trackSpawn(track, 0, library));
+  // M17 ticket 08: the same level for every Bot here, as `bench-sim --level` picks — a bench run isn't a Lobby's own spread.
+  const bots = new Map(
+    Array.from({ length: count }, (_, i) => {
+      const seed = `bot${i}`;
+      const profile = botProfile(level, seed);
+      return [seed, withPerceptionDelay(new TreeBot({ seed, profile }), profile, seed)] as const;
+    }),
+  );
+  [...bots.keys()].forEach((id, i) => sim.addCharacter(id, trackSpawn(track, i + 1, library)));
+
+  const tick = tickHistogram();
+  const think = tickHistogram();
+  const timingSums = emptySimulationTimings();
+  let downTicks = 0;
+  let state = sim.snapshot();
+  for (let n = 0; n < WARMUP_TICKS + TICKS; n += 1) {
+    const thinkStarted = performance.now();
+    const inputs: Record<string, SimInputs> = {};
+    for (const [id, bot] of bots) {
+      inputs[id] = bot.think({
+        tick: state.tick + 1,
+        id,
+        self: state.characters[id]!,
+        characters: state.characters,
+        track: botTrack,
+        rules,
+        runningFromTick: sim.motionClock,
+        fragile: state.fragile,
+      });
+    }
+    const thinkMs = performance.now() - thinkStarted;
+
+    const started = performance.now();
+    sim.tick(inputs, "RUNNING");
+    const tickMs = performance.now() - started;
+    // The Match loop builds this every tick anyway; the Bots read it next tick.
+    state = sim.snapshot();
+
+    if (n < WARMUP_TICKS) continue;
+    tick.record(tickMs);
+    think.record(thinkMs);
+    addTimings(timingSums, sim.lastTickTimings());
+    for (const c of Object.values(state.characters)) if (isDownMotionState(c.motionState)) downTicks += 1;
+  }
+  const result: RunResult = {
+    scenario: `server · Bots · moving · ${level}`,
+    characters: count + 1,
+    ticks: TICKS,
+    tick: tick.summary(),
+    timingMeans: summariseTimings(timingSums, TICKS),
+    bots: think.summary(),
+    navBuildMs,
+    falls: Object.values(state.characters).reduce((sum, c) => sum + c.fallCount, 0),
+    downShare: downTicks / (TICKS * (count + 1)),
+  };
+  disposeBotTrack(botTrack);
+  sim.dispose();
+  return result;
+};
+
 const runClient = (library: Record<string, Module>, track: Track, others: number): RunResult => {
   const resolved = resolveTrack(library, track);
   const sim = new RapierSimulation({
@@ -222,7 +314,7 @@ const runClient = (library: Record<string, Module>, track: Track, others: number
 const fmt = (ms: number): string => ms.toFixed(3);
 
 const main = async (): Promise<void> => {
-  await initPhysics();
+  await Promise.all([initPhysics(), initNavigation()]);
   const library = await loadAssetLibrary(
     async (url) => new Uint8Array(readFileSync(join(assetsDir, url.substring(url.lastIndexOf("/") + 1)))),
     "http://assets.local",
@@ -238,6 +330,7 @@ const main = async (): Promise<void> => {
     }
   }
   results.push(runClient(library, moving, Math.max(...PLAYER_COUNTS) - 1));
+  if (BOT_COUNT > 0) results.push(runBots(library, moving, BOT_COUNT, BOT_LEVEL));
 
   const commit = (() => {
     try {
@@ -264,17 +357,19 @@ const main = async (): Promise<void> => {
   console.log(`base race · ${machine.cpu} (${machine.cores} cores) · ${machine.os} · node ${machine.node} · ${commit}`);
   console.log(`${TICKS} measured ticks per run after ${WARMUP_TICKS} warm-up; times in ms\n`);
   console.log(
-    "| scenario | chars | tick p50 | p95 | p99 | max | >2 ms | >10 ms | step | collision | solver | user changes | moving seg. | char. sweeps | char. updates | snapshot p95 | replay p95 | falls | down |",
+    "| scenario | chars | tick p50 | p95 | p99 | max | >2 ms | >10 ms | step | collision | solver | user changes | moving seg. | char. sweeps | char. updates | snapshot p95 | replay p95 | bots p50 | bots p95 | falls | down |",
   );
-  console.log("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+  console.log("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
   for (const r of results) {
     const m = r.timingMeans;
     console.log(
       `| ${r.scenario} | ${r.characters} | ${fmt(r.tick.p50Ms)} | ${fmt(r.tick.p95Ms)} | ${fmt(r.tick.p99Ms)} | ${fmt(r.tick.maxMs)} | ${r.tick.over[0]} | ${r.tick.over[1]} | ` +
         `${fmt(m.stepMs)} | ${fmt(m.collisionDetectionMs)} | ${fmt(m.solverMs)} | ${fmt(m.userChangesMs)} | ${fmt(m.movingSegmentsMs)} | ${fmt(m.characterSweepsMs)} | ${fmt(m.characterUpdatesMs)} | ` +
-        `${r.snapshot ? fmt(r.snapshot.p95Ms) : "—"} | ${r.replay ? fmt(r.replay.p95Ms) : "—"} | ${r.falls} | ${(r.downShare * 100).toFixed(0)} % |`,
+        `${r.snapshot ? fmt(r.snapshot.p95Ms) : "—"} | ${r.replay ? fmt(r.replay.p95Ms) : "—"} | ` +
+        `${r.bots ? fmt(r.bots.p50Ms) : "—"} | ${r.bots ? fmt(r.bots.p95Ms) : "—"} | ${r.falls} | ${(r.downShare * 100).toFixed(0)} % |`,
     );
   }
+  for (const r of results) if (r.navBuildMs !== undefined) console.log(`\n${r.scenario}: navmesh built once in ${fmt(r.navBuildMs)} ms.`);
   console.log("\nstep … char. updates are means per tick. step/collision/solver/user changes are Rapier's own profiler; moving seg. and the two char. columns are timed around the shared step's own loops, outside world.step().");
 };
 

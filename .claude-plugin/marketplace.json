@@ -1,0 +1,16 @@
+{
+  "name": "dont-fall",
+  "owner": {
+    "name": "Tomas Lachmann"
+  },
+  "description": "Claude Code plugins for the DON'T FALL game repo.",
+  "plugins": [
+    {
+      "name": "dont-fall-track-builder",
+      "source": "./plugins/dont-fall-track-builder",
+      "description": "Build, inspect, validate, screenshot and publish DON'T FALL Tracks through the dont-fall-track-builder MCP server (ADR 0114).",
+      "category": "engineering",
+      "keywords": ["dont-fall", "track", "mcp", "level-design", "game"]
+    }
+  ]
+}

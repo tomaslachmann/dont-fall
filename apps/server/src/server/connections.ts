@@ -27,8 +27,9 @@ type Admission = { seated: false } | { seated: true; joinOrder: number | null };
  * a Character past `maxPlayers` (grilling session, 2026-09). Checked first and
  * synchronously, before this handler awaits anything. The cap counts every
  * connection this process holds, spectators included — that is what a
- * Player-facing "N SLOTS OPEN" means — and every live Reservation (ADR 0112),
- * so a stranger cannot take a seat a Party member is walking into.
+ * Player-facing "N SLOTS OPEN" means — every live Reservation (ADR 0112),
+ * so a stranger cannot take a seat a Party member is walking into, and every
+ * Bot (ADR 0129), whose seat is as taken as anyone's.
  *
  * A connection carrying `?reservation=<token>` of a live Reservation uses it
  * up and takes that seat instead, which is why it passes even when the
@@ -49,7 +50,7 @@ const ensureCapacity = (rt: MatchRuntime, socket: WebSocket, req: IncomingMessag
     rt.snapshotDirty = true;
     return { seated: true, joinOrder: reserved };
   }
-  if (rt.sockets.size + rt.reservations.liveCount() < rt.config.maxPlayers) return { seated: true, joinOrder: null };
+  if (rt.seatsTaken() < rt.config.maxPlayers) return { seated: true, joinOrder: null };
   socket.close(4003, truncateForCloseReason(`server is full (${rt.config.maxPlayers} players)`));
   return { seated: false };
 };
@@ -223,6 +224,9 @@ const wireLifecycle = (rt: MatchRuntime, id: string, socket: WebSocket): void =>
     // 0089): a Round held in LOADING by the client that just dropped starts
     // for whoever is left.
     rt.loaded.delete(id);
+    // A Bot never outlives the people it plays with (ADR 0129): with nobody
+    // left, its seat would keep an empty Lobby counted as occupied forever.
+    if (rt.sockets.size === 0) for (const botId of [...rt.bots.ids()]) rt.removeBot(botId);
     // …and out of the Lobby's voice room (ADR 0111), which is this roster and
     // nothing a client says.
     rt.accountRoster.changed(rt.lobbyPlayers.values());

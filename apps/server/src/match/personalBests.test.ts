@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { httpPersonalBestRecorder } from "./personalBests.js";
+import { TICK_MS } from "@dont-fall/shared";
+import { httpPersonalBestRecorder, personalBestRuns } from "./personalBests.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -38,5 +39,17 @@ describe("httpPersonalBestRecorder", () => {
 
     await expect(recorder.recordRuns(REPORT)).resolves.toBeUndefined();
     expect(error).toHaveBeenCalled();
+  });
+});
+
+describe("personalBestRuns (M17 ticket 10, ADR 0129)", () => {
+  it("skips a Bot that finished first, and still reports the Player behind it", () => {
+    // The Bot crossed the line first: its finish places it, and nothing is kept for it.
+    const characters = { bot: { finishTick: 130 }, player: { finishTick: 160 }, stillRunning: { finishTick: null } };
+    const accounts: Record<string, string | null> = { bot: null, player: "acc-1", stillRunning: "acc-2" };
+
+    expect(personalBestRuns(characters, (id) => accounts[id], 100)).toEqual([
+      { accountId: "acc-1", raceTimeMs: Math.round(60 * TICK_MS) },
+    ]);
   });
 });

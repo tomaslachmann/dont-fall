@@ -152,4 +152,10 @@ export interface ConveyorBelt {
   velocity: Vec3;
   /** Where the chevron strip sits. */
   deck: DeckFrame;
+  /**
+   * The Asset draws its own flow (ADR 0120) — a conveyor machine's slats ride
+   * a loop, so nothing draws a chevron strip over them. Physics and sound
+   * read this entry either way.
+   */
+  own?: boolean;
 }

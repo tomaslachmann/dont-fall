@@ -17,7 +17,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_arrow",
-    category: "obstacle",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 0.649, z: 0 }, halfExtents: { x: 0.071, y: 0.649, z: 0.042 } },
       clearance: 0.5,
@@ -26,7 +26,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_arrow_2",
-    category: "obstacle",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 0.649, z: 0 }, halfExtents: { x: 0.071, y: 0.649, z: 0.042 } },
       clearance: 0.5,
@@ -35,7 +35,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_arrow_3",
-    category: "obstacle",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 0.649, z: 0 }, halfExtents: { x: 0.071, y: 0.649, z: 0.042 } },
       clearance: 0.5,
@@ -44,7 +44,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_arrowtrap",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 0.781, z: 0 }, halfExtents: { x: 1.396, y: 0.781, z: 5.212 } },
       clearance: 0.5,
@@ -53,7 +53,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_arrowtrap_2",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 0.781, z: 0 }, halfExtents: { x: 1.396, y: 0.781, z: 5.212 } },
       clearance: 0.5,
@@ -62,7 +62,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_arrowtrap_3",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 0.781, z: 0 }, halfExtents: { x: 1.396, y: 0.781, z: 5.212 } },
       clearance: 0.5,
@@ -71,7 +71,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_arrowtrapbig",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 0.781, z: 0 }, halfExtents: { x: 1.396, y: 0.781, z: 6.126 } },
       clearance: 0.5,
@@ -80,7 +80,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_arrowtrapbig_2",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 0.781, z: 0 }, halfExtents: { x: 1.396, y: 0.781, z: 6.126 } },
       clearance: 0.5,
@@ -89,7 +89,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_arrowtrapbig_3",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 0.781, z: 0 }, halfExtents: { x: 1.396, y: 0.781, z: 6.126 } },
       clearance: 0.5,
@@ -98,7 +98,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_ball",
-    category: "obstacle",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 0.857, z: 0 }, halfExtents: { x: 0.857, y: 0.857, z: 0.857 } },
       clearance: 0.5,
@@ -107,7 +107,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_ball_2",
-    category: "obstacle",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 0.857, z: 0 }, halfExtents: { x: 0.857, y: 0.857, z: 0.857 } },
       clearance: 0.5,
@@ -116,7 +116,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_ball_3",
-    category: "obstacle",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 0.857, z: 0 }, halfExtents: { x: 0.857, y: 0.857, z: 0.857 } },
       clearance: 0.5,
@@ -125,7 +125,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_ball_4",
-    category: "obstacle",
+    category: "prop",
     footprint: {
       bounds: { center: { x: 0, y: 0.857, z: 0 }, halfExtents: { x: 0.857, y: 0.857, z: 0.857 } },
       clearance: 0.5,
@@ -134,7 +134,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_clay",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.309, z: 0 }, halfExtents: { x: 0.671, y: 0.308, z: 0.671 } },
       clearance: 0.5,
@@ -143,7 +143,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_claybig",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.309, z: 0 }, halfExtents: { x: 1.96, y: 0.308, z: 1.964 } },
       clearance: 0.5,
@@ -251,7 +251,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_hammer",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 1.13, z: 0 }, halfExtents: { x: 0.678, y: 1.13, z: 2.34 } },
       clearance: 0.5,
@@ -260,7 +260,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_hammer_2",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 1.13, z: 0 }, halfExtents: { x: 0.678, y: 1.13, z: 2.34 } },
       clearance: 0.5,
@@ -269,7 +269,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_hammer_3",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 1.13, z: 0 }, halfExtents: { x: 0.678, y: 1.13, z: 2.34 } },
       clearance: 0.5,
@@ -278,7 +278,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_hammerbig",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 1.247, z: 0 }, halfExtents: { x: 0.829, y: 1.247, z: 2.954 } },
       clearance: 0.5,
@@ -287,7 +287,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_hammerbig_2",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 1.247, z: 0 }, halfExtents: { x: 0.829, y: 1.247, z: 2.954 } },
       clearance: 0.5,
@@ -296,7 +296,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_hammerbig_3",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 1.247, z: 0 }, halfExtents: { x: 0.829, y: 1.247, z: 2.954 } },
       clearance: 0.5,
@@ -305,7 +305,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platform3faceshorizontal",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2.588, z: 0 }, halfExtents: { x: 4.376, y: 2.589, z: 5.04 } },
       clearance: 0.5,
@@ -314,7 +314,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platform3faceshorizontal_2",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2.588, z: 0 }, halfExtents: { x: 4.376, y: 2.589, z: 5.04 } },
       clearance: 0.5,
@@ -323,7 +323,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platform3faceshorizontal_3",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 2.588, z: 0 }, halfExtents: { x: 4.376, y: 2.589, z: 5.04 } },
       clearance: 0.5,
@@ -332,7 +332,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platform3facesvertical",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 4.377, z: 0 }, halfExtents: { x: 2.589, y: 4.376, z: 5.04 } },
       clearance: 0.5,
@@ -341,7 +341,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platform3facesvertical_2",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 4.377, z: 0 }, halfExtents: { x: 2.589, y: 4.376, z: 5.04 } },
       clearance: 0.5,
@@ -350,7 +350,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platform3facesvertical_3",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 4.377, z: 0 }, halfExtents: { x: 2.589, y: 4.376, z: 5.04 } },
       clearance: 0.5,
@@ -359,7 +359,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformblue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.317, z: 0 }, halfExtents: { x: 0.708, y: 0.317, z: 0.708 } },
       clearance: 0.5,
@@ -368,7 +368,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformcirclehorizontal",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 3.552, z: 0 }, halfExtents: { x: 3.822, y: 3.552, z: 4.005 } },
       clearance: 0.5,
@@ -377,7 +377,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformcirclehorizontal_2",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 3.552, z: 0 }, halfExtents: { x: 3.822, y: 3.552, z: 4.005 } },
       clearance: 0.5,
@@ -386,7 +386,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformcirclehorizontal_3",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 3.552, z: 0 }, halfExtents: { x: 3.822, y: 3.552, z: 4.005 } },
       clearance: 0.5,
@@ -395,7 +395,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformcirclevertical",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 3.822, z: 0 }, halfExtents: { x: 3.552, y: 3.822, z: 4.005 } },
       clearance: 0.5,
@@ -404,7 +404,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformcirclevertical_2",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 3.822, z: 0 }, halfExtents: { x: 3.552, y: 3.822, z: 4.005 } },
       clearance: 0.5,
@@ -413,7 +413,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformcirclevertical_3",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 3.822, z: 0 }, halfExtents: { x: 3.552, y: 3.822, z: 4.005 } },
       clearance: 0.5,
@@ -422,7 +422,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformgreen",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.317, z: 0 }, halfExtents: { x: 0.708, y: 0.317, z: 0.708 } },
       clearance: 0.5,
@@ -431,7 +431,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformred",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.317, z: 0 }, halfExtents: { x: 0.708, y: 0.317, z: 0.708 } },
       clearance: 0.5,
@@ -440,7 +440,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformspikeblue",
-    category: "obstacle",
+    category: "floor",
     hazard: "spiked",
     footprint: {
       bounds: { center: { x: 0, y: 0.443, z: 0 }, halfExtents: { x: 0.708, y: 0.443, z: 0.708 } },
@@ -450,7 +450,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformspikegreen",
-    category: "obstacle",
+    category: "floor",
     hazard: "spiked",
     footprint: {
       bounds: { center: { x: 0, y: 0.443, z: 0 }, halfExtents: { x: 0.708, y: 0.443, z: 0.708 } },
@@ -460,7 +460,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformspikered",
-    category: "obstacle",
+    category: "floor",
     hazard: "spiked",
     footprint: {
       bounds: { center: { x: 0, y: 0.443, z: 0 }, halfExtents: { x: 0.708, y: 0.443, z: 0.708 } },
@@ -470,7 +470,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformspringblue",
-    category: "spring",
+    category: "launcher",
     footprint: {
       bounds: { center: { x: 0, y: 0.863, z: 0 }, halfExtents: { x: 0.708, y: 0.862, z: 0.708 } },
       clearance: 0.5,
@@ -483,7 +483,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformspringgreen",
-    category: "spring",
+    category: "launcher",
     footprint: {
       bounds: { center: { x: 0, y: 0.863, z: 0 }, halfExtents: { x: 0.708, y: 0.862, z: 0.708 } },
       clearance: 0.5,
@@ -496,7 +496,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformspringred",
-    category: "spring",
+    category: "launcher",
     footprint: {
       bounds: { center: { x: 0, y: 0.863, z: 0 }, halfExtents: { x: 0.708, y: 0.862, z: 0.708 } },
       clearance: 0.5,
@@ -509,7 +509,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformstairblue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.317, z: 0 }, halfExtents: { x: 0.708, y: 0.317, z: 0.708 } },
       clearance: 0.5,
@@ -518,7 +518,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformstairgreen",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.317, z: 0 }, halfExtents: { x: 0.708, y: 0.317, z: 0.708 } },
       clearance: 0.5,
@@ -527,7 +527,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platformstairred",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.317, z: 0 }, halfExtents: { x: 0.708, y: 0.317, z: 0.708 } },
       clearance: 0.5,
@@ -536,7 +536,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platfrombigblue",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.317, z: 0 }, halfExtents: { x: 1.99, y: 0.317, z: 1.99 } },
       clearance: 0.5,
@@ -545,7 +545,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platfrombiggreen",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.317, z: 0 }, halfExtents: { x: 1.99, y: 0.317, z: 1.99 } },
       clearance: 0.5,
@@ -554,7 +554,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_platfrombigred",
-    category: "platform",
+    category: "floor",
     footprint: {
       bounds: { center: { x: 0, y: 0.317, z: 0 }, halfExtents: { x: 1.99, y: 0.317, z: 1.99 } },
       clearance: 0.5,
@@ -581,7 +581,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trap",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 1.035, z: 0 }, halfExtents: { x: 0.375, y: 1.034, z: 0.375 } },
       clearance: 0.5,
@@ -590,7 +590,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trap_2",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 1.035, z: 0 }, halfExtents: { x: 0.375, y: 1.034, z: 0.375 } },
       clearance: 0.5,
@@ -599,7 +599,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trap_3",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 1.035, z: 0 }, halfExtents: { x: 0.375, y: 1.034, z: 0.375 } },
       clearance: 0.5,
@@ -608,7 +608,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapball",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 3.759, z: 0 }, halfExtents: { x: 1.163, y: 3.759, z: 1.163 } },
       clearance: 0.5,
@@ -617,7 +617,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapball_2",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 3.759, z: 0 }, halfExtents: { x: 1.163, y: 3.759, z: 1.163 } },
       clearance: 0.5,
@@ -626,7 +626,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapball_3",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 3.759, z: 0 }, halfExtents: { x: 1.163, y: 3.759, z: 1.163 } },
       clearance: 0.5,
@@ -635,7 +635,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcircleblue",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 0.411, z: 0 }, halfExtents: { x: 0.205, y: 0.411, z: 0.85 } },
       clearance: 0.5,
@@ -644,7 +644,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcircledoubleblue",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 0.411, z: 0 }, halfExtents: { x: 0.205, y: 0.411, z: 1.5 } },
       clearance: 0.5,
@@ -653,7 +653,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcircledoublegreen",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 0.411, z: 0 }, halfExtents: { x: 0.205, y: 0.411, z: 1.5 } },
       clearance: 0.5,
@@ -662,7 +662,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcircledoublered",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 0.411, z: 0 }, halfExtents: { x: 0.205, y: 0.411, z: 1.5 } },
       clearance: 0.5,
@@ -671,7 +671,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclegreen",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 0.411, z: 0 }, halfExtents: { x: 0.205, y: 0.411, z: 0.85 } },
       clearance: 0.5,
@@ -680,7 +680,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclehorizontalblue",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 1.687, z: 0 }, halfExtents: { x: 0.322, y: 1.687, z: 0.322 } },
       clearance: 0.5,
@@ -689,7 +689,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclehorizontalgreen",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 1.687, z: 0 }, halfExtents: { x: 0.322, y: 1.687, z: 0.322 } },
       clearance: 0.5,
@@ -698,7 +698,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclehorizontalred",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 1.687, z: 0 }, halfExtents: { x: 0.322, y: 1.687, z: 0.322 } },
       clearance: 0.5,
@@ -707,7 +707,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclehorizontalspikeblue",
-    category: "obstacle",
+    category: "sweeper",
     hazard: "spiked",
     footprint: {
       bounds: { center: { x: 0, y: 1.687, z: 0 }, halfExtents: { x: 0.442, y: 1.687, z: 0.442 } },
@@ -717,7 +717,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclehorizontalspikegreen",
-    category: "obstacle",
+    category: "sweeper",
     hazard: "spiked",
     footprint: {
       bounds: { center: { x: 0, y: 1.687, z: 0 }, halfExtents: { x: 0.442, y: 1.687, z: 0.442 } },
@@ -727,7 +727,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclehorizontalspikered",
-    category: "obstacle",
+    category: "sweeper",
     hazard: "spiked",
     footprint: {
       bounds: { center: { x: 0, y: 1.687, z: 0 }, halfExtents: { x: 0.442, y: 1.687, z: 0.442 } },
@@ -737,7 +737,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclered",
-    category: "obstacle",
+    category: "sweeper",
     footprint: {
       bounds: { center: { x: 0, y: 0.411, z: 0 }, halfExtents: { x: 0.205, y: 0.411, z: 0.85 } },
       clearance: 0.5,
@@ -746,7 +746,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclespikeblue",
-    category: "obstacle",
+    category: "sweeper",
     hazard: "spiked",
     footprint: {
       bounds: { center: { x: 0, y: 0.411, z: 0 }, halfExtents: { x: 0.247, y: 0.411, z: 0.85 } },
@@ -756,7 +756,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclespikedoubleblue",
-    category: "obstacle",
+    category: "sweeper",
     hazard: "spiked",
     footprint: {
       bounds: { center: { x: 0, y: 0.411, z: 0 }, halfExtents: { x: 0.247, y: 0.411, z: 1.5 } },
@@ -766,7 +766,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclespikedoublegreen",
-    category: "obstacle",
+    category: "sweeper",
     hazard: "spiked",
     footprint: {
       bounds: { center: { x: 0, y: 0.411, z: 0 }, halfExtents: { x: 0.247, y: 0.411, z: 1.5 } },
@@ -776,7 +776,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclespikedoublered",
-    category: "obstacle",
+    category: "sweeper",
     hazard: "spiked",
     footprint: {
       bounds: { center: { x: 0, y: 0.411, z: 0 }, halfExtents: { x: 0.247, y: 0.411, z: 1.5 } },
@@ -786,7 +786,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclespikegreen",
-    category: "obstacle",
+    category: "sweeper",
     hazard: "spiked",
     footprint: {
       bounds: { center: { x: 0, y: 0.411, z: 0 }, halfExtents: { x: 0.247, y: 0.411, z: 0.85 } },
@@ -796,7 +796,7 @@ export const TRAP_MODULE_DEFS: AssetModuleDef[] = [
   },
   {
     id: "trap_trapcirclespikered",
-    category: "obstacle",
+    category: "sweeper",
     hazard: "spiked",
     footprint: {
       bounds: { center: { x: 0, y: 0.411, z: 0 }, halfExtents: { x: 0.247, y: 0.411, z: 0.85 } },

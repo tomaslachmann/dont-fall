@@ -9,10 +9,10 @@ import {
   buildRoundResult,
   checkpointSplits,
   countdownMsLeft,
+  motionClockFor,
   liveRacePlaces,
   msToTicks,
   recordCheckpointArrivals,
-  resolveHostId,
   roundTimeLeftMs,
   survivorTargetReached,
   type LiveRace,
@@ -24,9 +24,10 @@ import {
 import { trySend } from "../net/wire.js";
 import { openBettingArgs, roundWinners, runnersLeft } from "./betting.js";
 import { survivalTimesMs } from "./career.js";
+import { personalBestRuns } from "./personalBests.js";
 import type { MatchRuntime } from "./matchRuntime.js";
 import type { TickPerf } from "./tickPerf.js";
-import { startTickScheduler, type TickScheduler } from "./tickScheduler.js";
+import { startTickScheduler, type TickScheduler, type TickSchedulerTimers } from "./tickScheduler.js";
 
 /**
  * The idle-phase broadcast decision (ADR 0057) — pure, so tests can pin the
@@ -148,6 +149,8 @@ export interface MatchLoopHooks {
   onTerminalClose?: () => void;
   /** Tick timing (M13 ticket 02), present only when the process asked for it. */
   perf?: TickPerf | null;
+  /** The clock the loop ticks on; the real one when absent. A test drives the whole loop Tick by Tick through it. */
+  timers?: TickSchedulerTimers;
 }
 
 export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): TickScheduler => {
@@ -215,7 +218,13 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): TickSc
       // against these Ticks even while locked.
       const tickInputs: Record<string, SimInputs> = {};
       for (const id of rt.sockets.keys()) tickInputs[id] = rt.inputs.takeFor(id, thisTick);
+      // A Bot's input goes in beside them (ADR 0129), raw like theirs: the
+      // step locks it exactly as it locks a Player's.
+      rt.bots.inputsFor(thisTick, rt.roundRules, rt.simulation.motionClock, () => rt.simulation.snapshot(), tickInputs);
 
+      // Every Ramp counts from the Round's start (ADR 0123), known from the
+      // Countdown's first Tick and sent to clients from then on.
+      rt.simulation.syncMotionClock(motionClockFor(nextMatch, rt.roundStartTick, rt.config.countdownMs));
       rt.simulation.tick(tickInputs, nextMatch.phase);
       rt.serverTick = thisTick;
       // A one-shot edge, spent the instant a tick reads it whether or not it
@@ -305,14 +314,11 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): TickSc
         // Survival Round stamps `finishTick` on every survivor at its end,
         // which is not a run). `roundStartTick` is still this Round's here.
         if (played && !isSurvival) {
-          const runs = Object.entries(precomputedState.characters).flatMap(([id, character]) => {
-            if (character.finishTick === null) return [];
-            const accountId = rt.lobbyPlayers.get(id)?.accountId ?? rt.dnf.find((d) => d.id === id)?.accountId;
-            // Clamped: a Finish Zone on the spawn stamps `finishTick` during the
-            // Countdown, before the clock's anchor.
-            const raceTimeMs = Math.max(0, Math.round((character.finishTick - rt.roundStartTick) * TICK_MS));
-            return accountId ? [{ accountId, raceTimeMs }] : [];
-          });
+          const runs = personalBestRuns(
+            precomputedState.characters,
+            (id) => rt.lobbyPlayers.get(id)?.accountId ?? rt.dnf.find((d) => d.id === id)?.accountId,
+            rt.roundStartTick,
+          );
           if (runs.length > 0) {
             void rt.personalBests.recordRuns({ trackId: rt.fetched.id, matchId: rt.config.matchId, runs });
           }
@@ -465,7 +471,8 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): TickSc
           rt.resetToFreshLobby(rt.fetched.track);
           rt.dnf = [];
           rt.standingsReady.clear();
-          for (const player of rt.lobbyPlayers.values()) player.ready = false;
+          // A Bot is Ready by definition (ADR 0129).
+          for (const player of rt.lobbyPlayers.values()) player.ready = rt.bots.has(player.id);
         }
       } else if (nextMatch.phase === "LOADING" && rt.match.phase === "LOBBY") {
         // M9 ticket 16: Round 1 starts on the Lobby's own loaded Track — no
@@ -494,6 +501,8 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): TickSc
       // endings are read off it, and they should not be noticed only as often
       // as the snapshot rate happens to be (ADR 0020 decouples the two).
       const state = precomputedState ?? rt.simulation.snapshot();
+      // What every Bot reads next Tick (ADR 0129), built here anyway.
+      rt.bots.observe(state);
       for (const [id, character] of Object.entries(state.characters)) {
         character.lastInputTick = rt.inputs.lastInputTick(id);
       }
@@ -590,7 +599,8 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): TickSc
         return { trackId: pick?.trackId ?? null, roundType: pick?.roundType ?? null };
       });
       const lobbySnapshot = {
-        hostId: resolveHostId(lobbyPlayerList),
+        // Never a Bot (M17 ticket 10, ADR 0129) — see `MatchRuntime.hostId`.
+        hostId: rt.hostId(),
         players: lobbyPlayerList,
         // The host's Round-type pick and why (if at all) it can't start on
         // this Track — both shown to everyone before the start (M5 ticket
@@ -599,6 +609,7 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): TickSc
         ...(blockedReason !== undefined ? { startBlockedReason: blockedReason } : {}),
         matchLength: rt.matchLength,
         roundPicks,
+        bots: rt.lobbyBots,
       };
       if (!livePhase) {
         // Deliberately everything *except* `state`: the tick number inside
@@ -616,8 +627,8 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): TickSc
           timeLeftMs,
           countdown,
           dnf: rt.dnf,
-          standingsReady: [...rt.standingsReady],
-          loaded: [...rt.loaded],
+          standingsReady: rt.standingsReadyIds(),
+          loaded: rt.loadedIds(),
           round: rt.round,
           standingsDeadlineMs: standingsDeadline,
           roundResults: rt.roundResults,
@@ -648,9 +659,10 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): TickSc
             phase: rt.match.phase,
             roundRules: rt.roundRules,
             countdownMsLeft: countdown,
+            runningFromTick: rt.simulation.motionClock,
             dnf: rt.dnf,
-            standingsReady: [...rt.standingsReady],
-            loaded: [...rt.loaded],
+            standingsReady: rt.standingsReadyIds(),
+            loaded: rt.loadedIds(),
             trackId: rt.fetched.id,
             trackRevision: rt.fetched.revision,
             lobby: lobbySnapshot,
@@ -680,10 +692,10 @@ export const startMatchLoop = (rt: MatchRuntime, hooks?: MatchLoopHooks): TickSc
       consecutiveTickFailures += 1;
     }
   };
-  if (!perf) return startTickScheduler(runTick);
+  if (!perf) return startTickScheduler(runTick, hooks?.timers);
   return startTickScheduler((dueMs) => {
     const started = performance.now();
     runTick(dueMs);
     perf.recordTick(performance.now() - started, rt.match.phase, rt.sockets.size, rt.simulation.lastTickTimings());
-  });
+  }, hooks?.timers);
 };

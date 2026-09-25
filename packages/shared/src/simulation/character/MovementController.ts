@@ -173,13 +173,14 @@ export class MovementController {
   }
 
   /** Jump's own half of the tick — the take-off, and what the Surface under it makes of it. */
-  beginJump(pressed: boolean, surface: SurfaceController): number | null {
+  beginJump(pressed: boolean, surface: SurfaceController, carryScale = 1): number | null {
     const takeoff = this.jump.beginTick(this.grounded, pressed);
     // ADR 0092: the Surface you push off decides how much of the jump you
     // get. Ice gives back less, mud less again, a bounce deck more — height
     // goes with the square of this, so even a light multiplier is felt at once.
     if (takeoff !== null) {
-      const pushed = takeoff * surface.surfaceJumpMultiplier;
+      // ADR 0125: a carried Prop takes its share on top, by its weight.
+      const pushed = takeoff * surface.surfaceJumpMultiplier * carryScale;
       // ADR 0094: on a bounce Surface the deck's own rebound is still there
       // to be had, and this take-off replaces the landing branch below that
       // would otherwise have given it (the branch only runs on a downward

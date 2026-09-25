@@ -399,7 +399,12 @@ describe("the real files in assets/", () => {
     expect(model.visual.length).toBeGreaterThan(0);
     for (const mesh of [...model.collision, ...model.visual]) {
       expect(mesh.positions.length).toBeGreaterThan(0);
-      for (const index of mesh.indices) expect(index).toBeLessThan(mesh.positions.length);
+      // One assertion per mesh, not per index: a rivet-heavy file has well
+      // over a hundred thousand of them, and asserting each one is what
+      // timed this out, not the parse.
+      let highest = -1;
+      for (const index of mesh.indices) if (index > highest) highest = index;
+      expect(highest).toBeLessThan(mesh.positions.length);
     }
   });
 
@@ -422,7 +427,8 @@ describe("the real files in assets/", () => {
       [(max.x - min.x) / 2, (max.y - min.y) / 2, (max.z - min.z) / 2],
     );
 
-    const validated = validateAssetModule(model, { footprint });
+    const tolerance = ASSET_MODULE_DEFS.find((def) => def.id === name)?.visualTolerance;
+    const validated = validateAssetModule(model, { footprint, ...(tolerance === undefined ? {} : { visualTolerance: tolerance }) });
     expect(validated.collision.every((mesh) => mesh.surface === "default")).toBe(true);
     expect(validated.warnings).toEqual([]);
   });
