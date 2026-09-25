@@ -166,3 +166,89 @@ state at the moment of commit), on Slip Stream Cp 1→2 at all three levels.
   is `movingWorld.ts` (the swept region) plus `sweeperHold.ts` `inSwath`. They can run as two agents if
   the `movingWorld.ts` additions are kept additive.
 - **B-2** (EASY's timing error on fast walls) is the user's call.
+
+## The log (2026-09-25, the main session): both hypotheses above are mostly wrong
+
+**How it was measured.** `staggerLog.scratch.test.ts` lives in the session scratchpad and is not in the
+repo. It patches the prototypes of `RapierSimulation.resolveMovingSegmentContacts`,
+`CharacterController.applyImpact`, `DeckRider.steer` and `SweeperHold.decide` for the length of the test.
+For every Impact from a Moving Segment of magnitude ≥ `IMPACT_STAGGER_MIN` (4) on a `Controlled` or
+`Sliding` Character, it records:
+- the Segment with the greatest closing speed, and that closing speed;
+- the Segment's own point speed at the contact (`vseg`) and the Character's own speed (`vbot`);
+- the `DeckRider` state;
+- the hold's last decisions;
+- whether it ended in a Stagger Fall (joined to `playSection`'s `where`).
+
+The runs were `playSection` for 120 s with 12 Bots, seed `holds:07m:<leg>:<level>:0`, on three legs:
+Spin Cycle Start→Cp 0, Spin Cycle Cp 0→1 and Slip Stream Cp 1→2.
+
+| leg | level | passed | Stagger Falls | the Segment behind most Staggers |
+|---|---|---|---|---|
+| Spin Cycle Start→Cp 0 | H / N / E | 3 / 2 / 1 | 12 / 16 / 13 | **seg 37** (86 / 86 / 40 impacts, 27 / 33 / 17 → a Fall), then seg 31 |
+| Spin Cycle Cp 0→1 | H / N / E | 7 / 8 / 6 | 15 / 11 / 18 | **seg 119** (88 / 50 / 39, 40 / 17 / 12 → a Fall) |
+| Slip Stream Cp 1→2 | H / N / E | 11 / 8 / 1 | 10 / 21 / 35 | **seg 97** (51 / 72 / 86, 6 / 15 / 16 → a Fall), then 103; the sliding walls follow |
+
+**A (balls on carousels) is refuted.** A ball took part in 4 impacts over all nine runs, and 0 of them
+led to a Fall.
+
+**B-1 (disc swath for slides) is real but small.** An impact is marked "unchecked" when the wall stood
+outside the disc at the Bot's last "go" and the point of impact lay past its look. That happened only
+at **EASY** on Slip Stream: 19 impacts, which lie behind at most ~13 of its 35 Stagger Falls. HARD and
+NORMAL had none.
+
+**What actually Staggers them: one bar spinning about its middle, hit by a Bot that is moving.**
+
+- **The bars:**
+
+  | Segment | Asset | where | pivot on | speed |
+  |---|---|---|---|---|
+  | 31 | `kaykit_barrier_4x1x1` at scale 2, half-length 4.0 | Spin Cycle | lane centre | 1.2 rad/s |
+  | 37 | scale 1.8, 3.6 | Spin Cycle | lane centre | 1.8 |
+  | 119 | scale 1.6, 3.2 | Spin Cycle | the middle of a 7 m catwalk (x 5.5 … 12.5) | 1.9 |
+  | 97 | scale 2, 4.0 | Slip Stream | the lane | 1.5 |
+  | 103 | scale 2, 4.0 | Slip Stream | the lane | 1.7 |
+
+- **The bar alone is below the Stagger speed.** Tip speed w·r is 4.8 (31), 6.5 (37), 6.1 (119),
+  6.0 (97) and 6.8 (103, only right at the tip), against **6.67**. Over 697 spin-bar impacts, `vseg`
+  ≥ 6.67 held in **6**, and **not one** had `vbot` < 0.5. Every one of these Staggers needs the Bot's
+  own velocity: closing = (v_bar − v_bot)·n.
+- **What the Bot was doing when hit** (the hold's last decision):
+
+  | level | retreat | go | hold (standing, but `vbot` > 0.5, still moving) |
+  |---|---|---|---|
+  | HARD | **229 / 252** | 18 | 5 |
+  | NORMAL | **184 / 248** | 41 | 23 |
+  | EASY | 0 | 76 | **113** |
+
+  The EASY "holds" still carry speed: a Bot walked up to its stop point and had not stopped yet.
+- **So at HARD and NORMAL the retreat causes the Stagger it runs from.** In `decide`,
+  `counts(body, at, here)` is asked with no walk, so it holds a body counting once its speed passes
+  `BOT_HOLD_MIN_SPEED` = 6.67 / 2 = 3.33. The arm is then reported as a threat, and `retreat()` walks
+  the Bot back toward the previous corner at up to 5.5 u/s, often into the arm's path, which lifts the
+  closing speed over 6.67. Had the Bot stood still, it would have been pushed (`queuePush`) but not
+  Staggered, since the arm alone never reaches 6.67 on these bars.
+- Standing still is not always safe. It is not safe where a push carries a Bot off an edge (seg 119's
+  catwalk is 7 m wide with the bar reaching 3.3 either way; the Falls there are Stagger 15 and Bump 13,
+  and none is `pushed`), or near a body faster than 6.67: the sliding walls, whose `vseg` ≥ 6.67 in 45 of
+  102 other impacts, of which 10 were Falls taken standing at EASY.
+
+## What this points to
+
+These are proposals for the user, and nothing is built.
+
+1. **A retreat must not be faster into the arm than standing.** In `decide`'s "here will be occupied"
+   test, run `counts` for the move the Bot would actually make: closing =
+   (v_body − v_retreat)·n. Compare it with the closing speed while standing (v_body alone).
+   - If standing does not Stagger (below 6.67), and the push cannot carry the Bot off the floor within
+     the contact (the guard can vet that as it vets any move), **stand**.
+   - Retreat only when standing would Stagger, and then in a direction chosen **away from the arm's
+     velocity**, not back along the path.
+2. **EASY's still-moving "hold":** brake as `stand()` does on ice (a push against its own velocity) on
+   every floor while a sweeper is near, so a hold really is standing still by the time the arm arrives.
+3. **B-1 (the slide's swept region)** is kept for EASY at a lower priority.
+4. **A (rigid groups)** is not needed for the Staggers. It stays a correctness nicety for the rider (a
+   ball is a real box on the deck) with no measured cost.
+
+The targets are unchanged. The first number to watch is Stagger Falls on the three legs at HARD and
+NORMAL, before and after 1, on the same seeds.
