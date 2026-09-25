@@ -261,3 +261,32 @@ main session:**
   assert or the play is right.
 - **`transfers` T1 at NORMAL, stranded 1** and **`deckRider` base at EASY, passed 1 (≥ 3)**: 07h's (the
   latter its documented known red).
+
+## Round 3 (the main session, 2026-09-25)
+
+**Wall clock: 75 minutes. Model: Fable.** Stop rule: 3 failed attempts at one target, then record the
+numbers and move on to the next item. Runs in parallel with 07l (the spiked bar), which owns
+`deckRider.ts` and only reads `sweeperHold.ts`. You own `sweeperHold.ts`, `movingWorld.ts`, `links.ts`,
+`linkProof.ts` and the non-ride planning in `PathBot.ts`. Shared files (`tuning/bots.ts`, `index.ts`,
+ADR 0129): re-read before editing, additive only. Never commit, stash or revert.
+
+What round 2 left, measured by 07j (`07j-slip-stream-regression-ab.md`, As built):
+the arc costs Slip Stream. On the Slip Stream Cp 1→2 leg (seed `holds:slip2:<level>:0`) without the arc
+it read HARD 10/0, NORMAL 7/0, EASY 4/1 (passed/stranded); with it, 8/1, 5/0, 0/0. The cause is
+`planArc`'s exit choice. It takes the first corridor sample clear of the swath, so a Bot comes out about
+2 m sideways of the line the rest of the leg's proofs assumed, and later Falls mid-link (`bot-2`, Tick 341).
+
+In order:
+1. **The arc rejoins its route.** Pick the exit nearest the pre-arc corridor's line, or re-plan from the
+   arc's actual landing point before handing back. Target: the slip2 leg at least as good as without the
+   arc (≥ 10/0, ≥ 7/0, ≥ 4 with stranded ≤ 1) on both seeds 0 and 1, and Spin Cycle's two legs no worse
+   than round 2's §1 table. If no version of the arc beats "no arc" on Slip Stream, gate the arc to
+   crosses only (a sweeper whose free window is shorter than the walk through its swath, the 24-versus-37
+   finding) and record it.
+2. **Crosses, §4's next thing:** keep only a *cross's* swath off the first plan, never a single bar's.
+   The 12 m lane has room beside it at |x| > 3.4. Target: Spin Cycle Start→Cp 0 and Cp 0→1 obstacle
+   Falls ≤ 10 at HARD, passed ≥ 10, stranded 0 (the ticket's original targets).
+3. **If budget remains:** the staggered pair (36/37) hold stands at the lane's middle, not at the edge
+   strip.
+
+Regression set: as in the ticket, plus the slip2 leg on both seeds at all three levels.
