@@ -86,7 +86,7 @@ const timed = function (this: SweeperHold, ...args: Parameters<SweeperHold["hold
   }
 };
 
-/** BOT_PROFILE_HOOK=1: the hook's time split between its parts (temporary, for the 07i cost work). */
+/** BOT_PROFILE_HOOK=1 (quick loop): the hook's time split between its parts, logged after the run (M17 ticket 07i's cost work). */
 const parts: Record<string, { calls: number; us: number }> = {};
 const wrapPart = (name: string): void => {
   const proto = SweeperHold.prototype as unknown as Record<string, (...a: unknown[]) => unknown>;
@@ -135,7 +135,6 @@ const play = async (name: string, level: BotLevel, seed?: string): Promise<Secti
     `[sweeperHold] ${name} ${level}: passed ${outcome.passed}, stranded ${outcome.stranded}, slow ${outcome.slow}, obstacle Falls ${obstacleFalls(outcome.falls)} ${JSON.stringify(outcome.falls)}, mean pass ${meanPass.toFixed(1)} s, think ${outcome.thinkUsPerBotTick.toFixed(1)} µs/Bot-Tick, hook ${result.hookUsPerCall.toFixed(2)} µs/call over ${hookCost.calls} calls, gave up ${result.gaveUp}, arcs ${result.arcs} (dropped ${result.arcsDropped})`,
   );
   if (process.env.BOT_PROFILE_HOOK) {
-    console.log(`  decide parts: ${JSON.stringify(SweeperHold.prof)} ms`);
     for (const [part, { calls, us }] of Object.entries(parts)) console.log(`  ${part}: ${calls} calls, ${(us / 1000).toFixed(1)} ms in all, ${(us / Math.max(1, calls)).toFixed(1)} µs/call, ${(us / Math.max(1, hookCost.calls)).toFixed(1)} µs per hook call`);
   }
   return result;

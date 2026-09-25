@@ -233,7 +233,6 @@ export class SweeperHold implements HoldHook {
   /** Per bar, the Tick before which an arc search there is not tried again (07i). */
   private readonly arcFailed = new Map<number, number>();
 
-  static prof = { near: 0, corridor: 0, scan: 0, scans: 0 };
   /** Every arc planned, over all Bots: logged by the suite, not asserted (07i). */
   static arcs = 0;
   /** Every arc dropped for the Bot straying off it, over all Bots. */
@@ -346,16 +345,10 @@ export class SweeperHold implements HoldHook {
     const { view, self, tick, clock, stale } = ctx;
     const { moving } = view.track;
     const look = Math.max(0, Math.round(this.profile.lookAheadTicks));
-    const t0 = performance.now();
     const near = moving.near(self.position, BOT_HOLD_LOOK_M, tick, look, clock, ["sweeper"]).filter((body) => !isStopped(moving, body, clock));
-    const t1 = performance.now();
-    SweeperHold.prof.near += t1 - t0;
     this.sweepersNear = near.length > 0;
     if (near.length === 0) return "go";
     const samples = corridorAhead(ctx, BOT_HOLD_LOOK_M, BOT_HOLD_SAMPLE_M);
-    const t2 = performance.now();
-    SweeperHold.prof.corridor += t2 - t1;
-    SweeperHold.prof.scans += 1;
     const jitter = Math.round((2 * botDraw(this.seed, `hold ${tick}`) - 1) * this.profile.timingErrorTicks);
     const grow = CAPSULE_RADIUS + BOT_HOLD_MARGIN_M;
     // A bar too slow to Stagger only shoves: holding for it is time lost. A spiked body always counts.
@@ -394,7 +387,6 @@ export class SweeperHold implements HoldHook {
         }
       }
     }
-    SweeperHold.prof.scan += performance.now() - t2;
     if (blockedAt < 0) return "go";
     // Blocked further off than the Bot stops in: walk on toward it and hold there (07g). What it walks while its view
     // lags and until the next decision is added, since it cannot see itself reaching a sample that near.

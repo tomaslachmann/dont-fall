@@ -232,7 +232,7 @@ Tick for Tick).
 | base NORMAL / EASY | 1 / 0 (2 str.), step-off 1 / 8 | **9** / 1, stranded 0, step-off **0 / 1** | 07b's ≥ 6 / ≥ 3 — NORMAL **met**, EASY known red; one step-off left at EASY (`bot-1` at (2.6, 4.7, −216.2), Tick 2488, unread) |
 | R1 / R2 | 12 / 12 / 12, 12 / 12 / 12 | 12 / 12 / 11, 12 / 12 / 11 (both EASY: 1 slow, 0 stranded) | hold |
 | T1 (two turntables) | 12 / 12 / 12 | 12 / **11 + 1 stranded** / 11 | **regressed at NORMAL** — a simulation wedge, below |
-| `neverStepsOff -t "every Motion stopped"` | 9 / 9 green | (filled below) | hold |
+| `neverStepsOff -t "every Motion stopped"` | 9 / 9 green | **9 / 9 green**, 0 own Falls, 12/12 everywhere | hold |
 | think, base HARD / T3 | 13–14 µs | 34–54 µs under the load (crowd 33–39) | ≤ 40 — read alone before trusting |
 
 ### What each item became

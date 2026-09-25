@@ -65,6 +65,47 @@ describe("the moving world (M17 ticket 07)", () => {
     expect(Math.hypot(v.x, v.z)).toBeCloseTo(Math.abs(spinning.config.motion.spin!.speed) * 1, 1);
   });
 
+  it("near: the per-body stray bound (M17 ticket 07i) never drops a body a walk over the window would find, on a clock and off", () => {
+    const { moving } = botTrackOf(SPIN_CYCLE_TRACK);
+    // What `near` answered before the bound: every body's origin walked over [tick, tick + window].
+    const walked = (p: { x: number; y: number; z: number }, reach: number, tick: number, window: number, clock: number | null): number[] => {
+      const out: number[] = [];
+      for (const body of moving.sweepers) {
+        const within = body.radius + reach;
+        for (let t = tick; t <= tick + window; t += 1) {
+          const q = moving.poseAt(body.index, t, clock).position;
+          if (Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z) <= within) {
+            out.push(body.index);
+            break;
+          }
+        }
+      }
+      return out;
+    };
+    // A seeded walk of points over the Track's extent, about the bodies' own heights.
+    let s = 12345;
+    const draw = (): number => ((s = (s * 1103515245 + 12345) % 2147483648) / 2147483648);
+    let found = 0;
+    let asked = 0;
+    for (const clock of [null, 40]) {
+      for (let n = 0; n < 400; n += 1) {
+        const body = moving.sweepers[Math.floor(draw() * moving.sweepers.length)]!;
+        const rest = moving.poseAt(body.index, 0, null).position;
+        const p = { x: rest.x + (draw() - 0.5) * 30, y: rest.y + (draw() - 0.5) * 4, z: rest.z + (draw() - 0.5) * 30 };
+        const tick = Math.floor(draw() * 600);
+        const window = Math.floor(draw() * 24);
+        const expected = walked(p, 8, tick, window, clock);
+        const got = moving.near(p, 8, tick, window, clock, ["sweeper"]).map((b) => b.index);
+        expect(got, `point ${JSON.stringify(p)} tick ${tick} window ${window} clock ${clock}`).toEqual(expected);
+        found += expected.length;
+        asked += 1;
+      }
+    }
+    // The walk is a real test only if it finds bodies sometimes, and misses them sometimes.
+    expect(found).toBeGreaterThan(asked / 4);
+    expect(found).toBeLessThan(asked * moving.sweepers.length);
+  });
+
   it("classifies the base race's and Spin Cycle's bodies by what they are to a runner", () => {
     for (const [name, track] of [
       ["base race", BASE_RACE_TRACK],
