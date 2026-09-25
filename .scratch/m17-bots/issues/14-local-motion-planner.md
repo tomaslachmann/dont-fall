@@ -37,15 +37,50 @@ is the 07m log.
 2. **Braking.** The stand candidate brakes to zero on every floor: a push against its own velocity
    until it is under `BOT_BRAKE_MIN_SPEED`.
    - Target: at EASY, impacts with the hold standing and `vbot` > 0.5 go below 10% of 07m's 113.
-3. **Crowd.**
-   - Other Characters join the rollout. Their positions come from `others`, and each velocity is the
-     difference between the Bot's last two views of that Character, extrapolated at constant velocity.
-   - Every non-committed Steering goes through the planner, not only a held one.
+3. **Crowd** (rewritten 2026-09-25 after phases 1–2). The written version, "every non-committed
+   Steering through the planner", would miss most of the crowd Falls. They happen on rides, where
+   `DeckRider` is committed and the planner is never asked:
+   - the squares' ring on base race Cp 2→3 (pushed 27 / 44 at NORMAL / EASY);
+   - waiting and boarding on Spin Cycle Start→Cp 0 (pushed 16–57);
+   - the moving rows on base race Cp 1→2.
+
+   In order:
+   0. **First, trace the two new step-offs** (base race HARD and NORMAL, the whole-Race run in the As
+      built below) Bot by Bot, as ADR 0129 requires. If one is the planner's, fix that before anything
+      else.
+   1. **Two kinds of committed.** A *script* stays untouchable: a link's run, a transfer's run-up and
+      jump, an arc. *Positioning* goes through the planner, in the deck's frame when the Bot is on one:
+      `DeckRider`'s waiting spot, its walk across a deck, standing aboard, waiting to alight. Mark this on
+      the Steering (for example `committed: "script" | "position"`, or a separate flag), so that
+      `EdgeGuard` and the other hooks keep treating both as they do today.
+   2. **Characters with velocity.** Take `view.characters` (id → `CharacterSnapshot`, which has
+      `velocity`) as the Bot sees them, not the position-only `others`. Extrapolate each at constant
+      velocity over the rollout, and consider only those within a few metres. `queueFor` and `unstall`
+      keep their input.
+   3. **Risk by the simulation's rules.** Contact on its own is not a Fall. Score:
+      - a **Bump that would Stagger**: a relative closing speed ≥ `MOVING_SEGMENT_STAGGER_SPEED` at a
+        predicted overlap, which is the same threshold through `BUMP_IMPULSE_SCALE`. Two Bots walking at
+        each other close at 11 u/s;
+      - a **contact near an edge**, weighted by how close the rollout point is to the nearest void
+        edge (`voidEdgesNear`), because a `pushed` Fall is a shove at an edge.
+   4. **No dance.** Twelve planners alike all dodge the same way and oscillate. Each Bot gets a
+      deterministic preferred side (`botDraw(seed, …)`), a small bias in the score, and the existing
+      keep bonus holds its choice.
+   5. **Spread the waiting.** Bots waiting for a sweeper's window or to board stand at one point. Their
+      waiting spots are spread across the lane's width, or round a deck's ring (07l's finding). A queue
+      order like `queueFor`'s is used where there is one way through.
+   6. **The fight is exempt.** A Character the behaviour tree is fighting (aggression > 0) is left out of
+      the crowd risk. `fightRace` must stay green.
+   7. **Measure** with the log extended to Character impacts and pushes: who pushed whom, the
+      Bot's `DeckRider` state, and the distance to the nearest edge. Legs: base race Cp 1→2 and Cp 2→3,
+      Spin Cycle Start→Cp 0, all three levels, seeds as before.
    - Targets:
-     - base race NORMAL and EASY: `contact` + `pushed` on Cp 1→2 and Cp 2→3 halved against the evening
-       whole-Race run in `07d`;
-     - HARD base finish ≥ 11 held;
-     - think µs within ticket 08's budget.
+     - base race NORMAL and EASY: `contact` + `pushed` on Cp 1→2 and Cp 2→3 halved against the
+       evening whole-Race run in `07d`;
+     - Spin Cycle Start→Cp 0: `pushed` halved;
+     - base race HARD finish ≥ 11 held, step-offs 0 (the two above explained or gone), stranded 0;
+     - phases 1–2's numbers no worse;
+     - think µs reported (the planner's own share, as phases 1–2 measured it).
 4. **Swept regions for slides** (07m B-1).
    - `MovingWorld` keeps one swept hull per body, computed off the clock over one cycle.
    - The planner's and `SweeperHold`'s "still in the swath" ask it instead of the disc.
