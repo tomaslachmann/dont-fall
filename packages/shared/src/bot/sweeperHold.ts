@@ -357,7 +357,7 @@ export class SweeperHold implements HoldHook {
       if (body.spiked) return true;
       const v = moving.velocityAt(body.index, at, clock, p);
       // The Bot walks into it: its own walk closes the gap too (07i).
-      return Math.hypot(v.x, v.y, v.z) > Math.min(BOT_HOLD_MIN_SPEED, BOT_HOLD_MIN_SPEED_WALKING);
+      return Math.hypot(v.x, v.y, v.z) > (process.env.R3_OLD_SPEED ? BOT_HOLD_MIN_SPEED : Math.min(BOT_HOLD_MIN_SPEED, BOT_HOLD_MIN_SPEED_WALKING));
     };
     // On a moving deck the Bot is carried: a sample it will reach is where the deck takes it by then (07g).
     const deck: Platform | null = self.grounded ? moving.platformUnder(self.position, tick, clock) : null;
@@ -374,7 +374,7 @@ export class SweeperHold implements HoldHook {
     for (let i = 0; i < samples.length && blockedAt < 0; i += 1) {
       const { p, arriveTick } = samples[i]!;
       if (arriveTick - tick > look) {
-        if (!through) break;
+        if (!through || process.env.R3_NO_THROUGH) break;
         if (!inSwath(p)) break;
       } else through = inSwath(p);
       const at = arriveTick + jitter;
@@ -416,6 +416,7 @@ export class SweeperHold implements HoldHook {
     const { view, self, tick, clock, stale } = ctx;
     const { moving, nav } = view.track;
     const { body, near, samples, counts } = blocked;
+    if (process.env.R3_NOARC) return null;
     // From a stand, seen: the arc is a count from here, as a link's script is.
     if (Math.hypot(self.velocity.x, self.velocity.z) >= BOT_BRAKE_MIN_SPEED) return null;
     const failedUntil = this.arcFailed.get(body.index);

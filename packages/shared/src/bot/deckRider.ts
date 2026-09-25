@@ -437,6 +437,9 @@ export class DeckRider implements RideHook {
     return Math.hypot(self.velocity.x - floor.x, self.velocity.z - floor.z) < BOT_BRAKE_MIN_SPEED;
   }
 
+  /** TEMP 07l trace hook. */
+  static trace: ((id: string, tick: number, note: string) => void) | null = null;
+
   private step(ctx: HookContext, table: RideTable, seenTick: number): Steering | null {
     const { tick, self, clock } = ctx;
     const track = ctx.view.track;
@@ -444,6 +447,11 @@ export class DeckRider implements RideHook {
     const ride = this.ride!;
     const platform = this.platform!;
     const deck = table.decks[platform.index]!;
+    if (DeckRider.trace !== null) {
+      const t = this.state === "aboard" || this.state === "waitToAlight" ? this.aboardTarget(ctx, table) : null;
+      const f = (v: Vec3 | null | undefined): string => (v == null ? "-" : `(${v.x.toFixed(1)},${v.z.toFixed(1)})`);
+      DeckRider.trace(ctx.view.id, tick, `${this.state} p${platform.index} entry ${f(ride.entry.local)} to${ride.entry.to?.platform ?? "-"} exit ${f(ride.exit.local)} to${ride.exit.to?.platform ?? "-"} jump ${ride.exit.jump} target ${f(t)} across ${ride.across.toFixed(1)} forced ${this.forcedAt}`);
+    }
     switch (this.state) {
       case "waitToBoard":
       case "waitToAlight": {
