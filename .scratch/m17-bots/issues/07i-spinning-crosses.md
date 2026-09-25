@@ -10,8 +10,9 @@ and the second plan is the same route.
 **Blocked by:** 07g. **Runs in parallel with 07h round 2**, which owns `deckRider.ts` and
 `rideLinks.ts`.
 
-**Status:** planned. **Wall clock: 75 minutes. Model: Fable.** Stop rule: 3 failed attempts at one
-target, then record the numbers and the diagnosis, and move on.
+**Status:** done on tests, targets on Falls not met (recorded in "As built"). **Wall clock: 75 minutes,
+plus a second session of 60. Model: Fable.** Stop rule: 3 failed attempts at one target, then record the
+numbers and the diagnosis, and move on.
 
 ## Findings this ticket starts from (the combined whole-Race run, `07d-integration.md`, last section)
 
@@ -78,10 +79,13 @@ Use `playSection` with 12 Bots per level:
   - `difficulty.test.ts` (07g recorded why);
   - `races.test.ts`.
 
-## As built (2026-09-25, Fable, 75 minutes; numbers first)
+## As built (2026-09-25, Fable, 75 minutes + a second session of 60; numbers first)
 
 Everything seeded (`holds:<leg>:<level>:0`), aggression 0, Motion running, 12 Bots, 120 s cap, on one machine
-beside 07h's suites (wall-clock µs are ±2×). 07g's row is the "before".
+beside 07h's suites (wall-clock µs are ±2×). 07g's row is the "before". The first session was stopped
+mid-work after §1–§4 below and the arc's own-frame occupancy half-written; the second session verified it,
+measured the cost properly (§3), and fixed what the measurement named. It did not attempt the Falls
+targets again: §4's next fixes are unchanged and still the next thing.
 
 ### 1. The three legs (HARD, one seed; targets: obstacle Falls ≤ 10, passed ≥ 10, stranded 0)
 
@@ -151,16 +155,53 @@ below). What moved and what did not, per leg:
 - **`near` keeps a stray bound per body** (`movingWorld.ts`, the one file outside the ticket's list touched;
   it is nobody's in 07h's split, and the edit is additive). See §3 for why: it was the whole cost.
 
-### 3. Cost (met on two legs, within noise on the third)
+### 3. Cost (met on one leg, within noise on another, not on the cross's)
 
-The hook's share is **34–59 µs a call** on these legs (target ≤ 15; 07g: 2–16). Two costs, both mine:
-the arc search itself (up to 47 start Ticks × 10 played arcs × ~60 Ticks × near bodies of `occupies`,
-each a pose outside the 26-Tick ring cache — ~10 ms a search, once per Bot per bar, amortised over
-~2000 calls) and, larger, the through-the-swath horizon and `inSwath` per sample per decision on every
-leg with a sweeper. Not brought down in the budget. The cheap fix is to test an arc in the bar's *own*
-frame (a spin about a fixed pivot: occupancy at `tick + d` is occupancy of the point turned back by
-`ω·d` at `tick`), which makes every start Tick a rotation instead of a pose, and to cache `inSwath` per
-decision.
+First session: the hook's share was **34–59 µs a call** on these legs (target ≤ 15; 07g: 2–16), and the
+diagnosis was the arc search (poses outside the ring cache) and the through-the-swath scan.
+
+Second session, **profiled before anything was changed** (`BOT_PROFILE_HOOK=1` in the quick loop wraps
+`decide` / `planArc` / `followArc` / `stand` / `retreat`; a further split of `decide` was temporary), Spin
+Cycle Cp 0 → 1 at HARD, the same seed:
+
+| part | calls | ms in all | per hook call |
+|---|---|---|---|
+| `decide` | 10,981 | 1,523 | 45.4 µs |
+| — of which `moving.near` | 5,967 scans | **1,180** | 35 µs |
+| — `corridorAhead` | | 209 | 6 µs |
+| — the swath scan (`inSwath`, `occupies`, `counts`) | | 100 | 3 µs |
+| `planArc` | 495 | 16 | 0.5 µs |
+| `stand` + `retreat` | 8,442 | 16 | 0.5 µs |
+
+So the first session's diagnosis was wrong on both counts: the arc search is half a microsecond a call,
+and the swath scan three. **The cost was `near`**: it walked every sweeper's origin over the look window
+every decision, and Spin Cycle has 68 sweepers (20 swinging or sliding, whose origins move) against the
+base race's 24 that 07g's 2–16 µs were measured on. Fixed in `movingWorld.ts` (additive, nobody's file in
+the 07h split): `near` keeps per body where its origin rests and the furthest it ever strays (one cycle
+at pace 1 sampled at build, plus a Tick's step for the phases a Ramp lands between samples; exact for a
+body posed by one Motion of its own — no bound, so the old walk, for a chain of Motions, a trap door or
+a glove) and rejects a far body with one hypot. `movingWorld.test.ts` holds it to the old walk on 800
+seeded asks over Spin Cycle, on a clock and off, to the same list.
+
+The three legs at HARD, the same seed, three runs on one machine (07h's suites running beside):
+
+| leg | hook µs/call: WIP as committed → own frame + `inSwath` cached → + `near` bound | target ≤ 15 | outcome |
+|---|---|---|---|
+| Spin Cycle Start → Cp 0 (44 arc searches) | 62.0 → 54.0 → **24.2** | no | identical in all three |
+| Spin Cycle Cp 0 → 1 | 51.3 → 45.9 → **16.6** | within noise (±2×) | identical |
+| Slip Stream Cp 1 → 2 | 30.8 → 32.5 → **19.6** | no (but 07g's 2–16 was the base race) | identical |
+
+The outcome of every leg (passed, stranded, obstacle Falls by cause, give-ups, arcs, mean pass) is
+bit-identical across the three runs, which is what both changes promise: the frame trick is exact, and
+the bound never drops a body. What is left above 15 is `decide` itself on a leg with many sweepers near
+(`corridorAhead` and the scan, ~9 µs a hook call, since a decision happens every third Tick), and the
+cross's arc searches on the first leg.
+
+**A number that does not match the first session's §1:** Slip Stream Cp 1 → 2 at HARD now reads
+**passed 8, stranded 1, obstacle Falls 27 (Stagger 26), gave up 19** — identical across all three of
+this session's runs, so not from anything here; §1's row (10 / 17 / 3, stranded 0) was measured earlier
+in the day against a different `deckRider.ts` (07h round 2 is in the working tree, uncommitted, and that
+leg's walls and spiked circles are its rides). The main session should re-measure after 07h lands.
 
 ### 4. Not built, and what to build next
 
@@ -183,6 +224,6 @@ decision.
 - **Bumps on the catwalk (27 at HARD)** are the same crowd-at-a-hold problem as 07h's crowd rows: a
   queue rule for holds (as links and rides have) would take them.
 
-### Regression set
+### Regression set (second session, run once at the end, 07h's uncommitted `deckRider.ts` in the tree)
 
-Below, filled from the runs beside this section.
+REGRESSION_PLACEHOLDER
