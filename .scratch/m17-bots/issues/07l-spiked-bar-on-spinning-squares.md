@@ -55,15 +55,19 @@ before and after back to back on one tree. Obstacle = Obstacle + Stagger + pushe
 |---|---|---|---|
 | HARD a | 5 / 0 / 18 (**17**) | 5 / 0 / **0** (0) | Obstacle ≤ 10 **met**; passed ≥ 10 **not met** (5, as before) |
 | HARD b | 3 / 0 / 20 (**18**) | 3 / 0 / **3** (1) | Obstacle **met**; passed not met (3, as before) |
-| NORMAL a | 1 / 1 / 22 (21) | NORMAL_A | no worse |
-| NORMAL b | 0 / 1 / 25 (22) | NORMAL_B | no worse |
-| EASY a | 0 / 1 / 18 (15) | EASY_A | no worse |
-| EASY b | 0 / 0 / 13 (10) | EASY_B | no worse |
+| NORMAL a | 1 / 1 / 22 (21) | 2 / 1 / 14 (**2**) | `Obstacle` 21 → 2, passed +1 |
+| NORMAL b | 0 / 1 / 25 (22) | 2 / 1 / 9 (**0**) | `Obstacle` 22 → 0, passed +2 |
+| EASY a | 0 / 1 / 18 (15) | 0 / 0 / 32 (**0**) | `Obstacle` 15 → 0, stranded 1 → 0; **`pushed` 2 → 26** |
+| EASY b | 0 / 0 / 13 (10) | 0 / 0 / 34 (**1**) | `Obstacle` 10 → 1; **`pushed` 3 → 26** |
 
-Step-offs: 0 at HARD before and after. The `contact` Falls rose at HARD (1 / 3 → 7 / 10): Bots that used to be
-knocked down by the bar now stand on the square in each other's way. The passed column did not move at
-any level: the leg's throughput is 07e's finding (a transfer between corners that meet every quarter turn,
-one Bot per window), which this ticket did not touch.
+Step-offs: 0 at HARD before and after (one at NORMAL a and EASY a after, none before). The bar's own
+knockdowns (`Obstacle`) are gone at every level: 17 / 18 / 21 / 22 / 15 / 10 → 0 / 1 / 2 / 0 / 0 / 1. What
+replaced them is the crowd: `contact` at HARD 1 / 3 → 7 / 10, and at EASY `pushed` 2 / 3 → **26 / 26** (a
+`pushed` Fall counts as an obstacle Fall in the harness's sum, which is why EASY's total reads higher) —
+twelve Bots that used to be knocked down one at a time by the bar now all stand on the square, outside a
+3.7 m swath on a deck whose inscribed radius is 4.5 m, in a ring 0.8 m wide, and shove each other off it.
+Passed moved by 0 / 0 / +1 / +2 / 0 / 0: the leg's throughput is 07e's finding (a transfer between corners
+that meet every quarter turn, one Bot per window), which this ticket did not touch.
 
 ### The traced cause
 
@@ -115,12 +119,29 @@ Four constants in `tuning/bots.ts` ("A sweeper riding a moving deck"). No new ex
 - **Nothing here belongs in `sweeperHold.ts`.** The one thing worth knowing there: `hold` skips every
   committed Steering, which is by design (a ride owns the Bot), so a sweeper on a deck is the rider's to
   read, as it now is.
-- `contact` Falls at HARD 1 / 3 → 7 / 10: twelve Bots standing on a square outside the bar's swath stand
-  in a ring 0.6–2.6 m wide, in each other's way. Not read.
+- **The crowd on the square** (`contact` at HARD 7 / 10, `pushed` at EASY 26 / 26): twelve Bots outside
+  the swath share a ring 0.8 m wide. `aboardTarget`'s spread (`BOT_RIDE_SPREAD_M`) was made for a straight
+  rim; on a swath deck the spread wants to go *round* the ring, not across and back from the exit. Not built
+  (budget). At EASY it is the whole leg now.
 
 ### Regression set
 
-REGRESSION
+Run on the final code beside 07i round 3's and 07k's suites (three workers at 100%), and once more on
+the first cut, which found no swath and was bit-identical to the tree before, so that run is the baseline:
+**every outcome row is identical between the two** — passed, stranded, slow and every Fall count on R1, R2,
+base leg 2, the crowd case, T1, T2 and T3 at every level (`deckRider.test.ts` and `transfers.test.ts` print
+them). No deck in those cases carries a sweeper, so `swathsOn` finds nothing there, as designed.
+
+- `deckRider`: R1 12 / 12 / 11, R2 12 / 12 / 11, base 12 / 10 / 3 (EASY stranded 1, 07b's known red),
+  crowd 12 / 12 / 3 (EASY step-off 2 — the same on the baseline run, so not mine; 07h round 2 recorded 0,
+  and 07k is changing the simulation under both). Red only on wall clock: think 55–84 µs against 40, the
+  table 195 ms against 50 (07e's known red), under the load.
+- `transfers`: T1 12 / 12 / 12, T2 12 / 11 / 12, T3 12 / 9 / 11, stranded 0 everywhere (T1 NORMAL's
+  wedge is gone on this tree, 07k's). Red only on wall clock: think 42–141 µs against 40, Spin Cycle's
+  transfer stage 198 ms against 80, under the load.
+- `neverStranded`: 5 / 5 green. `neverStepsOff -t "every Motion stopped"`: 9 / 9 green.
+- `apps/server` `matchRuntime.bots` + `botFill`: 12 / 12 green. Typecheck `packages/shared` and
+  `apps/server`: clean.
 
 ### Files
 
