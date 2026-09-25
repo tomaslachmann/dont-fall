@@ -107,6 +107,62 @@ const yawOf = (q: Quat): number => 2 * Math.atan2(q.y, q.w);
 const wrapAngle = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 const groundDistance = (a: Vec3, b: Vec3): number => Math.hypot(b.x - a.x, b.z - a.z);
 
+/** A body turning flat about a fixed pivot, as of `tick`: its yaw rate and one turn in Ticks. */
+export interface SpinAbout {
+  readonly pivot: Vec3;
+  /** Radians per second; the sign is the turn's. */
+  readonly w: number;
+  readonly period: number;
+}
+
+/**
+ * `body` as a spin about a fixed pivot at `tick`, or null: its yaw must
+ * advance between `tick` and `tick + 1` with no roll or pitch, and its origin
+ * must be where it was a quarter turn on (a swing or a slide is not).
+ */
+export const spinAbout = (moving: MovingWorld, body: MovingBody, tick: number, clock: HookContext["clock"]): SpinAbout | null => {
+  const pose0 = moving.poseAt(body.index, tick, clock);
+  const pose1 = moving.poseAt(body.index, tick + 1, clock);
+  if (!isYaw(pose0.rotation) || !isYaw(pose1.rotation)) return null;
+  const w = wrapAngle(yawOf(pose1.rotation) - yawOf(pose0.rotation)) / TICK_DT;
+  if (Math.abs(w) < 1e-3) return null;
+  const period = Math.max(2, Math.round((2 * Math.PI) / Math.abs(w) / TICK_DT));
+  const later = moving.poseAt(body.index, tick + Math.round(period / 4), clock).position;
+  if (groundDistance(later, pose0.position) > 1e-3) return null;
+  return { pivot: pose0.position, w, period };
+};
+
+/**
+ * The point whose occupancy by `spin`'s body *now* is `p`'s occupancy
+ * `ticks` Ticks on: `p` turned back about the pivot by the body's turn over
+ * those Ticks (M17 ticket 07i). A spinning body's future is asked of its
+ * present pose, so a start Tick costs a sine, not a pose outside the ring
+ * cache. `cos`/`sin` are the turn's, when the caller has them tabled.
+ */
+export const turnedBack = (spin: SpinAbout, ticks: number, p: Vec3, cos = Math.cos(spin.w * ticks * TICK_DT), sin = Math.sin(spin.w * ticks * TICK_DT)): Vec3 => {
+  const dx = p.x - spin.pivot.x;
+  const dz = p.z - spin.pivot.z;
+  return { x: spin.pivot.x + dx * cos - dz * sin, y: p.y, z: spin.pivot.z + dx * sin + dz * cos };
+};
+
+/** A spinner's turn over each Tick offset an arc search asks, tabled once per search. */
+interface SpinTable {
+  readonly spin: SpinAbout;
+  readonly cos: Float64Array;
+  readonly sin: Float64Array;
+}
+
+const spinTable = (spin: SpinAbout, offsets: number): SpinTable => {
+  const cos = new Float64Array(offsets);
+  const sin = new Float64Array(offsets);
+  for (let d = 0; d < offsets; d += 1) {
+    const a = spin.w * d * TICK_DT;
+    cos[d] = Math.cos(a);
+    sin[d] = Math.sin(a);
+  }
+  return { spin, cos, sin };
+};
+
 /** How far past the bar's swept radius, plus the grown margin, a corridor sample must lie to be the arc's exit. */
 const ARC_EXIT_CLEAR_M = 0.3;
 /** How near a polyline point the played walk must come before it heads for the next. */
@@ -177,6 +233,7 @@ export class SweeperHold implements HoldHook {
   /** Per bar, the Tick before which an arc search there is not tried again (07i). */
   private readonly arcFailed = new Map<number, number>();
 
+  static prof = { near: 0, corridor: 0, scan: 0, scans: 0 };
   /** Every arc planned, over all Bots: logged by the suite, not asserted (07i). */
   static arcs = 0;
   /** Every arc dropped for the Bot straying off it, over all Bots. */
@@ -289,10 +346,16 @@ export class SweeperHold implements HoldHook {
     const { view, self, tick, clock, stale } = ctx;
     const { moving } = view.track;
     const look = Math.max(0, Math.round(this.profile.lookAheadTicks));
+    const t0 = performance.now();
     const near = moving.near(self.position, BOT_HOLD_LOOK_M, tick, look, clock, ["sweeper"]).filter((body) => !isStopped(moving, body, clock));
+    const t1 = performance.now();
+    SweeperHold.prof.near += t1 - t0;
     this.sweepersNear = near.length > 0;
     if (near.length === 0) return "go";
     const samples = corridorAhead(ctx, BOT_HOLD_LOOK_M, BOT_HOLD_SAMPLE_M);
+    const t2 = performance.now();
+    SweeperHold.prof.corridor += t2 - t1;
+    SweeperHold.prof.scans += 1;
     const jitter = Math.round((2 * botDraw(this.seed, `hold ${tick}`) - 1) * this.profile.timingErrorTicks);
     const grow = CAPSULE_RADIUS + BOT_HOLD_MARGIN_M;
     // A bar too slow to Stagger only shoves: holding for it is time lost. A spiked body always counts.
@@ -310,11 +373,9 @@ export class SweeperHold implements HoldHook {
     // The look-ahead is how far off a Bot notices a sweeper; a swath it has
     // noticed is checked all the way through (07i): a single bar's window is
     // as long as the walk through its swath, which no level's look covers.
-    const inSwath = (p: Vec3): boolean =>
-      near.some((body) => {
-        const at = moving.poseAt(body.index, tick, clock).position;
-        return Math.hypot(at.x - p.x, at.z - p.z) <= body.radius + grow;
-      });
+    // Each near body's swath as it stands now, once a decision, not once a sample.
+    const swaths = near.map((body) => ({ at: moving.poseAt(body.index, tick, clock).position, radius: body.radius + grow }));
+    const inSwath = (p: Vec3): boolean => swaths.some(({ at, radius }) => Math.hypot(at.x - p.x, at.z - p.z) <= radius);
     let blockedAt = -1;
     let through = false;
     for (let i = 0; i < samples.length && blockedAt < 0; i += 1) {
@@ -333,6 +394,7 @@ export class SweeperHold implements HoldHook {
         }
       }
     }
+    SweeperHold.prof.scan += performance.now() - t2;
     if (blockedAt < 0) return "go";
     // Blocked further off than the Bot stops in: walk on toward it and hold there (07g). What it walks while its view
     // lags and until the next decision is added, since it cannot see itself reaching a sample that near.
@@ -371,15 +433,9 @@ export class SweeperHold implements HoldHook {
       return null;
     };
     // A bar turning flat about a fixed pivot: its yaw advances, its origin stays.
-    const pose0 = moving.poseAt(body.index, tick, clock);
-    const pose1 = moving.poseAt(body.index, tick + 1, clock);
-    if (!isYaw(pose0.rotation) || !isYaw(pose1.rotation)) return fail();
-    const omega = wrapAngle(yawOf(pose1.rotation) - yawOf(pose0.rotation)) / TICK_DT;
-    if (Math.abs(omega) < 1e-3) return fail();
-    const period = Math.max(2, Math.round((2 * Math.PI) / Math.abs(omega) / TICK_DT));
-    const later = moving.poseAt(body.index, tick + Math.round(period / 4), clock).position;
-    if (groundDistance(later, pose0.position) > 1e-3) return fail();
-    const pivot = pose0.position;
+    const bar = spinAbout(moving, body, tick, clock);
+    if (bar === null) return fail();
+    const { pivot, w: omega, period } = bar;
     const grow = CAPSULE_RADIUS + BOT_ARC_MARGIN_M;
     const swath = body.radius + grow;
     // The path's first sample past the swath is where the arc comes out.
@@ -393,32 +449,25 @@ export class SweeperHold implements HoldHook {
     }
     if (exit === null) return fail();
     // A body turning flat about a fixed pivot occupies at `at` what it occupies
-    // at `tick` turned back by its turn since: asked at `tick`, every pose is
-    // the ring cache's, and a start Tick costs a sine, not a pose. Any other
-    // near body (a hammer, a wall) is asked at `at` as before.
+    // at `tick` turned back by its turn since (`turnedBack`): asked at `tick`,
+    // every pose is the ring cache's, and a start Tick costs a sine — tabled
+    // here, once per search, for every offset the search asks. Any other near
+    // body (a hammer, a wall) is asked at `at` as before.
+    const offsets = period + BOT_ARC_MAX_TICKS + stale.max + 2;
     const spinners = near.map((b) => {
-      const p0 = moving.poseAt(b.index, tick, clock);
-      const p1 = moving.poseAt(b.index, tick + 1, clock);
-      if (!isYaw(p0.rotation) || !isYaw(p1.rotation)) return null;
-      const w = wrapAngle(yawOf(p1.rotation) - yawOf(p0.rotation)) / TICK_DT;
-      const turn = Math.max(2, Math.round((2 * Math.PI) / Math.max(1e-3, Math.abs(w)) / TICK_DT));
-      const then = moving.poseAt(b.index, tick + Math.round(turn / 4), clock).position;
-      return groundDistance(then, p0.position) > 1e-3 ? null : { pivot: p0.position, w };
+      const spin = spinAbout(moving, b, tick, clock);
+      return spin === null ? null : spinTable(spin, offsets);
     });
     const clearAt = (p: Vec3, at: number): boolean => {
       for (let i = 0; i < near.length; i += 1) {
         const b = near[i]!;
-        const spin = spinners[i] ?? null;
-        if (spin === null) {
+        const table = spinners[i] ?? null;
+        if (table === null) {
           if (moving.occupies(b.index, at, clock, p, grow) && counts(b, at, p)) return false;
           continue;
         }
-        const a = spin.w * (at - tick) * TICK_DT;
-        const c = Math.cos(a);
-        const s = Math.sin(a);
-        const dx = p.x - spin.pivot.x;
-        const dz = p.z - spin.pivot.z;
-        const q = { x: spin.pivot.x + dx * c - dz * s, y: p.y, z: spin.pivot.z + dx * s + dz * c };
+        const d = at - tick;
+        const q = d >= 0 && d < offsets ? turnedBack(table.spin, d, p, table.cos[d], table.sin[d]) : turnedBack(table.spin, d, p);
         if (moving.occupies(b.index, tick, clock, q, grow) && counts(b, tick, q)) return false;
       }
       return true;
@@ -460,12 +509,17 @@ export class SweeperHold implements HoldHook {
       }
     }
     if (played.length === 0) return fail();
-    // The earliest start Tick over one turn that some arc is clear from, waiting here safe until it.
+    // The earliest start Tick over one turn that some arc is clear from, waiting here safe until it. The
+    // stand is checked once per Tick of the wait: a Tick the bar reaches the stand rules out every later start.
+    let waitChecked = tick + stale.max - 2;
     for (let delay = 0; delay < period; delay += BOT_ARC_DELAY_STEP_TICKS) {
       const startTick = tick + delay;
       let waitSafe = true;
-      for (let at = tick + stale.max; at <= startTick && waitSafe; at += 2) waitSafe = clearAt(start, at);
-      if (!waitSafe) continue;
+      for (let at = waitChecked + 2; at <= startTick && waitSafe; at += 2) {
+        waitSafe = clearAt(start, at);
+        waitChecked = at;
+      }
+      if (!waitSafe) break;
       for (const points of played) {
         let clear = true;
         for (let k = 0; k < points.length && clear; k += 1) clear = clearAt(points[k]!, startTick + k);

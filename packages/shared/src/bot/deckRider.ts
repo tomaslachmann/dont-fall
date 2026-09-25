@@ -323,11 +323,6 @@ export class DeckRider implements RideHook {
     }
     const out = this.step(ctx, table, seenTick);
     this.quiet = out === null || (out.moveDirection.x === 0 && out.moveDirection.z === 0 && out.jump !== true) ? this.quiet + 1 : 0;
-    // TEMP TRACE
-    if (process.env.BOT_TRACE === ctx.view.id && tick >= Number(process.env.BOT_TRACE_FROM ?? 0) && tick <= Number(process.env.BOT_TRACE_TO ?? 0)) {
-      const p = self.position;
-      console.log(`[trace] t${tick} ${this.state} pos (${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)}) g${self.grounded ? 1 : 0} v(${self.velocity.x.toFixed(1)},${self.velocity.z.toFixed(1)}) spot ${this.boardSpot ? `(${this.boardSpot.x.toFixed(2)}, ${this.boardSpot.z.toFixed(2)})` : "-"} walkUntil ${this.spotWalkUntil} out ${out ? `(${out.moveDirection.x.toFixed(2)},${out.moveDirection.z.toFixed(2)}) j${out.jump ? 1 : 0}` : "null"} corner ${ctx.corner}/${ctx.path.length} ${ctx.path[ctx.corner] ? `(${ctx.path[ctx.corner]!.point.x.toFixed(1)}, ${ctx.path[ctx.corner]!.point.z.toFixed(1)}) ride ${ctx.path[ctx.corner]!.ride ?? "-"}` : ""}`);
-    }
     return out;
   }
 
@@ -639,11 +634,6 @@ export class DeckRider implements RideHook {
     this.run = null;
     this.jumpHeading = direction;
     this.jumpLine = takeOffLocal === null ? null : { from: source, to: takeOffLocal };
-    // TEMP TRACE
-    if (process.env.BOT_TRACE === ctx.view.id) {
-      const j = jumpOffEnd(ctx.view.track, table, deck, platform, source, end, tick, clock);
-      console.log(`[jump] t${tick} still (${end.still.x.toFixed(2)}, ${end.still.y.toFixed(2)}, ${end.still.z.toFixed(2)}) takeOff (${j.takeOff.x.toFixed(2)}, ${j.takeOff.z.toFixed(2)}) runUp ${j.runUp} carry (${j.carry.x.toFixed(2)}, ${j.carry.z.toFixed(2)}) lands (${j.lands.x.toFixed(2)}, ${j.lands.z.toFixed(2)}) dir (${j.direction.x.toFixed(2)}, ${j.direction.z.toFixed(2)}) source (${source.x.toFixed(2)}, ${source.z.toFixed(2)})`);
-    }
     const heading = this.jumpLine === null ? direction : unit(moving.toWorld(platform, tick, clock, this.jumpLine.from), moving.toWorld(platform, tick, clock, this.jumpLine.to));
     return { moveDirection: heading, dash: false, jump: false, committed: true };
   }

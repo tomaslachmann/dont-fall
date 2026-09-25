@@ -436,6 +436,30 @@ export const movingWorldOf = (resolved: ResolvedTrack, nav: TrackNav): MovingWor
   const poses: MotionPose[] = new Array<MotionPose>(ring * n);
   let cachedClock: MotionClock | undefined;
   const moves = bodies.map((b) => originMoves(b.config));
+  // Where each body's origin rests, and the furthest it ever strays from there (M17 ticket 07i): `near`
+  // rejects a far body with one hypot against these instead of walking its origin over the look window
+  // (Spin Cycle's 68 sweepers cost `SweeperHold` 107 µs a decision that way). Exact for a body posed by
+  // one periodic Motion of its own, whose origin's path is the one cycle at pace 1 sampled here, plus a
+  // Tick's step for the phases a Ramp lands between samples; any other body (a chain of Motions, a trap
+  // door, a glove) keeps the walk.
+  const rests = bodies.map((b) => movingSegmentPose(b.config, 0, null).position);
+  const strays = bodies.map((b, i) => {
+    if (!moves[i]) return 0;
+    const { motion, under, trapDoor, punch } = b.config;
+    const kinds = [motion.spin, motion.swing, motion.slide].filter((m) => m !== undefined).length;
+    if (kinds !== 1 || under !== undefined || trapDoor !== undefined || punch !== undefined) return Number.POSITIVE_INFINITY;
+    const rest = rests[i]!;
+    let stray = 0;
+    let step = 0;
+    let previous = rest;
+    for (let tick = 1; tick <= periodTicksOf(motion) + 1; tick += 1) {
+      const p = movingSegmentPose(b.config, tick, null).position;
+      stray = Math.max(stray, Math.hypot(p.x - rest.x, p.y - rest.y, p.z - rest.z));
+      step = Math.max(step, Math.hypot(p.x - previous.x, p.y - previous.y, p.z - previous.z));
+      previous = p;
+    }
+    return stray + step;
+  });
   const poseAt = (i: number, tick: number, clock: MotionClock): MotionPose => {
     if (clock !== cachedClock) {
       cachedClock = clock;
@@ -500,6 +524,8 @@ export const movingWorldOf = (resolved: ResolvedTrack, nav: TrackNav): MovingWor
       for (const body of bodies) {
         if (roles !== undefined && !roles.includes(body.role)) continue;
         const within = body.radius + reach;
+        const rest = rests[body.index]!;
+        if (Math.hypot(rest.x - p.x, rest.y - p.y, rest.z - p.z) > within + strays[body.index]!) continue;
         const at = poseAt(body.index, tick, clock).position;
         if (Math.hypot(at.x - p.x, at.y - p.y, at.z - p.z) <= within) {
           out.push(body);

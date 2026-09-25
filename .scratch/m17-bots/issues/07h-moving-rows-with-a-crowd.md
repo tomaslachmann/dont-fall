@@ -212,3 +212,82 @@ In order:
 Don't run the whole-Race suite; the main session runs it after both parts finish. The regression set
 is as above, and 07g's `difficulty.test.ts` reds are known.
 
+## As built (Round 2, 2026-09-25, Fable, two sittings; numbers first)
+
+The first sitting (stopped mid-work, its changes in commit `995e881d`) built all four items; the second
+read that diff against the items, ran the suites, traced the one new red, and wrote this. Every run below
+was beside 07i's suites on four cores (three vitest workers at 100%), so **every wall-clock number is
+inflated** — think µs, table build ms and the bench — and the passed / stranded / step-off columns are
+what the round answers for (the section harness is deterministic per seed; T1 NORMAL reproduced alone,
+Tick for Tick).
+
+| Run | Round 1 | Round 2 | target |
+|---|---|---|---|
+| T2 (two carousels) | 8 + 1 str. / 11 + 1 str. / 10 | **12 / 12 / 11**, stranded 0 | 12 / ≥ 11 / ≥ 10, 0 — **met** |
+| T3 (spinning squares) | 10 / 11 / 9 + 1 str. | **11 / 10 / 11**, stranded 0 | ≥ 10 / ≥ 8 / ≥ 4, 0 — **met** |
+| crowd HARD (`crowd` seed) | 9, step-off 0, > 90 s | **12**, step-off 0, stranded 0, slowest **56 s** (Tick 1678) | ≥ 9, 0, 0, ≤ 90 s — **met** |
+| crowd NORMAL | 2, step-off 4 | **12**, step-off 0, stranded 0, slowest 110 s | ≥ 6, 0 — **met** |
+| crowd EASY | 1, step-off 16 | **3**, step-off 0, stranded 0, slowest 143 s | ≥ 3, 0 — **met, on the line** |
+| base HARD (`rides` seed) | 4, step-off 0 | **12**, step-off 0, own 0 | 07b's ≥ 8 / own ≤ 3 — **met** (red only on think ≤ 40 µs: 54 under load) |
+| base NORMAL / EASY | 1 / 0 (2 str.), step-off 1 / 8 | **9** / 1, stranded 0, step-off **0 / 1** | 07b's ≥ 6 / ≥ 3 — NORMAL **met**, EASY known red; one step-off left at EASY (`bot-1` at (2.6, 4.7, −216.2), Tick 2488, unread) |
+| R1 / R2 | 12 / 12 / 12, 12 / 12 / 12 | 12 / 12 / 11, 12 / 12 / 11 (both EASY: 1 slow, 0 stranded) | hold |
+| T1 (two turntables) | 12 / 12 / 12 | 12 / **11 + 1 stranded** / 11 | **regressed at NORMAL** — a simulation wedge, below |
+| `neverStepsOff -t "every Motion stopped"` | 9 / 9 green | (filled below) | hold |
+| think, base HARD / T3 | 13–14 µs | 34–54 µs under the load (crowd 33–39) | ≤ 40 — read alone before trusting |
+
+### What each item became
+
+1. **T2, the held heading on a spin.** The jump-off's run-up is now a line in the *deck's frame*
+   (`JumpOff.takeOffLocal`, `DeckRider.jumpLine`): before the press the Bot heads along that line as the
+   deck has turned it each Tick, and from the press on it holds `jumpHeading`, which is that line's world
+   heading at the take-off. `solveJumpOff` lays the line along the deck-frame direction that *is* the aim at
+   the take-off (on a spin the frame turns during the run-up; laid at `at` it came off the rim 8° round).
+   The fallback to `LinkRun` on a spinning deck was tried and measured worse (T2 10; T3 10 / 9 / 7 → 7 / 7 / 6),
+   so the deck-frame line is followed on every deck.
+2. **The live hand-off** (`handOff`, `BOT_RIDE_HANDOFF_TICKS`): a Bot held at a still entry by `someoneAhead`
+   or `landingTaken` asks `planAcross` again every 30 Ticks with the queue as it stands (never sooner after the
+   wait began than `BOT_REPLAN_TICKS`, since only then does `PathFollower` replan at once), and if the way it
+   finds now starts at another entry, `reset()`s so the follower goes there. `handedOff` is counted, not
+   asserted. "Count a queued wait as not stranded" was **not** built: with the hand-off, no queued wait
+   reaches the harness's 10 s window on T3 or the crowd rows, and the one stranded Bot left (T1) is not queued.
+3. **The crowd rows at NORMAL and EASY.** Two more causes, both read from the crowd seed at EASY:
+   - a jump's landing was probed along the line and along the carry, never *across* — a Bot spread across the
+     deck jumps at the still diagonally and came down 0.35 m wide, on a row's side. `roomyShift` moves the aim
+     across the line by `BOT_PATH_EDGE_MARGIN_M` when the landing has floor on one side only;
+   - the `landing` push for the still (Round 1's fix 2) fired on a Bot that had landed *on* the floor's top a
+     hand's width inside its edge (the navmesh's own erosion reads null there), and steered live off a view 15
+     Ticks late it walked an EASY Bot 2 m past the still and off the row's far side — eight of eleven crowd
+     step-offs at EASY, at one spot. It now fires only when the Bot is *down* a face by more than
+     `NAV_AGENT_CLIMB`.
+4. **Cost.** `dijkstra` reads adjacency lists built once per ride table (`adjacencyOf`: `linksFrom[u]`,
+   `linksOff[platform]`, `walksFrom[u]`, `endsOf[component]`) instead of scanning 1784 links per node, and
+   the start-walks from the Bot's floor to every still end of its component are cached by a
+   `BOT_RIDE_START_CELL_M` (2 m) cell (`startWalksFrom`), so a changed queue signature no longer pays every
+   navmesh walk again. The bench logs the share (`ridePlanCost`, printed by `pnpm bench:sim`; that is the
+   `scripts/bench-simulation.ts` edit): (filled below).
+
+### The one new red: T1 NORMAL, a Character pinned inside a Moving Segment (the simulation's, not the rider's)
+
+`transfers:T1:normal`, `bot-9`, traced Tick by Tick. It was `waitToAlight` on the second turntable, standing
+still while the spin carried it (Ticks 429–495); at Tick 496 it was carried onto a seam between two of the
+disc's eight pieces, sank 0.18 m into the groove (grounded, `platformUnder` null, so `waitToAlight` reset the
+ride), and by Tick 500 it sat at y 4.45 — 0.4 m under the top, inside the outline — **never grounded again,
+its position frozen to the centimetre for the remaining 1300 Ticks while `velocity.y` grew without bound
+(−3.5 at Tick 500, −843 at Tick 1645)**. A push for the deck's middle and a jump pressed both ways (the same
+remedy `aboard`'s lodged branch uses; built into `offLip` for the air case, run, and taken out again) changed
+its horizontal velocity and nothing else: the capsule controller cannot move it, and jump cannot fire off the
+ground. That is a simulation defect — a kinematic capsule wedged inside a moving body is neither pushed out nor
+counted as fallen — and a human Player carried onto that seam would be stuck the same way. Left for the main
+session (`simulation/character/`, outside this ticket's files). The Bot-side symptom is one stranded Bot on
+T1 NORMAL, where Round 1 had none; the seam drift is the ride's chord-versus-arc carry over 67 still Ticks and
+is not new, so which Round 2 change moved `bot-9` onto it is chaos, not read.
+
+### Files
+
+`bot/deckRider.ts` (`solveJumpOff`/`roomyShift`/`jumpLine`, `handOff`, the `landing` gate, `adjacencyOf`/
+`startWalksFrom` and `dijkstra` on them, `ridePlanCost`), `tuning/bots.ts` ("Rides with a crowd (M17 ticket
+07h, round 2)": `BOT_RIDE_HANDOFF_TICKS`, `BOT_RIDE_START_CELL_M`), `src/index.ts` (`ridePlanCost` export),
+`scripts/bench-simulation.ts` (the ride planning's share printed per run), ADR 0129 "As built", this ticket.
+`rideLinks.ts`, `deckRider.test.ts` and `transfers.test.ts` unchanged this round. No scratch file or debug
+toggle remains; typecheck clean in `packages/shared`, `apps/server`, `apps/track-builder`.
+

@@ -380,3 +380,18 @@ reliable, but it makes every Track more work).
   windows are found but the legs' Falls are elsewhere on them now (the staggered pair at the lane's edge,
   the catwalk's queue, Slip Stream's walls and spiked circles), and no target on Falls is met. The
   numbers and the next fixes are in the ticket.
+
+**Ticket 07h round 2, the crowd rows met (2026-09-25).**
+
+- **A jump off a spinning deck runs along a line in the deck's frame.** A heading held in world through a
+  turning run-up leaves the line the aim was solved on (two carousels 12 → 8 at HARD); the run-up is now the
+  deck-frame line as the deck turns it, and the world heading is held only from the press. **A Bot held at
+  an entry by those ahead asks the planner again** every `BOT_RIDE_HANDOFF_TICKS` with the queue as it stands,
+  and goes to the entry that is cheaper now, so twelve Bots no longer serialise at one end. A jump's landing
+  is probed *across* its line too, and the push for the still fires only when the Bot is down a face. With
+  that, the base race's moving rows with twelve Bots arriving together pass 12 / 12 / 3 at HARD / NORMAL /
+  EASY with **0 step-offs at every level**, two carousels 12 / 12 / 11 and two spinning squares 11 / 10 / 11,
+  stranded 0 on all three. The planner reads adjacency lists and a start-walk cache by 2 m cell.
+- **Found, left for the simulation: a Character carried onto a seam between a turntable's pieces can be
+  pinned inside the deck for good** — never grounded, position frozen, `velocity.y` unbounded — and no
+  input moves it (two turntables, NORMAL, one Bot). "Never stranded" cannot be kept from the Bot's side there.
