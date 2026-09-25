@@ -75,7 +75,7 @@ export const staleWindow = (profile: BotProfile): StaleWindow => {
  * One border of the navmesh a Bot must not cross: floor on one side, a drop
  * on the other. Its outward normal points at the drop.
  */
-interface VoidEdge {
+export interface VoidEdge {
   ax: number;
   az: number;
   bx: number;
@@ -344,6 +344,23 @@ const edgesNear = (edges: NavEdges, at: Vec3, feetY: number, radius: number, any
 
 /** Counts {@link edgesNear} calls, each one's mark on the edges it has taken. */
 let lookups = 0;
+
+/**
+ * The void edges within `radius` of `at` on a Bot's own floor (M17 ticket
+ * 14): what the local motion planner plays its rollouts against, the same
+ * edges the guard vets its moves against.
+ */
+export const voidEdgesNear = (nav: TrackNav, at: Vec3, feetY: number, radius: number): readonly VoidEdge[] => edgesNear(navEdgesOf(nav), at, feetY, radius);
+
+/**
+ * Whether going from `(x0, z0)` to `(x1, z1)` crosses one of `edges` outward,
+ * over its inner line ({@link BOT_EDGE_MARGIN_M} in from the drop): where the
+ * guard stops a move, a rollout is off the floor.
+ */
+export const crossesOut = (edges: readonly VoidEdge[], x0: number, z0: number, x1: number, z1: number): boolean => {
+  for (const edge of edges) if (crossing(edge.inner ?? edge, x0, z0, x1, z1) === 1) return true;
+  return false;
+};
 
 /** The edge's height at its point nearest `(x, z)`. */
 const heightAt = (edge: VoidEdge, x: number, z: number): number => {

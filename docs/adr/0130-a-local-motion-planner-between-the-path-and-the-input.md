@@ -67,3 +67,21 @@ evening run), and every path is found. What fails is how a Bot moves over the ne
   cheap rejection. The think budget per Bot-Tick stays as ticket 08 set it.
 - The first measure is the 07m stagger log's columns (impacts during retreat and during hold, and the
   Bot's own speed at impact) and the Falls by cause on the same legs and seeds.
+
+## As built
+
+**Ticket 14, phases 1 and 2 (2026-09-25).** `bot/localMotion.ts` is the planner as decided, wired where
+`SweeperHold` used to `stand` or `retreat`; the hold still says go or hold, and the arc is still tried
+first. Two things building it settled. **A stand's brake is a push only on a slick floor**: the
+velocity a Bot sees is as stale as its view, and a push against it on a floor whose grip has already
+stopped the body is a walk backwards at full speed — every Bot hit "standing" at HARD in the first
+attempt was doing exactly that. **The rollout models the guard**: a walk that would cross an edge's
+inner line stops there and stands, since `EdgeGuard` never sends that step, and only a push across it
+is scored as a Fall; without this every way out of a swath toward a lane's edge read as a Fall and a
+boxed Bot took a Stagger instead. The step for Tick `t` is resolved against the poses at `t`, so the
+rollout's step `k` is checked against `tick + k − 1`. Measured on 07m's three legs and seeds: spin-bar
+impacts during a retreat-or-planner move 230 → 14 at HARD and 186 → 20 at NORMAL, Stagger Falls 37 → 20
+and 48 → 39, passed 21 → 28 and 18 → 24, no step-off and nobody stranded, the standing-but-moving
+impacts at EASY 113 → 0; the planner's own cost is 2–10 µs per Bot-Tick. What is left is the hold
+stopping *inside* a spinner's swath (07g's walk-up rule), where every candidate is bad — point 3's
+territory, not the planner's.

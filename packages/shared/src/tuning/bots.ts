@@ -865,3 +865,73 @@ export const BOT_RIDE_SWATH_SKID_TICKS = 6;
 
 /** Radians past the tangent a walk round a swath leads, so the walk skirts the circle rather than grazing it. */
 export const BOT_RIDE_SWATH_LEAD_RAD = 0.15;
+
+// --- The local motion planner (M17 ticket 14, ADR 0130) -----------------------
+// `LocalMotionPlanner` (`bot/localMotion.ts`): where a hold refuses the way
+// forward, every candidate move is played for a short horizon through the
+// guard's own model of the Character and scored. First guesses, each moved
+// only by the 07m stagger log's numbers.
+
+/**
+ * How many Ticks each candidate is played for: two thirds of a second, long
+ * enough for a bar's tip at 6 u/s to cross four metres, and short enough that
+ * the rollout's straight push is still what the Bot would do. On top of it
+ * the Bot's own view lag is added, since a stand must be safe for as long as
+ * the Bot cannot see it standing.
+ */
+export const BOT_PLAN_HORIZON_TICKS = 20;
+
+/**
+ * The turns of the asked move tried, in degrees, in the order a tie falls
+ * (the stand is tried first of all): the asked move and its nearest turns,
+ * sideways, back-left and back-right, and back.
+ */
+export const BOT_PLAN_TURN_DEGREES: readonly number[] = [0, 15, -15, 30, -30, 60, -60, 90, -90, 135, -135, 180];
+
+/**
+ * The least turn, in degrees, a candidate must make from the asked move when
+ * the hold has refused the way forward: the hold's corridor looks further and
+ * with the profile's timing error, and the planner does not second-guess it.
+ */
+export const BOT_PLAN_HELD_MIN_TURN_DEG = 60;
+
+/**
+ * How far along its path, in metres, the point a candidate's progress is
+ * measured toward lies. Further than the horizon's walk, so heading for it
+ * is never done inside the rollout.
+ */
+export const BOT_PLAN_LOOK_M = 6;
+
+/** What a metre of progress toward the look-ahead point scores. The unit the costs below are in. */
+export const BOT_PLAN_PROGRESS_WEIGHT = 1;
+
+/**
+ * What a rollout that is Staggered costs: a moving body occupying the capsule
+ * at a closing speed the simulation Staggers from, or a spiked one at any
+ * speed. More than the whole horizon's walk could ever gain (3.7 m), so no
+ * progress is worth being knocked down for.
+ */
+export const BOT_PLAN_STAGGER_COST = 20;
+
+/**
+ * What each Tick of being pushed by a body too slow to Stagger costs. Being
+ * shoved is not a Fall, but the push carries the Bot along with the body, and
+ * the rollout follows it, so a push toward an edge is paid for by the edge.
+ */
+export const BOT_PLAN_CONTACT_COST = 0.5;
+
+/** What a rollout that leaves the floor costs: a Fall of the Bot's own, which no progress is worth. */
+export const BOT_PLAN_EDGE_COST = 30;
+
+/**
+ * What turning away from the asked move costs, scaled by `1 − cos` of the
+ * turn (0 straight on, 1 sideways, 2 back): between two safe moves the
+ * planner keeps to the path.
+ */
+export const BOT_PLAN_DEVIATION_COST = 1;
+
+/**
+ * What keeping the last decision's candidate is worth, so a Bot between two
+ * equally good moves does not flip between them every decision.
+ */
+export const BOT_PLAN_KEEP_BONUS = 0.5;

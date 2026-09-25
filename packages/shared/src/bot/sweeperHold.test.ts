@@ -102,7 +102,7 @@ const wrapPart = (name: string): void => {
     }
   };
 };
-if (process.env.BOT_PROFILE_HOOK) for (const name of ["decide", "planArc", "followArc", "stand", "retreat"]) wrapPart(name);
+if (process.env.BOT_PROFILE_HOOK) for (const name of ["decide", "planArc", "followArc"]) wrapPart(name);
 
 const play = async (name: string, level: BotLevel, seed?: string): Promise<SectionOutcome & { hookUsPerCall: number; gaveUp: number }> => {
   const { track, leg, capSeconds } = TRACKS[name]!;
