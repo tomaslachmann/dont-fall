@@ -119,3 +119,11 @@ existing Impact thresholds, except spiked pieces, which always knock down.
   (Asset category) and must stay one; a slowly sliding Obstacle that ragdolls
   on a brush is not fun, and a spiked plate that merely pushes is wrong. Speed
   plus an explicit `spiked` hazard says what actually happens.
+
+**As built, 2026-09-25 (M17 ticket 07k):** a Ride never carries its rider below the carrier. The
+carried movement's `y` is floored at `min(displacement.y, 0)` in `MovementController.sweepRide`. Before
+this, a Character landing on a rider's head could slide the rider 0.4 m into the deck it could not see,
+where it stayed wedged for the rest of the Round. As a backstop, a sweep that was asked to go down but
+got less than 10 % of it lifts the capsule out onto the solid above it
+(`SurfaceController.solidExitAbove`, `WEDGE_LIFT_MAX`). Neither change touches feel or replication: both
+act only in a state that was already a bug.
