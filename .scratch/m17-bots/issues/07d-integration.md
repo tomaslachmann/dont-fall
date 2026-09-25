@@ -363,3 +363,34 @@ What it says:
 - **A simulation defect, found by 07h round 2.** A Character carried onto the seam between a
   turntable's pieces sinks into the groove and is pinned inside the moving body, with `velocity.y`
   growing without bound. A human would be caught the same way. It belongs in `simulation/character/`.
+
+## Combined whole-Race run after 07i round 3, 07k and 07l (the main session, 2026-09-25, evening)
+
+Tree `28cec08a`, same command, 347 s. In brackets is the afternoon run above. The file is still 9 / 9 red
+on `ownFalls === 0`.
+
+| Race | level | finished | stranded | step-offs | own / obstacle Falls | where it hurts (section: Falls) |
+|---|---|---|---|---|---|---|
+| base race | HARD | **11** (4) | 0 (0) | 0 (0) | **14** (51) / 16 | Cp 6→Finish: Obstacle 6; Cp 4→5: Stagger 4 |
+| | NORMAL | 2 (3) | 0 (0) | 0 (0) | **8** (37) / 30 | Cp 2→3: pushed 19, contact 18 (the crowd on the squares' ring, 07l) |
+| | EASY | 0 (0) | 0 (0) | 5 (3) | 23 (30) / 72 | Cp 2→3: pushed 39; Cp 1→2: contact 25, pushed 15 |
+| Spin Cycle | HARD | 0 (0) | **0** (1) | 0 | **26** (52) / 38 | Start→Cp 0: Stagger 17, pushed 10. All 12 are slow; Falls now reach Cp 3→6 |
+| | NORMAL | 0 (0) | **0** (2) | 0 | 80 (62) / 108 | Start→Cp 0: Stagger 40, pushed 28; Cp 0→1: Stagger 29 |
+| | EASY | 0 (0) | 1 (1) | 2 | 46 (44) / 95 | Start→Cp 0: pushed 51, Stagger 38, Bump 24 |
+| Slip Stream | HARD | 8 (8) | 0 (0) | 0 | **44** (66) / 44 | Cp 1→2: Stagger 35, Obstacle 7 |
+| | NORMAL | 7 (7) | **0** (1) | 0 | 48 (60) / 46 | Cp 1→2: Stagger 39 |
+| | EASY | 1 (2) | 1 (2) | 1 | 80 (83) / 73 | Cp 1→2: Stagger 71, Bump 36, `link` 8 |
+
+What it says:
+
+- **The base race at HARD is solved in all but one**, with 11 of 12 finished. 07l took the spiked bar
+  away, and the own Falls went 51 → 14.
+- **At NORMAL and EASY the crowd is the problem.** On the base race it is the squares' ring (07l's
+  next fix: spread the waiting spots round the ring) and the moving rows at EASY.
+- **Spin Cycle gets further but finishes nobody.** At HARD the Falls now reach Cp 3→6, all 12 Bots are
+  "slow" (out of time), and nobody is stranded. The start (Start→Cp 0, the gates and the carousels with
+  the staggered pair 36/37) still costs the most. At NORMAL and EASY, Staggers and shoves at the start
+  dominate.
+- **Slip Stream Cp 1→2 is still the Stagger leg** (35/39/71). The arc and the crosses did not touch it.
+  What hits there are sliding walls and spin bars with a single arm.
+- Known reds: `fightRace` `fight-self` 1 (07i round 3, not yet traced).
