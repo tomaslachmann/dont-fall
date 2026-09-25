@@ -1,12 +1,14 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { vec3, type Vec3 } from "../../math/vec3.js";
 import {
+  CAPSULE_BOTTOM_OFFSET,
   CAPSULE_HALF_HEIGHT,
   CAPSULE_RADIUS,
   CHARACTER_CONTROLLER_OFFSET,
   GROUND_SNAP_DISTANCE,
   SURFACE_GROUND_NORMAL_MIN_Y,
   WALL_NORMAL_MAX_Y,
+  WEDGE_LIFT_MAX,
 } from "../../tuning/character.js";
 import { TICK_DT } from "../../tuning/clock.js";
 import { WALL_IMPACT_MIN_SPEED } from "../../tuning/knockdown.js";
@@ -26,6 +28,7 @@ import type { Capsule } from "./Capsule.js";
 export const WALKABLE_NORMAL_MIN_Y = Math.cos(WALKABLE_SLOPE_MAX_ANGLE);
 
 const DOWN = vec3(0, -1, 0);
+const UP = vec3(0, 1, 0);
 
 /** Where `walkableUnderfoot` casts from, around the capsule's axis (ADR 0084): the centre and a radius out along each axis. */
 const FOOTPRINT_PROBE_OFFSETS: readonly (readonly [number, number])[] = [
@@ -309,6 +312,49 @@ export class SurfaceController {
       isNotCharacter,
     );
     return hit && hit.normal1.y > WALL_NORMAL_MAX_Y ? hit.time_of_impact : undefined;
+  }
+
+  /**
+   * How far above the capsule's lowest point the solid that point is inside
+   * ends, within {@link WEDGE_LIFT_MAX} — or `undefined` when that point is in
+   * the open (M17 ticket 07k). Whether it is inside anything is a point
+   * query; how far up the solid goes is a hollow ray cast from it: with
+   * `solid` off, Rapier reports the boundary a ray *leaves* through when it
+   * starts inside a shape. (Its normal is no help telling that from a
+   * ceiling reached from below — Rapier turns it to face the ray either way,
+   * measured (0, −1, 0) on the exit through a deck's top.) Sensors are not
+   * solid, and another Character is never what buries you. Only asked when
+   * the sweep could not move the capsule down at all without landing it, so a
+   * Character in the open queries nothing.
+   */
+  solidExitAbove(): number | undefined {
+    const at = this.capsule.body.translation();
+    const foot = { x: at.x, y: at.y - CAPSULE_BOTTOM_OFFSET, z: at.z };
+    let inside = false;
+    this.capsule.world.intersectionsWithPoint(
+      foot,
+      () => {
+        inside = true;
+        return false;
+      },
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      CHARACTER_GROUPS,
+      this.capsule.collider,
+      undefined,
+      isNotCharacter,
+    );
+    if (!inside) return undefined;
+    const hit = this.capsule.world.castRay(
+      new RAPIER.Ray(foot, UP),
+      WEDGE_LIFT_MAX,
+      false,
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      CHARACTER_GROUPS,
+      this.capsule.collider,
+      undefined,
+      isNotCharacter,
+    );
+    return hit ? hit.timeOfImpact : undefined;
   }
 
   /**

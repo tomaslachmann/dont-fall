@@ -67,6 +67,19 @@ export const CAPSULE_HALF_HEIGHT = 0.5;
 export const CAPSULE_BOTTOM_OFFSET = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS;
 
 /**
+ * How far up a Character whose capsule ended up inside a solid is lifted to
+ * get it out (units) — the capsule's own height, so even one buried whole is
+ * put back on top of what buried it. Found by the M17 Bots (ticket 07k): a
+ * rider landed on by another Character was slid down into its own carrier,
+ * which the Ride's sweep ignores, and then sat inside it for the rest of the
+ * Round with nothing to push it out — the sweep finds only the hull faces
+ * round it, so it is never grounded and never freed. The lift is the
+ * backstop for every way in; the Ride itself no longer takes a rider below
+ * its carrier at all.
+ */
+export const WEDGE_LIFT_MAX = 2 * CAPSULE_BOTTOM_OFFSET;
+
+/**
  * Seating a Character never leaves it inside anything solid (found live
  * 2026-09-18/19, "spawnul jsem se v assetu"): an overlapping seat rises in
  * these steps until clear, up to this many metres, and the Countdown's own
