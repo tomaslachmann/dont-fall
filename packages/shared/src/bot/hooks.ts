@@ -77,7 +77,7 @@ export const defaultHooks = (profile: BotProfile, seed: string): PathHooks => {
   void seed;
   return {
     hold: [new SweeperHold(profile, seed), ...trapHolds(profile, seed)],
-    planFilterFlags: trapPlanFilterFlags,
+    planFilterFlags: (ctx) => trapPlanFilterFlags(ctx) | CROSS_SWATH_FLAG,
     push: new BeltPush(),
     ride: new DeckRider(profile, seed),
   };

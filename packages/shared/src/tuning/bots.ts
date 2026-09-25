@@ -795,6 +795,15 @@ export const BOT_ARC_RETRY_TICKS = 60;
  */
 export const BOT_ARC_MARGIN_M = 0.15;
 
+/**
+ * Where a spinning sweeper is asked whether it is a cross (M17 ticket 07i,
+ * round 3): eight points on a ring at this share of its swept radius, and it
+ * is a cross if even the best of them is never free of an arm for as long as
+ * a walk across the swath takes. Half way out, where a bar's hub does not
+ * count and its tip's width does not yet narrow the gap.
+ */
+export const BOT_CROSS_PROBE_RADIUS_SHARE = 0.5;
+
 // --- Rides with a crowd (M17 ticket 07h, round 2) -----------------------------
 // `DeckRider` again: a Bot held at a still entry by those ahead of it asks the
 // planner again with the queue as it stands, and goes to another entry when
@@ -826,3 +835,26 @@ export const BOT_RIDE_START_CELL_M = 2;
  * Cycle's catwalk (Segment 119, measured: 40 Staggers in 120 s at HARD).
  */
 export const BOT_HOLD_MIN_SPEED_WALKING = Math.max(0, IMPACT_STAGGER_MIN / MOVING_SEGMENT_IMPACT_SCALE - WALK_SPEED_FOR_BOTS);
+
+// ---------------------------------------------------------------------------
+// A sweeper riding a moving deck (M17 ticket 07l)
+// ---------------------------------------------------------------------------
+
+/**
+ * How far past a riding sweeper's swept radius plus the capsule a Bot aboard
+ * keeps, in metres: its waiting spot, its walk across the deck and a
+ * transfer's landing all stay outside `radius + CAPSULE_RADIUS + this`
+ * (M17 ticket 07l). Measured on the base race's spiked square: a transfer
+ * aimed at the deck's middle came down 3.7 m from the bar's pivot, skidded
+ * to 3.36 against a swept 3.04 + 0.35, and was knocked down where it stood.
+ */
+export const BOT_RIDE_SWATH_MARGIN_M = 0.3;
+
+/** A sweeper whose origin sits within this height of a deck's top, inside its outline and fixed in its frame, rides it. */
+export const BOT_RIDE_SWATH_LEVEL_M = 2;
+
+/** Ticks after a transfer's landing over which the landing point must stay clear of a riding sweeper: the skid a landing keeps its carry through. */
+export const BOT_RIDE_SWATH_SKID_TICKS = 6;
+
+/** Radians past the tangent a walk round a swath leads, so the walk skirts the circle rather than grazing it. */
+export const BOT_RIDE_SWATH_LEAD_RAD = 0.15;

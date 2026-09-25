@@ -20,13 +20,13 @@ import {
   BOT_HOLD_MAX_TICKS,
   BOT_HOLD_MAX_TICKS_PER_LOOK,
   BOT_HOLD_MIN_SPEED,
-  BOT_HOLD_MIN_SPEED_WALKING,
   BOT_HOLD_SAMPLE_M,
   BOT_HOLD_STOP_M,
   BOT_STALL_MOVE_M,
 } from "../tuning/bots.js";
 import { CAPSULE_BOTTOM_OFFSET, CAPSULE_RADIUS, WALK_SPEED } from "../tuning/character.js";
 import { TICK_DT } from "../tuning/clock.js";
+import { MOVING_SEGMENT_STAGGER_SPEED } from "../simulation/MovingSegment.js";
 import { accelerate, type Motion } from "./edgeGuard.js";
 import { corridorAhead, type HoldHook, type HookContext } from "./hooks.js";
 import type { MovingBody, MovingWorld, Platform } from "./movingWorld.js";
@@ -99,7 +99,10 @@ interface Blocked {
   readonly samples: readonly { p: Vec3; arriveTick: number }[];
   readonly near: readonly MovingBody[];
   readonly onDeck: boolean;
-  readonly counts: (body: MovingBody, at: number, p: Vec3) => boolean;
+  /** Whether `body` at `at` is one to hold for at `p`, reached with the walk velocity `walk` (none: standing). */
+  readonly counts: (body: MovingBody, at: number, p: Vec3, walk?: Vec3) => boolean;
+  /** The walk the Bot brings to `samples[i]`. */
+  readonly walkAt: (i: number) => Vec3 | undefined;
 }
 
 const isYaw = (q: Quat): boolean => Math.abs(q.x) < 1e-3 && Math.abs(q.z) < 1e-3;
@@ -148,6 +151,8 @@ export const turnedBack = (spin: SpinAbout, ticks: number, p: Vec3, cos = Math.c
 /** A spinner's turn over each Tick offset an arc search asks, tabled once per search. */
 interface SpinTable {
   readonly spin: SpinAbout;
+  /** The same turn about the origin, for turning a velocity back. */
+  readonly about0: SpinAbout;
   readonly cos: Float64Array;
   readonly sin: Float64Array;
 }
@@ -160,7 +165,7 @@ const spinTable = (spin: SpinAbout, offsets: number): SpinTable => {
     cos[d] = Math.cos(a);
     sin[d] = Math.sin(a);
   }
-  return { spin, cos, sin };
+  return { spin, about0: { ...spin, pivot: ORIGIN }, cos, sin };
 };
 
 /** How far past the bar's swept radius, plus the grown margin, a corridor sample must lie to be the arc's exit. */
@@ -174,6 +179,7 @@ const ARC_FLOOR_HALF = { x: 0.3, y: 0.5, z: 0.3 };
 const ARC_FLOOR_EVERY = 3;
 
 const STAND: Steering = { moveDirection: vec3(), dash: false };
+const ORIGIN: Vec3 = { x: 0, y: 0, z: 0 };
 
 /** Ticks a body's pose is compared at to tell a stopped body from a paused one: none of these is a multiple of another. */
 const STOPPED_PROBE_TICKS = [7, 61, 233];
@@ -268,6 +274,7 @@ export class SweeperHold implements HoldHook {
     }
     if (this.heldSince !== null && tick - this.heldSince >= this.holdCap()) {
       SweeperHold.gaveUp += 1;
+      if (process.env.R3_TRACE) console.log(`[trace] ${ctx.view.id} t${tick} gave up at (${ctx.self.position.x.toFixed(1)}, ${ctx.self.position.z.toFixed(1)}) seg ${this.blocked?.body.config.segmentIndex}`);
       this.goUntil = tick + BOT_HOLD_GO_TICKS;
       this.arc = null;
       this.end();
@@ -352,12 +359,28 @@ export class SweeperHold implements HoldHook {
     const jitter = Math.round((2 * botDraw(this.seed, `hold ${tick}`) - 1) * this.profile.timingErrorTicks);
     const grow = CAPSULE_RADIUS + BOT_HOLD_MARGIN_M;
     // A bar too slow to Stagger only shoves: holding for it is time lost. A spiked body always counts.
-    const counts = (body: MovingBody, at: number, p: Vec3): boolean => {
+    // A Bot walking into it brings its own walk (07i): the simulation's closing speed is the body's
+    // velocity net of the Character's, along the push, so a body head-on counts from the Stagger
+    // speed less the walk, and one moving away or across does not (07i round 3: the speed alone,
+    // above 1.2 u/s, held for every slow wall and hub on Slip Stream, and the holds gave up 4× as often).
+    const counts = (body: MovingBody, at: number, p: Vec3, walk?: Vec3): boolean => {
       if (!moving.solidAt(body.index, at, view.fragile)) return false;
       if (body.spiked) return true;
       const v = moving.velocityAt(body.index, at, clock, p);
-      // The Bot walks into it: its own walk closes the gap too (07i).
-      return Math.hypot(v.x, v.y, v.z) > (process.env.R3_OLD_SPEED ? BOT_HOLD_MIN_SPEED : Math.min(BOT_HOLD_MIN_SPEED, BOT_HOLD_MIN_SPEED_WALKING));
+      if (Math.hypot(v.x, v.y, v.z) > BOT_HOLD_MIN_SPEED) return true;
+      return walk !== undefined && Math.hypot(v.x - walk.x, v.y, v.z - walk.z) > MOVING_SEGMENT_STAGGER_SPEED;
+    };
+    /** The walk the Bot brings to sample `i`: its corridor's direction there at its floor's pace, from the samples' own spacing and arrival. */
+    const walkAt = (i: number): Vec3 | undefined => {
+      const a = samples[i - 1] ?? samples[i]!;
+      const b = samples[i + 1] ?? samples[i]!;
+      const dx = b.p.x - a.p.x;
+      const dz = b.p.z - a.p.z;
+      const length = Math.hypot(dx, dz);
+      const ticks = b.arriveTick - a.arriveTick;
+      if (length < 1e-6 || ticks <= 0) return undefined;
+      const speed = Math.min(WALK_SPEED, length / (ticks * TICK_DT));
+      return { x: (dx / length) * speed, y: 0, z: (dz / length) * speed };
     };
     // On a moving deck the Bot is carried: a sample it will reach is where the deck takes it by then (07g).
     const deck: Platform | null = self.grounded ? moving.platformUnder(self.position, tick, clock) : null;
@@ -380,9 +403,14 @@ export class SweeperHold implements HoldHook {
       const at = arriveTick + jitter;
       const q = carried(p, at);
       for (const body of near) {
-        if (moving.occupies(body.index, at, clock, q, grow) && counts(body, at, q)) {
+        if (moving.occupies(body.index, at, clock, q, grow) && counts(body, at, q, walkAt(i))) {
+          if (process.env.R3_TRACE) {
+            const v = moving.velocityAt(body.index, at, clock, q);
+            const u = walkAt(i);
+            console.log(`[trace] ${ctx.view.id} t${tick} hold? seg ${body.config.segmentIndex} body ${body.index} sample ${i} at (${q.x.toFixed(1)}, ${q.z.toFixed(1)}) |v| ${Math.hypot(v.x, v.y, v.z).toFixed(2)} |v-u| ${u === undefined ? "-" : Math.hypot(v.x - u.x, v.y, v.z - u.z).toFixed(2)}`);
+          }
           blockedAt = i;
-          this.blocked = { body, index: i, samples, near, onDeck: deck !== null, counts };
+          this.blocked = { body, index: i, samples, near, onDeck: deck !== null, counts, walkAt };
           break;
         }
       }
@@ -451,26 +479,34 @@ export class SweeperHold implements HoldHook {
       const spin = spinAbout(moving, b, tick, clock);
       return spin === null ? null : spinTable(spin, offsets);
     });
-    const clearAt = (p: Vec3, at: number): boolean => {
+    const clearAt = (p: Vec3, at: number, walk?: Vec3): boolean => {
       for (let i = 0; i < near.length; i += 1) {
         const b = near[i]!;
         const table = spinners[i] ?? null;
         if (table === null) {
-          if (moving.occupies(b.index, at, clock, p, grow) && counts(b, at, p)) return false;
+          if (moving.occupies(b.index, at, clock, p, grow) && counts(b, at, p, walk)) return false;
           continue;
         }
         const d = at - tick;
         const q = d >= 0 && d < offsets ? turnedBack(table.spin, d, p, table.cos[d], table.sin[d]) : turnedBack(table.spin, d, p);
-        if (moving.occupies(b.index, tick, clock, q, grow) && counts(b, tick, q)) return false;
+        // The walk turned back with the point: the closing speed is the same in the body's frame.
+        const u = walk === undefined ? undefined : d >= 0 && d < offsets ? turnedBack(table.about0, d, walk, table.cos[d], table.sin[d]) : turnedBack(table.about0, d, walk);
+        if (moving.occupies(b.index, tick, clock, q, grow) && counts(b, tick, q, u)) return false;
       }
       return true;
+    };
+    /** The walk from `points[k]` to `points[k + 1]`, one Tick apart. */
+    const walkAlong = (points: readonly Vec3[], k: number): Vec3 | undefined => {
+      const a = points[k]!;
+      const b = points[k + 1];
+      return b === undefined ? undefined : { x: (b.x - a.x) / TICK_DT, y: 0, z: (b.z - a.z) / TICK_DT };
     };
     for (let delay = 0; delay < period; delay += BOT_ARC_DELAY_STEP_TICKS) {
       let open = true;
       for (let i = 0; i < samples.length && open; i += 1) {
         const { p, arriveTick } = samples[i]!;
         if (groundDistance(p, pivot) > swath + ARC_EXIT_CLEAR_M && i > blocked.index) break;
-        open = clearAt(p, arriveTick + delay);
+        open = clearAt(p, arriveTick + delay, blocked.walkAt(i));
       }
       if (open) return fail();
     }
@@ -515,7 +551,7 @@ export class SweeperHold implements HoldHook {
       if (!waitSafe) break;
       for (const points of played) {
         let clear = true;
-        for (let k = 0; k < points.length && clear; k += 1) clear = clearAt(points[k]!, startTick + k);
+        for (let k = 0; k < points.length && clear; k += 1) clear = clearAt(points[k]!, startTick + k, walkAlong(points, k));
         if (!clear) continue;
         const jitter = Math.round((2 * botDraw(this.seed, `arc ${tick}`) - 1) * this.profile.timingErrorTicks);
         return { body: body.index, startTick: Math.max(tick + 1, startTick + jitter), points };
