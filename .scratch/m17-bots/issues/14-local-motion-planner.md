@@ -241,3 +241,162 @@ the trapHold D / S wall-clock asserts, `sweeperHold` base1's EASY > NORMAL obsta
 (0 > 1 before, 1 > 1 now), `deckRider`'s ride-table build time, base HARD think ≤ 40 µs, base EASY's
 and the crowd rows' EASY step-off (1 and 2, as before), and `transfers`' nine `think ≤ 40 µs` asserts
 (44–101 µs before, 43–107 now, the CPU shared both times).
+
+## As built (phase 3, 2026-09-25)
+
+### Item 0: the two step-offs, traced Bot by Bot (before anything was changed)
+
+Both reproduced bit-identically on the untouched tree (`playSection` with the whole-Race seeds
+`races:base race:<level>`, a scratch tracer recording every Tick's true position, the rider's state,
+`PathFollower`'s output, the hold's and the guard's). **Neither is the planner's**: on both, every
+Steering in the last 120 Ticks was a `DeckRider` script (`committed`), the hold and the guard were
+never asked, and the planner never ran.
+
+- **HARD, bot-0, Cp 1→2 (the moving rows), Tick 1589.** An `alighting` jump off a sliding row, with
+  bot-1 0.8–1.2 m beside it through the whole run-up and flight (t1526–1569). It came down at
+  (−0.57, 4.67, −195.7): grounded but `Sliding`, 0.2 m under the still floor's level — on a bevel beside
+  the floor it aimed at. The rider's "down again but not on the floor it aimed for: for that floor" push
+  (`deckRider.ts`, the `jumpHeading` branch) then walked it +x, and the ground under it fell 4.65 → 2.8
+  over 15 Ticks (a 45° face) until it dropped. The harness names it a step-off because bot-1's last
+  touch (t1569) was 20 Ticks before the last ground Tick and nothing else was within its windows; it
+  is a landing beside the still with a neighbour alongside, not a move the Bot chose toward a drop. The
+  fix is the rider's (a landing that reads `Sliding` should not push for the still along the face), not
+  this phase's.
+- **NORMAL, bot-8, Cp 2→3 (the spinning squares), Tick 7348.** Landed from a transfer, went `landing`
+  → `off` → `aboard` (its next corner was a ride from the deck it stood on), then walked the deck for
+  its `aboardTarget` with a view 3–8 Ticks late: the headings flip between the target (+z) and the
+  rim push (−x) every few Ticks, the classic to-and-fro at the rim, and from t7337 it walked +z for
+  7 Ticks straight while its seen position lagged 1.0 m behind its real one; at t7344 it was past the
+  rim in the air with its own rim check reading it 0.65 m inside. **This is exactly item 1's case** —
+  a positioning walk aboard, committed and unvetted, steered live off a late view — and it is why the
+  planner's rollout on a deck now stops at the outline less `BOT_EDGE_MARGIN_M` plus what the Bot
+  walks while its view lags (`deckMargin`), as the rider's own target inset does.
+
+### The numbers (items 1–7): three attempts, none met a target, the crowd pass is built but off
+
+**Status: built and measured; stopped by the rule after three attempts.** The crowd scoring, the
+positioning mark, `neighboursOf` and the two new planner questions are in the tree and green; the two
+call sites are behind `BOT_PLAN_CROWD_RIDES` / `BOT_PLAN_CROWD_HOLDS`, **both `false`**, so the shipped
+behaviour is phases 1–2's (one model change stays on: a hold's ask aboard a deck reads the deck's
+outline less `BOT_EDGE_MARGIN_M + BOT_RIDE_RIM_INSET_M` instead of the bare outline).
+
+The measuring tool grew item 7's columns: every Character-to-Character Bump (`resolveBump` patched:
+mover, bumped, closing speed, the bumped's rider state, its distance to the nearest void edge, the
+hook's last output) and every crowd Fall joined to the rider state. Same seeds (`holds:07m:<leg>:<level>:0`),
+120 s, 12 Bots, legs base race Cp 1→2 and Cp 2→3 and Spin Cycle Start→Cp 0. `c+p` is `contact` +
+`pushed`; "Bumps ≥ 4" is Bumps at Stagger magnitude.
+
+| leg | level | passed: before → 1 → 2 → 3 | c+p: before → 1 → 2 → 3 | step-offs: 1 / 2 / 3 | Bumps ≥ 4: before → 3 | think µs: before → 3 |
+|---|---|---|---|---|---|---|
+| base Cp 1→2 | HARD | 12 → 3 → 1 → **3** | 6 → 9 → 4 → 9 | 3 / 0 / 0 | 196 → 398 | 67 → 197 |
+| | NORMAL | 11 → 4 → 2 → 9 | 17 → 23 → 13 → 14 | 5 / 0 / 0 | 108 → 132 | 41 → 106 |
+| | EASY | 4 → 0 → 3 → 4 | 28 → 66 → 29 → 21 | 20 / 1 / 0 | 323 → 183 | 35 → 116 |
+| base Cp 2→3 | HARD | 11 → 4 → 2 → 10 | 11 → 23 → 4 → 6 | 2 / 0 / 0 | 285 → 512 | 67 → 113 |
+| | NORMAL | 6 → 1 → 2 → 5 | 26 → 48 → 12 → 37 | 20 / 0 / 1 | 286 → 330 | 61 → 101 |
+| | EASY | 0 → 0 → 0 → 0 | 51 → 75 → 54 → 59 | 22 / 0 / 0 | 428 → 305 | 56 → 115 |
+| Spin Start→Cp 0 (pushed) | HARD | 4 → 1 → 2 → 1 | 14 → 11 → 6 → 14 | 15 / 0 / 0 | 189 → 298 | 115 → 177 |
+| | NORMAL | 4 → 0 → 0 → 0 | 15 → 11 → 11 → 15 | 13 / 0 / 0 | 373 → 329 | 104 → 147 |
+| | EASY | 2 → 0 → 0 → 0 | 9 → 10 → 15 → 22 | 15 / 0 / 0 | 247 → 110 | 111 → 138 |
+
+Against the targets: **`contact` + `pushed` halved on base Cp 1→2 and Cp 2→3 at NORMAL and EASY: not
+met** (best, attempt 2, −25 % and −54 % at NORMAL, +4 % and +6 % at EASY, with `passed` collapsed);
+**Spin Cycle `pushed` halved: not met** (attempt 2 halved it at HARD alone, with 1 passed of 4);
+**step-offs 0: met by attempts 2 and 3** at HARD and NORMAL (attempt 1 had 13–22 a leg); **phases
+1–2's numbers no worse: not met by any attempt** (Spin Cycle Start→Cp 0 passed 4 / 4 / 2 → 1 / 0 / 0);
+**think: the planner's share** rose from 2–10 µs per Bot-Tick to 30–90 (4,500–12,700 choices a run at
+270–660 µs a choice, against 800–1,500 at 160–340 before), because a Bot in a queue has a neighbour
+within reach every Tick. With both switches off the planner is asked exactly as in phases 1–2.
+
+**The three attempts, and what each found:**
+
+1. *As designed, plus the plain walk.* Every non-committed corner walk went through the crowd too,
+   the rides' positioning committed and unvetted, an overlap displacing the rollout by the whole
+   overlap, contact weighted ×6 near an edge. Two thirds of all choices were turns (`0` 3,105 of
+   9,052 at Spin HARD): in a 3 m lane every Tick beside a neighbour cost about 1, twenty of them more
+   than the horizon's whole progress, so packs scattered and 180° turns walked Bots back into the
+   pack behind them; and a positioning walk the rollout had *stopped at the margin* (because the
+   guard would) was sent as a committed heading for three Ticks with no guard to stop it — 13–22
+   step-offs a leg, at HARD too. Staggering Bumps went up (189 → 483 at Spin HARD): the dodging made
+   the crossings.
+2. *Rides and holds only, stops sent as stands, still-floor turns uncommitted (the guard vets them),
+   half the overlap each, edge weight ×2, the deck's margin = `BOT_EDGE_MARGIN_M` + the lag walk +
+   the decide interval.* Step-offs 0 at HARD and NORMAL, crowd Falls down on every base leg but EASY,
+   and **`passed` collapsed** (rows 12 → 1 at HARD): the margin was 1.1 m at HARD and 2.2 m at
+   NORMAL, which covers a 4 × 4 row and most of a square, so every walk aboard was `stopped` on its
+   first step and sent as a stand (`stand` 7,924 of 12,711 choices). Think doubled: `near` and the
+   bodies were two thirds of a 632 µs choice.
+3. *The rider's own rim margin (`BOT_EDGE_MARGIN_M + BOT_RIDE_RIM_INSET_M`), a stand only for a stop
+   within the lag plus the decide interval (`Scored.stoppedAt`), no moving body in a positioning ask,
+   reach 4 m.* Throughput came back on the squares (10 / 5 / 0) and NORMAL's rows (9), not HARD's rows
+   (3 of 12): the crowd's shoves aboard a sliding row keep every rollout displaced, and a Bot that
+   turns off its `aboardTarget` walk for a neighbour is turned back by the rider's rim push the next
+   Tick — the to-and-fro item 0 traced, now between two planners. Staggering Bumps rose at HARD on
+   both base legs (196 → 398, 285 → 512).
+
+**Diagnosis.** The crowd term does what it says in isolation (the two new planner questions), and it
+is not what the rides need. A ride's positioning is a *count from a fresh stand* (07h): its walks are
+short, aimed, and already spread (`across`, `spreadStill`); a planner that turns one of them for a
+neighbour breaks the count, the rider re-aims, and the two fight. What the crowd Falls on a row need
+is not a better direction but **fewer Bots on the same rim point at the same Tick** — a queue order
+for boarding and alighting spots, as `queueFor` gives a link's start (item 5's second half, not
+built), and a shove model in the rider's own `contact`/`score` (a landing next to a waiter). The
+Bump-that-Staggers term is right but rarely the Fall: staggering Bumps are 1–3 % of Bumps, and the
+`pushed` Falls come from ordinary shoves at a rim, which the displacement term sees only once the two
+already overlap in a view that is late for both. Items 5 (the ring, the queue) and 6 (the exemption
+is wired: `Fighter.targetId` is passed and left out; `fightRace` is green with both switches) are
+where the next attempt should start, in `deckRider.ts`, which this ticket said to leave alone.
+
+**Built (all green, `localMotion` 7 / 7):**
+
+- `localMotion.ts`: `Neighbour`, `PlanAsk.others` / `holdHere`, `Scored.bumped` / `crowd` /
+  `stoppedAt`, `Candidate.turn`; the rollout extrapolates each neighbour at its velocity (in the deck's
+  frame when it rides the same deck), a closing speed ≥ `MOVING_SEGMENT_STAGGER_SPEED` at a predicted
+  overlap is a Bump that Staggers (costed as a Stagger), an overlap displaces the rollout half the
+  overlap away (over a drop, a Fall) and costs `BOT_PLAN_CROWD_CONTACT_COST` weighted by the nearest
+  edge (`voidEdgeDistance`, new in `edgeGuard.ts`); a preferred side per Bot (`botDraw(seed, "crowd
+  side")`, `BOT_PLAN_SIDE_BIAS`, only with a crowd); `neighboursOf` (reach, same floor, the Fight's
+  target left out); on a deck the floor is the outline less `BOT_EDGE_MARGIN_M + BOT_RIDE_RIM_INSET_M`.
+- `PathBot.ts`: `Steering.positioning`; `follow(view, route, others, fighting)`; `throughCrowd` /
+  `crowdSteer` (decide every `BOT_PLAN_CROWD_DECIDE_TICKS`, a chosen asked move is the fresh one, a
+  stop within the lag is a stand, a still-floor turn is sent uncommitted), behind `BOT_PLAN_CROWD_RIDES`.
+- `deckRider.ts`: `positioning: true` on the spot walk, the waits to board, `holdAboard`'s stand and
+  the walk across the deck — a mark only; the guard and the hooks read `committed` as before.
+- `sweeperHold.ts`: the hold's ask carries `neighboursOf` behind `BOT_PLAN_CROWD_HOLDS`.
+- `fight.ts`: `Fighter.targetId`. `TreeBot.ts` passes it.
+- `tuning/bots.ts`: the `BOT_PLAN_CROWD_*` block (nine constants) and `BOT_PLAN_SIDE_BIAS`.
+- Two questions in `localMotion.test.ts`: two walkers closing at 11 u/s (the asked move is `bumped`
+  and never chosen; alone it is chosen), and a spot held beside the lane's edge with a neighbour
+  pressed against it (the stand is shoved over the edge, a move in is chosen).
+
+**Regression set** (CPU shared with the whole-Race run): `neverStepsOff -t "every Motion stopped"`
+9 / 9, `neverStranded` / `localMotion` / `belts` / `edgeGuard` / `TreeBot` / `fight` / `fightRace`
+green, `sweeperHold` and `trapHold` red on the three known asserts (base1's ordering, D and S's
+wall clock); `deckRider` + `transfers` 9 passed, 14 red on exactly phases 1–2's asserts (nine
+`transfers` and base HARD `think ≤ 40` at 44–99 µs under the load, the two table-build times, base
+EASY's 1 and the crowd rows' 2 EASY step-offs); `apps/server` `matchRuntime.bots` + `botFill` 12 / 12;
+both typechecks clean.
+
+**The whole-Race run** (`BOT_RACES=1 … races.test.ts`, 392 s, both switches off; in brackets phases
+1–2's run above, the CPU shared with the regression set both times):
+
+| Race | level | finished | stranded | step-offs | own / obstacle | where |
+|---|---|---|---|---|---|---|
+| base race | HARD | 10 (10) | 0 (0) | 1 (1) | 9 (9) / 12 (12) | Cp 4→5: Stagger 8; Cp 1→2: contact 2, step-off 1 (item 0's, unchanged) |
+| | NORMAL | 5 (5) | 0 (0) | **0** (1) | 9 (10) / 39 (39) | Cp 2→3: pushed 27, contact 9 |
+| | EASY | 0 (0) | 2 (2) | 1 (1) | 22 (22) / 78 (78) | Cp 2→3: pushed 44, contact 30 |
+| Spin Cycle | HARD | 0 (0) | 0 (0) | 0 (0) | 33 (31) / 56 (50) | Start→Cp 0: pushed 19, Stagger 18; Cp 5→6: WallImpact 8 |
+| | NORMAL | 0 (0) | 0 (0) | 0 (0) | 49 (57) / 76 (87) | Start→Cp 0: Stagger 27, pushed 25; Cp 0→1: Stagger 15 |
+| | EASY | 0 (0) | 2 (1) | **0** (3) | 56 (57) / 114 (113) | Start→Cp 0: pushed 55, Stagger 54, Bump 27 |
+| Slip Stream | HARD | 11 (11) | 0 (0) | 0 (0) | 21 (21) / 21 (21) | Cp 1→2: Stagger 13, Obstacle 4 |
+| | NORMAL | 9 (9) | 0 (0) | 0 (0) | 35 (35) / 31 (31) | Cp 1→2: Stagger 16, link 4; Cp 4→5: Stagger 10 |
+| | EASY | 4 (4) | 2 (2) | 0 (0) | 69 (69) / 57 (57) | Cp 1→2: Stagger 47, link 14 |
+
+Finished 39 of 108, as phases 1–2 left it; the base race and Slip Stream are unchanged to the Fall,
+the one model change that stays on (the hold's deck-frame ask reading the outline less the rider's
+margin) moved Spin Cycle by a few Falls either way and took the base race NORMAL and Spin Cycle EASY
+step-offs to 0 (Spin EASY's stranded 1 → 2, one give-up wait inside the harness's window by the look
+of it, not traced). Think 65–106 µs per Bot-Tick, the CPU shared. The file is still 9 / 9 red on
+`ownFalls === 0` (known). The item-0 HARD step-off is unchanged and is the rider's (above).
+
+**Not built:** item 5's queue order for boarding and alighting spots, and the ring spread (07l); both
+are `deckRider.ts`'s, which this ticket said to leave alone, and are where the diagnosis points.

@@ -85,3 +85,23 @@ and 48 → 39, passed 21 → 28 and 18 → 24, no step-off and nobody stranded, 
 impacts at EASY 113 → 0; the planner's own cost is 2–10 µs per Bot-Tick. What is left is the hold
 stopping *inside* a spinner's swath (07g's walk-up rule), where every candidate is bad — point 3's
 territory, not the planner's.
+
+**Ticket 14, phase 3, the crowd (2026-09-25).** The planner now scores the Characters near, played
+forward at their own velocity: a Bump that would Stagger (a closing speed of
+`MOVING_SEGMENT_STAGGER_SPEED` at a predicted overlap, the simulation's own rule through
+`BUMP_IMPULSE_SCALE`) is costed as a Stagger; an overlap displaces the rollout half the overlap away,
+as two capsules resolve, so a shove beside a drop is a Fall and every contact costs more the nearer
+the edge; each Bot favours one side, drawn once from its seed; the Fight's target is left out. A ride's
+positioning (a waiting spot, a walk across a deck, a stand aboard) is marked `positioning` beside
+`committed` and can be asked in the deck's frame, where the floor is the outline less the rider's rim
+margin. **Both call sites are off** (`BOT_PLAN_CROWD_RIDES`, `BOT_PLAN_CROWD_HOLDS`): three attempts,
+each measured on the crowd legs, and none met a target — the plain walk through the planner scattered
+every pack (two thirds of the choices turns) and stepped off, the deck margin sized for the Bot's lag
+covered whole rows and stopped every walk aboard, and the last attempt still halved the rows' passes
+at HARD and doubled think. What the measurement says: a ride's positioning is a count from a fresh
+stand, and a second planner turning it fights the rider's own re-aim; the `pushed` Falls are
+ordinary shoves at a rim between Bots arriving on one point together, which want a queue order for
+boarding and alighting spots in the rider (as `queueFor` orders a link's start), not a better
+direction. The two step-offs the whole-Race run had found were traced first, and neither was the
+planner's: an alighting jump that came down on a bevel beside its still, and a walk aboard a spinning
+square steered live off a view a metre late.

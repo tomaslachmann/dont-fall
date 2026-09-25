@@ -935,3 +935,60 @@ export const BOT_PLAN_DEVIATION_COST = 1;
  * equally good moves does not flip between them every decision.
  */
 export const BOT_PLAN_KEEP_BONUS = 0.5;
+
+// --- The crowd (M17 ticket 14, phase 3) --------------------------------------
+// The planner also plays the Characters near a Bot forward at their own
+// velocity, and a ride's positioning (a waiting spot, a walk across a deck, a
+// stand aboard) goes through it in the deck's frame. First guesses, each moved
+// only by the stagger log's crowd columns.
+
+/**
+ * Whether a ride's positioning (a waiting spot, a walk across a deck, a stand
+ * aboard) goes through the crowd's planner, and whether a hold's ask carries
+ * the Characters near. **Both off** (ticket 14, phase 3): three attempts on
+ * the crowd legs, each measured, and each cost more than it saved — the
+ * third halved the moving rows' passes at HARD (12 → 3) and doubled think —
+ * so the shipped behaviour is phases 1–2's. The code stays, held by its own
+ * suite, for the next attempt the ticket records.
+ */
+export const BOT_PLAN_CROWD_RIDES = false;
+export const BOT_PLAN_CROWD_HOLDS = false;
+
+/**
+ * How far, across the ground, another Character must be for the crowd to be
+ * asked at all: further than a rollout could bring the two together (the
+ * horizon at a walk each way), so a Bot alone plans exactly as before.
+ */
+export const BOT_PLAN_CROWD_REACH_M = 4;
+
+/** Ticks between the crowd's decisions while a Character is near; between them the last choice is steered. */
+export const BOT_PLAN_CROWD_DECIDE_TICKS = 3;
+
+/** Metres beyond two capsules' radii at which two rollout points count as touching: what a late view of the other gets wrong. */
+export const BOT_PLAN_CROWD_TOUCH_M = 0.1;
+
+/**
+ * What each Tick of overlap with another Character costs, before the edge
+ * weighting: a shove is not a Fall, but a Bot that stands where another
+ * stands is pressed about, so the waiting spreads (item 5). Less than a
+ * body's {@link BOT_PLAN_CONTACT_COST}, which pushes at a body's speed.
+ */
+export const BOT_PLAN_CROWD_CONTACT_COST = 0.15;
+
+/**
+ * How much more a Tick of overlap costs at a drop's edge than in the open, as
+ * a multiple of the base cost: a `pushed` Fall is a shove at an edge, so
+ * being pressed there is what the crowd term is for.
+ */
+export const BOT_PLAN_CROWD_EDGE_COST = 2;
+
+/** How far from a drop, in metres, the edge weighting fades to nothing. */
+export const BOT_PLAN_CROWD_EDGE_M = 1.5;
+
+/**
+ * What a candidate turning to this Bot's own preferred side is worth in a
+ * crowd: twelve planners alike all dodge the same way and oscillate, so each
+ * Bot favours one side, drawn from its seed once. Under the deviation of a
+ * 15° turn, so it decides only between two turns of the same size.
+ */
+export const BOT_PLAN_SIDE_BIAS = 0.03;

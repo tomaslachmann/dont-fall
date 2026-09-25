@@ -22,6 +22,7 @@ import {
   BOT_HOLD_MIN_SPEED,
   BOT_HOLD_SAMPLE_M,
   BOT_HOLD_STOP_M,
+  BOT_PLAN_CROWD_HOLDS,
   BOT_STALL_MOVE_M,
 } from "../tuning/bots.js";
 import { CAPSULE_BOTTOM_OFFSET, CAPSULE_RADIUS, WALK_SPEED } from "../tuning/character.js";
@@ -29,7 +30,7 @@ import { TICK_DT } from "../tuning/clock.js";
 import { MOVING_SEGMENT_STAGGER_SPEED } from "../simulation/MovingSegment.js";
 import { accelerate, type Motion } from "./edgeGuard.js";
 import { corridorAhead, type HoldHook, type HookContext } from "./hooks.js";
-import { LocalMotionPlanner, type Choice } from "./localMotion.js";
+import { LocalMotionPlanner, neighboursOf, type Choice } from "./localMotion.js";
 import type { MovingBody, MovingWorld, Platform } from "./movingWorld.js";
 import { navFloorWithin, navSurfaceAt } from "./navMesh.js";
 import type { Steering } from "./PathBot.js";
@@ -338,6 +339,7 @@ export class SweeperHold implements HoldHook {
           grow: CAPSULE_RADIUS + BOT_HOLD_MARGIN_M,
           deck: blocked.deck,
           forwardRefused: true,
+          others: BOT_PLAN_CROWD_HOLDS ? neighboursOf(ctx, blocked.deck) : [],
         });
       }
     }

@@ -190,6 +190,51 @@ describe("the local motion planner (M17 ticket 14)", () => {
     }
   });
 
+  it("two Characters walking at each other close at a Bump that Staggers: the asked move is never chosen, and alone it is (phase 3)", () => {
+    const track = buildBotTrack(resolveTrack(library, trackWith(1.5)));
+    built.push(track);
+    // Out of the bar's reach, with someone 3 m down the lane walking straight at the Bot at a walk.
+    const { ctx, sim } = standing(track, { x: 0, y: TOP + 1, z: PIVOT.z + 12 });
+    try {
+      const other = { x: ctx.self.position.x, z: ctx.self.position.z - 3, vx: 0, vz: 5.5, aboard: false };
+      const crowd = new LocalMotionPlanner("planner-test").choose({ ...ask(ctx, false), others: [other] });
+      const head = crowd.scored.find((s) => s.candidate.name === "0")!;
+      expect(head.bumped).toBe(true);
+      expect(crowd.candidate.name).not.toBe("0");
+      const chosen = crowd.scored.find((s) => s.candidate === crowd.candidate)!;
+      expect(chosen.bumped).toBe(false);
+      expect(chosen.edge).toBe(false);
+      const alone = new LocalMotionPlanner("planner-test").choose(ask(ctx, false));
+      expect(alone.candidate.name).toBe("0");
+      expect(alone.scored.every((s) => !s.bumped && s.crowd === 0)).toBe(true);
+    } finally {
+      sim.dispose();
+    }
+  });
+
+  it("holding a spot beside the lane's edge with someone pressed against it, the stand is shoved over the edge and a move in is chosen (phase 3)", () => {
+    const track = buildBotTrack(resolveTrack(library, trackWith(1.5)));
+    built.push(track);
+    // A step inside the guard's margin at the lane's edge (x 6), with a Character standing between the Bot and the lane's
+    // middle, overlapping it: the two resolve apart, and the stand is the one pushed out.
+    const { ctx, sim } = standing(track, { x: 5.2, y: TOP + 1, z: PIVOT.z + 12 });
+    try {
+      const other = { x: ctx.self.position.x - 0.2, z: ctx.self.position.z, vx: 0, vz: 0, aboard: false };
+      const choice = new LocalMotionPlanner("planner-test").choose({ ...ask(ctx, false), others: [other], holdHere: true });
+      const standing = choice.scored.find((s) => s.candidate.name === "stand")!;
+      expect(standing.edge).toBe(true);
+      expect(choice.candidate.name).not.toBe("stand");
+      const chosen = choice.scored.find((s) => s.candidate === choice.candidate)!;
+      expect(chosen.edge).toBe(false);
+      // Away from the other, never further out.
+      expect(chosen.candidate.direction!.x).toBeLessThanOrEqual(0.01);
+      // Holding the spot, a turn is no deviation: the stand loses only by the shove, not by every move losing progress to it.
+      expect(standing.crowd).toBeGreaterThan(0);
+    } finally {
+      sim.dispose();
+    }
+  });
+
   it("a stand brakes against the Bot's own velocity on a slick floor until it is too slow to hurt, and is a zero move on a floor with grip", () => {
     const planner = new LocalMotionPlanner("planner-test");
     const moving = { velocity: { x: 3, y: 0, z: 4 } } as CharacterSnapshot;

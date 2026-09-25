@@ -352,6 +352,13 @@ let lookups = 0;
  */
 export const voidEdgesNear = (nav: TrackNav, at: Vec3, feetY: number, radius: number): readonly VoidEdge[] => edgesNear(navEdgesOf(nav), at, feetY, radius);
 
+/** The distance across the ground from `(x, z)` to the nearest of `edges` (the drops themselves, not their inner lines); `Infinity` with none. */
+export const voidEdgeDistance = (edges: readonly VoidEdge[], x: number, z: number): number => {
+  let best = Infinity;
+  for (const edge of edges) best = Math.min(best, distanceTo(edge, x, z));
+  return best;
+};
+
 /**
  * Whether going from `(x0, z0)` to `(x1, z1)` crosses one of `edges` outward,
  * over its inner line ({@link BOT_EDGE_MARGIN_M} in from the drop): where the

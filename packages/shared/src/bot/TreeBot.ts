@@ -188,7 +188,7 @@ export class TreeBot implements Bot {
         const view = this.currentView();
         const others: Vec3[] = [];
         for (const [id, other] of Object.entries(view.characters)) if (id !== view.id && !other.eliminated) others.push(other.position);
-        this.steering = this.follower.follow(view, route, others);
+        this.steering = this.follower.follow(view, route, others, this.fighter.targetId);
       },
     };
     const agent: Record<string, () => boolean | State> = {

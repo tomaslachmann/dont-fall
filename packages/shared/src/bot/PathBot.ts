@@ -17,6 +17,8 @@ import {
   BOT_LINK_START_ALONG_M,
   BOT_LINK_START_SIDE_M,
   BOT_OFF_CORRIDOR_M,
+  BOT_PLAN_CROWD_DECIDE_TICKS,
+  BOT_PLAN_CROWD_RIDES,
   BOT_REPLAN_TICKS,
   BOT_STALL_MOVE_M,
   BOT_STALL_TICKS,
@@ -32,6 +34,7 @@ import type { HookContext, PathHooks } from "./hooks.js";
 import { botProfile, type BotProfile } from "./profile.js";
 import { botDraw } from "./random.js";
 import { HopReader, hopStartable, LinkReplay, type NavLink } from "./links.js";
+import { LocalMotionPlanner, neighboursOf, type Choice } from "./localMotion.js";
 import type { Cross } from "./movingWorld.js";
 import { EDGE_STRIP_FLAG, navCorners, navFilterFor, navFloorWithin, navStraightRun, navSurfaceAt, type NavCorner, type TrackNav } from "./navMesh.js";
 
@@ -44,6 +47,11 @@ import { EDGE_STRIP_FLAG, navCorners, navFilterFor, navFloorWithin, navStraightR
 
 /** Straight-line distance across the ground: a path's corners are on the floor, a capsule's centre is above it. */
 const groundDistance = (a: Vec3, b: Vec3): number => Math.hypot(b.x - a.x, b.z - a.z);
+/** The unit direction across the ground from `from` to `to`; +x when they coincide. */
+const unitToward = (from: Vec3, to: Vec3): Vec3 => {
+  const d = groundDistance(from, to);
+  return d === 0 ? vec3(1, 0, 0) : vec3((to.x - from.x) / d, 0, (to.z - from.z) / d);
+};
 
 /**
  * Where a Bot is running to this Tick: a Round goal's answer (ticket 04's
@@ -92,6 +100,14 @@ export interface Steering {
    * which the guard adds to every Tick it plays. Absent: none.
    */
   readonly drift?: Vec3;
+  /**
+   * A committed move that is positioning rather than a script (M17 ticket 14,
+   * phase 3): a ride's waiting spot, its walk across a deck, a stand aboard or
+   * waiting to alight. The planner may turn it for the crowd; the guard and
+   * the hooks treat it as any committed move. A link's run, a transfer's
+   * run-up and jump and an arc are scripts, never this.
+   */
+  readonly positioning?: boolean;
 }
 
 /** A goal is worked out afresh every Tick, so the same goal is the same point, not the same object. */
@@ -246,6 +262,13 @@ export class PathFollower {
   private unstallUntil = Number.NEGATIVE_INFINITY;
   /** The last Tick this leaf was asked: a gap means the Bot was out of control, and whatever link it was on is over. */
   private lastTick = Number.NEGATIVE_INFINITY;
+  /** The crowd's planner (M17 ticket 14, phase 3): its last choice, when it was made, and whether it was for a stand. */
+  private readonly crowd: LocalMotionPlanner;
+  private crowdChoice: Choice | null = null;
+  private crowdDecidedAt = Number.NEGATIVE_INFINITY;
+  private crowdHeld = false;
+  /** Whether the last crowd choice was made aboard a deck. */
+  private crowdAboard = false;
 
   private readonly profile: BotProfile;
 
@@ -264,6 +287,7 @@ export class PathFollower {
     private readonly seed = "",
   ) {
     this.profile = profile ?? botProfile("normal", seed);
+    this.crowd = new LocalMotionPlanner(seed);
   }
 
   /** What the hooks are handed this Tick (M17 ticket 07). */
@@ -287,13 +311,14 @@ export class PathFollower {
    * own for this Tick: `self` as it sees it, the Track, and (M17 ticket 07)
    * the Motion Clock and the fragile floors the hooks read.
    */
-  follow(view: BotWorldView, route: Route, others: readonly Vec3[] = []): Steering {
+  follow(view: BotWorldView, route: Route, others: readonly Vec3[] = [], fighting: string | null = null): Steering {
     const { tick, self } = view;
     const { nav } = view.track;
     if (tick !== this.lastTick + 1) {
       this.link = null;
       this.stepping = null;
       this.approach = null;
+      this.crowdChoice = null;
     }
     this.lastTick = tick;
     if (this.link !== null || this.landing) this.stalledAt = null;
@@ -328,8 +353,10 @@ export class PathFollower {
     // A ride under way owns the Bot (M17 ticket 07b): its Steering is committed, so the guard and the other hooks leave it alone.
     const riding = this.hooks.ride?.steer(this.context(view)) ?? null;
     if (riding !== null) {
-      this.noteStall(tick, self, riding);
-      return riding;
+      // A ride's positioning goes through the crowd's planner, in the deck's frame (M17 ticket 14, phase 3); its scripts do not.
+      const steering = BOT_PLAN_CROWD_RIDES && riding.positioning === true && riding.jump !== true ? this.throughCrowd(view, riding, fighting) : riding;
+      this.noteStall(tick, self, steering);
+      return steering;
     }
     if (replan || !samePoint(goal, this.plannedGoal) || tick - this.plannedTick >= BOT_REPLAN_TICKS || this.offCorridor(self.position)) {
       this.plan(tick, self.position, goal, nav, view);
@@ -349,17 +376,91 @@ export class PathFollower {
     const { hold = [], push } = this.hooks;
     if (steering.committed !== true && (hold.length > 0 || push !== undefined)) {
       const context = this.context(view);
+      let held = false;
       for (const hook of hold) {
-        const held = hook.hold(context, steering);
-        if (held !== steering) {
-          steering = held;
+        const out = hook.hold(context, steering);
+        if (out !== steering) {
+          steering = out;
+          held = true;
           break;
         }
       }
+      // The plain walk for a corner is not planned round the crowd (M17 ticket 14, phase 3, attempt 1: every pack scattered,
+      // two thirds of the choices turns, step-offs everywhere); the crowd is the rides' and the holds' planner's.
+      void held;
       if (steering.committed !== true && push !== undefined) steering = push.compensate(context, steering);
     }
     this.noteStall(tick, self, steering);
     return steering;
+  }
+
+  /**
+   * `steering` through the crowd's planner (M17 ticket 14, phase 3) when a
+   * Character is within {@link BOT_PLAN_CROWD_REACH_M} on this Bot's floor:
+   * the Characters near are played forward at their own velocity, and the
+   * planner picks among the asked move, its turns and a stand. Nobody near,
+   * the move is untouched, so a Bot alone plans as it always did. A decision
+   * is kept for {@link BOT_PLAN_CROWD_DECIDE_TICKS}; a chosen asked move is
+   * the fresh one each Tick, a chosen turn is held. A zero move (a stand
+   * aboard, or waiting to board) is a hold of the spot: progress is measured
+   * as staying put, so only a crowd risk moves the Bot off it. `fighting` is
+   * the Character the Fight is after, left out of the crowd (item 6).
+   */
+  private throughCrowd(view: BotWorldView, steering: Steering, fighting: string | null): Steering {
+    const { tick, self } = view;
+    const { moving } = view.track;
+    const clock = view.runningFromTick ?? null;
+    const asked = steering.moveDirection;
+    const holding = asked.x === 0 && asked.z === 0;
+    if (tick - this.crowdDecidedAt < BOT_PLAN_CROWD_DECIDE_TICKS && this.crowdChoice !== null && this.crowdHeld === holding) {
+      return this.crowdSteer(view, steering, this.crowdChoice);
+    }
+    const deck = self.grounded ? moving.platformUnder(self.position, tick, clock) : null;
+    const ctx = this.context(view);
+    const others = neighboursOf(ctx, deck, fighting);
+    this.crowdDecidedAt = tick;
+    this.crowdHeld = holding;
+    if (others.length === 0) {
+      this.crowdChoice = null;
+      this.crowd.forget();
+      return steering;
+    }
+    // No moving body in a positioning ask: a sweeper riding the deck is the rider's own to keep out of (07l), one beside the
+    // lane is the hold's before the ride begins, and the bodies were two thirds of the choice's cost (attempt 2: 632 µs).
+    // A stand's turns are taken from the way to the next corner, or across the course when there is none.
+    const corner = ctx.path[ctx.corner]?.point;
+    const reference = holding ? (corner === undefined ? vec3(1, 0, 0) : unitToward(self.position, corner)) : asked;
+    this.crowdChoice = this.crowd.choose({ ctx, asked: reference, near: [], grow: CAPSULE_RADIUS + BOT_HOLD_MARGIN_M, deck, forwardRefused: false, others, holdHere: holding });
+    this.crowdAboard = deck !== null;
+    return this.crowdSteer(view, steering, this.crowdChoice);
+  }
+
+  /**
+   * The move to send for the crowd's `choice`: the asked move itself as it is
+   * now, a stand that brakes, or the turn chosen. A candidate the rollout
+   * stopped at an edge's margin is sent as a stand: the rollout stands there
+   * because the guard would, and a committed move has no guard. A turn on
+   * still floor is sent uncommitted, so the guard vets it from every place
+   * the Bot may really be; aboard a deck the guard has no edges, and the
+   * rollout's own margin is what keeps it on.
+   */
+  private crowdSteer(view: BotWorldView, steering: Steering, choice: Choice): Steering {
+    const { candidate } = choice;
+    if (candidate.name === "0") return steering;
+    const scored = choice.scored.find((s) => s.candidate === candidate);
+    // A stop the Bot would reach before it sees itself there and decides again is a stand now; a later one is walked toward.
+    const imminent = scored !== undefined && scored.stoppedAt <= this.guard.stale.max + BOT_PLAN_CROWD_DECIDE_TICKS;
+    const move = candidate.direction === null || imminent ? this.crowd.stand(this.context(view)).moveDirection : candidate.direction;
+    if (move.x === steering.moveDirection.x && move.z === steering.moveDirection.z) return steering;
+    // A Dash locks its direction: never on a move the planner turned.
+    const turned: Steering = { ...steering, moveDirection: move, dash: false };
+    if (steering.committed === true && !this.crowdAboard) {
+      const { committed, positioning, ...rest } = turned;
+      void committed;
+      void positioning;
+      return rest;
+    }
+    return turned;
   }
 
   /**
