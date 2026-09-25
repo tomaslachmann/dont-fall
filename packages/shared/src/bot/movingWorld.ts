@@ -328,8 +328,9 @@ const periodTicksOf = (motion: SegmentMotion): number => {
  * hold's margin of its pivot across the ground, and no lower under its arms
  * than a Character stands. Runs once per world, on the navmesh it was built for.
  */
-const markCrossSwaths = (nav: TrackNav, crosses: readonly MovingBody[], rests: readonly Vec3[], grow: number): void => {
-  if (crosses.length === 0) return;
+const markCrossSwaths = (nav: TrackNav, crosses: readonly MovingBody[], rests: readonly Vec3[], grow: number): number => {
+  let marked = 0;
+  if (crosses.length === 0) return marked;
   const tile = nav.navMesh.getTile(0);
   const header = tile.header();
   const count = header === null ? 0 : header.polyCount();
@@ -360,7 +361,9 @@ const markCrossSwaths = (nav: TrackNav, crosses: readonly MovingBody[], rests: r
     if (!swaths.some((s) => cy >= s.yLo && cy <= s.yHi && Math.hypot(s.x - cx, s.z - cz) <= s.within)) continue;
     const ref = base | i;
     nav.navMesh.setPolyFlags(ref, nav.navMesh.getPolyFlags(ref).flags | CROSS_SWATH_FLAG);
+    marked += 1;
   }
+  return marked;
 };
 
 /** Whether the body's Motion carries its local origin anywhere (a spin about its own origin does not). */
@@ -558,16 +561,30 @@ export const movingWorldOf = (resolved: ResolvedTrack, nav: TrackNav): MovingWor
   // A cross (M17 ticket 07i, round 3): a sweeper spinning about its own fixed origin whose longest gap
   // between arms, at the best of eight points on a ring inside its swath, is shorter than a walk
   // across the swath. Asked once per world, off the clock, with the hold's own margin.
+  // Two bars on one axle at one speed are one cross (Spin Cycle's 33/34): each alone has a window, together they have none.
   const grow = CAPSULE_RADIUS + BOT_HOLD_MARGIN_M;
-  const isCross = (body: MovingBody): boolean => {
+  const spinKey = (body: MovingBody): string | null => {
     const { motion, under, trapDoor, punch } = body.config;
-    if (motion.spin === undefined || motion.spin.speed === 0 || motion.swing !== undefined || motion.slide !== undefined) return false;
-    if ((under !== undefined && under.length > 0) || trapDoor !== undefined || punch !== undefined || moves[body.index]) return false;
-    const period = periodTicksOf(motion);
+    if (motion.spin === undefined || motion.spin.speed === 0 || motion.swing !== undefined || motion.slide !== undefined) return null;
+    if ((under !== undefined && under.length > 0) || trapDoor !== undefined || punch !== undefined || moves[body.index]) return null;
+    return `${axisLineKey(body.config, motion.spin.axis, motion.spin.pivot)}:${motion.spin.speed}`;
+  };
+  const axles = new Map<string, MovingBody[]>();
+  for (const body of sweepers) {
+    const key = spinKey(body);
+    if (key === null) continue;
+    const group = axles.get(key);
+    if (group === undefined) axles.set(key, [body]);
+    else group.push(body);
+  }
+  const isCross = (group: readonly MovingBody[]): boolean => {
+    const first = group[0]!;
+    const period = periodTicksOf(first.config.motion);
     if (period < 2) return false;
-    const crossing = Math.ceil((2 * (body.radius + grow)) / WALK_SPEED / TICK_DT);
-    const rest = rests[body.index]!;
-    const r = BOT_CROSS_PROBE_RADIUS_SHARE * body.radius;
+    const radius = group.reduce((r, b) => Math.max(r, b.radius), 0);
+    const crossing = Math.ceil((2 * (radius + grow)) / WALK_SPEED / TICK_DT);
+    const rest = rests[first.index]!;
+    const r = BOT_CROSS_PROBE_RADIUS_SHARE * radius;
     let bestGap = 0;
     for (let k = 0; k < 8 && bestGap < crossing; k += 1) {
       const angle = (k / 8) * 2 * Math.PI;
@@ -576,15 +593,17 @@ export const movingWorldOf = (resolved: ResolvedTrack, nav: TrackNav): MovingWor
       let run = 0;
       let gap = 0;
       for (let tick = 0; tick < 2 * period; tick += 1) {
-        if (occupies(body.index, tick % period, null, p, grow)) run = 0;
+        if (group.some((b) => occupies(b.index, tick % period, null, p, grow))) run = 0;
         else gap = Math.max(gap, (run += 1));
       }
       bestGap = Math.max(bestGap, Math.min(gap, period));
     }
     return bestGap < crossing;
   };
-  const crosses = sweepers.filter(isCross);
-  markCrossSwaths(nav, crosses, rests, grow);
+  const crosses: MovingBody[] = [];
+  for (const group of axles.values()) if (isCross(group)) crosses.push(...group);
+  const marked = markCrossSwaths(nav, crosses, rests, grow);
+  if (process.env.R3_TRACE) console.log(`[trace] crosses ${crosses.map((b) => b.config.segmentIndex).join(",")} (${axles.size} axles), ${marked} polys marked`);
 
   return {
     bodies,

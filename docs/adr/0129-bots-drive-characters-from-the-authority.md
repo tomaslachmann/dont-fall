@@ -406,3 +406,18 @@ reliable, but it makes every Track more work).
 - **Found, left for the simulation: a Character carried onto a seam between a turntable's pieces can be
   pinned inside the deck for good** — never grounded, position frozen, `velocity.y` unbounded — and no
   input moves it (two turntables, NORMAL, one Bot). "Never stranded" cannot be kept from the Bot's side there.
+
+**Ticket 07l, the spiked bar on the spinning squares (2026-09-25).**
+
+- **A sweeper riding a deck is the rider's to read.** The base race's spinning squares each carry a bar
+  with a Motion of its own, so in the deck's frame it sweeps a disc about the deck's centre; and every
+  ride Steering is committed, which the sweeper hold leaves untouched by design. So nothing aboard was
+  ever vetted against a bar, and a transfer — aimed at the other deck's *middle*, the bar's pivot — came
+  down inside its sweep and stood still there (traced Tick by Tick: landed at 3.7 m from the pivot,
+  knocked down 7 Ticks later). `DeckRider` now reads the sweepers riding a platform (`swathsOn`: inside
+  the outline, level with the top, fixed in the frame, moving against the deck), keeps its waiting spot,
+  its walk across the deck (round the swath on a hugging circle, since a tangent walk fought the rim
+  push at the mid-edge) and its stand out of the swath, and times a transfer so the landing and the walk
+  out of the swath are clear of the bar. Base leg Cp 2 → 3 at HARD, two seeds: `Obstacle` Falls 17 / 18
+  → 0 / 1, stranded 0, step-offs 0; passed unchanged at 5 / 3 — the leg's throughput is 07e's one-Bot-
+  per-window transfer, not the bar.

@@ -367,8 +367,14 @@ export class SweeperHold implements HoldHook {
       if (!moving.solidAt(body.index, at, view.fragile)) return false;
       if (body.spiked) return true;
       const v = moving.velocityAt(body.index, at, clock, p);
-      if (Math.hypot(v.x, v.y, v.z) > BOT_HOLD_MIN_SPEED) return true;
-      return walk !== undefined && Math.hypot(v.x - walk.x, v.y, v.z - walk.z) > MOVING_SEGMENT_STAGGER_SPEED;
+      const speed = Math.hypot(v.x, v.y, v.z);
+      if (speed > BOT_HOLD_MIN_SPEED) return true;
+      if (process.env.R3_OLD_SPEED || walk === undefined || speed < 1e-3) return false;
+      // Along the body's own motion, which is the push a sweeping face deals: a walk straight into it adds
+      // the whole walk, a walk across it adds nothing (07i round 3: the relative speed's magnitude counted
+      // a glancing walk past a bar's slow inner half as head-on, and 812 of 2,666 holds at Slip Stream's
+      // bar 97 were that).
+      return process.env.R3_RELATIVE ? Math.hypot(v.x - walk.x, v.y, v.z - walk.z) > MOVING_SEGMENT_STAGGER_SPEED : speed - (walk.x * v.x + walk.z * v.z) / speed > MOVING_SEGMENT_STAGGER_SPEED;
     };
     /** The walk the Bot brings to sample `i`: its corridor's direction there at its floor's pace, from the samples' own spacing and arrival. */
     const walkAt = (i: number): Vec3 | undefined => {

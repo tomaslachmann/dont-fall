@@ -243,8 +243,8 @@ const swathsOn = (track: BotTrack, table: RideTable, platform: Platform, tick: n
   const out: Swath[] = [];
   for (const body of moving.near(centre, reach, tick, 0, clock, ["sweeper"])) {
     const pose = moving.poseAt(body.index, tick, clock);
-    if (Math.abs(pose.position.y - deck.y) > BOT_RIDE_SWATH_LEVEL_M) continue;
     const local = moving.toLocal(platform, tick, clock, pose.position);
+    if (Math.abs(local.y - deck.y) > BOT_RIDE_SWATH_LEVEL_M) continue;
     if (hullDistance(deck.hull, local) > 0) continue;
     // Fixed in the deck's frame: its origin is at the same local point a quarter period on.
     const later = moving.toLocal(platform, tick + quarter, clock, moving.poseAt(body.index, tick + quarter, clock).position);
@@ -274,8 +274,6 @@ const swathAcross = (swaths: readonly Swath[], a: XZ, b: XZ): Swath | null => {
   return null;
 };
 
-const rotXZ = (v: XZ, a: number): XZ => ({ x: v.x * Math.cos(a) - v.z * Math.sin(a), z: v.x * Math.sin(a) + v.z * Math.cos(a) });
-
 /** `p` pushed radially out of any swath it is in. */
 const outOfSwaths = (swaths: readonly Swath[], p: XZ): XZ => {
   let q = p;
@@ -291,9 +289,13 @@ const outOfSwaths = (swaths: readonly Swath[], p: XZ): XZ => {
 /**
  * The platform-frame direction to walk from `from` for `to` keeping out of
  * `swaths`, or null when the straight walk is clear: radially out when
- * inside one, else along the tangent to the one in the way, on `to`'s side.
+ * inside one, else round the one in the way on a circle hugging it, the
+ * shorter way toward `to`, kept inside `deck`'s outline. (A tangent from
+ * the Bot's own point was tried first: it led out to the rim, the rim push
+ * led back into the swath, and the Bot walked to and fro at the mid-edge,
+ * where the ring between the two is a hand wide.)
  */
-const aroundSwaths = (swaths: readonly Swath[], from: XZ, to: XZ): XZ | null => {
+const aroundSwaths = (swaths: readonly Swath[], deck: RideDeck, from: XZ, to: XZ): XZ | null => {
   const inside = swathAt(swaths, from);
   if (inside !== null) {
     const d = Math.hypot(from.x - inside.pivot.x, from.z - inside.pivot.z);
@@ -301,14 +303,15 @@ const aroundSwaths = (swaths: readonly Swath[], from: XZ, to: XZ): XZ | null => 
   }
   const s = swathAcross(swaths, from, to);
   if (s === null) return null;
-  const d = Math.hypot(s.pivot.x - from.x, s.pivot.z - from.z);
-  const u = { x: (s.pivot.x - from.x) / d, z: (s.pivot.z - from.z) / d };
-  const a = Math.asin(Math.min(1, s.radius / d)) + BOT_RIDE_SWATH_LEAD_RAD;
-  const len = Math.hypot(to.x - from.x, to.z - from.z);
-  const v = len === 0 ? u : { x: (to.x - from.x) / len, z: (to.z - from.z) / len };
-  const t1 = rotXZ(u, a);
-  const t2 = rotXZ(u, -a);
-  return t1.x * v.x + t1.z * v.z >= t2.x * v.x + t2.z * v.z ? t1 : t2;
+  const R = s.radius + RUNUP_STEP_M / 2;
+  const af = Math.atan2(from.z - s.pivot.z, from.x - s.pivot.x);
+  const at = Math.atan2(to.z - s.pivot.z, to.x - s.pivot.x);
+  const turn = Math.atan2(Math.sin(at - af), Math.cos(at - af));
+  const a = af + Math.sign(turn || 1) * Math.min(Math.abs(turn), BOT_RIDE_SWATH_LEAD_RAD + RUNUP_STEP_M * 2 / R);
+  let p: XZ = { x: s.pivot.x + R * Math.cos(a), z: s.pivot.z + R * Math.sin(a) };
+  while (hullDistance(deck.hull, p) > -BOT_EDGE_MARGIN_M && Math.hypot(p.x - s.pivot.x, p.z - s.pivot.z) > RUNUP_STEP_M) p = insetToward(p, s.pivot, RUNUP_STEP_M);
+  const d = Math.hypot(p.x - from.x, p.z - from.z);
+  return d < 1e-6 ? null : { x: (p.x - from.x) / d, z: (p.z - from.z) / d };
 };
 
 /** Whether a riding sweeper occupies world point `p` at `at`. */
@@ -586,9 +589,6 @@ export class DeckRider implements RideHook {
     return Math.hypot(self.velocity.x - floor.x, self.velocity.z - floor.z) < BOT_BRAKE_MIN_SPEED;
   }
 
-  /** TEMP 07l trace hook. */
-  static trace: ((id: string, tick: number, note: string) => void) | null = null;
-
   private step(ctx: HookContext, table: RideTable, seenTick: number): Steering | null {
     const { tick, self, clock } = ctx;
     const track = ctx.view.track;
@@ -596,11 +596,6 @@ export class DeckRider implements RideHook {
     const ride = this.ride!;
     const platform = this.platform!;
     const deck = table.decks[platform.index]!;
-    if (DeckRider.trace !== null) {
-      const t = this.state === "aboard" || this.state === "waitToAlight" ? this.aboardTarget(ctx, table) : null;
-      const f = (v: Vec3 | null | undefined): string => (v == null ? "-" : `(${v.x.toFixed(1)},${v.z.toFixed(1)})`);
-      DeckRider.trace(ctx.view.id, tick, `${this.state} p${platform.index} entry ${f(ride.entry.local)} to${ride.entry.to?.platform ?? "-"} exit ${f(ride.exit.local)} to${ride.exit.to?.platform ?? "-"} jump ${ride.exit.jump} target ${f(t)} across ${ride.across.toFixed(1)} forced ${this.forcedAt}`);
-    }
     switch (this.state) {
       case "waitToBoard":
       case "waitToAlight": {
@@ -895,7 +890,9 @@ export class DeckRider implements RideHook {
     const seen = moving.toLocal(platform, seenTick, clock, self.position);
     const target = this.aboardTarget(ctx, table);
     const now = moving.toWorld(platform, tick, clock, seen);
-    if (hullDistance(deck.hull, seen) > -(BOT_EDGE_MARGIN_M + BOT_RIDE_RIM_INSET_M)) {
+    // On a deck a sweeper rides, the rim inset is let go (07l): between the swath and the rim there is no room for it.
+    const swaths = swathsOn(ctx.view.track, table, platform, tick, clock);
+    if (hullDistance(deck.hull, seen) > -(BOT_EDGE_MARGIN_M + (swaths.length > 0 ? 0 : BOT_RIDE_RIM_INSET_M))) {
       const centre = moving.toWorld(platform, tick, clock, { x: deck.centroid.x, y: deck.y, z: deck.centroid.z });
       return { moveDirection: unit(now, centre), dash: false, committed: true };
     }
@@ -906,7 +903,7 @@ export class DeckRider implements RideHook {
       return STAND;
     }
     // Round a sweeper riding the deck, never through its swath (07l): out of it radially, else along its tangent.
-    const around = aroundSwaths(swathsOn(ctx.view.track, table, platform, tick, clock), seen, target);
+    const around = aroundSwaths(swaths, deck, seen, target);
     if (around !== null) {
       const ahead = moving.toWorld(platform, tick, clock, { x: seen.x + around.x, y: seen.y, z: seen.z + around.z });
       return this.unpinned(tick, self.position, { moveDirection: unit(now, ahead), dash: false, committed: true });
@@ -921,7 +918,7 @@ export class DeckRider implements RideHook {
     const swaths = swathsOn(ctx.view.track, table, platform, tick, clock);
     if (swaths.length === 0) return null;
     const seen = moving.toLocal(platform, seenTick, clock, self.position);
-    const out = aroundSwaths(swaths, seen, seen);
+    const out = aroundSwaths(swaths, table.decks[platform.index]!, seen, seen);
     if (out === null) return null;
     const now = moving.toWorld(platform, tick, clock, seen);
     const ahead = moving.toWorld(platform, tick, clock, { x: seen.x + out.x, y: seen.y, z: seen.z + out.z });
@@ -976,7 +973,8 @@ export class DeckRider implements RideHook {
     const platform = this.platform!;
     const deck = table.decks[platform.index]!;
     const seen = moving.toLocal(platform, seenTick, clock, ctx.self.position);
-    if (hullDistance(deck.hull, seen) > -(BOT_EDGE_MARGIN_M + BOT_RIDE_RIM_INSET_M)) {
+    const swaths = swathsOn(ctx.view.track, table, platform, tick, clock);
+    if (hullDistance(deck.hull, seen) > -(BOT_EDGE_MARGIN_M + (swaths.length > 0 ? 0 : BOT_RIDE_RIM_INSET_M))) {
       const now = moving.toWorld(platform, tick, clock, seen);
       const centre = moving.toWorld(platform, tick, clock, { x: deck.centroid.x, y: deck.y, z: deck.centroid.z });
       this.quiet = 0;

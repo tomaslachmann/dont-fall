@@ -7,7 +7,7 @@ import { WALK_SPEED } from "../tuning/character.js";
 import { TICK_DT } from "../tuning/clock.js";
 import type { BotWorldView } from "./Bot.js";
 import type { StaleWindow } from "./edgeGuard.js";
-import { navSurfaceAt, type NavCorner } from "./navMesh.js";
+import { CROSS_SWATH_FLAG, navSurfaceAt, type NavCorner } from "./navMesh.js";
 import type { Steering } from "./PathBot.js";
 import type { BotProfile } from "./profile.js";
 import { BeltPush, beltUnder } from "./belts.js";
@@ -77,7 +77,7 @@ export const defaultHooks = (profile: BotProfile, seed: string): PathHooks => {
   void seed;
   return {
     hold: [new SweeperHold(profile, seed), ...trapHolds(profile, seed)],
-    planFilterFlags: (ctx) => trapPlanFilterFlags(ctx) | CROSS_SWATH_FLAG,
+    planFilterFlags: (ctx) => trapPlanFilterFlags(ctx) | (process.env.R3_NOCROSS ? 0 : CROSS_SWATH_FLAG),
     push: new BeltPush(),
     ride: new DeckRider(profile, seed),
   };
