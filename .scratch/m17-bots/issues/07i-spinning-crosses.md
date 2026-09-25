@@ -139,8 +139,19 @@ below). What moved and what did not, per leg:
   hit every level mid-swath. Now a sample inside a near body's swept radius that arrives within the look
   extends the check to the sample that leaves the swath. EASY still notices a bar only at its edge.
 - **`BOT_HOLD_MIN_SPEED_WALKING`**, above.
+- **A spinning body's occupancy is asked in its own frame** (second session): `spinAbout` reads a body
+  turning flat about a fixed pivot off its poses at `tick` and `tick + 1` (and its origin a quarter turn on);
+  `turnedBack` turns a point back about that pivot by the body's turn over `d` Ticks, so "occupied at
+  `tick + d`" is `occupies` at `tick` — the ring cache's pose — and a start Tick costs a sine, tabled once per
+  search for every offset it asks (`spinTable`). A test holds `turnedBack` to the poses themselves on 6,804
+  points (4 bars × 3 Ticks × 7 offsets × an 81-point grid): the turned-back point equals the point taken
+  into the body's frame at `tick + d` and out at `tick`, to 1e-6, and the occupancy answers agree at every
+  one. The wait-until-start check is incremental (a Tick the bar reaches the stand rules out every later
+  start, so it breaks); `inSwath` reads the near bodies' positions once a decision.
+- **`near` keeps a stray bound per body** (`movingWorld.ts`, the one file outside the ticket's list touched;
+  it is nobody's in 07h's split, and the edit is additive). See §3 for why: it was the whole cost.
 
-### 3. Cost (not met)
+### 3. Cost (met on two legs, within noise on the third)
 
 The hook's share is **34–59 µs a call** on these legs (target ≤ 15; 07g: 2–16). Two costs, both mine:
 the arc search itself (up to 47 start Ticks × 10 played arcs × ~60 Ticks × near bodies of `occupies`,
