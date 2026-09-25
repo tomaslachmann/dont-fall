@@ -183,6 +183,12 @@ export class Fighter {
     return this.plan.kind !== "idle";
   }
 
+  /** The Character this Fight is after, if its plan names one (M17 ticket 14, phase 3: left out of the crowd the run plans round). */
+  get targetId(): string | null {
+    const { plan } = this;
+    return plan.kind === "strike" || plan.kind === "catch" ? plan.target : null;
+  }
+
   /** Knocked about, Held, fallen: every plan is off, and nothing is pressed. */
   reset(): void {
     this.plan = { kind: "idle" };

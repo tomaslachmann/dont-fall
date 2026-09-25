@@ -22,6 +22,7 @@ import {
   BOT_HOLD_MIN_SPEED,
   BOT_HOLD_SAMPLE_M,
   BOT_HOLD_STOP_M,
+  BOT_PLAN_CROWD_HOLDS,
   BOT_STALL_MOVE_M,
 } from "../tuning/bots.js";
 import { CAPSULE_BOTTOM_OFFSET, CAPSULE_RADIUS, WALK_SPEED } from "../tuning/character.js";
@@ -29,6 +30,7 @@ import { TICK_DT } from "../tuning/clock.js";
 import { MOVING_SEGMENT_STAGGER_SPEED } from "../simulation/MovingSegment.js";
 import { accelerate, type Motion } from "./edgeGuard.js";
 import { corridorAhead, type HoldHook, type HookContext } from "./hooks.js";
+import { LocalMotionPlanner, neighboursOf, type Choice } from "./localMotion.js";
 import type { MovingBody, MovingWorld, Platform } from "./movingWorld.js";
 import { navFloorWithin, navSurfaceAt } from "./navMesh.js";
 import type { Steering } from "./PathBot.js";
@@ -81,9 +83,16 @@ import { botDraw } from "./random.js";
  * still decides whether it sees that window. The guard vets every move of
  * the arc (never steps off); an arc that finds nothing leaves the old hold
  * and its give-up in place (never stranded).
+ *
+ * M17 ticket 14 (ADR 0130): this hold says whether the way ahead is blocked,
+ * and no longer chooses what to do about it. Its `stand` and `retreat` are
+ * gone — the retreat walked back along the path into the arm it ran from,
+ * and Staggered the Bot it was saving (07m) — and a `LocalMotionPlanner`
+ * picks among a stand and the sideways and back moves by playing each one
+ * forward. The arc stays: it is tried first where the stand is quiet.
  */
 
-type Decision = "go" | "hold" | "retreat";
+type Decision = "go" | "hold";
 
 /** A crossing walked with a bar's rotation (M17 ticket 07i): where the Bot is each Tick from a stand at `points[0]` on `startTick`. */
 interface ArcPlan {
@@ -98,7 +107,10 @@ interface Blocked {
   readonly index: number;
   readonly samples: readonly { p: Vec3; arriveTick: number }[];
   readonly near: readonly MovingBody[];
-  readonly onDeck: boolean;
+  /** The moving deck the Bot stands on, if any: no arc is planned aboard one. */
+  readonly deck: Platform | null;
+  /** Whether a counting body reaches the Bot where it stands within {@link BOT_HOLD_HERE_TICKS}: then no arc is planned from here. */
+  readonly standHit: boolean;
   /** Whether `body` at `at` is one to hold for at `p`, reached with the walk velocity `walk` (none: standing). */
   readonly counts: (body: MovingBody, at: number, p: Vec3, walk?: Vec3) => boolean;
   /** The walk the Bot brings to `samples[i]`. */
@@ -238,6 +250,9 @@ export class SweeperHold implements HoldHook {
   private arc: ArcPlan | null = null;
   /** Per bar, the Tick before which an arc search there is not tried again (07i). */
   private readonly arcFailed = new Map<number, number>();
+  /** What to do while held (M17 ticket 14): the planner's choice at the last decision, steered every Tick until the next. */
+  private readonly planner: LocalMotionPlanner;
+  private plan: Choice | null = null;
 
   /** Every arc planned, over all Bots: logged by the suite, not asserted (07i). */
   static arcs = 0;
@@ -247,7 +262,9 @@ export class SweeperHold implements HoldHook {
   constructor(
     private readonly profile: BotProfile,
     private readonly seed: string,
-  ) {}
+  ) {
+    this.planner = new LocalMotionPlanner(seed);
+  }
 
   /** The longest this Bot holds before it goes anyway: one longest authored cycle, or longer the further it looks. */
   private holdCap(): number {
@@ -265,6 +282,7 @@ export class SweeperHold implements HoldHook {
       this.decision = "go";
       this.decidedAt = Number.NEGATIVE_INFINITY;
       this.arc = null;
+      this.plan = null;
     }
     // Never forever: a hold that has lasted its cap goes, and holds nothing for a while. An arc's wait
     // and walk are on the same clock (07i): a Bot boxed in at a bar by the crowd is not held for good.
@@ -293,9 +311,10 @@ export class SweeperHold implements HoldHook {
         if (this.decision !== "go") this.holdEnded = true;
         this.decision = "go";
       } else {
+        const blocked = this.blocked!;
         // A bar no straight walk clears is walked round with its rotation (07i), from this stand.
-        if (decided === "hold" && this.blocked !== null && !this.blocked.onDeck) {
-          const arc = this.planArc(ctx, this.blocked);
+        if (!blocked.standHit && blocked.deck === null) {
+          const arc = this.planArc(ctx, blocked);
           if (arc !== null) {
             SweeperHold.arcs += 1;
             this.arc = arc;
@@ -311,11 +330,20 @@ export class SweeperHold implements HoldHook {
           this.heldSince = tick;
           this.heldCorner = this.cornerDistance(ctx);
         }
-        this.decision = decided;
+        this.decision = "hold";
+        // Not forward: the planner picks among a stand and the sideways and back moves (M17 ticket 14, ADR 0130).
+        this.plan = this.planner.choose({
+          ctx,
+          asked: steering.moveDirection,
+          near: blocked.near,
+          grow: CAPSULE_RADIUS + BOT_HOLD_MARGIN_M,
+          deck: blocked.deck,
+          forwardRefused: true,
+          others: BOT_PLAN_CROWD_HOLDS ? neighboursOf(ctx, blocked.deck) : [],
+        });
       }
     }
-    if (this.decision === "hold") return this.stand(ctx);
-    if (this.decision === "retreat") return this.retreat(ctx);
+    if (this.decision === "hold") return this.plan === null ? this.planner.stand(ctx) : this.planner.steer(ctx, this.plan);
     // The corridor's arrival Ticks are a walk's: a Dash among sweepers arrives
     // when the timing did not look, so a Bot with a sweeper near walks.
     if (steering.dash && this.sweepersNear) return { ...steering, dash: false };
@@ -341,6 +369,8 @@ export class SweeperHold implements HoldHook {
     this.heldCorner = null;
     this.decision = "go";
     this.holdEnded = true;
+    this.plan = null;
+    this.planner.forget();
   }
 
   private decide(ctx: HookContext, steering: Steering): Decision {
@@ -406,7 +436,7 @@ export class SweeperHold implements HoldHook {
       for (const body of near) {
         if (moving.occupies(body.index, at, clock, q, grow) && counts(body, at, q, walkAt(i))) {
           blockedAt = i;
-          this.blocked = { body, index: i, samples, near, onDeck: deck !== null, counts, walkAt };
+          this.blocked = { body, index: i, samples, near, deck, standHit: false, counts, walkAt };
           break;
         }
       }
@@ -417,11 +447,15 @@ export class SweeperHold implements HoldHook {
     const speed = WALK_SPEED * surfaceConfig(navSurfaceAt(view.track.nav, self.position) ?? undefined).topSpeedMultiplier;
     const stopReach = BOT_HOLD_STOP_M + (stale.max + BOT_HOLD_DECIDE_TICKS) * speed * TICK_DT;
     if (blockedAt * BOT_HOLD_SAMPLE_M > stopReach) return "go";
+    // Whether the stand itself is reached: then no arc is planned from it, and the planner weighs the stand as it weighs any move.
     const last = tick + Math.min(look, BOT_HOLD_HERE_TICKS);
     for (let at = tick + stale.max; at <= last; at += 2) {
       const here = carried(self.position, at);
       for (const body of near) {
-        if (moving.occupies(body.index, at, clock, here, grow) && counts(body, at, here)) return "retreat";
+        if (moving.occupies(body.index, at, clock, here, grow) && counts(body, at, here)) {
+          this.blocked = { ...this.blocked!, standHit: true };
+          return "hold";
+        }
       }
     }
     return "hold";
@@ -592,7 +626,7 @@ export class SweeperHold implements HoldHook {
   private followArc(ctx: HookContext): Steering | null {
     const arc = this.arc!;
     const { tick, self, stale } = ctx;
-    if (tick < arc.startTick) return this.stand(ctx);
+    if (tick < arc.startTick) return this.planner.stand(ctx);
     const n = arc.points.length;
     const k = tick - arc.startTick;
     const last = arc.points[n - 1]!;
@@ -622,35 +656,6 @@ export class SweeperHold implements HoldHook {
     }
     const length = Math.hypot(dx, dz);
     if (length < 1e-6) return STAND;
-    return { moveDirection: vec3(dx / length, 0, dz / length), dash: false };
-  }
-
-  /** A stand; on a slick floor, a push against the drift until it is too slow to hurt (as `PathFollower.brake`). */
-  private stand(ctx: HookContext): Steering {
-    const { self } = ctx;
-    if (surfaceConfig(navSurfaceAt(ctx.view.track.nav, self.position) ?? undefined).grip >= 1) return STAND;
-    const speed = Math.hypot(self.velocity.x, self.velocity.z);
-    if (speed < BOT_BRAKE_MIN_SPEED) return STAND;
-    return { moveDirection: vec3(-self.velocity.x / speed, 0, -self.velocity.z / speed), dash: false };
-  }
-
-  /** A unit move back toward the previous corner; at corner 0, the path's direction reversed. */
-  private retreat(ctx: HookContext): Steering {
-    const { self, path, corner } = ctx;
-    const previous = corner > 0 ? path[corner - 1] : undefined;
-    let dx: number;
-    let dz: number;
-    if (previous !== undefined) {
-      dx = previous.point.x - self.position.x;
-      dz = previous.point.z - self.position.z;
-    } else {
-      const next = path[corner];
-      if (next === undefined) return this.stand(ctx);
-      dx = self.position.x - next.point.x;
-      dz = self.position.z - next.point.z;
-    }
-    const length = Math.hypot(dx, dz);
-    if (length < 1e-6) return this.stand(ctx);
     return { moveDirection: vec3(dx / length, 0, dz / length), dash: false };
   }
 }

@@ -865,3 +865,130 @@ export const BOT_RIDE_SWATH_SKID_TICKS = 6;
 
 /** Radians past the tangent a walk round a swath leads, so the walk skirts the circle rather than grazing it. */
 export const BOT_RIDE_SWATH_LEAD_RAD = 0.15;
+
+// --- The local motion planner (M17 ticket 14, ADR 0130) -----------------------
+// `LocalMotionPlanner` (`bot/localMotion.ts`): where a hold refuses the way
+// forward, every candidate move is played for a short horizon through the
+// guard's own model of the Character and scored. First guesses, each moved
+// only by the 07m stagger log's numbers.
+
+/**
+ * How many Ticks each candidate is played for: two thirds of a second, long
+ * enough for a bar's tip at 6 u/s to cross four metres, and short enough that
+ * the rollout's straight push is still what the Bot would do. On top of it
+ * the Bot's own view lag is added, since a stand must be safe for as long as
+ * the Bot cannot see it standing.
+ */
+export const BOT_PLAN_HORIZON_TICKS = 20;
+
+/**
+ * The turns of the asked move tried, in degrees, in the order a tie falls
+ * (the stand is tried first of all): the asked move and its nearest turns,
+ * sideways, back-left and back-right, and back.
+ */
+export const BOT_PLAN_TURN_DEGREES: readonly number[] = [0, 15, -15, 30, -30, 60, -60, 90, -90, 135, -135, 180];
+
+/**
+ * The least turn, in degrees, a candidate must make from the asked move when
+ * the hold has refused the way forward: the hold's corridor looks further and
+ * with the profile's timing error, and the planner does not second-guess it.
+ */
+export const BOT_PLAN_HELD_MIN_TURN_DEG = 60;
+
+/**
+ * How far along its path, in metres, the point a candidate's progress is
+ * measured toward lies. Further than the horizon's walk, so heading for it
+ * is never done inside the rollout.
+ */
+export const BOT_PLAN_LOOK_M = 6;
+
+/** What a metre of progress toward the look-ahead point scores. The unit the costs below are in. */
+export const BOT_PLAN_PROGRESS_WEIGHT = 1;
+
+/**
+ * What a rollout that is Staggered costs: a moving body occupying the capsule
+ * at a closing speed the simulation Staggers from, or a spiked one at any
+ * speed. More than the whole horizon's walk could ever gain (3.7 m), so no
+ * progress is worth being knocked down for.
+ */
+export const BOT_PLAN_STAGGER_COST = 20;
+
+/**
+ * What each Tick of being pushed by a body too slow to Stagger costs. Being
+ * shoved is not a Fall, but the push carries the Bot along with the body, and
+ * the rollout follows it, so a push toward an edge is paid for by the edge.
+ */
+export const BOT_PLAN_CONTACT_COST = 0.5;
+
+/** What a rollout that leaves the floor costs: a Fall of the Bot's own, which no progress is worth. */
+export const BOT_PLAN_EDGE_COST = 30;
+
+/**
+ * What turning away from the asked move costs, scaled by `1 − cos` of the
+ * turn (0 straight on, 1 sideways, 2 back): between two safe moves the
+ * planner keeps to the path.
+ */
+export const BOT_PLAN_DEVIATION_COST = 1;
+
+/**
+ * What keeping the last decision's candidate is worth, so a Bot between two
+ * equally good moves does not flip between them every decision.
+ */
+export const BOT_PLAN_KEEP_BONUS = 0.5;
+
+// --- The crowd (M17 ticket 14, phase 3) --------------------------------------
+// The planner also plays the Characters near a Bot forward at their own
+// velocity, and a ride's positioning (a waiting spot, a walk across a deck, a
+// stand aboard) goes through it in the deck's frame. First guesses, each moved
+// only by the stagger log's crowd columns.
+
+/**
+ * Whether a ride's positioning (a waiting spot, a walk across a deck, a stand
+ * aboard) goes through the crowd's planner, and whether a hold's ask carries
+ * the Characters near. **Both off** (ticket 14, phase 3): three attempts on
+ * the crowd legs, each measured, and each cost more than it saved — the
+ * third halved the moving rows' passes at HARD (12 → 3) and doubled think —
+ * so the shipped behaviour is phases 1–2's. The code stays, held by its own
+ * suite, for the next attempt the ticket records.
+ */
+export const BOT_PLAN_CROWD_RIDES = false;
+export const BOT_PLAN_CROWD_HOLDS = false;
+
+/**
+ * How far, across the ground, another Character must be for the crowd to be
+ * asked at all: further than a rollout could bring the two together (the
+ * horizon at a walk each way), so a Bot alone plans exactly as before.
+ */
+export const BOT_PLAN_CROWD_REACH_M = 4;
+
+/** Ticks between the crowd's decisions while a Character is near; between them the last choice is steered. */
+export const BOT_PLAN_CROWD_DECIDE_TICKS = 3;
+
+/** Metres beyond two capsules' radii at which two rollout points count as touching: what a late view of the other gets wrong. */
+export const BOT_PLAN_CROWD_TOUCH_M = 0.1;
+
+/**
+ * What each Tick of overlap with another Character costs, before the edge
+ * weighting: a shove is not a Fall, but a Bot that stands where another
+ * stands is pressed about, so the waiting spreads (item 5). Less than a
+ * body's {@link BOT_PLAN_CONTACT_COST}, which pushes at a body's speed.
+ */
+export const BOT_PLAN_CROWD_CONTACT_COST = 0.15;
+
+/**
+ * How much more a Tick of overlap costs at a drop's edge than in the open, as
+ * a multiple of the base cost: a `pushed` Fall is a shove at an edge, so
+ * being pressed there is what the crowd term is for.
+ */
+export const BOT_PLAN_CROWD_EDGE_COST = 2;
+
+/** How far from a drop, in metres, the edge weighting fades to nothing. */
+export const BOT_PLAN_CROWD_EDGE_M = 1.5;
+
+/**
+ * What a candidate turning to this Bot's own preferred side is worth in a
+ * crowd: twelve planners alike all dodge the same way and oscillate, so each
+ * Bot favours one side, drawn from its seed once. Under the deviation of a
+ * 15° turn, so it decides only between two turns of the same size.
+ */
+export const BOT_PLAN_SIDE_BIAS = 0.03;

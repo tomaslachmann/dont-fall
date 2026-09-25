@@ -67,6 +67,8 @@ import { hullDistance, insetToward, nearestRim, rideTableOf, RUNUP_STEP_M, TRANS
 type State = "off" | "waitToBoard" | "boarding" | "aboard" | "waitToAlight" | "alighting" | "landing";
 
 const STAND: Steering = { moveDirection: vec3(), dash: false, committed: true };
+/** A wait that is positioning (M17 ticket 14, phase 3): the crowd's planner may move the Bot off the spot for a risk, the guard and hooks treat it as committed. */
+const POSITION_STAND: Steering = { ...STAND, positioning: true };
 
 const ground = (a: Vec3, b: Vec3): number => Math.hypot(b.x - a.x, b.z - a.z);
 const unit = (from: Vec3, to: Vec3): Vec3 => {
@@ -615,14 +617,15 @@ export class DeckRider implements RideHook {
           // The walk to the spot is a counted run from a fresh stand, as a jump's run-up is (M17 ticket 07h): steered live off a
           // view up to `stale.max` late, an EASY Bot had walked 2.75 m past where it saw itself, past its spot and off the deck's
           // edge, or turned back for a spot already behind it and drifted off the side (measured, base leg 2: every step-off).
-          if (tick < this.spotWalkUntil) return { moveDirection: this.spotHeading, dash: false, committed: true };
+          // Positioning (M17 ticket 14, phase 3): the crowd's planner may turn the walk and move a wait off its spot.
+          if (tick < this.spotWalkUntil) return { moveDirection: this.spotHeading, dash: false, committed: true, positioning: true };
           const away = ground(self.position, this.boardSpot);
           if (away > BOT_CORNER_REACHED_M) {
-            if (!this.fresh(ctx, seenTick)) return STAND;
+            if (!this.fresh(ctx, seenTick)) return POSITION_STAND;
             if (tick < this.spotUntil) {
               this.spotHeading = unit(self.position, this.boardSpot);
               this.spotWalkUntil = tick + walkTicks(away);
-              return { moveDirection: this.spotHeading, dash: false, committed: true };
+              return { moveDirection: this.spotHeading, dash: false, committed: true, positioning: true };
             }
             // Not there when the walk should have got there (someone stands on it): rest a stall where it is, asking to go
             // from here meanwhile, then walk for it again (measured on R2: a Bot that gave the spot up for good stood a metre
@@ -630,12 +633,12 @@ export class DeckRider implements RideHook {
             if (tick - this.spotUntil > BOT_STALL_TICKS) this.spotUntil = tick + walkTicks(away) + ctx.stale.max + 5;
           }
         }
-        if (!this.fresh(ctx, seenTick)) return boarding ? STAND : this.holdAboard(ctx, table, seenTick);
+        if (!this.fresh(ctx, seenTick)) return boarding ? POSITION_STAND : this.holdAboard(ctx, table, seenTick);
         const error = Math.round((2 * botDraw(this.seed, `ride ${tick}`) - 1) * this.profile.timingErrorTicks);
         const source = this.sourceLocal(ctx, seenTick);
         const aim = boarding ? this.boardAim(deck, end) : end.still;
         const go = this.forcedAt !== null ? tick >= this.forcedAt : contact(track, table, deck, platform, end, aim, source, tick + error, this.profile.timingErrorTicks, clock);
-        if (!go) return boarding ? STAND : this.holdAboard(ctx, table, seenTick);
+        if (!go) return boarding ? POSITION_STAND : this.holdAboard(ctx, table, seenTick);
         // In turn: whoever is nearer the point the run heads for goes first (the links' rule). A wait that gave up goes regardless.
         const dest = boarding ? this.rimAhead(ctx, deck, source) : end.to === null ? end.still : transferAim(track, table, end, tick + JUMP_TICKS, clock);
         if (this.forcedAt === null && this.someoneAhead(ctx, dest)) {
@@ -908,7 +911,8 @@ export class DeckRider implements RideHook {
       const ahead = moving.toWorld(platform, tick, clock, { x: seen.x + around.x, y: seen.y, z: seen.z + around.z });
       return this.unpinned(tick, self.position, { moveDirection: unit(now, ahead), dash: false, committed: true });
     }
-    return this.unpinned(tick, self.position, { moveDirection: unit(now, moving.toWorld(platform, tick, clock, target)), dash: false, committed: true });
+    // The walk across the deck is positioning (M17 ticket 14, phase 3): the crowd's planner may turn it, in the deck's frame.
+    return this.unpinned(tick, self.position, { moveDirection: unit(now, moving.toWorld(platform, tick, clock, target)), dash: false, committed: true, positioning: true });
   }
 
   /** Aboard `platform` and seen inside a riding sweeper's swath (07l): the committed walk radially out of it, else null. */
@@ -986,7 +990,7 @@ export class DeckRider implements RideHook {
       this.quiet = 0;
       return out;
     }
-    return STAND;
+    return POSITION_STAND;
   }
 }
 
