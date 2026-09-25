@@ -219,6 +219,23 @@ export const GETUP_DRIVE_MS = 900;
 export const GETUP_CAPSULE_LIFT = 0.7;
 
 /**
+ * How far from the get-up clip's origin a Character getting up may be moved
+ * to stand clear of still geometry (units) — `getUpSpot`. Found by M17
+ * ticket 06b: a heap pressed against a barrier stood its capsule up inside
+ * it for good. Past this, it stands where the clip says, as it always did.
+ */
+export const GETUP_SPOT_SEARCH_RADIUS = 1.5;
+/** The spacing of `getUpSpot`'s rings (units). */
+export const GETUP_SPOT_SEARCH_STEP = 0.1;
+/** How many directions `getUpSpot` tries on each ring. */
+export const GETUP_SPOT_DIRECTIONS = 12;
+/** How high `getUpSpot` may lift the capsule at one distance before looking further out: steps of {@link GETUP_SPOT_RISE_STEP}. */
+export const GETUP_SPOT_RISE_STEPS = 3;
+export const GETUP_SPOT_RISE_STEP = 0.1;
+/** How far into the floor it stands on a get-up capsule may start and still count as clear (units). */
+export const GETUP_SPOT_FLOOR_GRAZE = 0.05;
+
+/**
  * How far a ragdoll joint may bend, in radians (M6 ticket 05, ADR 0047).
  *
  * Before these, every joint was a free ball joint: elbows and knees bent both
