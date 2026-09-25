@@ -178,7 +178,17 @@ EASY on Spin Cycle Cp 0→1).
 | base race | HARD | 10 (11) | 0 (0) | **1** (0) | 9 (14) / 12 (16) | Cp 4→5: Stagger 8; Cp 1→2: contact 2, **step-off 1** |
 | | NORMAL | **5** (2) | 0 (0) | **1** (0) | 10 (8) / 39 (30) | Cp 2→3: pushed 27, contact 10, step-off 1 |
 | | EASY | 0 (0) | 2 (0) | 1 (5) | 22 (23) / 78 (72) | Cp 2→3: pushed 44, contact 30 |
-RACES_TODO
+| Spin Cycle | HARD | 0 (0) | 0 (0) | 0 (0) | **31** (26) / 50 (38) | Start→Cp 0: Stagger 14, pushed 16, contact 9; Cp 0→1: Stagger 8; Cp 5→6: WallImpact 6 |
+| | NORMAL | 0 (0) | 0 (0) | 0 (0) | **57** (80) / 87 (108) | Start→Cp 0: Stagger 30, pushed 25, Bump 11; Cp 0→1: Stagger 21 |
+| | EASY | 0 (0) | 1 (1) | 3 (2) | 57 (46) / 113 (95) | Start→Cp 0: pushed 57, Stagger 47, Bump 26 |
+| Slip Stream | HARD | **11** (8) | 0 (0) | 0 (0) | **21** (44) / 21 (44) | Cp 1→2: Stagger 13, Obstacle 4 |
+| | NORMAL | **9** (7) | 0 (0) | 0 (0) | **35** (48) / 31 (46) | Cp 1→2: Stagger 16, link 4; Cp 4→5: Stagger 10 |
+| | EASY | **4** (1) | 2 (1) | 0 (1) | 69 (80) / 57 (73) | Cp 1→2: Stagger 47, `link` 14 |
+
+Finished 33 → 39 of 108, the Stagger legs halved at HARD (Slip Stream's own Falls 44 → 21), Spin Cycle
+still finishes nobody, and the crowd legs (base race Cp 2→3, Spin Cycle's start) are unchanged or worse
+— phase 3's. Think 63–105 µs per Bot-Tick with the CPU shared by the regression set; 07d's evening run
+is not comparable on that column. The file is still 9 / 9 red on `ownFalls === 0` (known).
 
 **A step-off each at HARD and NORMAL on the base race, where the evening run had none.** Both are on
 ride legs (the moving rows, the spinning squares), where every Steering is committed and the planner
@@ -186,3 +196,13 @@ is never asked; the harness names a Fall a step-off only when no touch, push, li
 is within its windows, so this may be a reclassified shove among a crowd that now arrives together,
 or a real one. **It needs a Bot-by-Bot trace before this lands** (the rule is ADR 0129's), which this
 session did not have the budget for.
+
+**Regression set:** `neverStepsOff -t "every Motion stopped"` 9 / 9, `neverStranded` 5 / 5,
+`localMotion` 5 / 5, `sweeperHold` / `trapHold` / `belts` / `edgeGuard` / `TreeBot` / `fight` /
+`fightRace` 60 passed, 3 red; `deckRider` + `transfers` 9 passed, 14 red; `apps/server`
+`matchRuntime.bots` + `botFill` 12 / 12; both typechecks clean. **Every red is one the tree had before
+this ticket, on the same assert** (the main session's sequential logs of the same suites, 10:55):
+the trapHold D / S wall-clock asserts, `sweeperHold` base1's EASY > NORMAL obstacle-Falls ordering
+(0 > 1 before, 1 > 1 now), `deckRider`'s ride-table build time, base HARD think ≤ 40 µs, base EASY's
+and the crowd rows' EASY step-off (1 and 2, as before), and `transfers`' nine `think ≤ 40 µs` asserts
+(44–101 µs before, 43–107 now, the CPU shared both times).
