@@ -18,7 +18,7 @@ import {
 } from "../tuning/bots.js";
 import { CAPSULE_BOTTOM_OFFSET, CAPSULE_RADIUS, WALK_SPEED } from "../tuning/character.js";
 import { TICK_DT } from "../tuning/clock.js";
-import { BROKEN_FLAG, CROSS_SWATH_FLAG, LAST_CRACK_FLAG, navFloorWithin, type TrackNav } from "./navMesh.js";
+import { BROKEN_FLAG, LAST_CRACK_FLAG, navFloorWithin, type TrackNav } from "./navMesh.js";
 
 /**
  * What a moving body is to a runner (M17 ticket 07): a `floor` it rides, a
@@ -92,11 +92,12 @@ export interface MovingWorld {
   readonly fragile: readonly MovingBody[];
   readonly platforms: readonly Platform[];
   /**
-   * Crosses (M17 ticket 07i, round 3): the sweepers on one axle, spinning
-   * about a fixed pivot, that no straight walk through their swath clears —
-   * at the best point of a ring inside the swath, the longest gap between arms
-   * over one turn is shorter than a walk across the swath's width. A first
-   * plan keeps beside one where the lane has room (`PathFollower`).
+   * Crosses (M17 ticket 07i, round 3): two or more sweepers on one axle,
+   * spinning about a fixed pivot, that together no straight walk through their
+   * swath clears — at the best point of a ring inside the swath, the longest
+   * gap between arms over one turn is shorter than a walk across the swath's
+   * width. A first plan keeps beside one where the lane has room
+   * (`PathFollower`). A single bar, however fast, is never one.
    */
   readonly crosses: readonly Cross[];
   /** World pose of body `i` at `tick`. Cached per (body, tick) in a ring of `BOT_LOOK_AHEAD_TICKS_MAX + 2` Ticks; a new clock flushes it. */
@@ -331,50 +332,6 @@ const periodTicksOf = (motion: SegmentMotion): number => {
   return Math.max(1, Math.round(ticks));
 };
 
-/**
- * Sets {@link CROSS_SWATH_FLAG} on every polygon whose centre lies under a
- * cross's swath (M17 ticket 07i, round 3): within its swept radius plus the
- * hold's margin of its pivot across the ground, and no lower under its arms
- * than a Character stands. Runs once per world, on the navmesh it was built for.
- */
-const markCrossSwaths = (nav: TrackNav, crosses: readonly MovingBody[], rests: readonly Vec3[], grow: number): number => {
-  let marked = 0;
-  if (crosses.length === 0) return marked;
-  const tile = nav.navMesh.getTile(0);
-  const header = tile.header();
-  const count = header === null ? 0 : header.polyCount();
-  const base = nav.navMesh.getPolyRefBase(tile);
-  const swaths = crosses.map((body) => {
-    const rest = rests[body.index]!;
-    let yLo = Infinity;
-    let yHi = -Infinity;
-    for (const h of body.hitboxes) {
-      yLo = Math.min(yLo, h.yMin);
-      yHi = Math.max(yHi, h.yMax);
-    }
-    return { x: rest.x, z: rest.z, within: body.radius + grow, yLo: rest.y + yLo - 2 * CAPSULE_BOTTOM_OFFSET, yHi: rest.y + yHi };
-  });
-  for (let i = 0; i < count; i += 1) {
-    const poly = tile.polys(i);
-    if (poly.getType() !== 0) continue;
-    const n = poly.vertCount();
-    let cx = 0;
-    let cy = 0;
-    let cz = 0;
-    for (let k = 0; k < n; k += 1) {
-      const v = poly.verts(k);
-      cx += tile.verts(v * 3) / n;
-      cy += tile.verts(v * 3 + 1) / n;
-      cz += tile.verts(v * 3 + 2) / n;
-    }
-    if (!swaths.some((s) => cy >= s.yLo && cy <= s.yHi && Math.hypot(s.x - cx, s.z - cz) <= s.within)) continue;
-    const ref = base | i;
-    nav.navMesh.setPolyFlags(ref, nav.navMesh.getPolyFlags(ref).flags | CROSS_SWATH_FLAG);
-    marked += 1;
-  }
-  return marked;
-};
-
 /** Whether the body's Motion carries its local origin anywhere (a spin about its own origin does not). */
 const originMoves = (config: MovingSegmentConfig): boolean => {
   const at0 = movingSegmentPose(config, 0, null).position;
@@ -587,6 +544,9 @@ export const movingWorldOf = (resolved: ResolvedTrack, nav: TrackNav): MovingWor
     else group.push(body);
   }
   const isCross = (group: readonly MovingBody[]): boolean => {
+    // Never a single bar (07i round 3, measured: routed beside Spin Cycle's staggered pair and its catwalk bars, twelve
+    // Bots jammed at the lane's edge and were Bumped off it; the hold and its window are for a bar).
+    if (group.length < 2) return false;
     const first = group[0]!;
     const period = periodTicksOf(first.config.motion);
     if (period < 2) return false;
@@ -609,9 +569,11 @@ export const movingWorldOf = (resolved: ResolvedTrack, nav: TrackNav): MovingWor
     }
     return bestGap < crossing;
   };
-  const crosses: MovingBody[] = [];
-  for (const group of axles.values()) if (isCross(group)) crosses.push(...group);
-  markCrossSwaths(nav, crosses, rests, grow);
+  const crosses: Cross[] = [];
+  for (const group of axles.values()) {
+    if (!isCross(group)) continue;
+    crosses.push({ bodies: group, pivot: rests[group[0]!.index]!, radius: group.reduce((r, b) => Math.max(r, b.radius), 0) });
+  }
 
   return {
     bodies,

@@ -290,3 +290,110 @@ In order:
    strip.
 
 Regression set: as in the ticket, plus the slip2 leg on both seeds at all three levels.
+
+### As built (round 3, 2026-09-25, Fable, 75 minutes; numbers first)
+
+Everything as in §1: seeded `holds:<leg>:<level>:<seed>`, aggression 0, Motion running, 12 Bots, 120 s cap, 4 cores
+shared with 07l's and 07k's suites. **07k's simulation fix (`MovementController`/`SurfaceController`) and 07l's
+`deckRider.ts` both landed in HEAD during this round**; the before column was measured before 07l's commit, the after
+column after it, and the one pair run on both sides of it (Slip Stream at every level and seed, Spin Cycle Cp 0 → 1 at
+HARD, with this round's first rule) came out **bit-identical**, so the columns compare.
+
+| leg, HARD unless said (passed / stranded, obstacle Falls, gave up, arcs) | round 2's HEAD (this morning) | round 3 | target |
+|---|---|---|---|
+| Slip Stream Cp 1 → 2, seed 0 | 9 / 0, 22, 15, 0 | **9 / 0, 21, 7, 0** | ≥ 10 / 0: **no** (9) |
+| … seed 1 | 9 / 0, 21, 12, 0 | **9 / 0, 26, 9, 1** | no (9) |
+| … NORMAL seed 0 / 1 | 3 / 1, 37, 34 · 7 / 0, 23, 24 | **7 / 0, 27, 14 · 8 / 0, 19, 11** | ≥ 7 / 0: **yes, both** |
+| … EASY seed 0 / 1 | 0 / 1, 27, 85 · 1 / 2, 35, 76 | **2 / 0, 32, 53 · 3 / 0, 22, 63** | ≥ 4, stranded ≤ 1: no on passed (2, 3), stranded met |
+| Spin Cycle Start → Cp 0, seed 0 / 1 | 1 / 2, 17, 24, 40 · 2 / 0, 19, 33, 50 | **2 / 0, 18, 26, 39 · 4 / 0, 19, 21, 31** | ≤ 10 Falls, ≥ 10 passed: no; stranded 0: **yes** (was 2) |
+| Spin Cycle Cp 0 → 1, seed 0 / 1 | 5 / 0, 15, 20, 0 · (not run) | **8 / 0, 12, 14, 0 · 7 / 0, 14, 12, 0** | ≤ 10 Falls: no (12, 14); ≥ 10 passed: no; stranded 0 |
+
+Stranded is 0 on every leg, level and seed now (round 2's HEAD had 1–2 on four of them). Passed rose on every leg
+but Slip Stream HARD, which stays at 9 on both seeds; Falls fell on the two Spin Cycle legs and on Slip Stream NORMAL
+and EASY. No Falls target is met, the same as rounds 1 and 2.
+
+**1. The Slip Stream regression was not the arc.** 07j named `planArc`'s exit, but the arc never fires on that leg:
+`arcs` is **0** at every level and seed, before and after (07j's trace inferred an arc from a sidestep). The three
+07i changes toggled one at a time on seed 0 (HARD / NORMAL / EASY, passed / stranded, Falls):
+
+| variant | HARD | NORMAL | EASY |
+|---|---|---|---|
+| HEAD (all three) | 9 / 0, 22 | 3 / 1, 37 | 0 / 1, 27 |
+| 07a's speed rule back (`BOT_HOLD_MIN_SPEED` alone) | **12 / 0, 12** | 6 / 0, 34 | 0 / 3, 47 |
+| the through-the-swath scan off | 9 / 0, 22 (identical) | 3 / 1, 44 | 4 / 1, 34 |
+| both off | 12 / 0, 12 | 7 / 0, 27 | 1 / 0, 35 |
+
+It was **`BOT_HOLD_MIN_SPEED_WALKING`**: `min(3.3, 1.2)` on the body's speed *alone* counted every body over 1.2 u/s
+whichever way it moved, so the holds ran to their cap four times as often (gave up 4 → 15 at HARD, 19 → 85 at EASY)
+and a give-up walks into the bar. Traced on HARD seed 0: 2,666 hold decisions at bar 97, **812 of them on a body under
+3.3 u/s** that only the new rule counted. But the old rule is what staggered every Bot off the catwalk (round 2, 40 in
+120 s), and it still does: put back, Spin Cycle Cp 0 → 1 reads 5 / 0 with **41** Falls.
+
+**Built:** `counts` reads the simulation's own rule. `resolveMovingSegmentContacts` staggers on the closing speed
+`(v_segment − v_character) · push`, so a body counts when its speed alone is over `BOT_HOLD_MIN_SPEED` (07a, unchanged)
+**or** its velocity relative to the walk the Bot brings to that sample (`walkAt`: the corridor's direction and pace
+there; along the arc, the played points' own step) is over `MOVING_SEGMENT_STAGGER_SPEED` (6.7 u/s). Head-on a body
+counts from 1.2 u/s as before; moving away or across, it does not. `BOT_HOLD_MIN_SPEED_WALKING` is no longer read here
+(07l's `deckRider.ts` reads it, so it stays). Also tried and not kept: the closing speed **along the body's own
+motion** (`|v| − walk · v̂`, closer to one face's push): Slip Stream HARD 10 / 0 and 10 / 0 (the target), but NORMAL
+7 / 6, EASY 1 / 0, 200 Falls over the six runs against the bound's 147, and the catwalk 17 Falls against 12. The bound
+was kept for fewer Falls everywhere but one number.
+
+**2. A cross's swath off the first plan** (§4's next thing). Three attempts:
+- A navmesh flag under the swath (`markGatedPolys`'s pattern, excluded by the first plan's filter): a no-op. Recast's
+  polygons under the cross span the whole 12 m lane, so excluding by polygon centre leaves no first plan at all (the
+  test's route ended 10.6 m short), and the second plan is the old route.
+- **A via point** beside the swath instead (`besideCrosses`, `PathBot.ts`): when a stretch of the first plan passes
+  within a cross's swath (its radius, the capsule, `BOT_HOLD_MARGIN_M`, `BOT_CROSS_BESIDE_M`), the plan is re-run through
+  a point that far from the pivot, square to the stretch, on the side it already leans to first, and taken when the
+  floor holds the point and both halves join. No floor beside (a catwalk) keeps the plan: the hold and the arc are for
+  that. Only the first plan; the never-stranded second plan never detours. On Spin Cycle Start → Cp 0 this changed
+  **nothing**, because the leg's plan is the ride planner's (`planAcross`) — the navmesh alone never joins the goal
+  past the carousels — and it replaced the detoured plan whole.
+- The same via before the first ride, the rest re-planned across from it (`onward`, the ride hook's own
+  `planAcross`): seed 0 / 1 went 1 / 1, 13 Falls · 3 / 0, 14 → **2 / 0, 18 · 4 / 0, 19**. Stranded 0, passed +1, and
+  five more Staggers — all at the **staggered pair 36 / 37** (z −74 … −78, x 5.6–6.4, the lane's edge, §4's finding),
+  none at the cross. Kept for "never stranded"; the pair is item 3, not built.
+
+**What is a cross** (`MovingWorld.crosses`, `movingWorld.ts`): two or more sweepers on one axle (`axisLineKey` and
+speed), spinning about a fixed origin, whose longest gap between arms over one turn, at the best of eight points on a
+ring at `BOT_CROSS_PROBE_RADIUS_SHARE` of the swept radius, is shorter than a walk across the swath — the 24-versus-37
+finding, asked of the poses once per world. On Spin Cycle: **28+29 and 33+34**, held by `movingWorld.test.ts`, which
+also holds the via to keeping the straight-through route's plan out of 33/34's swath. **A single bar is never one**,
+measured: with the gap test alone, 23 axles on Spin Cycle were "crosses" (36, 37, the catwalk's 118–121, Slip Stream's
+97 …), and routed beside them Spin Cycle Cp 0 → 1 read 7 / 0, 5 Falls · **4 / 0**, 5 Falls — the Falls target met, but
+eight Bots jammed at (8, −213) on the catwalk's edge, 16 Bumps — while Slip Stream HARD read **10 / 0, 14 · 10 / 0, 8**
+(both targets), NORMAL 5 / 0 · 9 / 0, EASY 2 / 0 · 1 / 0. So a via beside bar 97 is what Slip Stream HARD wants and a
+via beside the catwalk bars is what the catwalk cannot afford: **a via that checks the room beside it** (floor to the
+side of the via, not just under it) is the next thing to try, before the pair.
+
+**3. Not built:** the staggered pair's hold at the lane's middle. It is now where Spin Cycle Start → Cp 0's Staggers
+are (10 of 15 on seed 0, all at x 5.6–6.4).
+
+**Cost** (`BOT_QUICK` on `sweeperHold.test.ts`, the three legs at HARD seed 0, under the regression suites' load):
+hook 23.3 / 19.4 / 23.8 µs a call (round 2: 24.2 / 16.6 / 19.6); target ≤ 15 not met, unchanged within noise. The
+cross test is once per world; a via costs one extra plan on the plans that meet a cross.
+
+**Files:** `bot/sweeperHold.ts` (the rule, `walkAt`, `walkAlong`; the arc's clear check turns the walk back with the
+point), `bot/movingWorld.ts` (`Cross`, `crosses`, `occupies` hoisted), `bot/PathBot.ts` (`besideCrosses`, both plan
+paths), `bot/movingWorld.test.ts` (the cross test), `tuning/bots.ts` (`BOT_CROSS_PROBE_RADIUS_SHARE`,
+`BOT_CROSS_BESIDE_M`, additive). `hooks.ts` and `navMesh.ts` were touched and put back. Two WIP snapshots of this tree
+were committed by the main session mid-round (`1224f39d` and before); one carried a scratch test (`r3.scratch.test.ts`,
+since deleted) and the flag version of `movingWorld.ts`/`navMesh.ts`, both superseded in the working tree.
+
+### Regression set (round 3, run once at the end; 07l's and 07k's suites beside it, load average 1.1–1.9)
+
+Every `src/bot/*.test.ts` but `difficulty` and `races` (17 files in parallel), then the five red files again one at
+a time, `apps/server`'s two Bot suites alone, and the three typechecks.
+
+| item | result |
+|---|---|
+| `neverStepsOff -t "every Motion stopped"` | green (in the parallel run) |
+| `apps/server` `matchRuntime.bots`, `matchRuntime.botFill` | **2 files, 12 tests green** alone (both timed out at 5 s under the parallel bot suites) |
+| typecheck `packages/shared`, `apps/server`, `apps/track-builder` | green (`bombHome.scratch.test.ts`'s unused `RAPIER`, not this round's) |
+| `movingWorld.test.ts` (with the cross test), `belts`, `TreeBot`, `neverStranded`, `sectionHarness`, `navMesh`, `links`, `fight`, `profile`, `perceptionDelay`, `edgeGuard` | green |
+| `sweeperHold.test.ts`: `turnedBack`, `spinAbout`, A / B / C, base0 | green; the base1 "strictly EASY > NORMAL > HARD" red as in round 2 (EASY 0 obstacle Falls, NORMAL 1) |
+| `trapHold` D and S | wall-clock under load (known) |
+| `transfers` T1/T2/T3 think µs ≤ 40 (77–102 measured) | **not this round's**: 100 µs with the old speed rule too (A/B'd on T1 at HARD); the table-build ms likewise |
+| `deckRider` "finds the platforms" ms, base HARD think µs, base EASY passed, moving rows with a crowd at EASY (2 step-offs) | 07l's file (`deckRider.ts` changed in HEAD this round); base EASY is its documented known red |
+| **`fightRace` "every Fall the Fight drove had a cause": `fight-self` 1 in Race B** | **this round's, by A/B**: green with 07a's speed rule alone, red with the relative-speed rule, twice each, sequentially. One Fall of two seeded twelve-Bot base-race Rounds, inside `FIGHT_BLAME_TICKS` of a Fight's walk with nothing else credited. Whether the Fight walked it off or a hold changed the pack is for a per-Bot trace (`fightRace.test.ts`'s own classifier); not done here. |

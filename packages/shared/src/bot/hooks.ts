@@ -7,7 +7,7 @@ import { WALK_SPEED } from "../tuning/character.js";
 import { TICK_DT } from "../tuning/clock.js";
 import type { BotWorldView } from "./Bot.js";
 import type { StaleWindow } from "./edgeGuard.js";
-import { CROSS_SWATH_FLAG, navSurfaceAt, type NavCorner } from "./navMesh.js";
+import { navSurfaceAt, type NavCorner } from "./navMesh.js";
 import type { Steering } from "./PathBot.js";
 import type { BotProfile } from "./profile.js";
 import { BeltPush, beltUnder } from "./belts.js";
@@ -77,8 +77,7 @@ export const defaultHooks = (profile: BotProfile, seed: string): PathHooks => {
   void seed;
   return {
     hold: [new SweeperHold(profile, seed), ...trapHolds(profile, seed)],
-    // A first plan keeps beside a cross's swath where the lane has room (M17 ticket 07i, round 3).
-    planFilterFlags: (ctx) => trapPlanFilterFlags(ctx) | CROSS_SWATH_FLAG,
+    planFilterFlags: trapPlanFilterFlags,
     push: new BeltPush(),
     ride: new DeckRider(profile, seed),
   };

@@ -5,9 +5,11 @@ import { surfaceConfig } from "../track/Surface.js";
 import {
   BOT_BRAKE_MIN_SPEED,
   BOT_CORNER_REACHED_M,
+  BOT_CROSS_BESIDE_M,
   BOT_DASH_MARGIN_M,
   BOT_DASH_SIDE_M,
   BOT_FORK_VIA_REACHED_M,
+  BOT_HOLD_MARGIN_M,
   BOT_LEG_JOINED_M,
   BOT_LINK_LAND_TICKS,
   BOT_LINK_QUEUE_HEIGHT_M,
@@ -21,7 +23,7 @@ import {
   BOT_STALL_TOUCH_M,
   BOT_UNSTALL_TICKS,
 } from "../tuning/bots.js";
-import { WALK_SPEED } from "../tuning/character.js";
+import { CAPSULE_RADIUS, WALK_SPEED } from "../tuning/character.js";
 import { TICK_DT } from "../tuning/clock.js";
 import { DASH_DURATION_TICKS, DASH_RAMP_TICKS, DASH_RELEASE_TICKS, DASH_SPEED, JUMP_HOLD_MAX_TICKS } from "../tuning/movement.js";
 import type { BotWorldView } from "./Bot.js";
@@ -30,7 +32,8 @@ import type { HookContext, PathHooks } from "./hooks.js";
 import { botProfile, type BotProfile } from "./profile.js";
 import { botDraw } from "./random.js";
 import { HopReader, hopStartable, LinkReplay, type NavLink } from "./links.js";
-import { EDGE_STRIP_FLAG, navCorners, navFilterFor, navStraightRun, navSurfaceAt, type NavCorner, type TrackNav } from "./navMesh.js";
+import type { Cross } from "./movingWorld.js";
+import { EDGE_STRIP_FLAG, navCorners, navFilterFor, navFloorWithin, navStraightRun, navSurfaceAt, type NavCorner, type TrackNav } from "./navMesh.js";
 
 /*
  * This file was the first Bot (`PathBot`, M17 ticket 03). Since ticket 04 the
@@ -93,6 +96,66 @@ export interface Steering {
 
 /** A goal is worked out afresh every Tick, so the same goal is the same point, not the same object. */
 const samePoint = (a: Vec3, b: Vec3 | null): boolean => b !== null && a.x === b.x && a.y === b.y && a.z === b.z;
+
+/** How far, up or down, a path may run from a cross's axle and still be under its arms. */
+const CROSS_LEVEL_M = 3;
+/** Box a via point beside a cross must find floor in. */
+const VIA_FLOOR_HALF: Vec3 = { x: 0.5, y: 1, z: 0.5 };
+
+/**
+ * `corners` re-planned beside the first cross it runs through (M17 ticket 07i,
+ * round 3), or null to keep it. A cross has no straight window (07g: an arm
+ * past any point of Spin Cycle's cross every 24 Ticks, a walk through in 37),
+ * so a plan through its swath is a hold to the cap or an arc, both slow; the
+ * lane beside it, where it has one, is a walk. The via lies a swath's width
+ * from the pivot, square to the stretch that runs through, on the side the
+ * stretch already leans to first; it is taken when the floor holds it and both
+ * halves join. No floor beside (a catwalk) keeps the plan: the hold and its arc
+ * are for that. Only a preference, never the second, never-stranded plan's.
+ */
+export const besideCrosses = (
+  nav: TrackNav,
+  crosses: readonly Cross[],
+  from: Vec3,
+  goal: Vec3,
+  corners: readonly NavCorner[],
+  filter: Parameters<typeof navCorners>[3],
+  /** The way on from the via to the goal; the navmesh's own by default (a ride's planner when the leg needs one). */
+  onward: (via: Vec3) => NavCorner[] | null = (via) => navCorners(nav, via, goal, filter),
+): NavCorner[] | null => {
+  for (let i = 1; i < corners.length; i += 1) {
+    const a = corners[i - 1]!;
+    const b = corners[i]!;
+    // Past a link or a ride the Bot is in the air, or the rider's.
+    if (a.link !== null || a.ride !== undefined) break;
+    const dx = b.point.x - a.point.x;
+    const dz = b.point.z - a.point.z;
+    const length = Math.hypot(dx, dz);
+    if (length < 1e-6) continue;
+    for (const cross of crosses) {
+      const { pivot } = cross;
+      if (Math.abs(a.point.y - pivot.y) > CROSS_LEVEL_M) continue;
+      const swath = cross.radius + CAPSULE_RADIUS + BOT_HOLD_MARGIN_M + BOT_CROSS_BESIDE_M;
+      const t = Math.max(0, Math.min(1, ((pivot.x - a.point.x) * dx + (pivot.z - a.point.z) * dz) / (length * length)));
+      const nearest = { x: a.point.x + dx * t, y: a.point.y + (b.point.y - a.point.y) * t, z: a.point.z + dz * t };
+      if (groundDistance(nearest, pivot) >= swath) continue;
+      const nx = -dz / length;
+      const nz = dx / length;
+      const lean = (nearest.x - pivot.x) * nx + (nearest.z - pivot.z) * nz >= 0 ? 1 : -1;
+      for (const side of [lean, -lean]) {
+        const via = { x: pivot.x + side * nx * swath, y: nearest.y, z: pivot.z + side * nz * swath };
+        if (navFloorWithin(nav, via, VIA_FLOOR_HALF) === null) continue;
+        const first = navCorners(nav, from, via, filter);
+        if (first === null || groundDistance(first.at(-1)!.point, via) > BOT_LEG_JOINED_M) continue;
+        const second = onward(via);
+        if (second === null || groundDistance(second.at(-1)!.point, goal) > BOT_LEG_JOINED_M) continue;
+        return [...first, ...second.slice(1)];
+      }
+      return null;
+    }
+  }
+  return null;
+};
 
 const STAND: Steering = { moveDirection: vec3(), dash: false };
 const COMMITTED_STAND: Steering = { ...STAND, committed: true };
@@ -355,14 +418,22 @@ export class PathFollower {
     // may add flags the first plan keeps off too (M17 ticket 07f, a fragile
     // block on its last crack); the second plan drops them all the same.
     const extra = this.hooks.planFilterFlags?.({ view }) ?? 0;
-    let corners = navCorners(nav, from, goal, navFilterFor(nav, EDGE_STRIP_FLAG | extra));
+    const filter = navFilterFor(nav, EDGE_STRIP_FLAG | extra);
+    let corners = navCorners(nav, from, goal, filter);
+    // A first plan keeps beside a cross's swath where the lane has room (M17 ticket 07i, round 3); the second plan never does.
+    if (corners !== null && view.track.moving.crosses.length > 0) corners = besideCrosses(nav, view.track.moving.crosses, from, goal, corners, filter) ?? corners;
     let last = corners?.at(-1)?.point;
     if (last === undefined || groundDistance(last, goal) > BOT_LEG_JOINED_M) corners = navCorners(nav, from, goal);
     last = corners?.at(-1)?.point;
     // The navmesh alone does not join the goal: a way across moving floors, if the ride hook knows one (M17 ticket 07b).
     if ((last === undefined || groundDistance(last, goal) > BOT_LEG_JOINED_M) && this.hooks.ride !== undefined) {
-      const across = this.hooks.ride.planAcross({ view, seed: this.seed }, from, goal);
-      if (across !== null) corners = across;
+      const { ride } = this.hooks;
+      const across = ride.planAcross({ view, seed: this.seed }, from, goal);
+      if (across !== null) {
+        corners = across;
+        // Beside a cross before the first ride too, the rest of the way re-planned across from the via (07i round 3).
+        if (view.track.moving.crosses.length > 0) corners = besideCrosses(nav, view.track.moving.crosses, from, goal, across, filter, (via) => ride.planAcross({ view, seed: this.seed }, via, goal)) ?? across;
+      }
     }
     this.path = corners === null ? [] : keepOffEdges(nav, corners);
     this.corner = 0;

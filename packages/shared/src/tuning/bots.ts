@@ -804,6 +804,13 @@ export const BOT_ARC_MARGIN_M = 0.15;
  */
 export const BOT_CROSS_PROBE_RADIUS_SHARE = 0.5;
 
+/**
+ * Metres beyond a cross's swath (its swept radius, the capsule and
+ * {@link BOT_HOLD_MARGIN_M}) a first plan's via point beside it is put, so the
+ * walk in to it and out of it clips no arm. First guess.
+ */
+export const BOT_CROSS_BESIDE_M = 0.5;
+
 // --- Rides with a crowd (M17 ticket 07h, round 2) -----------------------------
 // `DeckRider` again: a Bot held at a still entry by those ahead of it asks the
 // planner again with the queue as it stands, and goes to another entry when

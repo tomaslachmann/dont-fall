@@ -191,15 +191,6 @@ export const BROKEN_FLAG = 16;
  */
 export const LAST_CRACK_FLAG = 32;
 
-/**
- * A polygon under the swath of a cross (M17 ticket 07i, round 3): a spinning
- * sweeper no straight walk through its swath clears, since an arm is past any
- * point of it sooner than a walk gets through (`MovingWorld.crosses`). The
- * first plan keeps off it where the lane has room beside; the never-stranded
- * second plan drops it. A single bar with a window is never marked.
- */
-export const CROSS_SWATH_FLAG = 64;
-
 const filters = new WeakMap<TrackNav, Map<number, QueryFilter>>();
 
 /**

@@ -12,7 +12,8 @@ import { buildBotTrack, disposeBotTrack, type BotTrack } from "./Bot.js";
 import { movingWorldOf } from "./movingWorld.js";
 import { BOT_HOLD_MARGIN_M } from "../tuning/bots.js";
 import { CAPSULE_RADIUS } from "../tuning/character.js";
-import { BROKEN_FLAG, CROSS_SWATH_FLAG, GATED_FLAG, LAST_CRACK_FLAG, navCorners, navFilterFor } from "./navMesh.js";
+import { BROKEN_FLAG, GATED_FLAG, LAST_CRACK_FLAG, navCorners } from "./navMesh.js";
+import { besideCrosses } from "./PathBot.js";
 import { loadTestLibrary } from "./sectionHarness.js";
 
 /**
@@ -147,27 +148,22 @@ describe("the moving world (M17 ticket 07)", () => {
     expect(spin.platforms.some((platform) => platform.bodies.length >= 4)).toBe(true);
   });
 
-  it("crosses (M17 ticket 07i, round 3): Spin Cycle's cross is its two bars on one axle, its swath is flagged, and a first plan keeps beside it", () => {
+  it("crosses (M17 ticket 07i, round 3): Spin Cycle's cross is its two bars on one axle, and a first plan keeps beside it", () => {
     const { moving, nav } = botTrackOf(SPIN_CYCLE_TRACK);
-    const segments = moving.crosses.map((body) => body.config.segmentIndex);
     // The cross 07g measured (Segments 33 and 34): each bar alone has a window, together they have none.
-    expect(segments).toContain(33);
-    expect(segments).toContain(34);
-    expect(moving.crosses.every((body) => body.role === "sweeper" && body.config.motion.spin !== undefined)).toBe(true);
-    // Its swath is on the navmesh.
-    const tile = nav.navMesh.getTile(0);
-    const count = tile.header()!.polyCount();
-    const base = nav.navMesh.getPolyRefBase(tile);
-    let flagged = 0;
-    for (let i = 0; i < count; i += 1) if ((nav.navMesh.getPolyFlags(base | i).flags & CROSS_SWATH_FLAG) !== 0) flagged += 1;
-    expect(flagged).toBeGreaterThan(0);
-    // A first plan through the cross's deck, the flag kept off, joins and keeps out of the swath; without the flag it walks through.
-    const cross = moving.crosses.find((body) => body.config.segmentIndex === 33)!;
-    const pivot = moving.poseAt(cross.index, 0, null).position;
+    const cross = moving.crosses.find((c) => c.bodies.some((body) => body.config.segmentIndex === 33))!;
+    expect(cross).toBeDefined();
+    expect(cross.bodies.map((body) => body.config.segmentIndex).sort()).toEqual([33, 34]);
+    expect(moving.crosses.every((c) => c.bodies.every((body) => body.role === "sweeper" && body.config.motion.spin !== undefined))).toBe(true);
+    console.log(`[movingWorld] Spin Cycle crosses: ${moving.crosses.map((c) => c.bodies.map((b) => b.config.segmentIndex).join("+")).join(" ")}`);
+    // A straight plan through the cross walks through its swath; kept beside it, it joins and keeps out.
+    const { pivot } = cross;
     const y = pivot.y - 0.5;
     const from = { x: pivot.x, y, z: pivot.z + 7 };
     const to = { x: pivot.x, y, z: pivot.z - 7 };
-    const beside = navCorners(nav, from, to, navFilterFor(nav, CROSS_SWATH_FLAG));
+    const through = navCorners(nav, from, to)!;
+    expect(through).not.toBeNull();
+    const beside = besideCrosses(nav, moving.crosses, from, to, through, undefined);
     expect(beside).not.toBeNull();
     const last = beside!.at(-1)!.point;
     expect(Math.hypot(last.x - to.x, last.z - to.z)).toBeLessThan(1);
@@ -182,8 +178,10 @@ describe("the moving world (M17 ticket 07)", () => {
       return best;
     };
     expect(nearest(beside!)).toBeGreaterThan(swath - 0.5);
-    const through = navCorners(nav, from, to)!;
     expect(nearest(through)).toBeLessThan(swath - 0.5);
+    // A single bar is never a cross, however fast: every cross is at least two bodies on one axle.
+    expect(moving.crosses.every((c) => c.bodies.length >= 2)).toBe(true);
+    expect(moving.crosses.some((c) => c.bodies.some((body) => [36, 37, 119].includes(body.config.segmentIndex)))).toBe(false);
   });
 
   it("poses a trap door's leaf and a glove by their own clocks, and knows when each is solid", () => {
