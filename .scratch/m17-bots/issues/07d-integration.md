@@ -329,3 +329,37 @@ What still blocks, and where it goes next:
 - **The spiked bar on the base race's spinning squares (Obstacle 30 at HARD), in 07i.**
 - **Moving rows with a crowd at NORMAL and EASY, in 07h round 2**, along with EASY's step-offs (30).
 
+
+## Combined whole-Race run after 07h round 2 and 07i (the main session, 2026-09-25, afternoon)
+
+Tree: `2ddc1f6a` (07h round 2 and 07i's second session). Same command. It took **394 s** on this
+machine, which 07h measured at about 3.4× slower than the machine the 133 s run above was on. The file
+is 9 / 9 red on `ownFalls === 0`, the ADR 0129 bar, as it was before. In brackets is the run above.
+
+| Race | level | finished | stranded | step-offs | own / obstacle Falls | where it hurts (section: Falls) |
+|---|---|---|---|---|---|---|
+| base race | HARD | **4** (3) | 0 (0) | 0 (0) | 51 / 53 | Cp 2→3: Obstacle **48** (30), the spiked bar on the spinning squares |
+| | NORMAL | **3** (1) | 0 (0) | **0** (6) | 37 / 42 | Obstacle 30; Cp 1→2 is no longer the wall (123 before) |
+| | EASY | 0 (0) | **0** (1) | **3** (30) | 30 / 42 | Cp 1→2: pushed 14, contact 15, Stagger 13, Bump 11 |
+| Spin Cycle | HARD | 0 (0) | **1** (0) | 1 | 52 / 57 | Start→Cp 0: Stagger 21; Cp 0→1: Stagger 25, Bump 19 |
+| | NORMAL | 0 (0) | **2** (0) | 0 | 62 / 78 | Start→Cp 0: Stagger 40, pushed 14; Cp 0→1: Stagger 19 |
+| | EASY | 0 (0) | **1** (0) | 0 | 44 / 83 | Start→Cp 0: pushed 36, Stagger 29; Cp 0→1: Stagger 13 |
+| Slip Stream | HARD | **8** (10) | 0 (0) | 1 | 66 / 65 | Cp 1→2: Stagger 62, Bump 14 |
+| | NORMAL | **7** (10) | **1** (0) | 0 | 60 / 58 | Cp 1→2: Stagger 48, `link` 2 |
+| | EASY | 2 (1) | **2** (1) | 0 | 83 / 76 | Cp 1→2: Stagger 66, Bump 28, **`link` 13** |
+
+What it says:
+
+- **07h round 2 worked on the Race.** The base race's moving rows are no longer the wall: NORMAL
+  step-offs 6 → 0, EASY 30 → 3, and NORMAL finishes 3.
+- **07i did not open Spin Cycle.** Its second session made the hook faster and left the outcomes
+  bit-identical. Its falls targets were not re-attempted (07i §4). The crosses' Staggers stand at about
+  the same count, and there are now 1–2 stranded Bots per level, which were not there before.
+- **Slip Stream regressed**, from 10/10 to 8/7 finished, with new stranded Bots and a new `link` Falls
+  row (13 at EASY). 07i's report saw the same leg (Cp 1→2, HARD 8 passed / 1 stranded / 27 Falls) turn
+  between two `deckRider.ts` versions. It is unattributed: an A/B of 07h round 2 against 07i on that
+  leg is the first thing to run.
+- **The spiked bar at base Cp 2→3 got worse** at HARD (Obstacle 30 → 48). 07i never reached it.
+- **A simulation defect, found by 07h round 2.** A Character carried onto the seam between a
+  turntable's pieces sinks into the groove and is pinned inside the moving body, with `velocity.y`
+  growing without bound. A human would be caught the same way. It belongs in `simulation/character/`.
