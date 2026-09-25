@@ -105,3 +105,82 @@ boarding and alighting spots in the rider (as `queueFor` orders a link's start),
 direction. The two step-offs the whole-Race run had found were traced first, and neither was the
 planner's: an alighting jump that came down on a bevel beside its still, and a walk aboard a spinning
 square steered live off a view a metre late.
+
+## Amendment (2026-09-25, evening): a crowd is coordination plus velocity avoidance, not the hazard planner
+
+**Why.** Ticket 14's phase 3 put the crowd into the hazard planner's rollout, and all three attempts
+failed (ticket 14, "As built (phase 3)"):
+- throughput collapsed (HARD moving rows 12 → 3 passed);
+- two thirds of all choices were turns;
+- Bumps at Stagger strength doubled at HARD;
+- think went from 2–10 µs to 30–90 µs.
+
+Two outside reviews followed, an audit and a rebuttal of it, and the user accepted their shared
+conclusions. These decisions replace point 1's "crowd" risk term and ticket 14's phase 3 design.
+
+1. **Hazards and the crowd are two solvers.**
+   - The hazard planner (phases 1–2) stays as it is: an exact, deterministic `MovingWorld`, and
+     rollouts of a few headings.
+   - The crowd works on observed, late, autonomous Characters. It gets its own velocity solver, with
+     its own candidates, horizon and costs. `BOT_PLAN_CROWD_RIDES` and `BOT_PLAN_CROWD_HOLDS` stay off,
+     and the code they switch is retired once the solver lands (ticket 17).
+2. **Layers, one authority per layer.**
+   - Order of authority: a script (a link's run, a transfer run-up and jump, an arc), then the edge and
+     committed-safety invariants, then a reservation or slot, then local avoidance, then the preferred
+     velocity.
+   - A route or ride controller emits a preferred velocity. The local solver moves it to the nearest
+     safe velocity, and locomotion carries it out.
+   - Two controllers of the same layer must never adjust the same heading in turn. That is what broke
+     attempt 3, where `DeckRider` and the planner fought.
+3. **Rides are scheduled, not dodged.**
+   - The `pushed` Falls on the rides are an occupancy problem: too many Bots want one rim point at one
+     Tick.
+   - A reservation controller per ride link hands out time-windowed slots: approach, board, the space
+     aboard, and exit.
+   - Each slot has a lease and a timeout. The timeout is ADR 0129's "never stranded", with its own test.
+   - Alighting goes before boarding, because it frees space.
+   - Only Bots reserve. A human is a non-cooperative occupant: an observed occupancy voids a slot, and
+     the Bot yields or replans.
+4. **Open floor: a velocity-space solver.**
+   - Candidates are velocities, not unit headings: magnitudes 0, 0.25, 0.5, 0.75 and 1 of the local top
+     speed, around the preferred and the current velocity. `walkWish` scales the walk linearly by
+     `|moveDirection|` (`MovementController.ts`), so half speed needs no simulation change.
+   - **Hard constraints reject a candidate:** a predicted step-off, leaving a deck's hull, an
+     acceleration outside the envelope, or breaking a script.
+   - **A continuous cost ranks the rest:** distance to the preferred velocity, change against the
+     current and the last chosen velocity, inverse time-to-collision, corridor lateral error, and a
+     comfort spacing.
+   - Turns of 135–180° exist only in an explicit **recover** state, entered on a detected deadlock.
+5. **Pair-stable passing.** The side of passing is fixed per pair of Characters, never drawn per Bot:
+   - head-on: one convention in the path tangent's frame;
+   - same way: by a stable priority;
+   - crossing: by a key hashed from the pair.
+
+   The choice is held with hysteresis until the pair has passed. This adds to the velocity solver and
+   does not replace its constraints.
+6. **Late perception stays and becomes uncertainty.**
+   - `perceptionDelay` is part of difficulty and fairness, and the policy never reads true state.
+   - The solver widens a neighbour's envelope with the age of the view and the neighbour's reachable
+     acceleration. When uncertainty is high, it slows rather than dodges.
+   - That widening applies on open floor only. Aboard a deck, safety comes from the slots: a large
+     margin on a small deck is what froze attempt 2.
+   - Toward a human the Bot takes almost the whole correction on itself.
+   - Bot–bot pairs may share only an old, declared reservation or slot intent, never a fresh one.
+7. **Difficulty is style above a fixed safety layer.** Patience, gap acceptance, willingness to
+   yield, occasional legal cutting in, aggression and bounded execution noise can vary. The edge and
+   committed-safety invariants never do. This refines point 5.
+8. **Measure so the hypothesis can fail.**
+   - Report what each change should move, broken down by controller: passes and throughput per ride
+     link, wait p50/p95, starvation count, `pushed`/Stagger/self step-off separately, the number of
+     sign changes of lateral velocity per encounter, reversals over 90° in cruise, minimum TTC, corridor
+     deviation, and think µs per decision.
+   - A whole-Race aggregate alone does not count as evidence.
+
+**Order (tickets 15–21):**
+1. Fix the rider's two self-falls, with an invariant test (15).
+2. The Spin Cycle 2 × 2 ablation of the hold boundary against the crowd (16).
+3. Retire the crowd from rides (17).
+4. Ride reservations between Bots (18).
+5. The open-floor velocity solver (19).
+6. Pair stability (20).
+7. Difficulty as style (21).

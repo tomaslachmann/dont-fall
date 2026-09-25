@@ -1,7 +1,7 @@
 # 14 — A local motion planner between the path and the input
 
 **Design:** ADR 0130, read it first. **Evidence:** `07m-bodies-that-move-as-one.md`, "The log".
-**Status:** planned (2026-09-25). This replaces 07m's proposals 1 and 2. They are this ticket's phases
+**Status:** phases 1–2 done; phase 3 built, measured, failed, and off (As built below); phase 4 moved into 16/19. Continued in tickets 15–21 per ADR 0130's amendment (2026-09-25). This replaces 07m's proposals 1 and 2. They are this ticket's phases
 1 and 2, built as the planner, not as more handlers.
 
 ## The measuring tool (use it first, and every phase)
