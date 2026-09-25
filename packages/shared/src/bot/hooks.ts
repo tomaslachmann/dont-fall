@@ -77,7 +77,8 @@ export const defaultHooks = (profile: BotProfile, seed: string): PathHooks => {
   void seed;
   return {
     hold: [new SweeperHold(profile, seed), ...trapHolds(profile, seed)],
-    planFilterFlags: (ctx) => trapPlanFilterFlags(ctx) | (process.env.R3_NOCROSS ? 0 : CROSS_SWATH_FLAG),
+    // A first plan keeps beside a cross's swath where the lane has room (M17 ticket 07i, round 3).
+    planFilterFlags: (ctx) => trapPlanFilterFlags(ctx) | CROSS_SWATH_FLAG,
     push: new BeltPush(),
     ride: new DeckRider(profile, seed),
   };

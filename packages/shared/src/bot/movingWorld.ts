@@ -56,6 +56,15 @@ export interface MovingBody {
   readonly spiked: boolean;
 }
 
+/** Sweepers on one axle that together leave no straight window (M17 ticket 07i, round 3): Spin Cycle's cross is two bars. */
+export interface Cross {
+  readonly bodies: readonly MovingBody[];
+  /** The axle, in world space: the bodies' shared rest origin. */
+  readonly pivot: Vec3;
+  /** The furthest any of them reaches from the pivot. */
+  readonly radius: number;
+}
+
 /** Floor bodies moving as one: Spin Cycle's carousel is eight quarter pieces with one spin. */
 export interface Platform {
   readonly index: number;
@@ -83,13 +92,13 @@ export interface MovingWorld {
   readonly fragile: readonly MovingBody[];
   readonly platforms: readonly Platform[];
   /**
-   * Sweepers spinning flat about a fixed pivot that no straight walk through
-   * the swath clears (M17 ticket 07i, round 3): at the best point of a ring
-   * inside the swath, the longest gap between arms over one turn is shorter
-   * than a walk across the swath's width. The navmesh under each carries
-   * {@link CROSS_SWATH_FLAG}, so a first plan keeps beside it where it can.
+   * Crosses (M17 ticket 07i, round 3): the sweepers on one axle, spinning
+   * about a fixed pivot, that no straight walk through their swath clears —
+   * at the best point of a ring inside the swath, the longest gap between arms
+   * over one turn is shorter than a walk across the swath's width. A first
+   * plan keeps beside one where the lane has room (`PathFollower`).
    */
-  readonly crosses: readonly MovingBody[];
+  readonly crosses: readonly Cross[];
   /** World pose of body `i` at `tick`. Cached per (body, tick) in a ring of `BOT_LOOK_AHEAD_TICKS_MAX + 2` Ticks; a new clock flushes it. */
   poseAt(i: number, tick: number, clock: MotionClock): MotionPose;
   /** World velocity of world point `p` on body `i` over tick → tick + 1 (`motionPointVelocity`'s rule, through the pose cache). */
@@ -602,8 +611,7 @@ export const movingWorldOf = (resolved: ResolvedTrack, nav: TrackNav): MovingWor
   };
   const crosses: MovingBody[] = [];
   for (const group of axles.values()) if (isCross(group)) crosses.push(...group);
-  const marked = markCrossSwaths(nav, crosses, rests, grow);
-  if (process.env.R3_TRACE) console.log(`[trace] crosses ${crosses.map((b) => b.config.segmentIndex).join(",")} (${axles.size} axles), ${marked} polys marked`);
+  markCrossSwaths(nav, crosses, rests, grow);
 
   return {
     bodies,

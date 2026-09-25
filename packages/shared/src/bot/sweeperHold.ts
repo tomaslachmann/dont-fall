@@ -274,7 +274,6 @@ export class SweeperHold implements HoldHook {
     }
     if (this.heldSince !== null && tick - this.heldSince >= this.holdCap()) {
       SweeperHold.gaveUp += 1;
-      if (process.env.R3_TRACE) console.log(`[trace] ${ctx.view.id} t${tick} gave up at (${ctx.self.position.x.toFixed(1)}, ${ctx.self.position.z.toFixed(1)}) seg ${this.blocked?.body.config.segmentIndex}`);
       this.goUntil = tick + BOT_HOLD_GO_TICKS;
       this.arc = null;
       this.end();
@@ -367,14 +366,10 @@ export class SweeperHold implements HoldHook {
       if (!moving.solidAt(body.index, at, view.fragile)) return false;
       if (body.spiked) return true;
       const v = moving.velocityAt(body.index, at, clock, p);
-      const speed = Math.hypot(v.x, v.y, v.z);
-      if (speed > BOT_HOLD_MIN_SPEED) return true;
-      if (process.env.R3_OLD_SPEED || walk === undefined || speed < 1e-3) return false;
-      // Along the body's own motion, which is the push a sweeping face deals: a walk straight into it adds
-      // the whole walk, a walk across it adds nothing (07i round 3: the relative speed's magnitude counted
-      // a glancing walk past a bar's slow inner half as head-on, and 812 of 2,666 holds at Slip Stream's
-      // bar 97 were that).
-      return process.env.R3_RELATIVE ? Math.hypot(v.x - walk.x, v.y, v.z - walk.z) > MOVING_SEGMENT_STAGGER_SPEED : speed - (walk.x * v.x + walk.z * v.z) / speed > MOVING_SEGMENT_STAGGER_SPEED;
+      if (Math.hypot(v.x, v.y, v.z) > BOT_HOLD_MIN_SPEED) return true;
+      // The relative speed bounds the closing speed whatever face is met (07i round 3 measured the closing
+      // speed along the body's own motion instead: fewer holds, more Staggers on every leg but one).
+      return walk !== undefined && Math.hypot(v.x - walk.x, v.y, v.z - walk.z) > MOVING_SEGMENT_STAGGER_SPEED;
     };
     /** The walk the Bot brings to sample `i`: its corridor's direction there at its floor's pace, from the samples' own spacing and arrival. */
     const walkAt = (i: number): Vec3 | undefined => {
@@ -403,18 +398,13 @@ export class SweeperHold implements HoldHook {
     for (let i = 0; i < samples.length && blockedAt < 0; i += 1) {
       const { p, arriveTick } = samples[i]!;
       if (arriveTick - tick > look) {
-        if (!through || process.env.R3_NO_THROUGH) break;
+        if (!through) break;
         if (!inSwath(p)) break;
       } else through = inSwath(p);
       const at = arriveTick + jitter;
       const q = carried(p, at);
       for (const body of near) {
         if (moving.occupies(body.index, at, clock, q, grow) && counts(body, at, q, walkAt(i))) {
-          if (process.env.R3_TRACE) {
-            const v = moving.velocityAt(body.index, at, clock, q);
-            const u = walkAt(i);
-            console.log(`[trace] ${ctx.view.id} t${tick} hold? seg ${body.config.segmentIndex} body ${body.index} sample ${i} at (${q.x.toFixed(1)}, ${q.z.toFixed(1)}) |v| ${Math.hypot(v.x, v.y, v.z).toFixed(2)} |v-u| ${u === undefined ? "-" : Math.hypot(v.x - u.x, v.y, v.z - u.z).toFixed(2)}`);
-          }
           blockedAt = i;
           this.blocked = { body, index: i, samples, near, onDeck: deck !== null, counts, walkAt };
           break;
@@ -450,7 +440,6 @@ export class SweeperHold implements HoldHook {
     const { view, self, tick, clock, stale } = ctx;
     const { moving, nav } = view.track;
     const { body, near, samples, counts } = blocked;
-    if (process.env.R3_NOARC) return null;
     // From a stand, seen: the arc is a count from here, as a link's script is.
     if (Math.hypot(self.velocity.x, self.velocity.z) >= BOT_BRAKE_MIN_SPEED) return null;
     const failedUntil = this.arcFailed.get(body.index);
