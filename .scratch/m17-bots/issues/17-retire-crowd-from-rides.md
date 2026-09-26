@@ -16,7 +16,7 @@ a second authority over a script's heading is what the amendment forbids.
 **Keep:**
 - `neighboursOf`, `Fighter.targetId` and `voidEdgeDistance`: 19 and 20 reuse them;
 - the `positioning` mark on `Steering`: 18 uses it to tell a slot walk from a script;
-- the measuring columns in the scratchpad log.
+- the harness's `impactLog` and `stepOffTrace` (`harnessProbes.ts`), which record the planner's candidate as the hook output.
 
 Move the two crowd questions in `localMotion.test.ts` to 19's suite, or delete them.
 

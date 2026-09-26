@@ -42,8 +42,8 @@ cause, and the diagnosis in ticket 14 is wrong. Record that, and do not build on
 
 ## Files
 
-`sweeperHold.ts` (the boundary, behind a switch), `tuning/bots.ts`, and the 07m log from the
-scratchpad (copied in only to run).
+`sweeperHold.ts` (the boundary, behind a switch), `tuning/bots.ts`, and the harness's committed
+`impactLog` for the impacts and the hook output (`harnessProbes.ts`).
 
 ## Regression set
 

@@ -18,6 +18,7 @@ import { CAPSULE_BOTTOM_OFFSET, CAPSULE_RADIUS } from "../tuning/character.js";
 import { TICK_DT, TICK_RATE_HZ } from "../tuning/clock.js";
 import { ELIMINATION_CREDIT_TICKS } from "../tuning/fight.js";
 import { buildBotTrack, type Bot, type BotTrack } from "./Bot.js";
+import { HarnessProbes, type ImpactRecord, type StepOffTrace } from "./harnessProbes.js";
 import { LinkReplay } from "./links.js";
 import { initNavigation } from "./navMesh.js";
 import { withPerceptionDelay } from "./perceptionDelay.js";
@@ -72,6 +73,10 @@ export interface SectionRun {
   profile?: (level: BotLevel, seed: string) => BotProfile;
   /** M17 ticket 07d: the whole Race — spawn at the Start (`leg` 0) and pass only at the finish. */
   whole?: boolean;
+  /** Log every Impact of Stagger strength a Bot takes on its feet (`harnessProbes.ts`). Off by default, and free when off. */
+  impactLog?: boolean;
+  /** Trace every `step-off` Fall Tick by Tick, with the ground it left (`harnessProbes.ts`). Off by default, and free when off. */
+  stepOffTrace?: boolean;
 }
 
 export interface SectionOutcome {
@@ -89,6 +94,12 @@ export interface SectionOutcome {
   where: string[];
   /** M17 ticket 07d: Falls by cause per section, keyed by the section the Bot was in (`checkpointIndex + 1`: 0 is Start → Checkpoint 0). */
   sections: Record<number, Record<string, number>>;
+  /** With `impactLog`: every Impact of Stagger strength, joined to the Fall it led to. */
+  impacts?: ImpactRecord[];
+  /** With `impactLog`: every Bump between Characters, of any strength. */
+  bumps?: number;
+  /** With `stepOffTrace`: one trace per `step-off` Fall. */
+  stepOffs?: StepOffTrace[];
 }
 
 /** One section of a Race in a report (M17 ticket 07d; ticket 11 prints it): between two Checkpoints, its Falls by cause. */
@@ -254,11 +265,13 @@ export const playSection = async (run: SectionRun): Promise<SectionOutcome> => {
   /** Where each Bot was `STRANDED_WINDOW_S` ago, a ring of positions. */
   const trail = new Map<string, Vec3[]>();
   const windowTicks = Math.round(STRANDED_WINDOW_S * TICK_RATE_HZ);
+  const probes = new HarnessProbes(sim, botTrack, { impactLog: run.impactLog === true, stepOffTrace: run.stepOffTrace === true });
   let state: SimState = sim.snapshot();
   let thinkMs = 0;
   let thinks = 0;
   const ticks = Math.round(capSeconds / TICK_DT);
   try {
+    probes.install();
     for (let n = 0; n < ticks; n += 1) {
       if (n % YIELD_TICKS === 0) await new Promise((resolve) => setImmediate(resolve));
       const inputs: Record<string, SimInputs> = {};
@@ -290,6 +303,7 @@ export const playSection = async (run: SectionRun): Promise<SectionOutcome> => {
       if (running === 0) break;
       sim.tick(inputs, "RUNNING");
       const next = sim.snapshot();
+      if (probes.on) probes.tick(next);
       for (const id of bots.keys()) {
         const before = state.characters[id]!;
         const after = next.characters[id]!;
@@ -335,11 +349,13 @@ export const playSection = async (run: SectionRun): Promise<SectionOutcome> => {
           inSection[cause] = (inSection[cause] ?? 0) + 1;
           const at = ground?.position ?? before.position;
           where.push(`${id} ${cause} at (${at.x.toFixed(1)}, ${at.y.toFixed(1)}, ${at.z.toFixed(1)}) tick ${ground?.tick}`);
+          if (probes.on) probes.fell(id, cause, ground, next.tick, before.motionState);
         }
       }
       state = next;
     }
   } finally {
+    probes.restore();
     LinkReplay.prototype.step = steps;
     sim.dispose();
   }
@@ -365,5 +381,7 @@ export const playSection = async (run: SectionRun): Promise<SectionOutcome> => {
     thinkUsPerBotTick: (thinkMs * 1000) / Math.max(1, thinks),
     where,
     sections,
+    ...(run.impactLog === true ? { impacts: probes.impacts, bumps: probes.bumps } : {}),
+    ...(run.stepOffTrace === true ? { stepOffs: probes.stepOffs } : {}),
   };
 };

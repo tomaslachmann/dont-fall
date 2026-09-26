@@ -6,6 +6,13 @@
 
 ## The measuring tool (use it first, and every phase)
 
+**The measuring tool is committed now (2026-09-26):** `sectionHarness`'s `impactLog` and `stepOffTrace`
+options (`packages/shared/src/bot/harnessProbes.ts`, tested by `harnessProbes.test.ts`). Both are off by
+default and wrap nothing when off. They replace the lost scratch copies, and `formatImpactLog` /
+`formatStepOffTraces` print them. With `stepOffTrace` on, the base race's HARD whole-Race seed
+(`races:base race:hard`, 60 s) reproduces this ticket's bot-0 step-off at Tick 1589.
+
+
 `/tmp/claude-0/-home-user-dont-fall/1f9d0a11-d77f-5a3c-8e1e-75269777c133/scratchpad/staggerLog.scratch.test.ts`
 is the 07m log.
 - **What it does:** it patches the prototypes of `RapierSimulation.resolveMovingSegmentContacts`,

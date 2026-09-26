@@ -2,8 +2,8 @@
 
 **Design:** ADR 0129 (a Bot never steps off on its own) and ADR 0130's amendment (a script outranks
 everything, so it must be safe on its own). **Evidence:** ticket 14, "As built (phase 3)", item 0, which
-traced both Bot by Bot on the whole-Race seeds `races:base race:<level>`. The tracer is in the session
-scratchpad (`stepOffTrace.scratch.test.ts`).
+traced both Bot by Bot on the whole-Race seeds `races:base race:<level>`. The trace is `playSection`'s committed
+`stepOffTrace` option (`harnessProbes.ts`), which reproduces the HARD one on `races:base race:hard`.
 
 **Status:** planned. **Runs before 16–21:** until a script stops dropping its own Bot, no crowd
 experiment can tell its Falls apart from these.
